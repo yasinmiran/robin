@@ -39,6 +39,10 @@ type Config struct {
 	// IncludeLoopback gathers loopback candidates. The tunnel listener is
 	// loopback-only, so ICE-TCP needs this.
 	IncludeLoopback bool
+	// Certificate is the DTLS identity. The agent keeps one for its whole
+	// session so the fingerprint the CLI pinned survives a page reload. Nil
+	// generates a fresh one.
+	Certificate *webrtc.Certificate
 
 	MinBitrate, StartBitrate, MaxBitrate int // bits per second
 	Log                                  *slog.Logger
@@ -131,7 +135,11 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 	if len(cfg.STUN) > 0 {
 		ice = []webrtc.ICEServer{{URLs: cfg.STUN}}
 	}
-	pc, err := api.NewPeerConnection(webrtc.Configuration{ICEServers: ice})
+	pcConfig := webrtc.Configuration{ICEServers: ice}
+	if cfg.Certificate != nil {
+		pcConfig.Certificates = []webrtc.Certificate{*cfg.Certificate}
+	}
+	pc, err := api.NewPeerConnection(pcConfig)
 	if err != nil {
 		return nil, err
 	}
