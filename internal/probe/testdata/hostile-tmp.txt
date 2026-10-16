@@ -1,0 +1,24 @@
+Welcome to the HPC login node. Jobs go through Slurm.
+probe=1
+os=Linux
+kernel=4.18.0-553.el8_10.x86_64
+machine=x86_64
+distro_id=almalinux
+distro_version=8.10
+distro_like=rhel centos fedora
+distro_name=AlmaLinux 8.10 (Cerulean Leopard)
+user=gina
+uid=40017
+home=/cluster/home/gina
+cpus=128
+memory_kb=1056315392
+env.XDG_SESSION_TYPE=
+env.DISPLAY=
+env.WAYLAND_DISPLAY=
+env.XDG_CURRENT_DESKTOP=
+env.XDG_RUNTIME_DIR=
+cmd.Xvfb=/usr/bin/Xvfb
+cmd.xkbcomp=/usr/bin/xkbcomp
+agentdir_rejected=/cluster/home/gina/.cache/remotejump:mkdir
+agentdir_rejected=/tmp/remotejump-40017:owner
+sha256_tool=sha256sum
