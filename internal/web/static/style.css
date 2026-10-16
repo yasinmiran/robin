@@ -1,0 +1,196 @@
+:root {
+  --veil: rgb(244 246 247 / 0.9);
+  --veil-edge: rgb(24 32 38 / 0.12);
+  --ink: #1a2228;
+  --ink-soft: #5a6770;
+  --ok: #0f8a68;
+  --wait: #b6741a;
+  --down: #c1453a;
+  --shadow: 0 8px 24px rgb(0 0 0 / 0.3);
+  --ui: system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", Cantarell, Ubuntu, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --veil: rgb(29 36 43 / 0.86);
+    --veil-edge: rgb(255 255 255 / 0.09);
+    --ink: #e5eaee;
+    --ink-soft: #8d9aa5;
+    --ok: #52d2a6;
+    --wait: #f1b54a;
+    --down: #f27e6e;
+  }
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+}
+
+#screen {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+  outline: none;
+  touch-action: none;
+}
+
+/* The wire runs along the top edge while the link is being established. */
+#wire {
+  position: fixed;
+  inset: 0 0 auto;
+  height: 2px;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 300ms;
+  pointer-events: none;
+}
+#wire::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 28%;
+  background: linear-gradient(90deg, transparent, var(--wait) 40%, var(--wait) 60%, transparent);
+  animation: travel 1.6s cubic-bezier(.45, 0, .55, 1) infinite;
+}
+body:has(#hud[data-state="connecting"]) #wire,
+body:has(#hud[data-state="reconnecting"]) #wire { opacity: 1; }
+
+@keyframes travel {
+  from { translate: -100% 0; }
+  to { translate: 360% 0; }
+}
+
+#scrim {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 0.55);
+  backdrop-filter: grayscale(1);
+}
+
+/* The HUD hangs from the top edge like a tab: square where it meets the
+   edge, rounded where it hangs free. Tucked, a sliver stays visible. */
+#hud {
+  position: fixed;
+  top: 0;
+  left: 50%;
+  max-width: calc(100vw - 32px);
+  translate: -50% 0;
+  padding: 8px 8px 8px 16px;
+  color: var(--ink);
+  background: var(--veil);
+  border: 1px solid var(--veil-edge);
+  border-top: 0;
+  border-radius: 0 0 12px 12px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(16px) saturate(1.3);
+  font: 500 12.5px/16px var(--ui);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  transition: translate 240ms cubic-bezier(.2, .8, .2, 1), box-shadow 240ms;
+}
+#hud.tucked {
+  translate: -50% calc(-100% + 4px);
+  box-shadow: none;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 20px;
+}
+
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--wait);
+}
+#hud[data-state="connected"] .dot { background: var(--ok); }
+#hud[data-state="ended"] .dot { background: var(--down); }
+
+.picture {
+  display: inline-flex;
+  gap: 14px;
+}
+
+.stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.unit { color: var(--ink-soft); }
+
+.glyph {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: var(--ink-soft);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+.glyph circle { fill: var(--ink-soft); stroke: none; }
+#transport:not([data-kind="udp"]) .direct,
+#transport:not([data-kind="tcp"]) .tunnel { display: none; }
+
+#fullscreen {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-left: -6px;
+  padding: 0;
+  color: var(--ink-soft);
+  background: none;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+}
+#fullscreen:hover { color: var(--ink); background: var(--veil-edge); }
+#fullscreen:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+#fullscreen svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+#fullscreen .exit,
+:fullscreen #fullscreen .enter { display: none; }
+:fullscreen #fullscreen .exit { display: block; }
+
+.notice {
+  max-width: 42ch;
+  margin: 6px 0 4px;
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 19px;
+  font-weight: 400;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #hud { transition: none; }
+  #wire::after {
+    animation: none;
+    width: 100%;
+    background: repeating-linear-gradient(90deg, var(--wait) 0 12px, transparent 12px 20px);
+  }
+}
