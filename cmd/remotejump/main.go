@@ -60,6 +60,9 @@ func runGUI(args []string) int {
 	fps := fs.Int("fps", 0, "frame rate cap (default 30, 20 on small hosts)")
 	maxKbps := fs.Int("max-kbps", 0, "video bitrate ceiling in kbit/s (default 10000)")
 	session := fs.String("session", "", "command to run in the spawned display (default: the lightest desktop found)")
+	attach := fs.String("attach", "", `stream a desktop already running on the host instead of starting one: an X11 display such as ":0", "auto" for your active session, or "wayland"`)
+	audio := fs.Bool("audio", true, "stream the desktop's sound as well")
+	encoder := fs.String("encoder", "software", "video encoder on the host: software, or vaapi or nvenc where the host has them")
 	stun := fs.String("stun", defaultSTUN, `comma-separated STUN servers for NAT traversal, or "none"`)
 	listen := fs.String("listen", "127.0.0.1:0", "loopback address for the browser page")
 	noBrowser := fs.Bool("no-browser", false, "print the page URL on stdout instead of opening a browser")
@@ -103,7 +106,7 @@ func runGUI(args []string) int {
 	err = gui.Run(ctx, gui.Options{
 		Dest: dest, SSHPath: *sshPath, SSHArgs: sshArgs,
 		Transport: t, MaxWidth: w, MaxHeight: h, FPS: *fps, MaxKbps: *maxKbps,
-		Session: *session, STUN: parseSTUN(*stun),
+		Session: *session, Attach: *attach, Audio: *audio, Encoder: *encoder, STUN: parseSTUN(*stun),
 		Listen: *listen, NoBrowser: *noBrowser, Verbose: *verbose,
 		Stdout: os.Stdout, Stderr: os.Stderr, Log: log,
 	})

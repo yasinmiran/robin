@@ -35,7 +35,12 @@ type Options struct {
 	FPS                 int
 	MaxKbps             int
 	Session             string
-	STUN                []string
+	// Attach streams a running desktop instead of spawning one: an X11
+	// display, "auto", or protocol.AttachWayland.
+	Attach  string
+	Audio   bool
+	Encoder string
+	STUN    []string
 
 	Listen    string // page address, default 127.0.0.1:0
 	NoBrowser bool   // print the URL on stdout instead of opening a browser
@@ -79,7 +84,13 @@ func Run(ctx context.Context, o Options) error {
 		}
 		return fmt.Errorf("no usable directory for the agent on %s (%s)", o.Dest, strings.Join(why, "; "))
 	}
-	if missing := report.SpawnMissing(); len(missing) > 0 {
+	if o.Attach == "auto" {
+		if o.Attach, err = pickAttach(report); err != nil {
+			return err
+		}
+		log.Info("attaching", "to", o.Attach)
+	}
+	if missing := report.SpawnMissing(); o.Attach == "" && len(missing) > 0 {
 		return fmt.Errorf("%s cannot run a headless desktop yet: missing %s\ninstall with: %s",
 			o.Dest, strings.Join(missing, ", "), report.InstallHint())
 	}
@@ -109,7 +120,8 @@ func Run(ctx context.Context, o Options) error {
 	if err != nil {
 		return err
 	}
-	log.Info("agent ready", "display", ready.Display, "session", ready.Session, "size", fmt.Sprintf("%dx%d", ready.Width, ready.Height))
+	log.Info("agent ready", "mode", ready.Mode, "display", ready.Display, "session", ready.Session,
+		"size", fmt.Sprintf("%dx%d", ready.Width, ready.Height), "encoder", ready.Encoder, "audio", ready.Audio)
 
 	tunnelPort := 0
 	if ready.TunnelAddr != "" && o.Transport != relay.Direct {
@@ -177,6 +189,7 @@ func startMessage(o Options, r *probe.Report) protocol.Start {
 	s := protocol.Start{
 		Version: protocol.Version, MaxWidth: o.MaxWidth, MaxHeight: o.MaxHeight,
 		FPS: o.FPS, MaxKbps: o.MaxKbps, Session: o.Session, STUN: o.STUN,
+		Attach: o.Attach, Audio: o.Audio, Encoder: o.Encoder,
 	}
 	small := r.CPUs > 0 && r.CPUs <= 2
 	if s.MaxWidth <= 0 || s.MaxHeight <= 0 {
