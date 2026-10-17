@@ -154,7 +154,11 @@ func Run(ctx context.Context, o Options) error {
 	} else if err := openBrowser(srv.URL()); err != nil {
 		fmt.Fprintf(o.Stderr, "open this URL in your browser: %s\n", srv.URL())
 	}
-	fmt.Fprintf(o.Stderr, "remotejump: %s on %s; press Ctrl+C to end the session\n", ready.Display, o.Dest)
+	desktop := ready.Display
+	if ready.Mode == protocol.ModeAttach {
+		desktop = "attached to " + ready.Display
+	}
+	fmt.Fprintf(o.Stderr, "remotejump: %s on %s; press Ctrl+C to end the session\n", desktop, o.Dest)
 
 	b := &bridge{
 		agent: ag.conn, relay: relay.New(relay.Policy{Transport: o.Transport, TunnelPort: tunnelPort}),

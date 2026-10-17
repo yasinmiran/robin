@@ -2,11 +2,84 @@ package gui
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/yasinmiran/remotejump/internal/probe"
 )
 
-// pickAttach chooses the running desktop that --attach auto means.
+// pickAttach chooses the running desktop that --attach auto means: the X
+// display of the user's active local X11 session, else the one X server
+// socket the user owns. GDM registers X11 sessions before their server
+// starts, so the session often names no display and the socket decides.
+//
+// A user whose active session is Wayland gets no guess: the X server they
+// own there is Xwayland, whose root window shows none of the desktop.
 func pickAttach(r *probe.Report) (string, error) {
-	return "", errors.New("--attach auto is not available yet; name a display such as :0")
+	wayland := false
+	for _, s := range r.Sessions {
+		if !s.Active || s.Remote {
+			continue
+		}
+		switch s.Type {
+		case "x11":
+			if s.Display != "" {
+				return s.Display, nil
+			}
+		case "wayland":
+			wayland = true
+		}
+	}
+	var mine []string
+	for _, x := range r.X11 {
+		if x.UID == r.UID {
+			mine = append(mine, x.Display)
+		}
+	}
+	if len(mine) == 1 && !wayland {
+		return mine[0], nil
+	}
+
+	var why string
+	switch {
+	case wayland:
+		why = "your active session is Wayland; use --attach wayland, or --attach :N for one X display"
+	case len(mine) > 1:
+		why = "you run more than one X server; choose one with --attach :N"
+	default:
+		why = "no X11 desktop of yours is running; name one with --attach :N"
+	}
+	return "", errors.New("--attach auto: " + why + "\n" + found(r))
+}
+
+// found describes the sessions and X displays the probe saw, for an error.
+func found(r *probe.Report) string {
+	var sessions, displays []string
+	for _, s := range r.Sessions {
+		desc := []string{s.Type}
+		if s.Display != "" {
+			desc = append(desc, "display "+s.Display)
+		}
+		if s.Active {
+			desc = append(desc, "active")
+		}
+		if s.Remote {
+			desc = append(desc, "remote")
+		}
+		sessions = append(sessions, fmt.Sprintf("%s (%s)", s.ID, strings.Join(desc, ", ")))
+	}
+	for _, x := range r.X11 {
+		owner := x.Owner
+		if owner == "" {
+			owner = fmt.Sprintf("uid %d", x.UID)
+		}
+		displays = append(displays, fmt.Sprintf("%s (%s)", x.Display, owner))
+	}
+	none := func(list []string) string {
+		if len(list) == 0 {
+			return "none"
+		}
+		return strings.Join(list, ", ")
+	}
+	return fmt.Sprintf("found sessions: %s; X displays: %s", none(sessions), none(displays))
 }
