@@ -102,8 +102,8 @@ type Candidate struct {
 // ControlType identifies a data channel message.
 type ControlType string
 
-// Data channel message types. Clipboard flows both ways; the rest flow from
-// browser to agent.
+// Data channel message types. Clipboard flows both ways, heartbeats from agent
+// to browser, the rest from browser to agent.
 const (
 	ControlKey       ControlType = "key"
 	ControlMove      ControlType = "move"
@@ -112,6 +112,10 @@ const (
 	ControlResize    ControlType = "resize"
 	ControlClipboard ControlType = "clipboard"
 	ControlRelease   ControlType = "release" // release every held key and button
+	// ControlHeartbeat goes from agent to browser every second. The page
+	// restarts ICE when heartbeats stop, which catches a path that died in
+	// one direction only.
+	ControlHeartbeat ControlType = "heartbeat"
 )
 
 // Control is one message on the control data channel. Coordinates are in

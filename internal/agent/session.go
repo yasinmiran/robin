@@ -130,9 +130,10 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 		cancel()
 		wg.Wait()
 	}()
-	wg.Add(2)
+	wg.Add(3)
 	go func() { defer wg.Done(); s.stream.run(ctx) }()
 	go func() { defer wg.Done(); s.forwardClipboard(ctx) }()
+	go func() { defer wg.Done(); s.heartbeat(ctx) }()
 
 	msgs := make(chan protocol.Message)
 	go func() {
@@ -293,6 +294,26 @@ func (s *session) control(m protocol.Control) {
 		}
 		if err := s.x.SetClipboard(m.Text); err != nil {
 			s.log.Warn("set clipboard", "err", err)
+		}
+	}
+}
+
+// heartbeat tells the page every second that the media path still works; the
+// page restarts ICE when they stop arriving.
+func (s *session) heartbeat(ctx context.Context) {
+	t := time.NewTicker(time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		s.mu.Lock()
+		p := s.peer
+		s.mu.Unlock()
+		if p != nil {
+			p.SendControl(protocol.Control{T: protocol.ControlHeartbeat})
 		}
 	}
 }

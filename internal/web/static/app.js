@@ -4,6 +4,10 @@ import { StatsSampler } from './stats.js';
 
 const CONTROL_CHANNEL = 'control';
 const ICE_GRACE_MS = 2000;
+// The agent sends a heartbeat every second. Silence this long means media is
+// not getting through even if ICE still looks connected, as when only the
+// agent-to-browser direction of UDP dies; a restart moves to a working path.
+const HEARTBEAT_STALL_MS = 3500;
 const STATS_EVERY_MS = 1000;
 const TOKEN_KEY = 'remotejump.token';
 
@@ -19,6 +23,8 @@ let state = 'connecting';
 let lastRemoteClipboard = null;
 let wsOpened = false;
 let iceGraceTimer = 0;
+let heartbeatTimer = 0;
+let lastControlAt = 0;
 let statsTimer = 0;
 let signals = Promise.resolve();
 let earlyCandidates = [];
@@ -115,9 +121,18 @@ function createPeer(config) {
   };
 
   channel = pc.createDataChannel(CONTROL_CHANNEL, { ordered: true });
-  channel.onopen = () => input.sendResize();
+  channel.onopen = () => {
+    lastControlAt = Date.now();
+    input.sendResize();
+  };
   channel.onclose = () => input.release();
-  channel.onmessage = (e) => onControl(JSON.parse(e.data));
+  channel.onmessage = (e) => {
+    lastControlAt = Date.now();
+    // A heartbeat-triggered restart may never change iceConnectionState.
+    if (state === 'reconnecting' && ['connected', 'completed'].includes(pc.iceConnectionState)) setState('connected');
+    onControl(JSON.parse(e.data));
+  };
+  heartbeatTimer = setInterval(checkHeartbeat, 500);
 
   pc.onnegotiationneeded = async () => {
     try {
@@ -169,6 +184,15 @@ function restartIce() {
   if (state !== 'ended') pc.restartIce();
 }
 
+function checkHeartbeat() {
+  if (state !== 'connected' || channel?.readyState !== 'open') return;
+  if (Date.now() - lastControlAt < HEARTBEAT_STALL_MS) return;
+  // Give the restart a full stall period before trying again.
+  lastControlAt = Date.now();
+  setState('reconnecting');
+  restartIce();
+}
+
 function onControl(c) {
   if (c.t !== 'clipboard') return;
   lastRemoteClipboard = c.text ?? '';
@@ -187,6 +211,7 @@ function end(reason) {
   if (state === 'ended') return;
   clearTimeout(iceGraceTimer);
   clearInterval(statsTimer);
+  clearInterval(heartbeatTimer);
   input.release();
   setState('ended');
   overlay.showNotice(reason);

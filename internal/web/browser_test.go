@@ -217,6 +217,16 @@ func playAgent(ctx context.Context, b *Browser, frames string, onOffer func(stri
 		sendCandidate(c)
 	})
 	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
+		// Heartbeat like the real agent, or the page treats the link as stalled.
+		dc.OnOpen(func() {
+			go func() {
+				hb, _ := json.Marshal(protocol.Control{T: protocol.ControlHeartbeat})
+				for dc.ReadyState() == webrtc.DataChannelStateOpen {
+					dc.SendText(string(hb))
+					time.Sleep(time.Second)
+				}
+			}()
+		})
 		dc.OnMessage(func(msg webrtc.DataChannelMessage) {
 			var c protocol.Control
 			if json.Unmarshal(msg.Data, &c) != nil {

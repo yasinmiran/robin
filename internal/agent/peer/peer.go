@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pion/ice/v4"
@@ -16,6 +17,7 @@ import (
 	"github.com/pion/interceptor/pkg/cc"
 	"github.com/pion/interceptor/pkg/gcc"
 	"github.com/pion/rtcp"
+	"github.com/pion/stun/v4"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
 
@@ -119,9 +121,13 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 
 	se := webrtc.SettingEngine{}
 	se.SetSCTPMaxMessageSize(MaxControlBytes)
-	// The browser drives recovery with an ICE restart after ~2 s of
-	// disconnection; failing late gives that restart time to land.
-	se.SetICETimeouts(5*time.Second, 30*time.Second, 2*time.Second)
+	// Disconnected after 2 s lets followNomination react quickly; failing late
+	// gives the browser's ICE restart time to land.
+	se.SetICETimeouts(2*time.Second, 30*time.Second, time.Second)
+	var pcRef atomic.Pointer[webrtc.PeerConnection]
+	se.SetICEBindingRequestHandler(func(m *stun.Message, _, _ ice.Candidate, pair *ice.CandidatePair) bool {
+		return followNomination(m, pair, pcRef.Load())
+	})
 	if cfg.TCPMux != nil {
 		se.SetICETCPMux(cfg.TCPMux)
 		se.SetNetworkTypes([]webrtc.NetworkType{
@@ -143,6 +149,7 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 	if err != nil {
 		return nil, err
 	}
+	pcRef.Store(pc)
 	p := &Peer{pc: pc, h: h, log: log}
 
 	select {
@@ -290,10 +297,22 @@ func (p *Peer) readRTCP(sender *webrtc.RTPSender) {
 		for _, pkt := range pkts {
 			switch pkt.(type) {
 			case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
+				p.log.Info("keyframe requested", "by", fmt.Sprintf("%T", pkt))
 				if p.h.Keyframe != nil {
 					p.h.Keyframe()
 				}
 			}
 		}
 	}
+}
+
+// followNomination decides whether to switch to a pair the browser nominated.
+// Pion on its own only follows nominations of higher priority, but when UDP
+// dies the browser fails over to the lower-priority SSH tunnel; without this
+// the agent keeps sending into the dead path until ICE fails 30 s later. It
+// follows only once its own path has gone quiet and the new pair has proven
+// itself, so the normal startup churn of nominations is ignored.
+func followNomination(m *stun.Message, pair *ice.CandidatePair, pc *webrtc.PeerConnection) bool {
+	return pc != nil && m.Contains(stun.AttrUseCandidate) && pair.ResponsesReceived() > 0 &&
+		pc.ICEConnectionState() == webrtc.ICEConnectionStateDisconnected
 }
