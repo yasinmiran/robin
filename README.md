@@ -215,12 +215,16 @@ Firefox with its OpenH264 plugin. Chrome is what the end-to-end tests drive.
 4. The agent starts on an exec channel. Its stdin and stdout carry signaling
    as JSON lines, with a heartbeat both ways so a dead connection tears the
    session down instead of leaving a display running.
-5. It starts Xvfb and a session, or attaches to the X display already running,
-   captures with MIT-SHM and DAMAGE, encodes with openh264, and sends over a
-   Pion peer connection. Sound comes from the monitor of a PulseAudio sink,
-   read over its native protocol in Go, and goes out as Opus from libopus.
-   Keyboard, pointer, clipboard and resize come back over a data channel and
-   go in through XTest and RandR.
+5. It starts Xvfb and a session, or attaches to the X display already
+   running, and captures with MIT-SHM and DAMAGE. A Wayland desktop is
+   reached through xdg-desktop-portal instead, its frames read from PipeWire
+   by `gst-launch-1.0`. Frames are encoded with openh264, or with the GPU
+   through the host's ffmpeg or GStreamer when `--encoder` asks for it, and
+   sent over a Pion peer connection. Sound comes from the monitor of a
+   PulseAudio or PipeWire sink, read over the PulseAudio protocol in Go, and
+   goes out as Opus from libopus. Keyboard, pointer, clipboard and resize
+   come back over a data channel and go in through XTest and RandR, or the
+   portal on Wayland.
 6. The CLI serves the page on loopback and relays offer, answer and
    candidates between it and the agent, adding one passive TCP candidate that
    leads into an SSH forward to the agent.
