@@ -23,6 +23,7 @@ import (
 
 	"github.com/yasinmiran/remotejump/internal/agent"
 	"github.com/yasinmiran/remotejump/internal/agent/h264"
+	"github.com/yasinmiran/remotejump/internal/protocol"
 )
 
 var version = "dev"
@@ -76,10 +77,10 @@ func serve(args []string) int {
 	os.Stdout = os.Stderr
 
 	err = agent.Run(ctx, os.Stdin, out, agent.Options{
-		RunRoot:    filepath.Join(filepath.Dir(exe), "run"),
-		Build:      version,
-		NewEncoder: newEncoder,
-		Log:        log,
+		RunRoot:  filepath.Join(filepath.Dir(exe), "run"),
+		Build:    version,
+		Encoders: map[string]agent.NewEncoderFunc{protocol.EncoderSoftware: newEncoder},
+		Log:      log,
 	})
 	if err != nil {
 		log.Error("session ended", "err", err)

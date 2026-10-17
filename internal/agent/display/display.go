@@ -44,6 +44,9 @@ type Options struct {
 	Session string
 	// Xvfb overrides the Xvfb binary looked up on PATH.
 	Xvfb string
+	// Env holds extra variables for the session, such as the address of a
+	// sound server the agent started.
+	Env []string
 }
 
 // Display is a running Xvfb with a session inside it.
@@ -123,7 +126,7 @@ func Spawn(ctx context.Context, o Options) (_ *Display, err error) {
 		return nil, err
 	}
 
-	env := sessionEnv(os.Environ(), d.Name, d.XAuthority)
+	env := append(sessionEnv(os.Environ(), d.Name, d.XAuthority), o.Env...)
 	group := 0
 	if plan.companion != nil {
 		// The terminal goes first and the window manager adopts it when it

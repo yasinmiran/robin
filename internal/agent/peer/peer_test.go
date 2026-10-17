@@ -2,6 +2,7 @@ package peer
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -202,9 +203,9 @@ func TestPeerRejectsOversizedControl(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer p.Close()
-	// No channel yet: sending is a silent no-op, not an error.
-	if err := p.SendControl(protocol.Control{T: protocol.ControlClipboard, Text: strings.Repeat("x", MaxControlBytes)}); err != nil {
-		t.Fatalf("send before channel open: %v", err)
+	// No channel yet: nothing is sent, and the caller can tell.
+	if err := p.SendControl(protocol.Control{T: protocol.ControlClipboard, Text: "x"}); !errors.Is(err, ErrNoControl) {
+		t.Fatalf("send before channel open: %v, want ErrNoControl", err)
 	}
 }
 

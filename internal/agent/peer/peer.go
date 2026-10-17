@@ -33,6 +33,10 @@ const H264Fmtp = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-i
 // 256 KiB, so larger clipboard text could not cross anyway.
 const MaxControlBytes = 256 << 10
 
+// ErrNoControl means the browser has not opened the control channel yet, so
+// nothing was sent.
+var ErrNoControl = errors.New("peer: control channel not open")
+
 // Config is fixed for the life of a Peer.
 type Config struct {
 	STUN []string
@@ -49,6 +53,8 @@ type Config struct {
 	// session so the fingerprint the CLI pinned survives a page reload. Nil
 	// generates a fresh one.
 	Certificate *webrtc.Certificate
+	// Audio adds an Opus track for WriteAudio.
+	Audio bool
 
 	MinBitrate, StartBitrate, MaxBitrate int // bits per second
 	Log                                  *slog.Logger
@@ -59,15 +65,19 @@ type Config struct {
 type Handlers struct {
 	Candidate func(protocol.Candidate)
 	Control   func(protocol.Control)
-	Keyframe  func()        // the browser lost a picture or just connected
-	Bitrate   func(bps int) // new congestion-control target
-	State     func(state webrtc.PeerConnectionState)
+	// ControlOpen fires when the browser opens the control channel, so state
+	// sent before then can be sent again.
+	ControlOpen func()
+	Keyframe    func()        // the browser lost a picture or just connected
+	Bitrate     func(bps int) // new congestion-control target
+	State       func(state webrtc.PeerConnectionState)
 }
 
 // Peer is one browser session.
 type Peer struct {
 	pc    *webrtc.PeerConnection
 	track *webrtc.TrackLocalStaticSample
+	audio *webrtc.TrackLocalStaticSample // nil without Config.Audio
 	h     Handlers
 	log   *slog.Logger
 
@@ -97,6 +107,13 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 		PayloadType: 102,
 	}, webrtc.RTPCodecTypeVideo); err != nil {
 		return nil, err
+	}
+	if cfg.Audio {
+		if err := m.RegisterCodec(webrtc.RTPCodecParameters{
+			RTPCodecCapability: opusCapability, PayloadType: 111,
+		}, webrtc.RTPCodecTypeAudio); err != nil {
+			return nil, err
+		}
 	}
 
 	reg := &interceptor.Registry{}
@@ -196,6 +213,16 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 		return nil, err
 	}
 	go p.readRTCP(sender)
+	if cfg.Audio {
+		if p.audio, err = webrtc.NewTrackLocalStaticSample(opusCapability, "audio", "remotejump"); err != nil {
+			pc.Close()
+			return nil, err
+		}
+		if _, err := pc.AddTrack(p.audio); err != nil {
+			pc.Close()
+			return nil, err
+		}
+	}
 
 	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
 		if h.Candidate == nil {
@@ -257,14 +284,22 @@ func (p *Peer) WriteFrame(annexB []byte, d time.Duration) error {
 	return p.track.WriteSample(media.Sample{Data: annexB, Duration: d})
 }
 
-// SendControl sends a message to the browser over the control channel. It is
-// a no-op until the browser has opened the channel.
+// WriteAudio sends one Opus packet. It is a no-op without Config.Audio.
+func (p *Peer) WriteAudio(opus []byte, d time.Duration) error {
+	if p.audio == nil {
+		return nil
+	}
+	return p.audio.WriteSample(media.Sample{Data: opus, Duration: d})
+}
+
+// SendControl sends a message to the browser over the control channel, or
+// returns ErrNoControl before the browser has opened it.
 func (p *Peer) SendControl(m protocol.Control) error {
 	p.mu.Lock()
 	dc := p.control
 	p.mu.Unlock()
 	if dc == nil || dc.ReadyState() != webrtc.DataChannelStateOpen {
-		return nil
+		return ErrNoControl
 	}
 	b, err := json.Marshal(m)
 	if err != nil {
@@ -291,6 +326,11 @@ func (p *Peer) attachControl(dc *webrtc.DataChannel) {
 	p.mu.Lock()
 	p.control = dc
 	p.mu.Unlock()
+	dc.OnOpen(func() {
+		if p.h.ControlOpen != nil {
+			p.h.ControlOpen()
+		}
+	})
 	dc.OnMessage(func(msg webrtc.DataChannelMessage) {
 		if !msg.IsString || len(msg.Data) > MaxControlBytes || p.h.Control == nil {
 			return
@@ -333,4 +373,10 @@ func (p *Peer) readRTCP(sender *webrtc.RTPSender) {
 func followNomination(m *stun.Message, pair *ice.CandidatePair, pc *webrtc.PeerConnection) bool {
 	return pc != nil && m.Contains(stun.AttrUseCandidate) && pair.ResponsesReceived() > 0 &&
 		pc.ICEConnectionState() == webrtc.ICEConnectionStateDisconnected
+}
+
+// opusCapability is the audio format: stereo Opus with in-band FEC, which
+// every browser decodes.
+var opusCapability = webrtc.RTPCodecCapability{
+	MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2, SDPFmtpLine: "minptime=10;useinbandfec=1",
 }

@@ -75,7 +75,7 @@ func startAgent(t *testing.T) *harness {
 		defer close(h.exited)
 		h.runErr = Run(context.Background(), inR, outW, Options{
 			RunRoot: h.root, Build: "test", Log: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})),
-			NewEncoder: func(w, hgt, fps, bps int) (Encoder, error) { return enc, nil },
+			Encoders: map[string]NewEncoderFunc{protocol.EncoderSoftware: func(w, hgt, fps, bps int) (Encoder, error) { return enc, nil }},
 		})
 		outW.Close()
 	}()
@@ -175,6 +175,9 @@ func TestSessionTearsDownOnStdinEOF(t *testing.T) {
 	if ready.Width != 800 || ready.Height != 600 {
 		t.Fatalf("initial size %dx%d, want 800x600", ready.Width, ready.Height)
 	}
+	if ready.Mode != protocol.ModeSpawn || ready.Encoder != protocol.EncoderSoftware || ready.Audio {
+		t.Fatalf("ready reports mode %q, encoder %q, audio %v", ready.Mode, ready.Encoder, ready.Audio)
+	}
 	dirs, _ := filepath.Glob(filepath.Join(h.root, "*", "Xauthority"))
 	if len(dirs) != 1 {
 		t.Fatalf("run dir missing its Xauthority: %v", dirs)
@@ -215,6 +218,7 @@ func TestSessionRejectsWrongVersion(t *testing.T) {
 func TestSessionStreamsToABrowser(t *testing.T) {
 	h := startAgent(t)
 	ready := h.start()
+	cursors := make(chan protocol.Cursor, 16)
 
 	connect := func() (*webrtc.PeerConnection, *webrtc.DataChannel, chan *webrtc.TrackRemote) {
 		m := &webrtc.MediaEngine{}
@@ -236,6 +240,15 @@ func TestSessionStreamsToABrowser(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+			var c protocol.Control
+			if json.Unmarshal(msg.Data, &c) == nil && c.T == protocol.ControlCursor {
+				select {
+				case cursors <- *c.Cursor:
+				default:
+				}
+			}
+		})
 		tracks := make(chan *webrtc.TrackRemote, 1)
 		pc.OnTrack(func(tr *webrtc.TrackRemote, _ *webrtc.RTPReceiver) { tracks <- tr })
 		pc.OnICECandidate(func(c *webrtc.ICECandidate) {
@@ -267,6 +280,16 @@ func TestSessionStreamsToABrowser(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitSize(t, h.sizes, 800, 600)
+	// The page gets the pointer image, PNG included, as soon as its channel
+	// opens.
+	select {
+	case c := <-cursors:
+		if len(c.PNG) == 0 {
+			t.Fatalf("first cursor %d came without its image", c.ID)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no cursor sent to the page")
+	}
 
 	deadline := time.Now().Add(10 * time.Second)
 	for dc.ReadyState() != webrtc.DataChannelStateOpen && time.Now().Before(deadline) {
@@ -325,5 +348,14 @@ func TestFit(t *testing.T) {
 		if gw, gh := fit(tc.w, tc.h, tc.mw, tc.mh); gw != tc.ww || gh != tc.wh {
 			t.Errorf("fit(%d,%d into %dx%d) = %dx%d, want %dx%d", tc.w, tc.h, tc.mw, tc.mh, gw, gh, tc.ww, tc.wh)
 		}
+	}
+}
+
+func TestSessionRejectsUnknownEncoder(t *testing.T) {
+	h := startAgent(t)
+	h.cli.Send(protocol.Message{Type: protocol.TypeStart, Start: &protocol.Start{Version: protocol.Version, Encoder: "quantum"}})
+	m, ok := <-h.msgs
+	if !ok || m.Type != protocol.TypeError || !strings.Contains(m.Error, "quantum") {
+		t.Fatalf("got %+v", m)
 	}
 }

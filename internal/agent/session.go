@@ -1,7 +1,7 @@
 //go:build linux
 
 // Package agent runs one remotejump session on the host: it speaks signaling
-// on stdio, owns the display, and streams it to whichever browser the CLI
+// on stdio, owns the desktop, and streams it to whichever browser the CLI
 // relays.
 package agent
 
@@ -25,9 +25,8 @@ import (
 	"github.com/pion/ice/v4"
 	"github.com/pion/webrtc/v4"
 
-	"github.com/yasinmiran/remotejump/internal/agent/display"
+	"github.com/yasinmiran/remotejump/internal/agent/desktop"
 	"github.com/yasinmiran/remotejump/internal/agent/peer"
-	"github.com/yasinmiran/remotejump/internal/agent/x11"
 	"github.com/yasinmiran/remotejump/internal/protocol"
 )
 
@@ -45,15 +44,19 @@ const (
 type Options struct {
 	// RunRoot holds one private directory per live session. Directories left
 	// by sessions whose process is gone are removed on start.
-	RunRoot    string
-	Build      string
-	NewEncoder NewEncoderFunc
-	Log        *slog.Logger
+	RunRoot string
+	Build   string
+	// Encoders maps Start.Encoder names to constructors. It must hold
+	// protocol.EncoderSoftware, the default.
+	Encoders map[string]NewEncoderFunc
+	// NewAudio captures the desktop's sound; nil when this build has none.
+	NewAudio NewAudioFunc
+	Log      *slog.Logger
 }
 
 // Run serves one session over r and w (the SSH exec channel) until the CLI
-// says bye, the channel closes or goes silent, the display dies, or ctx ends.
-// Everything it started is torn down before it returns.
+// says bye, the channel closes or goes silent, the desktop goes away, or ctx
+// ends. Everything it started is torn down before it returns.
 func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 	log := o.Log
 	if log == nil {
@@ -66,29 +69,47 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 	if err != nil {
 		return err
 	}
+	encoderName := start.Encoder
+	if encoderName == "" {
+		encoderName = protocol.EncoderSoftware
+	}
+	newEncoder, ok := o.Encoders[encoderName]
+	if !ok {
+		return fail(conn, fmt.Errorf("encoder %q is not available in this agent", encoderName))
+	}
 	runDir, err := makeRunDir(o.RunRoot)
 	if err != nil {
 		return fail(conn, err)
 	}
 	defer os.RemoveAll(runDir)
 
-	disp, err := display.Spawn(ctx, display.Options{
-		RunDir: runDir, MaxWidth: start.MaxWidth, MaxHeight: start.MaxHeight, Session: start.Session,
-	})
-	if err != nil {
-		return fail(conn, fmt.Errorf("spawn display: %w", err))
+	// Sound comes up before a spawned desktop so its programs inherit the
+	// sound server's address.
+	var audio AudioSource
+	var desktopEnv []string
+	if start.Audio {
+		if o.NewAudio == nil {
+			log.Warn("audio requested but this agent has no audio support")
+		} else if audio, desktopEnv, err = o.NewAudio(ctx, AudioOptions{
+			RunDir: runDir, Attached: start.Attach != "", Log: log,
+		}); err != nil {
+			log.Warn("audio unavailable", "err", err)
+			audio = nil
+		} else {
+			defer audio.Close()
+		}
 	}
-	defer disp.Close()
-	log.Info("display up", "display", disp.Name, "session", disp.Session)
 
-	x, err := x11.Open(disp.Name, disp.XAuthority)
+	d, err := openDesktop(ctx, start, runDir, desktopEnv, log)
 	if err != nil {
-		return fail(conn, fmt.Errorf("open display: %w", err))
+		return fail(conn, err)
 	}
-	defer x.Close()
+	defer d.close()
+	log.Info("desktop up", "mode", d.mode, "display", d.name, "session", d.session)
+
 	w0, h0 := fit(start.Width, start.Height, start.MaxWidth, start.MaxHeight)
 	if w0 > 0 && h0 > 0 {
-		if _, _, err := x.Resize(w0, h0); err != nil {
+		if _, _, err := d.desk.Resize(w0, h0); err != nil && !errors.Is(err, desktop.ErrFixedSize) {
 			log.Warn("initial resize", "err", err)
 		}
 	}
@@ -111,15 +132,17 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 	}
 
 	s := &session{
-		conn: conn, x: x, start: start, log: log, tcpMux: tcpMux, cert: cert,
-		stream: newStream(x, start.FPS, o.NewEncoder, log),
+		conn: conn, desk: d.desk, start: start, log: log, tcpMux: tcpMux, cert: cert, audio: audio != nil,
+		stream:  newStream(d.desk, start.FPS, start.MaxWidth, start.MaxHeight, newEncoder, log),
+		cursors: map[uint32]protocol.Cursor{},
 	}
 	defer s.closePeer()
 
-	width, height := x.Size()
+	width, height := d.desk.Size()
 	if err := conn.Send(protocol.Message{Type: protocol.TypeReady, Ready: &protocol.Ready{
-		Version: protocol.Version, AgentBuild: o.Build, Display: disp.Name, Session: disp.Session,
+		Version: protocol.Version, AgentBuild: o.Build, Display: d.name, Session: d.session,
 		Width: width, Height: height, TunnelAddr: ln.Addr().String(),
+		Mode: d.mode, Audio: audio != nil, Encoder: encoderName,
 	}}); err != nil {
 		return err
 	}
@@ -130,10 +153,17 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 		cancel()
 		wg.Wait()
 	}()
-	wg.Add(3)
-	go func() { defer wg.Done(); s.stream.run(ctx) }()
-	go func() { defer wg.Done(); s.forwardClipboard(ctx) }()
-	go func() { defer wg.Done(); s.heartbeat(ctx) }()
+	run := func(f func(context.Context)) {
+		wg.Add(1)
+		go func() { defer wg.Done(); f(ctx) }()
+	}
+	run(s.stream.run)
+	run(s.forwardClipboard)
+	run(s.forwardCursor)
+	run(s.heartbeat)
+	if audio != nil {
+		run(func(ctx context.Context) { s.forwardAudio(ctx, audio) })
+	}
 
 	msgs := make(chan protocol.Message)
 	go func() {
@@ -155,8 +185,8 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case err := <-disp.Done():
-			return fail(conn, fmt.Errorf("display exited: %w", err))
+		case err := <-d.done:
+			return fail(conn, fmt.Errorf("desktop went away: %w", err))
 		case m, ok := <-msgs:
 			if !ok {
 				if err := conn.Err(); err != nil && !errors.Is(err, io.EOF) {
@@ -173,15 +203,21 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 
 type session struct {
 	conn   *protocol.Conn
-	x      *x11.Conn
+	desk   desktop.Desktop
 	start  protocol.Start
 	log    *slog.Logger
 	tcpMux ice.TCPMux
 	cert   *webrtc.Certificate
+	audio  bool
 	stream *stream
 
 	mu   sync.Mutex
 	peer *peer.Peer
+	// cursors holds every pointer image seen, so a page that connects later
+	// can be sent images the desktop reported before it arrived.
+	cursors      map[uint32]protocol.Cursor
+	cursor       uint32          // current pointer image
+	cursorsShown map[uint32]bool // images the current page already has
 }
 
 // handle processes one CLI message; done reports a clean end of session.
@@ -195,7 +231,7 @@ func (s *session) handle(m protocol.Message) (done bool, err error) {
 		answer, err := p.Answer(m.SDP)
 		if err != nil {
 			// A bad offer is the browser's problem, not a reason to drop the
-			// display: report it and wait for the next one.
+			// desktop: report it and wait for the next one.
 			s.log.Warn("offer rejected", "err", err)
 			return false, s.conn.Send(protocol.Message{Type: protocol.TypeError, Error: err.Error()})
 		}
@@ -229,7 +265,7 @@ func (s *session) currentPeer() (*peer.Peer, error) {
 	}
 	maxBitrate := max(s.start.MaxKbps*1000, startBitrate)
 	p, err := peer.New(peer.Config{
-		STUN: s.start.STUN, TCPMux: s.tcpMux, IncludeLoopback: true, Certificate: s.cert,
+		STUN: s.start.STUN, TCPMux: s.tcpMux, IncludeLoopback: true, Certificate: s.cert, Audio: s.audio,
 		MinBitrate: minBitrate, StartBitrate: min(startBitrate, maxBitrate), MaxBitrate: maxBitrate,
 		Log: s.log,
 	}, peer.Handlers{
@@ -238,12 +274,13 @@ func (s *session) currentPeer() (*peer.Peer, error) {
 				s.log.Warn("send candidate", "err", err)
 			}
 		},
-		Control:  s.control,
-		Keyframe: s.stream.requestKeyframe,
-		Bitrate:  s.stream.setBitrate,
+		Control:     s.control,
+		ControlOpen: s.sendCurrentCursor,
+		Keyframe:    s.stream.requestKeyframe,
+		Bitrate:     s.stream.setBitrate,
 		State: func(st webrtc.PeerConnectionState) {
 			if st == webrtc.PeerConnectionStateConnected {
-				s.x.Input(protocol.Control{T: protocol.ControlRelease})
+				s.desk.Input(protocol.Control{T: protocol.ControlRelease})
 			}
 		},
 	})
@@ -251,6 +288,7 @@ func (s *session) currentPeer() (*peer.Peer, error) {
 		return nil, fmt.Errorf("create peer: %w", err)
 	}
 	s.peer = p
+	s.cursorsShown = map[uint32]bool{}
 	s.stream.setPeer(p)
 	return p, nil
 }
@@ -265,14 +303,14 @@ func (s *session) closePeer() {
 	}
 	s.stream.setPeer(nil)
 	// Whatever the departing browser held down must not stay pressed.
-	s.x.Input(protocol.Control{T: protocol.ControlRelease})
+	s.desk.Input(protocol.Control{T: protocol.ControlRelease})
 	p.Close()
 }
 
 func (s *session) control(m protocol.Control) {
 	switch m.T {
 	case protocol.ControlKey, protocol.ControlMove, protocol.ControlButton, protocol.ControlWheel, protocol.ControlRelease:
-		if err := s.x.Input(m); err != nil {
+		if err := s.desk.Input(m); err != nil {
 			s.log.Debug("input", "err", err)
 		}
 	case protocol.ControlResize:
@@ -280,8 +318,12 @@ func (s *session) control(m protocol.Control) {
 		if w <= 0 || h <= 0 {
 			return
 		}
-		gw, gh, err := s.x.Resize(w, h)
-		if err != nil {
+		gw, gh, err := s.desk.Resize(w, h)
+		switch {
+		case errors.Is(err, desktop.ErrFixedSize):
+			// An attached desktop keeps its size; the page scales the video.
+			return
+		case err != nil:
 			s.log.Warn("resize", "w", w, "h", h, "err", err)
 			return
 		}
@@ -292,7 +334,7 @@ func (s *session) control(m protocol.Control) {
 			s.log.Warn("clipboard from browser too large", "bytes", len(m.Text))
 			return
 		}
-		if err := s.x.SetClipboard(m.Text); err != nil {
+		if err := s.desk.SetClipboard(m.Text); err != nil {
 			s.log.Warn("set clipboard", "err", err)
 		}
 	}
@@ -309,13 +351,16 @@ func (s *session) heartbeat(ctx context.Context) {
 			return
 		case <-t.C:
 		}
-		s.mu.Lock()
-		p := s.peer
-		s.mu.Unlock()
-		if p != nil {
+		if p := s.currentOrNil(); p != nil {
 			p.SendControl(protocol.Control{T: protocol.ControlHeartbeat})
 		}
 	}
+}
+
+func (s *session) currentOrNil() *peer.Peer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.peer
 }
 
 func (s *session) forwardClipboard(ctx context.Context) {
@@ -323,7 +368,7 @@ func (s *session) forwardClipboard(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case text, ok := <-s.x.Clipboard():
+		case text, ok := <-s.desk.Clipboard():
 			if !ok {
 				return
 			}
@@ -331,12 +376,75 @@ func (s *session) forwardClipboard(ctx context.Context) {
 				s.log.Warn("remote clipboard too large to send", "bytes", len(text))
 				continue
 			}
-			s.mu.Lock()
-			p := s.peer
-			s.mu.Unlock()
-			if p != nil {
-				if err := p.SendControl(protocol.Control{T: protocol.ControlClipboard, Text: text}); err != nil {
+			if p := s.currentOrNil(); p != nil {
+				if err := p.SendControl(protocol.Control{T: protocol.ControlClipboard, Text: text}); err != nil && !errors.Is(err, peer.ErrNoControl) {
 					s.log.Warn("send clipboard", "err", err)
+				}
+			}
+		}
+	}
+}
+
+func (s *session) forwardCursor(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case c, ok := <-s.desk.Cursor():
+			if !ok {
+				return
+			}
+			s.mu.Lock()
+			if len(c.PNG) > 0 {
+				s.cursors[c.ID] = c
+			}
+			s.cursor = c.ID
+			s.mu.Unlock()
+			s.sendCurrentCursor()
+		}
+	}
+}
+
+// sendCurrentCursor shows the page the current pointer image, with its PNG
+// the first time this page sees it.
+func (s *session) sendCurrentCursor() {
+	s.mu.Lock()
+	p := s.peer
+	c, known := s.cursors[s.cursor]
+	if p == nil || !known {
+		s.mu.Unlock()
+		return
+	}
+	if s.cursorsShown[c.ID] {
+		c.PNG = nil
+	}
+	s.mu.Unlock()
+	if err := p.SendControl(protocol.Control{T: protocol.ControlCursor, Cursor: &c}); err != nil {
+		// Before the channel opens nothing is marked; ControlOpen resends.
+		if !errors.Is(err, peer.ErrNoControl) {
+			s.log.Debug("send cursor", "err", err)
+		}
+		return
+	}
+	s.mu.Lock()
+	if s.peer == p {
+		s.cursorsShown[c.ID] = true
+	}
+	s.mu.Unlock()
+}
+
+func (s *session) forwardAudio(ctx context.Context, src AudioSource) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case pkt, ok := <-src.Packets():
+			if !ok {
+				return
+			}
+			if p := s.currentOrNil(); p != nil {
+				if err := p.WriteAudio(pkt, AudioFrame); err != nil {
+					s.log.Debug("write audio", "err", err)
 				}
 			}
 		}

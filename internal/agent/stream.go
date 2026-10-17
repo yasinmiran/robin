@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/yasinmiran/remotejump/internal/agent/desktop"
 	"github.com/yasinmiran/remotejump/internal/agent/peer"
-	"github.com/yasinmiran/remotejump/internal/agent/x11"
 	"github.com/yasinmiran/remotejump/internal/agent/yuv"
 )
 
@@ -34,8 +34,11 @@ const minKeyframeGap = 300 * time.Millisecond
 // stream captures, encodes and sends frames at up to fps while a peer is
 // attached. An idle screen costs one cheap DAMAGE check per tick.
 type stream struct {
-	x          *x11.Conn
-	fps        int
+	desk desktop.Desktop
+	fps  int
+	// maxW and maxH cap the encoded size. A spawned display never exceeds
+	// them; an attached one can.
+	maxW, maxH int
 	newEncoder NewEncoderFunc
 	log        *slog.Logger
 
@@ -44,8 +47,8 @@ type stream struct {
 	bitrate  atomic.Int64
 }
 
-func newStream(x *x11.Conn, fps int, newEncoder NewEncoderFunc, log *slog.Logger) *stream {
-	s := &stream{x: x, fps: fps, newEncoder: newEncoder, log: log}
+func newStream(desk desktop.Desktop, fps, maxW, maxH int, newEncoder NewEncoderFunc, log *slog.Logger) *stream {
+	s := &stream{desk: desk, fps: fps, maxW: maxW, maxH: maxH, newEncoder: newEncoder, log: log}
 	s.bitrate.Store(startBitrate)
 	return s
 }
@@ -96,7 +99,7 @@ func (s *stream) run(ctx context.Context) {
 		}
 		now := time.Now()
 		force := enc == nil || (s.keyframe.Load() && now.Sub(lastKey) >= minKeyframeGap)
-		f, changed, err := s.x.Capture(force || stale)
+		f, changed, err := s.desk.Capture(force || stale)
 		if err != nil {
 			s.log.Warn("capture", "err", err)
 			continue
