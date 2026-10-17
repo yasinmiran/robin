@@ -11,11 +11,14 @@
 # WLTEST_DESKTOPS (default: all of them) picks the desktops:
 #   gnome46  mutter 46 and xdg-desktop-portal-gnome on Ubuntu 24.04 (Containerfile)
 #   gnome49  mutter 49 and xdg-desktop-portal-gnome on Fedora 43 (fedora.Containerfile)
+#   kde      kwin_wayland 6.7 and xdg-desktop-portal-kde on Fedora 43 (kde.Containerfile);
+#            KWin screencasts only with OpenGL, so this one borrows the host's
+#            render node and is skipped, saying so, where there is none to open
 # WLTEST_GOFLAGS (default -race) goes to go test -c.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../../../.." && pwd)
-desktops=${WLTEST_DESKTOPS:-gnome46 gnome49}
+desktops=${WLTEST_DESKTOPS:-gnome46 gnome49 kde}
 out=$(mktemp -d)
 name=
 cleanup() {
@@ -43,26 +46,47 @@ chmod -R a+rX "$out"
 # test binary against it.
 run_desktop() {
 	desktop=$1
+	shift
 	case $desktop in
 	gnome46) file=Containerfile image=localhost/robin-wltest ;;
 	gnome49) file=fedora.Containerfile image=localhost/robin-wltest-gnome49 ;;
+	kde) file=kde.Containerfile image=localhost/robin-wltest-kde ;;
 	*)
 		echo "wltest.sh: no desktop $desktop" >&2
 		return 1
 		;;
 	esac
-	uid=1000
+	uid=1000 gid=1000 runopts=
+	if [ "$desktop" = kde ]; then
+		# KWin screencasts only when it composites with OpenGL, which takes a
+		# render node. keep-id makes the session user this user, whom the
+		# node's permissions admit.
+		node=
+		for n in /dev/dri/renderD*; do
+			if [ -r "$n" ] && [ -w "$n" ]; then
+				node=$n
+				break
+			fi
+		done
+		if [ -z "$node" ]; then
+			echo "==== kde: SKIPPED: no render node $(id -un) can open, and KWin screencasts only with OpenGL"
+			return 0
+		fi
+		uid=$(id -u) gid=$(id -g)
+		runopts="--userns=keep-id --user $uid:$gid --device $node -e HOME=/tmp/home"
+	fi
 	echo "==== $desktop"
 	# Run by ID: another checkout may retag the image between build and run.
 	id=$(podman build -q -t "$image" -f "$here/$file" "$here")
 	name=robin-wltest-$desktop-$$
-	podman run -d --name "$name" --init --shm-size=512m -v "$out:/t:ro" "$id" sleep infinity >/dev/null
+	# shellcheck disable=SC2086 # $runopts holds options without spaces
+	podman run -d --name "$name" --init --shm-size=512m $runopts -v "$out:/t:ro" "$id" sleep infinity >/dev/null
 	# There is no logind or systemd here: mutter falls back to its dummy login
 	# manager once /run/systemd/seats is gone, and wants a system bus of some kind.
 	podman exec -u root "$name" sh -c "
 		rm -rf /run/systemd/seats
-		mkdir -p /run/user/$uid /run/dbus
-		chown $uid:$uid /run/user/$uid
+		mkdir -p /run/user/$uid /run/dbus /tmp/home
+		chown $uid:$gid /run/user/$uid /tmp/home
 		chmod 700 /run/user/$uid
 		dbus-daemon --config-file=/etc/robin-system-bus.conf --fork"
 	podman exec "$name" /t/session.sh

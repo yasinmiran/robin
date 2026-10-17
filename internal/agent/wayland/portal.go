@@ -346,11 +346,15 @@ func (s *portalSession) call(method string, args ...any) error {
 	return s.p.obj.Call(ifaceRemote+"."+method, 0, append([]any{s.handle, vardict{}}, args...)...).Err
 }
 
+// tokenPrefix starts every handle and session token the agent asks the
+// portal for, which tells its objects from other clients'.
+const tokenPrefix = "robin"
+
 // randomToken returns a fresh handle token, valid as an object path element.
 func randomToken() string {
 	b := make([]byte, 8)
 	rand.Read(b)
-	return "robin" + hex.EncodeToString(b)
+	return tokenPrefix + hex.EncodeToString(b)
 }
 
 func shortName(method string) string {

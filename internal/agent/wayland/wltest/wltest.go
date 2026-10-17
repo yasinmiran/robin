@@ -1,7 +1,8 @@
 // Package wltest stands in for the person at a test host's screen, who has
-// to answer the portal's consent dialog. It clicks through mutter's own
-// remote desktop interface, which asks nobody, so only tests may import it:
-// the agent always goes through the portal, where the user decides.
+// to answer the portal's consent dialog. On GNOME it clicks through mutter's
+// own remote desktop interface, which asks nobody; on KDE Plasma it presses
+// the dialog's button through AT-SPI. Only tests may import it: the agent
+// always goes through the portal, where the user decides.
 package wltest
 
 import (
@@ -28,15 +29,28 @@ const (
 )
 
 // AnswerDialog waits for the consent dialog to come up, then shares the
-// screen, switching on remote interaction first if allowInput is set.
+// screen, allowing remote interaction if allowInput is set. KDE Plasma has
+// no view-only choice; there it returns ErrNoViewOnly when allowInput is
+// not set.
 func AnswerDialog(allowInput bool) error {
-	time.Sleep(3 * time.Second)
-	conn, err := dbus.Connect("unix:path=" + os.Getenv("XDG_RUNTIME_DIR") + "/bus")
+	conn, err := sessionBus()
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
+	if isKDE(conn) {
+		return answerKDE(conn, allowInput)
+	}
+	return answerGNOME(conn, allowInput)
+}
 
+func sessionBus() (*dbus.Conn, error) {
+	return dbus.Connect("unix:path=" + os.Getenv("XDG_RUNTIME_DIR") + "/bus")
+}
+
+// answerGNOME clicks xdg-desktop-portal-gnome's dialog through mutter.
+func answerGNOME(conn *dbus.Conn, allowInput bool) error {
+	time.Sleep(3 * time.Second)
 	var rdPath dbus.ObjectPath
 	if err := conn.Object(mutterRD, "/org/gnome/Mutter/RemoteDesktop").Call(mutterRD+".CreateSession", 0).Store(&rdPath); err != nil {
 		return fmt.Errorf("mutter RemoteDesktop: %w", err)

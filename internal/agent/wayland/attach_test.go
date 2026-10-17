@@ -27,9 +27,9 @@ import (
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
-// The tests in this file drive a real GNOME Wayland session through
-// xdg-desktop-portal. testdata/wltest.sh runs them in a container with
-// headless mutter; anywhere else they skip.
+// The tests in this file drive a real Wayland desktop through
+// xdg-desktop-portal. testdata/wltest.sh runs them in containers with
+// headless mutter and kwin_wayland; anywhere else they skip.
 
 var (
 	probeScript = os.Getenv("ROBIN_WAYLAND_PROBE")
@@ -52,7 +52,7 @@ func TestMain(m *testing.M) {
 func needSession(t *testing.T) {
 	t.Helper()
 	if probeScript == "" {
-		t.Skip("needs a GNOME Wayland session; run internal/agent/wayland/testdata/wltest.sh")
+		t.Skip("needs a Wayland session; run internal/agent/wayland/testdata/wltest.sh")
 	}
 }
 
@@ -110,6 +110,9 @@ func TestAttachStreamsAndDrives(t *testing.T) {
 
 	t.Run("pointer", func(t *testing.T) {
 		mark := p.mark()
+		// Somewhere else first: a pointer already at the target moves nowhere
+		// and reports nothing, as when a kept session runs this again.
+		send(t, d, protocol.Control{T: protocol.ControlMove, X: 101, Y: 103})
 		send(t, d, protocol.Control{T: protocol.ControlMove, X: 301, Y: 203})
 		ev := p.await(t, mark, func(e probeEvent) bool { return e.Ev == "motion" && near(e.X, 301) && near(e.Y, 203) })
 		t.Logf("motion at %.1f,%.1f", ev.X, ev.Y)
@@ -284,6 +287,9 @@ func TestAttachTornDownWhenAgentDies(t *testing.T) {
 
 func TestAttachViewOnly(t *testing.T) {
 	needSession(t)
+	if wltest.KDE() {
+		t.Skip("KDE Plasma's dialog grants the devices asked for or nothing: there is no view-only grant to test")
+	}
 	removeToken(tokenFile)
 	d, notices := open(t, false)
 	defer d.Close()
@@ -341,7 +347,7 @@ func openWith(t *testing.T, allowInput bool, opt func(*Options)) (*Desktop, []pr
 	t.Helper()
 	var mu sync.Mutex
 	var notices []protocol.Notice
-	answered := make(chan error, 1)
+	answered := make(chan error, 2)
 	o := Options{
 		TokenFile: tokenFile, MaxWidth: 1920, MaxHeight: 1080, FPS: 30, ConsentWait: 30 * time.Second,
 		Notify: func(n protocol.Notice) {
@@ -358,18 +364,24 @@ func openWith(t *testing.T, allowInput bool, opt func(*Options)) (*Desktop, []pr
 		opt(&o)
 	}
 	d, err := Open(context.Background(), o)
-	select {
-	case aerr := <-answered:
-		if aerr != nil {
-			t.Fatalf("answer the consent dialog: %v", aerr)
-		}
-	default:
-	}
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
 	mu.Lock()
 	defer mu.Unlock()
+	// Every answer is waited for, so none presses a later test's dialog, and
+	// a dialog that never came up fails the test.
+	var aerr error
+	for _, n := range notices {
+		if n.Kind == protocol.NoticeConsent {
+			if e := <-answered; aerr == nil {
+				aerr = e
+			}
+		}
+	}
+	if err != nil {
+		t.Fatalf("Open: %v (answering the dialog: %v)", err, aerr)
+	}
+	if aerr != nil {
+		t.Fatalf("answer the consent dialog: %v", aerr)
+	}
 	return d, notices
 }
 
@@ -395,8 +407,10 @@ func checkTornDown(t *testing.T) {
 		if n := countProcs("gst-launch-1.0"); n > 0 {
 			left = append(left, fmt.Sprintf("%d gst-launch-1.0", n))
 		}
+		if s := portalSessions(conn); len(s) > 0 {
+			left = append(left, "portal sessions "+strings.Join(s, " "))
+		}
 		for _, o := range [][2]string{
-			{portalBus, "/org/freedesktop/portal/desktop/session"},
 			{"org.gnome.Mutter.RemoteDesktop", "/org/gnome/Mutter/RemoteDesktop/Session"},
 			{"org.gnome.Mutter.ScreenCast", "/org/gnome/Mutter/ScreenCast/Session"},
 		} {
@@ -409,6 +423,30 @@ func checkTornDown(t *testing.T) {
 		}
 	}
 	t.Errorf("left behind after Close: %s", strings.Join(left, ", "))
+}
+
+// portalSessions lists the agent's portal session objects as sender/token.
+// Other clients' do not count: on KDE the GTK probe window holds one of its
+// own for as long as it runs (GtkApplication's Inhibit monitor).
+func portalSessions(conn *dbus.Conn) []string {
+	const root = "/org/freedesktop/portal/desktop/session"
+	senders, err := introspect.Call(conn.Object(portalBus, root))
+	if err != nil {
+		return nil
+	}
+	var sessions []string
+	for _, sender := range senders.Children {
+		node, err := introspect.Call(conn.Object(portalBus, dbus.ObjectPath(root+"/"+sender.Name)))
+		if err != nil {
+			continue
+		}
+		for _, s := range node.Children {
+			if strings.HasPrefix(s.Name, tokenPrefix) {
+				sessions = append(sessions, sender.Name+"/"+s.Name)
+			}
+		}
+	}
+	return sessions
 }
 
 func send(t *testing.T, d *Desktop, m protocol.Control) {

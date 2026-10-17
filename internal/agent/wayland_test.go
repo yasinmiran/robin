@@ -25,7 +25,7 @@ import (
 // the picture carries the remote one.
 func TestSessionAttachesToWayland(t *testing.T) {
 	if os.Getenv("ROBIN_WAYLAND_PROBE") == "" {
-		t.Skip("needs a GNOME Wayland session; run internal/agent/wayland/testdata/wltest.sh")
+		t.Skip("needs a Wayland session; run internal/agent/wayland/testdata/wltest.sh")
 	}
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
