@@ -80,7 +80,7 @@ host cannot provide sound the session runs without it, and the CLI says why.
 | `--fps` | `30` | frame rate cap (20 on small hosts) |
 | `--hidpi` | off | size the remote display in the browser's device pixels: sharp text on Retina screens, about four times the pixels to encode. Raise `--max-size` to go fully native |
 | `--max-kbps` | `10000` | video bitrate ceiling; congestion control works below it |
-| `--encoder` | `software` | `vaapi` or `nvenc` to encode on the host's GPU; see [Hardware encoding](#hardware-encoding) |
+| `--encoder` | `auto` | `auto` encodes on the host's GPU where it pays and in software elsewhere; `software`, `vaapi` or `nvenc` insist on one; see [Hardware encoding](#hardware-encoding) |
 | `--session` | lightest found | command to run in the display, e.g. `startxfce4` |
 | `--attach` | | stream a desktop already running on the host: `auto`, `wayland` for your Wayland session, or an X display such as `:1` |
 | `--audio` | `true` | stream the desktop's sound; `--audio=false` leaves it out |
@@ -162,9 +162,19 @@ nothing: repeated frames are not encoded.
 ## Hardware encoding
 
 ```sh
-robin gui --encoder vaapi build-box   # Intel or AMD, through VA-API
-robin gui --encoder nvenc gpu-box     # NVIDIA
+robin gui --max-size 3840x2160 build-box   # auto: the GPU, if build-box has one
+robin gui --encoder vaapi build-box        # Intel or AMD through VA-API, or fail
+robin gui --encoder nvenc gpu-box          # NVIDIA, or fail
+robin gui --encoder software build-box     # never the GPU
 ```
+
+By default the CLI picks the encoder from the probe. It takes the GPU when
+the host can drive it and the GPU pays for the latency it adds: on hosts
+with four cores or fewer, and for sessions above 1920x1080 when ffmpeg can
+drive the GPU. VA-API comes before NVENC. Everywhere else it stays in
+software. If the GPU it picked fails on the host, the session carries on in
+software, and `-v` shows which encoder was picked, why, and why it fell back.
+An encoder named with `--encoder` is used or the session fails.
 
 The agent is a static binary and cannot load the host's GPU libraries, so
 for these it pipes frames through a tool the host already has: ffmpeg, or
@@ -178,13 +188,15 @@ of this against the probe before it deploys anything and says what is
 missing; the agent then tries each route the host offers on a test frame,
 ffmpeg first, and if none works the error lists why each one failed.
 
-Software stays the default, and nothing switches to hardware by itself,
-because on a reasonably fast CPU it saves little. On an i7-13800H with its
-iGPU, a session scrolling a terminal cost about a fifth of a core at
-1440x900 and about one core at 3840x2160 with either encoder: copying each
-frame out to the tool eats most of what the GPU saves. It pays where
-openh264 is the bottleneck, on slow CPUs and on busy 4K content (28 ms of
-CPU per frame for openh264 against 12 ms through ffmpeg). What it costs:
+That is why `auto` leaves a 1080p session on a bigger host in software: on
+a reasonably fast CPU the GPU saves little. On an i7-13800H with its iGPU,
+a session scrolling a terminal cost about a fifth of a core at 1440x900 and
+about one core at 3840x2160 with either encoder: copying each frame out to
+the tool eats most of what the GPU saves. It pays where openh264 is the
+bottleneck, on slow CPUs and on busy 4K content (28 ms of CPU per frame for
+openh264 against 12 ms through ffmpeg). GStreamer's route spends 31 to 34
+ms on a 2160p frame, a whole frame at 30 fps, so `auto` uses it on small
+hosts only. What the GPU costs:
 
 - A keyframe the browser asks for takes about 40 ms instead of 5, because a
   running tool cannot be asked for one and is restarted instead.
@@ -200,7 +212,7 @@ CPU per frame for openh264 against 12 ms through ffmpeg). What it costs:
   hardware yet.
 
 The measurements and the reasons behind the design are in the
-[ADR](docs/adr/0001-architecture.md#hardware-h264-through-a-host-tool-and-only-when-asked-for).
+[ADR](docs/adr/0001-architecture.md#hardware-h264-through-a-host-tool-picked-where-it-pays).
 
 ## What the client needs
 
@@ -222,8 +234,8 @@ Firefox with its OpenH264 plugin. Chrome is what the end-to-end tests drive.
    running, and captures with MIT-SHM and DAMAGE. A Wayland desktop is
    reached through xdg-desktop-portal instead, its frames read from PipeWire
    by `gst-launch-1.0`. Frames are encoded with openh264, or with the GPU
-   through the host's ffmpeg or GStreamer when `--encoder` asks for it, and
-   sent over a Pion peer connection. Sound comes from the monitor of a
+   through the host's ffmpeg or GStreamer where the probe finds that it
+   pays, and sent over a Pion peer connection. Sound comes from the monitor of a
    PulseAudio or PipeWire sink, read over the PulseAudio protocol in Go, and
    goes out as Opus from libopus. Keyboard, pointer, clipboard and resize
    come back over a data channel and go in through XTest and RandR, or the
@@ -367,5 +379,6 @@ to print the comparison the ADR quotes.
   agents from a Mac.
 - One browser per session; a second tab is refused until the first closes.
 - Hardware encoding answers a keyframe request about 35 ms later than
-  software and adds a few milliseconds to every frame, and the NVENC route
-  is untested on real hardware; see [Hardware encoding](#hardware-encoding).
+  software and adds a few milliseconds to every frame, which is the price on
+  the hosts and sizes where `auto` picks it. The NVENC route is untested on
+  real hardware; see [Hardware encoding](#hardware-encoding).

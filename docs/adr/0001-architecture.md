@@ -64,9 +64,11 @@ Patent note: openh264 built from source is not covered by Cisco's binary
 licence. That is the same position as every other source build of an H.264
 encoder; Phase 2 hardware encoders do not change it.
 
-### Hardware H.264 through a host tool, and only when asked for
+### Hardware H.264 through a host tool, picked where it pays
 
-`--encoder vaapi` and `--encoder nvenc` encode on the host's GPU. The agent
+`--encoder vaapi` and `--encoder nvenc` encode on the host's GPU, and the
+default, `--encoder auto`, picks one of them where the probe shows it pays
+(below). The agent
 is a fully static musl binary, which cannot dlopen the host's glibc libva,
 its VA driver or the NVIDIA libraries, and a second, dynamically linked
 helper would have to match every distribution's glibc and driver ABI. So
@@ -137,8 +139,26 @@ with either encoder, since capture, colour conversion and the copy into the
 pipe stay in the agent and outweigh what the GPU takes off it. So hardware
 encoding helps where openh264 is the bottleneck, on slow CPUs and on busy
 4K content, and costs latency everywhere: several milliseconds a frame
-through the pipe and a restart per requested keyframe. That is why it is
-opt-in, and why nothing picks it on its own.
+through the pipe and a restart per requested keyframe.
+
+It started out opt-in for that reason. The original design asked for the
+probe to pick it, and these numbers say where a pick is right, so `auto`,
+the default, applies them (`probe.Report.AutoEncoder`). The GPU is taken
+when the probe shows a working route and either of two things holds. The
+host has four cores or fewer: openh264 needs up to 8.5 ms of a fast core
+per 1080p frame, a quarter of a core at 30 fps, which a small host feels and
+a slow core makes worse. Or the session may exceed 1920x1080 and ffmpeg
+drives the GPU: at 2160p openh264 spends up to 28 ms of CPU a frame on busy
+content against 12 through ffmpeg. GStreamer's route does not count for
+large sessions, since it spends 31 to 34 ms on a 2160p frame, a whole frame
+interval at 30 fps, for 21 ms of CPU. VA-API comes before NVENC, which has
+not run on NVIDIA hardware. A 1080p session on a host with more cores stays
+in software, where the GPU would save a few milliseconds of CPU a frame and
+add as many of latency. Because a pick is a guess from the probe, the CLI
+marks it (`Start.EncoderFallback`): a picked encoder that fails its trial
+frame, or later at the session's size, gives way to openh264 for the rest
+of the session and Ready says why, where an encoder the user named still
+fails the session.
 
 The first `Open` tries each route the host offers on a 320x240 frame,
 ffmpeg first since it measured faster and cheaper, and keeps the first that
