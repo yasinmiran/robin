@@ -1,7 +1,8 @@
 #!/bin/sh
-# Runs the tests of internal/agent/wayland against a headless GNOME session
-# (mutter, PipeWire, xdg-desktop-portal-gnome) in a rootless podman
-# container. Extra arguments go to the test binary:
+# Runs the tests of internal/agent/wayland, and the agent session test that
+# attaches to Wayland, against a headless GNOME session (mutter, PipeWire,
+# xdg-desktop-portal-gnome) in a rootless podman container. Extra arguments
+# go to both test binaries:
 #
 #   internal/agent/wayland/testdata/wltest.sh
 #   internal/agent/wayland/testdata/wltest.sh -test.run=Attach
@@ -20,7 +21,9 @@ cleanup() {
 trap cleanup EXIT
 
 podman build -q -t "$image" -f "$here/Containerfile" "$here" >/dev/null
-(cd "$root" && go test ${WLTEST_GOFLAGS--race} -c -o "$out/wayland.test" ./internal/agent/wayland)
+cd "$root"
+go test ${WLTEST_GOFLAGS--race} -c -o "$out/wayland.test" ./internal/agent/wayland
+go test ${WLTEST_GOFLAGS--race} -c -o "$out/agent.test" ./internal/agent
 cp "$here/probe.py" "$here/session.sh" "$out/"
 # The session runs as the image's unprivileged user, not the owner of $out.
 chmod -R a+rX "$out"
@@ -37,8 +40,12 @@ podman exec -u root "$name" sh -c '
 podman exec "$name" /t/session.sh
 
 status=0
-podman exec -w /tmp -e XDG_RUNTIME_DIR=/run/user/1000 -e RJ_WAYLAND_PROBE=/t/probe.py \
-	"$name" /t/wayland.test -test.v -test.timeout=5m "$@" || status=$?
+for t in "wayland.test" "agent.test -test.run=Wayland"; do
+	echo "== $t"
+	# shellcheck disable=SC2086 # $t is a binary and its own arguments
+	podman exec -w /tmp -e XDG_RUNTIME_DIR=/run/user/1000 -e RJ_WAYLAND_PROBE=/t/probe.py \
+		"$name" /t/$t -test.v -test.timeout=5m "$@" || status=1
+done
 if [ "$status" != 0 ]; then
 	podman exec "$name" sh -c 'tail -n 20 /tmp/session-logs/*.log' >&2 || true
 fi

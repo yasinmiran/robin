@@ -23,6 +23,7 @@ import (
 	"github.com/godbus/dbus/v5/introspect"
 
 	"github.com/yasinmiran/remotejump/internal/agent/desktop"
+	"github.com/yasinmiran/remotejump/internal/agent/wayland/wltest"
 	"github.com/yasinmiran/remotejump/internal/protocol"
 )
 
@@ -348,7 +349,7 @@ func openWith(t *testing.T, allowInput bool, opt func(*Options)) (*Desktop, []pr
 			notices = append(notices, n)
 			mu.Unlock()
 			if n.Kind == protocol.NoticeConsent {
-				go func() { answered <- answerDialog(allowInput) }()
+				go func() { answered <- wltest.AnswerDialog(allowInput) }()
 			}
 		},
 		Log: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})),
@@ -370,82 +371,6 @@ func openWith(t *testing.T, allowInput bool, opt func(*Options)) (*Desktop, []pr
 	mu.Lock()
 	defer mu.Unlock()
 	return d, notices
-}
-
-// answerDialog stands in for the person at the host's screen. It clicks the
-// consent dialog of xdg-desktop-portal-gnome 46 on a 1280x720 monitor
-// through mutter's own remote desktop interface, which asks nobody. Only
-// this harness takes that path; the product always goes through the portal.
-func answerDialog(allowInput bool) error {
-	const (
-		mutterRD = "org.gnome.Mutter.RemoteDesktop"
-		mutterSC = "org.gnome.Mutter.ScreenCast"
-		btnLeft  = int32(0x110)
-	)
-	// The dialog takes a moment to map after Start.
-	time.Sleep(3 * time.Second)
-	conn, err := sessionBus()
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	sigs := newSignals(conn)
-
-	var rdPath dbus.ObjectPath
-	if err := conn.Object(mutterRD, "/org/gnome/Mutter/RemoteDesktop").Call(mutterRD+".CreateSession", 0).Store(&rdPath); err != nil {
-		return err
-	}
-	rd := conn.Object(mutterRD, rdPath)
-	defer rd.Call(mutterRD+".Session.Stop", 0)
-	id, err := rd.GetProperty(mutterRD + ".Session.SessionId")
-	if err != nil {
-		return err
-	}
-	var scPath, stream dbus.ObjectPath
-	if err := conn.Object(mutterSC, "/org/gnome/Mutter/ScreenCast").Call(mutterSC+".CreateSession", 0,
-		vardict{"remote-desktop-session-id": id}).Store(&scPath); err != nil {
-		return err
-	}
-	// Absolute pointer positions are given relative to a stream.
-	if err := conn.Object(mutterSC, scPath).Call(mutterSC+".Session.RecordMonitor", 0, "", vardict{}).Store(&stream); err != nil {
-		return err
-	}
-	added, stop, err := sigs.watch(stream, mutterSC+".Stream", "PipeWireStreamAdded")
-	if err != nil {
-		return err
-	}
-	defer stop()
-	if err := rd.Call(mutterRD+".Session.Start", 0).Err; err != nil {
-		return err
-	}
-	select {
-	case <-added:
-	case <-time.After(5 * time.Second):
-		return errors.New("mutter stream never started")
-	}
-	click := func(x, y float64) error {
-		if err := rd.Call(mutterRD+".Session.NotifyPointerMotionAbsolute", 0, string(stream), x, y).Err; err != nil {
-			return err
-		}
-		time.Sleep(200 * time.Millisecond)
-		if err := rd.Call(mutterRD+".Session.NotifyPointerButton", 0, btnLeft, true).Err; err != nil {
-			return err
-		}
-		if err := rd.Call(mutterRD+".Session.NotifyPointerButton", 0, btnLeft, false).Err; err != nil {
-			return err
-		}
-		time.Sleep(500 * time.Millisecond)
-		return nil
-	}
-	// The session's first event is dropped, so the first is a harmless move.
-	rd.Call(mutterRD+".Session.NotifyPointerMotionAbsolute", 0, string(stream), 100.0, 100.0)
-	time.Sleep(300 * time.Millisecond)
-	if allowInput {
-		if err := click(896, 266); err != nil { // "Allow Remote Interaction"
-			return err
-		}
-	}
-	return click(922, 132) // "Share"
 }
 
 // checkTornDown waits for every trace of the session to go: the gst-launch
