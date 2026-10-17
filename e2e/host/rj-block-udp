@@ -1,0 +1,12 @@
+#!/bin/bash
+# Drops all UDP that is not on loopback, in and out, for IPv4 and IPv6. Runs as
+# rj through sudo so it exercises the same path a test uses mid-session.
+# Idempotent.
+set -euo pipefail
+
+for ipt in iptables ip6tables; do
+  for rule in "INPUT -p udp ! -i lo -j DROP" "OUTPUT -p udp ! -o lo -j DROP"; do
+    # shellcheck disable=SC2086
+    sudo -n "$ipt" -w -C $rule 2>/dev/null || sudo -n "$ipt" -w -I $rule
+  done
+done

@@ -1,0 +1,23 @@
+# Replaces the distro sshd_config: its Subsystem line cannot be overridden from
+# sshd_config.d. The host key and authorized keys are mounted per run.
+Port 22
+AddressFamily inet
+HostKey /etc/ssh/rj/ssh_host_ed25519_key
+AuthorizedKeysFile /etc/ssh/authorized_keys.d/%u
+
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+# Rootless podman has no audit or login session support for PAM to use.
+UsePAM no
+UseDNS no
+
+AllowTcpForwarding yes
+AllowStreamLocalForwarding yes
+StreamLocalBindUnlink yes
+X11Forwarding no
+PrintMotd no
+LogLevel VERBOSE
+
+Subsystem sftp internal-sftp

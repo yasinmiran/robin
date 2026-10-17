@@ -1,0 +1,11 @@
+#!/bin/bash
+# Runs a command against the agent's display: rj-x xdotool getdisplaygeometry
+set -euo pipefail
+
+dir=$(rj-rundir)
+DISPLAY=$(<"$dir/display")
+export DISPLAY
+if [[ -f $dir/Xauthority ]]; then
+  export XAUTHORITY=$dir/Xauthority
+fi
+exec "$@"

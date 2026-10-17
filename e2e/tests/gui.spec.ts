@@ -1,0 +1,249 @@
+import { test, expect, type BrowserContext, type Page, type TestInfo } from '@playwright/test';
+import fs from 'node:fs';
+import path from 'node:path';
+import { Cli } from './helpers/cli';
+import { pagePoint } from './helpers/coords';
+import { CHANGED_FLOOR, isNonBlack, sampleFrame, waitForStillFrame } from './helpers/frames';
+import * as host from './helpers/host';
+
+// One remotejump session per scenario, shared by the tests below in order.
+// When a test fails Playwright restarts the worker, so beforeAll brings up a
+// fresh session for the tests that remain. Playwright traces this context
+// (trace: retain-on-failure in the config).
+
+const SCENARIO = process.env.SCENARIO ?? '';
+const OUT = path.resolve('out');
+const SCREEN = '#screen';
+const FIRST_FRAME_MS = 20_000;
+const RESTART_TIMEOUT_MS = Number(process.env.RJ_RESTART_TIMEOUT_MS ?? 30_000);
+
+type Endpoint = { address: string; port: number; protocol: string; candidateType: string };
+type Stats = {
+  transport: 'udp' | 'tcp' | null;
+  local: Endpoint;
+  remote: Endpoint;
+  framesDecoded: number;
+  frameWidth: number;
+  frameHeight: number;
+  fps: number;
+  kbps: number;
+};
+
+const state = (page: Page) => page.evaluate(() => (window as any).remotejump?.state as string | undefined);
+const stats = (page: Page) => page.evaluate(() => (window as any).remotejump.stats() as Promise<Stats>);
+
+let cli: Cli | undefined;
+let context: BrowserContext;
+let page: Page;
+let sessionStart = 0;
+
+test.beforeAll(async ({ browser }, testInfo) => {
+  expect(['direct', 'blocked', 'restart'], 'SCENARIO').toContain(SCENARIO);
+  testInfo.setTimeout(150_000);
+  context = await browser.newContext({
+    viewport: { width: 1280, height: 720 },
+    recordVideo: { dir: path.join(OUT, 'video'), size: { width: 1280, height: 720 } },
+  });
+  page = await context.newPage();
+  const consoleLog = fs.createWriteStream(path.join(OUT, 'console.log'), { flags: 'a' });
+  page.on('console', (m) => consoleLog.write(`${new Date().toISOString()} ${m.type()} ${m.text()}\n`));
+  page.on('pageerror', (e) => consoleLog.write(`${new Date().toISOString()} pageerror ${e.stack ?? e}\n`));
+
+  cli = await Cli.start(OUT);
+  sessionStart = Date.now();
+  await page.goto(cli.url);
+  await expect
+    .poll(() => page.evaluate(() => typeof (window as any).remotejump), { message: 'window.remotejump exists', timeout: 15_000 })
+    .toBe('object');
+  // Logs every state change to console.log, for reading a failure afterwards.
+  await page.evaluate(() => {
+    let last: string | undefined;
+    setInterval(() => {
+      const s = (window as any).remotejump?.state;
+      if (s !== last) console.log(`[rj-state] ${last} -> ${s}`);
+      last = s;
+    }, 100);
+  });
+});
+
+test.afterEach(async ({}, testInfo) => {
+  // Playwright already attaches a screenshot and trace on failure.
+  if (testInfo.status === testInfo.expectedStatus || !page) return;
+  const snapshot = await page
+    .evaluate(async () => {
+      const rj = (window as any).remotejump;
+      return { state: rj?.state, stats: await rj?.stats?.().catch((e: Error) => String(e)) };
+    })
+    .catch((e) => ({ error: String(e) }));
+  await testInfo.attach('remotejump', { body: JSON.stringify(snapshot, null, 2), contentType: 'application/json' });
+  if (cli) await testInfo.attach('cli stderr (tail)', { body: cli.stderrTail(), contentType: 'text/plain' });
+  await testInfo.attach('host', { body: await host.diagnostics().catch(String), contentType: 'text/plain' });
+});
+
+test.afterAll(async () => {
+  await cli?.stop();
+  await context?.close(); // flushes the page video
+});
+
+async function connectedStats(testInfo: TestInfo, label: string): Promise<Stats> {
+  await expect.poll(() => state(page), { message: 'state is connected', timeout: 15_000 }).toBe('connected');
+  let s!: Stats;
+  await expect
+    .poll(async () => (s = await stats(page)).transport, { message: 'stats().transport is set', timeout: 10_000 })
+    .not.toBeNull();
+  await testInfo.attach(`stats ${label}`, { body: JSON.stringify(s, null, 2), contentType: 'application/json' });
+  return s;
+}
+
+// typeIntoTerminal focuses the remote xterm through the video, types command
+// and Enter, and checks both the effect on the host (file holds want) and the
+// picture (the xterm region changed from the frame before typing).
+async function typeIntoTerminal(command: string, file: string, want: string) {
+  await host.ssh(`rm -f ${file}`);
+  let term: host.Rect | null = null;
+  await expect.poll(async () => (term = await host.terminal()), { message: 'an xterm is mapped', timeout: 15_000 }).not.toBeNull();
+  const t = term!;
+
+  const centre = await pagePoint(page, SCREEN, t.x + t.width / 2, t.y + t.height / 2);
+  await page.mouse.click(centre.x, centre.y);
+  await waitForStillFrame(page, SCREEN);
+  await sampleFrame(page, SCREEN, { save: 'pre-typing' });
+  await page.waitForTimeout(600);
+  const noise = (await sampleFrame(page, SCREEN, { compare: 'pre-typing', region: t })).changed!;
+
+  await page.keyboard.type(command, { delay: 20 });
+  await page.keyboard.press('Enter');
+
+  await expect
+    .poll(async () => (await host.sshRaw(`cat ${file}`)).stdout.trim(), { message: `${file} on the host`, timeout: 10_000 })
+    .toBe(want);
+  const floor = Math.max(CHANGED_FLOOR, noise * 3 + 50);
+  await expect
+    .poll(async () => (await sampleFrame(page, SCREEN, { compare: 'pre-typing', region: t })).changed, {
+      message: `pixels changed in the xterm since before typing (noise ${noise})`,
+      timeout: 5_000,
+    })
+    .toBeGreaterThan(floor);
+}
+
+test('frames decode: non-black within 20 s, framesDecoded increasing', async () => {
+  const left = Math.max(1_000, FIRST_FRAME_MS - (Date.now() - sessionStart));
+  await expect
+    .poll(async () => isNonBlack(await sampleFrame(page, SCREEN)), { message: 'a non-black frame', timeout: left, intervals: [250] })
+    .toBe(true);
+  const first = (await stats(page)).framesDecoded;
+  expect(first, 'framesDecoded').toBeGreaterThan(0);
+  // An encoder that skips idle frames needs damage to send another one.
+  await host.retitleTerminal().catch(() => {});
+  await expect.poll(async () => (await stats(page)).framesDecoded, { message: 'framesDecoded grows', timeout: 10_000 }).toBeGreaterThan(first);
+});
+
+test('keyboard: a typed command runs on the host and shows in the picture', async () => {
+  await typeIntoTerminal(`echo rj-e2e > /tmp/rj-e2e-${SCENARIO}`, `/tmp/rj-e2e-${SCENARIO}`, 'rj-e2e');
+});
+
+test('pointer: the remote cursor lands where the page points, within 2 px', async () => {
+  const { width, height } = await host.displayGeometry();
+  for (const [fx, fy] of [
+    [0.23, 0.31],
+    [0.71, 0.64],
+  ]) {
+    const want = { x: Math.round(width * fx), y: Math.round(height * fy) };
+    const p = await pagePoint(page, SCREEN, want.x, want.y);
+    await page.mouse.move(p.x, p.y, { steps: 4 });
+    await expect
+      .poll(
+        async () => {
+          const got = await host.mouseLocation();
+          return Math.max(Math.abs(got.x - want.x), Math.abs(got.y - want.y));
+        },
+        { message: `xdotool getmouselocation vs ${want.x},${want.y}`, timeout: 5_000 },
+      )
+      .toBeLessThanOrEqual(2);
+  }
+});
+
+test('clipboard: browser to host and host to browser', async () => {
+  const n = Date.now().toString(36);
+  await page.evaluate((t) => (window as any).remotejump.sendClipboard(t), `rj-clip-${n}`);
+  await expect.poll(host.clipboard, { message: 'host clipboard', timeout: 10_000 }).toBe(`rj-clip-${n}`);
+
+  await host.setClipboard(`rj-back-${n}`);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).remotejump.lastRemoteClipboard), {
+      message: 'remotejump.lastRemoteClipboard',
+      timeout: 10_000,
+    })
+    .toBe(`rj-back-${n}`);
+});
+
+test('resize: display and video follow a 1000x700 viewport within 10 s', async () => {
+  await page.setViewportSize({ width: 1000, height: 700 });
+  await expect
+    .poll(
+      async () => {
+        const video = await page.$eval(SCREEN, (v) => `${(v as HTMLVideoElement).videoWidth}x${(v as HTMLVideoElement).videoHeight}`);
+        const g = await host.displayGeometry();
+        return `video ${video}, display ${g.width}x${g.height}`;
+      },
+      { timeout: 10_000 },
+    )
+    .toBe('video 1000x700, display 1000x700');
+});
+
+if (SCENARIO === 'direct') {
+  test('transport: direct session uses UDP', async ({}, testInfo) => {
+    expect((await connectedStats(testInfo, 'direct')).transport).toBe('udp');
+  });
+}
+
+if (SCENARIO === 'blocked') {
+  test('transport: with UDP blocked the session runs on ICE-TCP through the SSH forward', async ({}, testInfo) => {
+    const s = await connectedStats(testInfo, 'blocked');
+    expect(s.transport).toBe('tcp');
+    expect(s.remote.address).toBe('127.0.0.1');
+  });
+}
+
+if (SCENARIO === 'restart') {
+  test('transport: blocking UDP mid-session falls back to TCP and keeps working', async ({}, testInfo) => {
+    testInfo.setTimeout(RESTART_TIMEOUT_MS + 60_000);
+    expect((await connectedStats(testInfo, 'before block')).transport).toBe('udp');
+
+    await host.blockUdp();
+    const blockedAt = Date.now();
+    const seen: string[] = [];
+    await expect
+      .poll(
+        async () => {
+          const st = (await state(page)) ?? 'none';
+          const now = st === 'connected' ? `connected/${(await stats(page)).transport}` : st;
+          if (seen.at(-1) !== now) seen.push(now);
+          return now;
+        },
+        { message: 'state recovers to connected over tcp', timeout: RESTART_TIMEOUT_MS, intervals: [250] },
+      )
+      .toBe('connected/tcp');
+    testInfo.annotations.push({ type: 'recovery', description: `${Date.now() - blockedAt} ms via ${seen.join(' -> ')}` });
+
+    const after = await connectedStats(testInfo, 'after block');
+    expect(after.remote.address).toBe('127.0.0.1');
+    await typeIntoTerminal('echo rj-e2e-tcp > /tmp/rj-e2e-restart-tcp', '/tmp/rj-e2e-restart-tcp', 'rj-e2e-tcp');
+  });
+}
+
+test('teardown: SIGINT ends the CLI and leaves nothing behind on the host', async ({}, testInfo) => {
+  const dir = await host.runDir();
+  expect(await host.leftovers(), 'session processes are visible before teardown').not.toBe('');
+
+  const stop = await cli!.stop(10_000);
+  testInfo.annotations.push({ type: 'exit', description: JSON.stringify(stop) });
+  expect(stop.killed, 'CLI exited by itself within 10 s of SIGINT').toBe(false);
+  expect(stop.code, 'CLI exit code').toBe(0);
+
+  const left = Math.max(1_000, 10_000 - stop.afterMs);
+  await expect.poll(host.leftovers, { message: 'session processes on the host', timeout: left }).toBe('');
+  await expect.poll(() => host.exists(dir), { message: `run dir ${dir} exists`, timeout: 1_000 }).toBe(false);
+  expect(cli!.extraStdout, 'stdout carries only the URL').toEqual([]);
+  testInfo.annotations.push({ type: 'page state after teardown', description: String(await state(page)) });
+});

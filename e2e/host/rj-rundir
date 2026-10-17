@@ -1,0 +1,19 @@
+#!/bin/bash
+# Prints the newest remotejump agent run dir: the directory holding the
+# "display" file the agent writes. Exits 1 when there is none.
+set -euo pipefail
+
+uid=$(id -u)
+roots=()
+for r in "$HOME/.cache/remotejump/run" "${XDG_RUNTIME_DIR:-}/remotejump" \
+         "/run/user/$uid/remotejump" "/tmp/remotejump-$uid"; do
+  [[ -d $r ]] && roots+=("$r")
+done
+
+newest=
+if ((${#roots[@]})); then
+  newest=$(find "${roots[@]}" -maxdepth 3 -type f -name display -printf '%T@ %h\n' 2>/dev/null \
+    | sort -rn | head -n1 | cut -d' ' -f2-) || true
+fi
+[[ -n $newest ]] || { echo "rj-rundir: no agent run dir found" >&2; exit 1; }
+echo "$newest"
