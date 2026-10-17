@@ -65,7 +65,7 @@ ifeq ($(HOST_OS)/$(HOST_ARCH),linux/amd64)
 	@set -e; t=$(target_amd64); zig=$$(toolchain/zig.sh); prefix=$$(toolchain/openh264.sh $$t); toolchain/opus.sh $$t >/dev/null; \
 	CGO_ENABLED=1 CC="$$zig cc -target $$t" CXX="$$zig c++ -target $$t" \
 	CGO_CFLAGS="-I$$prefix/include" CGO_LDFLAGS="-L$$prefix/lib" \
-	$(GO) test -tags openh264,opus ./internal/agent/h264/ ./internal/agent/opus/
+	$(GO) test -tags openh264,opus ./internal/agent/h264/ ./internal/agent/opus/ ./internal/agent/audio/
 endif
 
 test-short:
