@@ -36,6 +36,7 @@ remotejump gui build-box -- -p 2222 -i ~/.ssh/other_key   # anything after -- go
 remotejump gui --max-size 2560x1440 --fps 60 workstation
 remotejump gui --no-browser lab-node                     # print the URL instead of opening it
 remotejump gui --attach auto workstation                 # the desktop you are logged in to there
+remotejump gui --attach wayland workstation              # your GNOME or Plasma session on Wayland
 ```
 
 Your `~/.ssh/config`, agent, `ProxyJump`, `ProxyCommand`, certificates and
@@ -44,11 +45,15 @@ plain `ssh`: one ControlMaster connection carries the probe, the agent upload,
 the agent itself and the tunnel. The browser tab can be reloaded; the remote
 session survives until you press Ctrl+C in the terminal.
 
-With `--attach`, nothing new is started: the agent streams an X11 desktop that
-is already running on the host, usually the one you are logged in to at the
-machine. `auto` picks the display of your active session, or the one X server
-you own when the session does not name one (GDM never does), and `:1` names a
-display outright. The cookie comes from wherever startx, LightDM, GDM, mutter
+With `--attach`, nothing new is started: the agent streams a desktop that is
+already running on the host, usually the one you are logged in to at the
+machine. `wayland` takes your Wayland session through the desktop's screen
+sharing portal, which asks first (see
+[Attaching to a Wayland desktop](#attaching-to-a-wayland-desktop)). The rest
+of this section is about X11. `auto` picks the Wayland session when that is
+the active one, else the display of your active X11 session, or the one X
+server you own when the session does not name one (GDM never does), and `:1`
+names a display outright. The cookie comes from wherever startx, LightDM, GDM, mutter
 or SDDM left it; failing that, the agent gets in the way an
 `xhost +si:localuser:$USER` grant allows.
 
@@ -74,7 +79,7 @@ host cannot provide sound the session runs without it, and the CLI says why.
 | `--max-kbps` | `10000` | video bitrate ceiling; congestion control works below it |
 | `--encoder` | `software` | `vaapi` or `nvenc` to encode on the host's GPU; see [Hardware encoding](#hardware-encoding) |
 | `--session` | lightest found | command to run in the display, e.g. `startxfce4` |
-| `--attach` | | stream a desktop already running on the host: `auto`, or an X display such as `:1` |
+| `--attach` | | stream a desktop already running on the host: `auto`, `wayland` for your Wayland session, or an X display such as `:1` |
 | `--audio` | `true` | stream the desktop's sound; `--audio=false` leaves it out |
 | `--stun` | Google's public server | STUN servers for NAT traversal, comma-separated, or `none` |
 | `--no-browser` | | print the page URL on stdout instead of opening a browser |
@@ -94,7 +99,8 @@ install line for that distro, for example:
 sudo apt install xvfb openbox xterm
 ```
 
-Attaching to a running desktop needs none of that, only the desktop.
+Attaching to a running desktop needs none of that, only the desktop, plus
+GStreamer's tools for a Wayland one.
 
 For sound in a spawned session the host also needs `pulseaudio`. The agent starts
 a private one with a null sink as its only output and its socket in the
@@ -113,6 +119,40 @@ The agent goes to `~/.cache/remotejump` (or `$XDG_RUNTIME_DIR/remotejump`, or
 by hash and reused across sessions. It runs as you, starts its own display on
 a free number, and when the SSH channel closes it kills everything it started
 and removes its files.
+
+## Attaching to a Wayland desktop
+
+`--attach wayland` streams the GNOME or KDE Plasma session you are logged in
+to on the host instead of starting a new one. It goes through
+xdg-desktop-portal, the same screen sharing a video call app uses, which
+means the desktop asks before anyone sees it. `--attach auto` picks it when
+the session logind reports as active is a Wayland one.
+
+The first time, a dialog comes up on the host's own screen and someone sitting
+there has to answer it. On GNOME, switch on Allow Remote Interaction before
+pressing Share, or the session is view only; the CLI says so if that happens,
+and also says, while it waits, what to approve and for how long (two minutes).
+Approval gets the agent a restore token from the portal. The agent keeps it
+next to itself on the host, in `wayland-restore-token`, readable only by you,
+and every later session starts with no dialog at all. Delete the file to be
+asked again. A view-only approval is never remembered, so the next run asks
+once more.
+
+Ending the session gives the screen back as it was. Stopping the share from
+the host's own indicator ends the remote session too.
+
+The agent reads the screen through GStreamer, so the host needs
+`gst-launch-1.0` and the PipeWire, base and good plugin sets. A desktop
+install usually has everything but the tools package; the CLI checks and
+prints the line for your distribution, for example:
+
+```
+sudo apt install gstreamer1.0-tools gstreamer1.0-pipewire gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+```
+
+Streaming a fully animated 1280x720 screen at 30 fps costs `gst-launch-1.0`
+about 6% of one core, on top of the encoder. An idle screen costs next to
+nothing: repeated frames are not encoded.
 
 ## Hardware encoding
 
@@ -210,9 +250,19 @@ list. On a shared client, use `--no-browser` and open the printed URL yourself.
 ```sh
 make test     # unit and integration tests; the encoders against real openh264 and libopus on linux/amd64
 make test-x   # capture, input, display, sound server and agent session tests against Xvfb and pulseaudio, in podman
+make test-wayland  # Wayland attach against headless mutter and the GNOME portal, in podman
 make e2e      # the whole thing: podman host, Playwright and Chrome client
-make check    # all three
+make check    # all four
 ```
+
+`make test-wayland` boots mutter with a virtual monitor, PipeWire and
+xdg-desktop-portal-gnome in a container. Nobody sits at that screen, so the
+harness answers the consent dialog itself by clicking it through mutter's
+own remote desktop interface, a path only the tests use. It checks that the
+first session asks and the second restores without asking, that frames
+arrive and change, pointer, keys and held-key repeat, the clipboard both
+ways, view-only grants, and that no `gst-launch-1.0` or portal session
+outlives the agent, whether it closes or is killed.
 
 `make e2e` runs four scenarios against a fresh host container each: direct
 UDP, UDP blocked on the host from the start, UDP blocked mid-session, and
@@ -239,13 +289,35 @@ to print the comparison the ADR quotes.
 
 ## Known limits
 
-- Attaching works with X11 desktops. On a Wayland session `--attach auto`
-  will not guess, because the X server you own there is Xwayland, whose
-  screen holds none of the desktop.
-- An attached desktop arrives as one picture of all its monitors, gaps
+- `--attach auto` never picks an X display inside a Wayland session, because
+  the X server you own there is Xwayland, whose screen holds none of the
+  desktop. It takes the Wayland session itself when the probe finds its
+  socket and session bus.
+- Attaching to Wayland needs someone at the host's screen to approve it the
+  first time. It works through the portal's remote desktop interface, which
+  GNOME and KDE Plasma have; wlroots compositors such as Sway do not.
+- On Wayland, characters only type if the host's keyboard layout has them:
+  the compositor drops any other keysym, and there is no spare keycode to
+  bind one to as on X11. Paste such text through the clipboard instead.
+- GNOME drops the first key event of each remote session, and now and then
+  the first pointer event. The agent spends both on input that does
+  nothing, so you should not notice, but it is why mutter logs `No keycode
+  found for keyval ffffff` when a session starts.
+- An attached Wayland desktop keeps its own size and shows one monitor. A
+  screen larger than `--max-size` is scaled down, and a scaled (HiDPI)
+  screen streams at its logical size, so text is softer than on the host.
+- On Wayland the pointer is drawn into the video, so it moves at the
+  video's pace, a round trip behind your hand; the browser hides its own
+  pointer over the picture.
+- Held keys on Wayland repeat at the host's own rate, and the browser's
+  repeats are not sent. A held key during a network stall keeps repeating
+  on the host until the key-up gets through.
+- The Wayland tests run against GNOME 46. KDE Plasma 6's portal was
+  checked by hand during design but is not in the suite.
+- An attached X11 desktop arrives as one picture of all its monitors, gaps
   included, scaled to fit `--max-size`, so on a wide multi-monitor desktop
   small text gets hard to read.
-- While attached, autorepeat is off for the whole display, keys held at the
+- Attached to X11, autorepeat is off for the whole display, keys held at the
   machine itself included, until the session ends.
 - Text pasted from the browser into an attached desktop outlives the session
   only if that desktop runs a clipboard manager.

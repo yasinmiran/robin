@@ -283,13 +283,17 @@ with no cookie it holds. xgb cannot send an empty authorization, so that last
 attempt presents a zero cookie; the server refuses it and falls back to
 host-based access, which is what an `xhost +si:localuser:$USER` grant opens.
 
-For `--attach auto` the CLI takes the display of the user's active local X11
-session from logind. Under GDM that field is empty, because GDM registers the
-session before its X server starts (the GNOME workstation used for the checks below
-reports exactly that), so the fallback is the one socket in `/tmp/.X11-unix`
-the user owns. A Wayland session would pass that test too, through Xwayland,
-whose root window shows none of the desktop; with an active Wayland session
-`auto` refuses to guess and lists what it found.
+For `--attach auto` the CLI first looks for a Wayland session: when logind
+says the active one is Wayland (or there is no logind) and the probe sees a
+compositor socket and the session bus, it attaches through the portal
+described below. Otherwise it takes the display of the user's active local
+X11 session from logind. Under GDM that field is empty, because GDM registers
+the session before its X server starts (the GNOME workstation used for the
+checks below reports exactly that), so the fallback is the one socket in
+`/tmp/.X11-unix` the user owns. A Wayland session would pass that test too,
+through Xwayland, whose root window shows none of the desktop, so with an
+active Wayland session the probe cannot reach, `auto` refuses to guess and
+lists what it found.
 
 The desktop's size belongs to its user. `Resize` returns `ErrFixedSize` and
 the page scales the video into its window. A desktop larger than the session
@@ -331,6 +335,7 @@ frame; the first difference switches Capture to comparing every frame, which
 still keeps an idle screen from being encoded. In the 130 s on mutter, 128 of
 those rechecks found nothing DAMAGE had missed. Each cost one MIT-SHM grab of
 2 to 4 ms and a hash of the 54 MB frame, about 13 ms.
+
 ### Sound: the PulseAudio protocol in Go, Opus from a static libopus
 
 The agent records the desktop's sound and sends it as a stereo Opus track
@@ -393,3 +398,104 @@ speaker toggle once an audio track arrives; unmuting takes that click. Chrome
 reports `totalAudioEnergy` only for audio it plays: a muted element reports
 zero while packets arrive, so the e2e clicks the speaker before it plays
 noise on the host and checks the energy rises.
+
+### Attaching to Wayland: the portal, not mutter's own API
+
+A Wayland compositor lets no client read the screen or inject input on its
+own say-so, so attaching goes through an interface the compositor offers.
+
+| Option | Verdict |
+|---|---|
+| `org.gnome.Mutter.RemoteDesktop` and `ScreenCast` directly | Works with no dialog at all: any process running as the user can watch and drive the screen without the person in front of it ever knowing. GNOME only. Rejected for exactly that. |
+| xdg-desktop-portal `RemoteDesktop` and `ScreenCast` | The desktop asks the person at the screen, shows that sharing is on, and lets them stop it. GNOME and KDE Plasma implement it, and a restore token skips the dialog after the first approval. **Chosen.** |
+| libei through the portal's `ConnectToEIS` | Not needed: the portal's `Notify*` methods carry keyboard, pointer and wheel on GNOME 46 and later and on Plasma 6, and libei would be a C library in a static agent. |
+
+wlroots compositors such as Sway have no `RemoteDesktop` portal and are not
+covered. The agent talks D-Bus with `godbus`, so it stays pure Go. The
+mutter-direct path appears in one place, the test harness, which uses it to
+click the consent dialog in a container where nobody is at the screen.
+
+### The restore token is a credential, spent by every Start
+
+Persistence is requested on `SelectDevices` with `persist_mode` 2, until
+revoked; the ScreenCast spec forbids it on `SelectSources` for a remote
+desktop session. Whoever holds the token and can reach the user's session
+bus can start a session without a dialog, so it lives in the agent's
+directory as `wayland-restore-token`, mode 0600, written to a temporary file
+and renamed into place. The name keeps deploy's sweep of old agent files off
+it.
+
+Each `Start` consumes the token it was given. On success the token it returns
+replaces the file. On any failure the file goes, and if the failure came
+with a token the agent asks once more without one, unless the user declined
+or nobody answered. A grant without both keyboard and pointer is never kept:
+GNOME's Allow Remote Interaction switch is off by default, and a remembered
+view-only grant would make every later session silently view only. If a
+restored grant comes back view only anyway, the agent drops it and asks
+with the dialog. Every request asks for the same devices, one monitor, the
+same cursor mode and the clipboard, because KDE rejects a token for a
+request that differs from the one it was issued for.
+
+The wait for an answer is two minutes. Without a token the agent tells the
+CLI at once, with a `notice` message before `Ready`; with one it waits two
+seconds first, since a valid token answers immediately and only a revoked
+one brings the dialog back. The CLI prints who has to do what on which
+screen, and stretches its own wait for `Ready` to match. If the CLI goes
+away meanwhile, the agent closes the request, which by the portal spec ends
+the dialog too.
+
+### Wayland frames through gst-launch-1.0, in I420
+
+The portal hands over a PipeWire connection that can see only the shared
+stream. There is no pure Go client for PipeWire's native protocol and its
+SPA pod format, and linking libpipewire would end the static agent, so the
+agent runs `gst-launch-1.0` with that connection as fd 3:
+
+```
+pipewiresrc fd=3 path=N keepalive-time=100 ! video/x-raw,max-framerate=31/1
+  ! videoconvert ! videoscale ! video/x-raw,format=I420,colorimetry=bt601,width=W,height=H
+  ! y4menc ! fdsink fd=1
+```
+
+This does put GStreamer on the host, which the encoder decision above
+rejected. That was about spawn mode working on a bare server; a host with a
+Wayland desktop already runs PipeWire and most of GStreamer, and usually
+lacks only the tools package.
+
+`max-framerate` goes into the PipeWire format offer, so the compositor
+paces the stream; one frame over the target leaves room for jitter.
+`keepalive-time` resends the last frame on a static screen, without which
+the first frame would wait for something to change. The agent compares each
+frame with the last one it handed out and reports a repeat as no change, so
+an idle desktop still encodes nothing. `y4menc` frames the byte stream and
+states the size, and it copes with any row padding the converter leaves.
+`videoscale` brings a screen larger than the session's maximum down to fit.
+
+I420 won on measurement, a fully animated 1280x720 screen at 30 fps:
+`gst-launch-1.0` spent 6% of a core converting to I420 against 4% passing
+BGRx through, while converting BGRx in the agent costs about 4.5% of a core
+in Go and moves 2.7 times the bytes through the pipe. So `desktop.Frame`
+carries its pixel format and the stream copies an I420 frame instead of
+converting it.
+
+The pointer is embedded in the frames. Cursor metadata travels in PipeWire
+buffer headers, which `gst-launch-1.0` cannot pass on, so the agent tells the
+page to hide its own pointer over the video. The remote pointer then moves
+at the video's latency, which is the cost.
+
+### Wayland input: the compositor picks the keycode
+
+Printable characters go in as keysyms through `NotifyKeyboardKeysym`, and
+mutter finds the keycode and presses Shift or AltGr as the level needs. A
+keysym missing from the active layout is dropped: a Wayland client cannot
+change the compositor's keymap, so the spare-keycode trick the X11 path uses
+has no equivalent. GNOME drops the first key event of a remote desktop
+session and, about one session in five, leaves the first pointer event
+unseen by clients, so the agent opens with a `VoidSymbol` tap, which no
+layout has, and a zero relative motion.
+
+Held keys are not repeated from the browser. Wayland clients repeat a held
+key themselves at the rate the compositor announces, so passing the
+browser's repeats on as presses would double them. Wheel input goes as
+discrete steps, one per 100 browser pixels as on X11: smooth scroll's sign
+differs between GNOME and KDE, discrete steps do not.
