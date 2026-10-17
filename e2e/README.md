@@ -36,7 +36,7 @@ cannot leak into the next one. The tests run in order against one session.
 |---|---|---|
 | `direct` | open | the session comes up on UDP |
 | `blocked` | UDP dropped (except loopback) before the CLI starts | ICE-TCP through the SSH forward carries the whole session; the selected remote candidate is `127.0.0.1` |
-| `restart` | open, then UDP dropped mid-session | the page notices, restarts ICE and recovers onto TCP within 30 s (`RJ_RESTART_TIMEOUT_MS`), and input still works afterwards |
+| `restart` | open, then UDP dropped mid-session | the page notices, restarts ICE and recovers onto TCP within 15 s (`RJ_RESTART_TIMEOUT_MS`; typically about 3 s), and input still works afterwards |
 
 Every scenario also checks, in this order:
 

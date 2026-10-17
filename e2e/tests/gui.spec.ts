@@ -15,7 +15,7 @@ const SCENARIO = process.env.SCENARIO ?? '';
 const OUT = path.resolve('out');
 const SCREEN = '#screen';
 const FIRST_FRAME_MS = 20_000;
-const RESTART_TIMEOUT_MS = Number(process.env.RJ_RESTART_TIMEOUT_MS ?? 30_000);
+const RESTART_TIMEOUT_MS = Number(process.env.RJ_RESTART_TIMEOUT_MS ?? 15_000);
 
 type Endpoint = { address: string; port: number; protocol: string; candidateType: string };
 type Stats = {

@@ -33,11 +33,13 @@ export class Cli {
     const stderrPath = path.join(dir, 'cli.stderr.log');
     const stderr = fs.createWriteStream(stderrPath, { flags: 'a' });
     const stdoutLog = fs.createWriteStream(path.join(dir, 'cli.stdout.log'), { flags: 'a' });
-    const header = `--- ${new Date().toISOString()} remotejump gui --no-browser ${host}\n`;
+    // Verbose, so the saved stderr carries the agent's log (ICE states, resizes).
+    const args = ['gui', '--no-browser', '-v', ...(process.env.RJ_CLI_ARGS ?? '').split(' ').filter(Boolean), host];
+    const header = `--- ${new Date().toISOString()} remotejump ${args.join(' ')}\n`;
     stderr.write(header);
     stdoutLog.write(header);
 
-    const proc = spawn('remotejump', ['gui', '--no-browser', host], {
+    const proc = spawn('remotejump', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true, // own process group, like a foreground job
     });

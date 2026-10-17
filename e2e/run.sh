@@ -6,7 +6,8 @@
 #   ./run.sh selftest           prove the harness itself, no CLI needed
 #
 # RJ_BIN overrides the CLI binary (default bin/remotejump-linux-amd64, relative
-# to the repo root). RJ_RESTART_TIMEOUT_MS and RJ_SIGINT_PID_ONLY pass through
+# to the repo root). RJ_RESTART_TIMEOUT_MS, RJ_SIGINT_PID_ONLY and RJ_CLI_ARGS
+# (extra flags for `remotejump gui`, which always runs with -v) pass through
 # to the tests. Artifacts land in e2e/out/<scenario>/.
 set -euo pipefail
 
@@ -135,7 +136,8 @@ run_scenario() {
     on_client ssh rjhost rj-block-udp
   fi
   on_client env SCENARIO="$s" \
-    RJ_RESTART_TIMEOUT_MS="${RJ_RESTART_TIMEOUT_MS:-30000}" RJ_SIGINT_PID_ONLY="${RJ_SIGINT_PID_ONLY:-0}" \
+    RJ_RESTART_TIMEOUT_MS="${RJ_RESTART_TIMEOUT_MS:-15000}" RJ_SIGINT_PID_ONLY="${RJ_SIGINT_PID_ONLY:-0}" \
+    RJ_CLI_ARGS="${RJ_CLI_ARGS:-}" \
     npx playwright test tests/gui.spec.ts || status=$?
   save_host_state "$dir"
   remove_containers
