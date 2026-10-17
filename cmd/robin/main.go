@@ -65,7 +65,7 @@ func runGUI(args []string) int {
 	attach := fs.String("attach", "", `stream a desktop already running on the host instead of starting one: an X11 display such as ":0", "auto" for your active session, or "wayland"`)
 	audio := fs.Bool("audio", true, "stream the desktop's sound as well")
 	hidpi := fs.Bool("hidpi", false, "size the remote display in device pixels: sharper on HiDPI screens, more to encode (raise --max-size to go native)")
-	encoder := fs.String("encoder", "software", "video encoder on the host: software, or vaapi or nvenc where the host has them")
+	encoder := fs.String("encoder", protocol.EncoderAuto, "video encoder on the host: auto (the GPU where the host has one and it pays, else software), software, vaapi or nvenc")
 	stun := fs.String("stun", defaultSTUN, `comma-separated STUN servers for NAT traversal, or "none"`)
 	listen := fs.String("listen", "127.0.0.1:0", "loopback address for the browser page")
 	noBrowser := fs.Bool("no-browser", false, "print the page URL on stdout instead of opening a browser")

@@ -133,7 +133,10 @@ func Run(ctx context.Context, o Options) (err error) {
 	}
 	defer ag.stop()
 
-	start := startMessage(o, report)
+	start, picked := startMessage(o, report)
+	if picked != "" {
+		log.Info("encoder picked", "encoder", start.Encoder, "why", picked)
+	}
 	if err := ag.conn.Send(protocol.Message{Type: protocol.TypeStart, Start: &start}); err != nil {
 		return ag.explain(err)
 	}
@@ -143,6 +146,9 @@ func Run(ctx context.Context, o Options) (err error) {
 	}
 	log.Info("agent ready", "mode", ready.Mode, "display", ready.Display, "session", ready.Session,
 		"size", fmt.Sprintf("%dx%d", ready.Width, ready.Height), "encoder", ready.Encoder, "audio", ready.Audio)
+	if ready.EncoderError != "" {
+		log.Info("encoder fell back to software", "why", ready.EncoderError)
+	}
 	if o.Audio && !ready.Audio {
 		fmt.Fprintf(o.Stderr, "robin: no sound from %s: %s\n", o.Dest, ready.AudioError)
 	}
@@ -213,8 +219,9 @@ func runProbe(ctx context.Context, m *sshmux.Master) (*probe.Report, error) {
 }
 
 // startMessage fills in the session parameters, with lower defaults on
-// small hosts.
-func startMessage(o Options, r *probe.Report) protocol.Start {
+// small hosts, and picks the encoder when o leaves it to auto. The string
+// says why it picked the one it did; it is empty when the user chose.
+func startMessage(o Options, r *probe.Report) (protocol.Start, string) {
 	s := protocol.Start{
 		Version: protocol.Version, MaxWidth: o.MaxWidth, MaxHeight: o.MaxHeight,
 		FPS: o.FPS, MaxKbps: o.MaxKbps, Session: o.Session, STUN: o.STUN,
@@ -236,7 +243,12 @@ func startMessage(o Options, r *probe.Report) protocol.Start {
 	if s.MaxKbps <= 0 {
 		s.MaxKbps = protocol.DefaultMaxKbps
 	}
-	return s
+	var why string
+	if s.Encoder == protocol.EncoderAuto {
+		s.Encoder, why = r.AutoEncoder(s.MaxWidth, s.MaxHeight)
+		s.EncoderFallback = s.Encoder != protocol.EncoderSoftware
+	}
+	return s, why
 }
 
 func iceServers(stun []string) []protocol.ICEServer {

@@ -10,24 +10,24 @@ import (
 )
 
 // CheckEncoder reports whether the host has what the named video encoder
-// needs. The software encoder is built into the agent. The hardware ones
-// drive the GPU through ffmpeg or GStreamer on the host, so they need the
-// GPU and one of those tools with the right encoder; the error says what is
-// missing and, for a missing tool on a distribution whose ffmpeg is known to
-// have both encoders, what to install.
+// needs. The software encoder is built into the agent, and auto falls back
+// to it. The hardware ones drive the GPU through ffmpeg or GStreamer on the
+// host, so they need the GPU and one of those tools with the right encoder;
+// the error says what is missing and, for a missing tool on a distribution
+// whose ffmpeg is known to have both encoders, what to install.
 func (r *Report) CheckEncoder(name string) error {
 	var problem string
 	var noTool bool
 	switch name {
-	case protocol.EncoderSoftware, "":
+	case protocol.EncoderSoftware, protocol.EncoderAuto, "":
 		return nil
 	case protocol.EncoderVAAPI:
 		problem, noTool = r.vaapiProblem()
 	case protocol.EncoderNVENC:
 		problem, noTool = r.nvencProblem()
 	default:
-		return fmt.Errorf("unknown encoder %q; want %s, %s or %s",
-			name, protocol.EncoderSoftware, protocol.EncoderVAAPI, protocol.EncoderNVENC)
+		return fmt.Errorf("unknown encoder %q; want %s, %s, %s or %s",
+			name, protocol.EncoderAuto, protocol.EncoderSoftware, protocol.EncoderVAAPI, protocol.EncoderNVENC)
 	}
 	if problem == "" {
 		return nil
@@ -94,4 +94,60 @@ func (r *Report) nvencProblem() (string, bool) {
 		return "", false
 	}
 	return "it needs ffmpeg with h264_nvenc, or gst-launch-1.0 with GStreamer's nvcodec plugin", true
+}
+
+// Where a hardware encoder pays for the latency it adds: a few milliseconds
+// a frame through the pipe and about 40 ms per requested keyframe, against
+// the CPU openh264 needs. See the ADR's measurements.
+const (
+	// autoHardwareMaxCPUs is the most cores a host may have for the GPU to
+	// take a 1080p session: openh264 needs up to a quarter of a fast core at
+	// 1080p30, which a host this small feels.
+	autoHardwareMaxCPUs = 4
+	// autoHardwareMinPixels is the session size above which the GPU encodes
+	// on any host: at 2160p openh264 spends up to 28 ms of CPU a frame on
+	// busy content, ffmpeg's VA-API route 12 ms.
+	autoHardwareMinPixels = 1920*1080 + 1
+)
+
+// AutoEncoder picks the encoder for --encoder auto, for a session of at most
+// maxWidth x maxHeight, and says why. It takes the GPU only where the probe
+// shows a working route and the GPU pays: on a host with few cores, or for a
+// session larger than 1080p through ffmpeg. GStreamer's VA-API route spends
+// a whole frame interval on a 2160p frame for little less CPU than
+// openh264, so it counts on small hosts only. VA-API comes before NVENC,
+// which has not run on NVIDIA hardware.
+func (r *Report) AutoEncoder(maxWidth, maxHeight int) (string, string) {
+	small := r.CPUs > 0 && r.CPUs <= autoHardwareMaxCPUs
+	large := maxWidth*maxHeight >= autoHardwareMinPixels
+	size := fmt.Sprintf("%dx%d", maxWidth, maxHeight)
+	var found []string
+	for _, c := range []struct {
+		name, ffmpeg string
+		problem      func() (string, bool)
+	}{
+		{protocol.EncoderVAAPI, "h264_vaapi", r.vaapiProblem},
+		{protocol.EncoderNVENC, "h264_nvenc", r.nvencProblem},
+	} {
+		if problem, _ := c.problem(); problem != "" {
+			continue
+		}
+		found = append(found, c.name)
+		ffmpeg := slices.Contains(r.FFmpegEncoders, c.ffmpeg)
+		switch {
+		case small:
+			return c.name, fmt.Sprintf("%s: the host has %d CPUs", c.name, r.CPUs)
+		case large && ffmpeg:
+			return c.name, fmt.Sprintf("%s through ffmpeg: sessions reach %s", c.name, size)
+		}
+	}
+	switch {
+	case len(found) == 0:
+		return protocol.EncoderSoftware, "software: no GPU encoder on the host"
+	case large:
+		return protocol.EncoderSoftware, fmt.Sprintf("software: %s needs ffmpeg to pay at %s on %d CPUs",
+			strings.Join(found, " and "), size, r.CPUs)
+	}
+	return protocol.EncoderSoftware, fmt.Sprintf("software: openh264 is cheap enough at %s on %d CPUs, and lower latency than %s",
+		size, r.CPUs, strings.Join(found, " or "))
 }
