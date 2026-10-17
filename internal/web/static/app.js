@@ -88,6 +88,7 @@ function sendControl(c) {
 async function onSignal(m) {
   switch (m.type) {
     case 'config':
+      input.scale = m.config?.hidpi ? window.devicePixelRatio || 1 : 1;
       if (!pc) createPeer(m.config ?? {});
       break;
     case 'answer': {

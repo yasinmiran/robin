@@ -40,7 +40,9 @@ type Options struct {
 	Attach  string
 	Audio   bool
 	Encoder string
-	STUN    []string
+	// HiDPI sizes the remote display in the browser's device pixels.
+	HiDPI bool
+	STUN  []string
 
 	Listen    string // page address, default 127.0.0.1:0
 	NoBrowser bool   // print the URL on stdout instead of opening a browser
@@ -154,7 +156,7 @@ func Run(ctx context.Context, o Options) error {
 
 	b := &bridge{
 		agent: ag.conn, relay: relay.New(relay.Policy{Transport: o.Transport, TunnelPort: tunnelPort}),
-		config: protocol.Config{ICEServers: iceServers(start.STUN)}, log: log,
+		config: protocol.Config{ICEServers: iceServers(start.STUN), HiDPI: o.HiDPI}, log: log,
 	}
 	err = b.run(ctx, srv, m.Done())
 	// Ctrl+C in a terminal reaches ssh too, so the master may die first; a

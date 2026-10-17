@@ -48,6 +48,7 @@ session survives until you press Ctrl+C in the terminal.
 | `--transport` | `auto` | `direct` for UDP only, `tunnel` to force the SSH path |
 | `--max-size` | `1920x1080` | largest remote resolution; the display follows your window up to this. 1280x720 on hosts with two cores or fewer |
 | `--fps` | `30` | frame rate cap (20 on small hosts) |
+| `--hidpi` | off | size the remote display in the browser's device pixels: sharp text on Retina screens, about four times the pixels to encode. Raise `--max-size` to go fully native |
 | `--max-kbps` | `10000` | video bitrate ceiling; congestion control works below it |
 | `--session` | lightest found | command to run in the display, e.g. `startxfce4` |
 | `--stun` | Google's public server | STUN servers for NAT traversal, comma-separated, or `none` |

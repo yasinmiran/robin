@@ -19,6 +19,9 @@ export class Input {
   #pasteQueue = null; // key messages held back while waiting for a paste event
   #pasteTimer = 0;
   #resizeTimer = 0;
+  // scale turns CSS pixels into remote pixels: devicePixelRatio when the
+  // session asked for HiDPI, 1 otherwise.
+  scale = 1;
 
   // send delivers one Control message; active reports whether input should
   // be captured at all, so a closed session leaves the browser's own keys
@@ -55,7 +58,7 @@ export class Input {
   }
 
   sendResize() {
-    this.#send({ t: 'resize', w: Math.round(window.innerWidth), h: Math.round(window.innerHeight) });
+    this.#send({ t: 'resize', w: Math.round(window.innerWidth * this.scale), h: Math.round(window.innerHeight * this.scale) });
   }
 
   sendClipboard(text) {

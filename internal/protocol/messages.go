@@ -96,6 +96,9 @@ type Ready struct {
 // Config tells the browser how to build its RTCPeerConnection.
 type Config struct {
 	ICEServers []ICEServer `json:"iceServers"`
+	// HiDPI asks the page to size the remote display in device pixels
+	// rather than CSS pixels.
+	HiDPI bool `json:"hidpi,omitempty"`
 }
 
 // ICEServer mirrors the browser's RTCIceServer.
@@ -154,7 +157,8 @@ type Control struct {
 	DX float64 `json:"dx,omitempty"`
 	DY float64 `json:"dy,omitempty"`
 
-	// Resize, in CSS pixels of the client viewport.
+	// Resize, in CSS pixels of the client viewport, or device pixels when
+	// Config.HiDPI is set.
 	W int `json:"w,omitempty"`
 	H int `json:"h,omitempty"`
 
