@@ -22,6 +22,7 @@ RUN userdel -r ubuntu \
  && usermod -p '*' rj \
  && mkdir -p /run/sshd /etc/ssh/rj /etc/ssh/authorized_keys.d \
  && install -d -m 1777 /tmp/.X11-unix \
+ && install -d -o rj -g rj -m 0700 /run/user/1000 \
  && rm -f /etc/ssh/ssh_host_* /etc/ssh/sshd_config.d/*
 
 COPY sshd_config /etc/ssh/sshd_config

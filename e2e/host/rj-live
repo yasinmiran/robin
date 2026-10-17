@@ -3,7 +3,8 @@
 # running before remotejump comes along.
 #
 #   rj-live start   start Xvfb on :5 with its cookie in ~/.Xauthority, as
-#                   startx does, then xterm and openbox; save its state
+#                   startx does, then xterm, openbox and the user's
+#                   pulseaudio; save its state
 #   rj-live state   print what an attached session must leave as it found it
 #   rj-live before  print the state saved at start
 set -euo pipefail
@@ -13,7 +14,7 @@ dir=$HOME/.rj-live
 
 state() {
   export DISPLAY=:$num XAUTHORITY=$HOME/.Xauthority
-  echo "Xvfb $(pgrep -u rj -x Xvfb) openbox $(pgrep -u rj -x openbox) xterm $(pgrep -u rj -x xterm)"
+  echo "Xvfb $(pgrep -u rj -x Xvfb) openbox $(pgrep -u rj -x openbox) xterm $(pgrep -u rj -x xterm) pulseaudio $(pgrep -u rj -x pulseaudio)"
   echo "geometry $(xdotool getdisplaygeometry)"
   xset q | sed -n '/auto repeat:/p;/auto repeating keys:/,/bell percent/p' | sed 's/ *bell percent.*//;s/ *key click.*//'
   echo "core keymap $(xmodmap -pke | sha256sum | cut -c1-16)"
@@ -35,6 +36,15 @@ start() {
   setsid -f xterm -geometry 80x24+60+60 </dev/null >"$dir/xterm.log" 2>&1
   xdotool search --sync --onlyvisible --class xterm >/dev/null
   setsid -f openbox </dev/null >"$dir/openbox.log" 2>&1
+  # A logged-in desktop comes with its user's sound server, which an attached
+  # session records.
+  XDG_RUNTIME_DIR=/run/user/$(id -u) setsid -f pulseaudio --daemonize=no --exit-idle-time=-1 -n \
+    --load="module-null-sink sink_name=desk rate=48000 channels=2 norewinds=1" \
+    --load=module-native-protocol-unix </dev/null >"$dir/pulseaudio.log" 2>&1
+  for _ in $(seq 100); do
+    [[ -S /run/user/$(id -u)/pulse/native ]] && break
+    sleep 0.1
+  done
   for _ in $(seq 100); do
     xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q 'window id' && break
     sleep 0.1

@@ -237,8 +237,11 @@ test('sound: the desktop is heard once the speaker is turned on', async ({}, tes
     .toBeGreaterThan(before);
   await playing;
   testInfo.annotations.push({ type: 'audio', description: JSON.stringify(await audio()) });
-  // The session's programs get a cookie in the run dir, so libpulse writes none.
-  expect(await host.exists('/home/rj/.config/pulse'), '~/.config/pulse on the host').toBe(false);
+  // A spawned session's programs get a cookie in the run dir, so libpulse
+  // writes none. An attached desktop's own server keeps its cookie there.
+  if (SCENARIO !== 'attach') {
+    expect(await host.exists('/home/rj/.config/pulse'), '~/.config/pulse on the host').toBe(false);
+  }
 });
 
 if (SCENARIO === 'direct') {
