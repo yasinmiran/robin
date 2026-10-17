@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the robin e2e suite in rootless podman.
 #
-#   ./run.sh                    every scenario: direct blocked restart attach wayland
+#   ./run.sh                    every scenario: direct blocked restart attach wayland webkit firefox
 #   ./run.sh direct restart     just those
 #   ./run.sh selftest           prove the harness itself, no CLI needed
 #
@@ -30,7 +30,7 @@ WLHOST_IMG=localhost/$NET-wlhost
 ROBIN_BIN=${ROBIN_BIN:-bin/robin-linux-amd64}
 [[ $ROBIN_BIN = /* ]] || ROBIN_BIN=$ROOT/$ROBIN_BIN
 
-ALL_SCENARIOS=(direct blocked restart attach wayland)
+ALL_SCENARIOS=(direct blocked restart attach wayland webkit firefox)
 
 log() { printf '\033[1m[e2e]\033[0m %s\n' "$*" >&2; }
 die() { log "error: $*"; exit 2; }
@@ -152,7 +152,12 @@ run_scenario() {
   mkdir -p "$dir"
   log "scenario $s: fresh host"
   remove_containers
-  local spec=tests/gui.spec.ts
+  local spec=tests/gui.spec.ts project=chrome expect=$s
+  # The webkit and firefox scenarios are the direct one in another browser.
+  if [[ $s = webkit || $s = firefox ]]; then
+    project=$s
+    expect=direct
+  fi
   if [[ $s = wayland ]]; then
     start_host "$WLHOST_IMG"
     spec=tests/wayland.spec.ts
@@ -176,10 +181,10 @@ run_scenario() {
     on_client ssh robinhost robin-wayland start
     cli_args="--attach auto $cli_args"
   fi
-  on_client env SCENARIO="$s" \
+  on_client env SCENARIO="$expect" ROBIN_E2E_BROWSER="$project" \
     ROBIN_RESTART_TIMEOUT_MS="${ROBIN_RESTART_TIMEOUT_MS:-15000}" ROBIN_SIGINT_PID_ONLY="${ROBIN_SIGINT_PID_ONLY:-0}" \
     ROBIN_CLI_ARGS="$cli_args" \
-    npx playwright test "$spec" || status=$?
+    npx playwright test --project="$project" "$spec" || status=$?
   save_host_state "$dir"
   remove_containers
   return "$status"
@@ -341,7 +346,7 @@ selftest() {
   start_host
   start_client "$dir"
   wait_for_sshd
-  on_client env SCENARIO=selftest npx playwright test tests/selftest.spec.ts || status=$?
+  on_client env SCENARIO=selftest npx playwright test --project=chrome tests/selftest.spec.ts || status=$?
   save_host_state "$dir"
   remove_containers
 
@@ -356,8 +361,8 @@ main() {
   local s
   for s in "${scenarios[@]}"; do
     case $s in
-      selftest | direct | blocked | restart | attach | wayland) ;;
-      *) die "unknown scenario '$s' (want selftest, direct, blocked, restart, attach or wayland)" ;;
+      selftest | direct | blocked | restart | attach | wayland | webkit | firefox) ;;
+      *) die "unknown scenario '$s' (want selftest, direct, blocked, restart, attach, wayland, webkit or firefox)" ;;
     esac
   done
   command -v podman >/dev/null || die "podman not found"

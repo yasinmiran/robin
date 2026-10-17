@@ -17,6 +17,14 @@ const SCREEN = '#screen';
 const FIRST_FRAME_MS = 20_000;
 const RESTART_TIMEOUT_MS = Number(process.env.ROBIN_RESTART_TIMEOUT_MS ?? 15_000);
 
+// Playwright's WebKit on Linux decodes WebRTC video but renders no remote
+// track into a <video> element, not even a VP8 loopback between two peer
+// connections in a blank page (e2e/README.md). There the checks that read
+// the picture or map the pointer onto it are skipped, and decoding is read
+// from the browser's stats instead.
+const PICTURE = process.env.ROBIN_E2E_BROWSER !== 'webkit';
+const NO_PICTURE = "Playwright's Linux WebKit renders no remote WebRTC video";
+
 type Endpoint = { address: string; port: number; protocol: string; candidateType: string };
 type Stats = {
   transport: 'udp' | 'tcp' | null;
@@ -31,6 +39,26 @@ type Stats = {
 
 const state = (page: Page) => page.evaluate(() => (window as any).robin?.state as string | undefined);
 const stats = (page: Page) => page.evaluate(() => (window as any).robin.stats() as Promise<Stats>);
+
+// decodedVideo is the browser's own account of the video it decoded: the
+// negotiated codec, how many frames, and their size.
+const decodedVideo = (page: Page) =>
+  page.evaluate(async () => {
+    const report = await ((window as any).robin.pc as RTCPeerConnection).getStats();
+    let out = { codec: '', framesDecoded: 0, keyFramesDecoded: 0, width: 0, height: 0 };
+    report.forEach((s: any) => {
+      if (s.type !== 'inbound-rtp' || s.kind !== 'video') return;
+      const c = report.get(s.codecId);
+      out = {
+        codec: `${c?.mimeType ?? ''} ${c?.sdpFmtpLine ?? ''}`.trim(),
+        framesDecoded: s.framesDecoded ?? 0,
+        keyFramesDecoded: s.keyFramesDecoded ?? 0,
+        width: s.frameWidth ?? 0,
+        height: s.frameHeight ?? 0,
+      };
+    });
+    return out;
+  });
 
 let cli: Cli | undefined;
 let context: BrowserContext;
@@ -55,7 +83,8 @@ test.beforeAll(async ({ browser }, testInfo) => {
   await expect
     .poll(() => page.evaluate(() => typeof (window as any).robin), { message: 'window.robin exists', timeout: 15_000 })
     .toBe('object');
-  // Logs every state change to console.log, for reading a failure afterwards.
+  // Logs every state change, and anything the page's CSP blocks, to
+  // console.log, for reading a failure afterwards.
   await page.evaluate(() => {
     let last: string | undefined;
     setInterval(() => {
@@ -63,6 +92,10 @@ test.beforeAll(async ({ browser }, testInfo) => {
       if (s !== last) console.log(`[robin-state] ${last} -> ${s}`);
       last = s;
     }, 100);
+    document.addEventListener('securitypolicyviolation', (e) => {
+      const where = `${e.sourceFile || '?'}:${e.lineNumber}`;
+      console.log(`[robin-csp] ${e.effectiveDirective} blocked ${e.blockedURI || 'inline'} at ${where} ${e.sample}`);
+    });
   });
 });
 
@@ -72,7 +105,13 @@ test.afterEach(async ({}, testInfo) => {
   const snapshot = await page
     .evaluate(async () => {
       const robin = (window as any).robin;
-      return { state: robin?.state, stats: await robin?.stats?.().catch((e: Error) => String(e)) };
+      // The browser's own view of the video stream: decoder, frames received
+      // against decoded, keyframes, what it asked for.
+      let inbound: unknown = null;
+      (await (robin?.pc as RTCPeerConnection | undefined)?.getStats().catch(() => undefined))?.forEach((s: any) => {
+        if (s.type === 'inbound-rtp' && s.kind === 'video') inbound = s;
+      });
+      return { state: robin?.state, stats: await robin?.stats?.().catch((e: Error) => String(e)), inbound };
     })
     .catch((e) => ({ error: String(e) }));
   await testInfo.attach('robin', { body: JSON.stringify(snapshot, null, 2), contentType: 'application/json' });
@@ -127,6 +166,7 @@ async function typeIntoTerminal(command: string, file: string, want: string) {
 }
 
 test('frames decode: non-black within 20 s, framesDecoded increasing', async () => {
+  test.skip(!PICTURE, NO_PICTURE);
   const left = Math.max(1_000, FIRST_FRAME_MS - (Date.now() - sessionStart));
   await expect
     .poll(async () => isNonBlack(await sampleFrame(page, SCREEN)), { message: 'a non-black frame', timeout: left, intervals: [250] })
@@ -138,14 +178,52 @@ test('frames decode: non-black within 20 s, framesDecoded increasing', async () 
   await expect.poll(async () => (await stats(page)).framesDecoded, { message: 'framesDecoded grows', timeout: 10_000 }).toBeGreaterThan(first);
 });
 
+if (!PICTURE) {
+  test('frames decode: Constrained Baseline H.264 keeps decoding, read from getStats', async ({}, testInfo) => {
+    const left = Math.max(1_000, FIRST_FRAME_MS - (Date.now() - sessionStart));
+    await expect
+      .poll(async () => (await decodedVideo(page)).framesDecoded, { message: 'framesDecoded', timeout: left })
+      .toBeGreaterThan(0);
+    const first = await decodedVideo(page);
+    testInfo.annotations.push({ type: 'decoded', description: JSON.stringify(first) });
+    expect(first.codec, 'negotiated codec').toMatch(/^video\/H264 /i);
+    expect(first.codec).toContain('packetization-mode=1');
+    expect(first.codec).toContain('profile-level-id=42e01f');
+    expect(first.keyFramesDecoded, 'keyframes decoded').toBeGreaterThan(0);
+    expect(first.width * first.height, 'decoded frame size').toBeGreaterThan(0);
+    await host.retitleTerminal().catch(() => {});
+    await expect
+      .poll(async () => (await decodedVideo(page)).framesDecoded, { message: 'framesDecoded grows', timeout: 10_000 })
+      .toBeGreaterThan(first.framesDecoded);
+  });
+}
+
 test('keyboard: a typed command runs on the host and shows in the picture', async () => {
+  test.skip(!PICTURE, NO_PICTURE);
   await typeIntoTerminal(`echo robin-e2e > /tmp/robin-e2e-${SCENARIO}`, `/tmp/robin-e2e-${SCENARIO}`, 'robin-e2e');
 });
+
+if (!PICTURE) {
+  // Without a picture there is nothing to click, so the host focuses the
+  // xterm the way that click would.
+  test('keyboard: a typed command runs on the host', async () => {
+    const file = `/tmp/robin-e2e-${SCENARIO}`;
+    await host.ssh(`rm -f ${file}`);
+    await expect.poll(host.terminal, { message: 'an xterm is mapped', timeout: 15_000 }).not.toBeNull();
+    await host.focusTerminal();
+    await page.keyboard.type(`echo robin-e2e > ${file}`, { delay: 20 });
+    await page.keyboard.press('Enter');
+    await expect
+      .poll(async () => (await host.sshRaw(`cat ${file}`)).stdout.trim(), { message: `${file} on the host`, timeout: 10_000 })
+      .toBe('robin-e2e');
+  });
+}
 
 // A still screen sends only the keyframes Chrome asks for every 3 s, and
 // Chrome's jitter estimate grows on them until it holds new frames back for
 // about a second, so what is typed after a pause shows late.
 test('latency: after 20 s of a still screen, keystrokes show within 400 ms', async ({}, testInfo) => {
+  test.skip(!PICTURE, NO_PICTURE);
   testInfo.setTimeout(60_000);
   let term: host.Rect | null = null;
   await expect.poll(async () => (term = await host.terminal()), { message: 'an xterm is mapped', timeout: 15_000 }).not.toBeNull();
@@ -187,6 +265,7 @@ test('latency: after 20 s of a still screen, keystrokes show within 400 ms', asy
 });
 
 test('pointer: the remote cursor lands where the page points, within 2 px', async () => {
+  test.skip(!PICTURE, NO_PICTURE);
   const { width, height } = await host.displayGeometry();
   for (const [fx, fy] of [
     [0.23, 0.31],
@@ -208,6 +287,7 @@ test('pointer: the remote cursor lands where the page points, within 2 px', asyn
 });
 
 test('cursor: the page wears the remote pointer image, which changes over the xterm', async () => {
+  test.skip(!PICTURE, NO_PICTURE);
   const cursorOf = () => page.evaluate(() => getComputedStyle(document.getElementById('screen')!).cursor);
   const { width, height } = await host.displayGeometry();
   const desk = await pagePoint(page, SCREEN, width - 20, height - 20);
@@ -243,7 +323,10 @@ test('resize: display and video follow a 1000x700 viewport within 10 s', async (
   await expect
     .poll(
       async () => {
-        const video = await page.$eval(SCREEN, (v) => `${(v as HTMLVideoElement).videoWidth}x${(v as HTMLVideoElement).videoHeight}`);
+        // Without a picture, the size of the frames the browser decoded.
+        const video = PICTURE
+          ? await page.$eval(SCREEN, (v) => `${(v as HTMLVideoElement).videoWidth}x${(v as HTMLVideoElement).videoHeight}`)
+          : await decodedVideo(page).then((v) => `${v.width}x${v.height}`);
         const g = await host.displayGeometry();
         return `video ${video}, display ${g.width}x${g.height}`;
       },

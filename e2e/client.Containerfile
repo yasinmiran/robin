@@ -18,3 +18,10 @@ RUN npm ci --no-audit --no-fund \
 RUN npx playwright install --with-deps chrome \
  && rm -rf /var/lib/apt/lists/* \
  && google-chrome --version
+
+# Firefox (the image's own Playwright build) decodes H.264 in WebRTC only with
+# Cisco's OpenH264 plugin, which it would otherwise download on first use.
+COPY client/firefox-openh264.py /usr/local/lib/
+RUN python3 /usr/local/lib/firefox-openh264.py /ms-playwright/firefox-*/firefox/omni.ja \
+      /opt/gmp-gmpopenh264/system-installed
+ENV MOZ_GMP_PATH=/opt/gmp-gmpopenh264/system-installed

@@ -65,6 +65,12 @@ export async function terminal(): Promise<Rect | null> {
   return { x: v.X, y: v.Y, width: v.WIDTH, height: v.HEIGHT };
 }
 
+// focusTerminal gives the xterm the keyboard focus from the host side, which
+// a click through the picture does otherwise.
+export async function focusTerminal(): Promise<void> {
+  await ssh(`robin-x sh -c '${FIRST_XTERM} && xdotool windowfocus --sync "$w"'`);
+}
+
 // retitleTerminal changes the xterm's title, so the window manager redraws the
 // title bar: damage that does not go through robin's input path.
 export async function retitleTerminal(): Promise<void> {

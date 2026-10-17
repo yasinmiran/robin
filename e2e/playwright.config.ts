@@ -1,7 +1,8 @@
 import { defineConfig } from '@playwright/test';
 
 // Runs inside the client container, where out/ is e2e/out/<scenario> on the
-// host. run.sh picks the spec file; SCENARIO tells gui.spec.ts what to expect.
+// host. run.sh picks the spec file and the project (the browser); SCENARIO
+// tells gui.spec.ts what to expect.
 export default defineConfig({
   testDir: 'tests',
   outputDir: 'out/test-results',
@@ -17,11 +18,37 @@ export default defineConfig({
     ['json', { outputFile: 'out/results.json' }],
   ],
   use: {
-    channel: 'chrome',
     headless: true,
     viewport: { width: 1280, height: 720 },
-    launchOptions: { args: ['--autoplay-policy=no-user-gesture-required'] },
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
+  projects: [
+    {
+      name: 'chrome',
+      use: { channel: 'chrome', launchOptions: { args: ['--autoplay-policy=no-user-gesture-required'] } },
+    },
+    // Playwright's WebKit runs Safari's WebRTC stack (libwebrtc) on Linux.
+    { name: 'webkit', use: { browserName: 'webkit' } },
+    {
+      name: 'firefox',
+      use: {
+        browserName: 'firefox',
+        launchOptions: {
+          // The OpenH264 plugin the client image installs under MOZ_GMP_PATH,
+          // set up the way distributions ship it: enabled, never updated.
+          firefoxUserPrefs: {
+            'media.gmp-gmpopenh264.enabled': true,
+            'media.gmp-gmpopenh264.provider.enabled': true,
+            'media.gmp-gmpopenh264.autoupdate': false,
+            'media.gmp-gmpopenh264.visible': true,
+            'media.gmp-gmpopenh264.version': 'system-installed',
+            'media.gmp-manager.updateEnabled': false,
+            'media.peerconnection.video.h264_enabled': true,
+            'media.autoplay.default': 0,
+          },
+        },
+      },
+    },
+  ],
 });
