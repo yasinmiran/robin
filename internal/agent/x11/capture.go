@@ -4,7 +4,10 @@ package x11
 
 import (
 	"fmt"
+	"hash/maphash"
+	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/jezek/xgb"
 	"github.com/jezek/xgb/damage"
@@ -18,6 +21,11 @@ import (
 // Frame is a captured picture; see desktop.Frame.
 type Frame = desktop.Frame
 
+// damageCheck is how long a screen DAMAGE calls idle goes before Capture
+// grabs it anyway. Some compositors draw in ways DAMAGE on the root window
+// never hears about; this is how such a screen is noticed.
+const damageCheck = time.Second
+
 // capturer holds the shared memory segment the server copies frames into.
 type capturer struct {
 	mu    sync.Mutex
@@ -26,6 +34,15 @@ type capturer struct {
 	noSHM bool // MIT-SHM is unavailable or failed; use plain GetImage
 	seg   *segment
 	frame Frame
+
+	grabbed    time.Time // when frame was taken
+	checkEvery time.Duration
+	seed       maphash.Seed
+	sum        uint64 // hash of frame, once summed is set
+	summed     bool
+	// polling means DAMAGE was caught missing a change: every Capture then
+	// grabs the screen and compares it with the last frame.
+	polling bool
 }
 
 type segment struct {
@@ -35,6 +52,7 @@ type segment struct {
 
 func (cp *capturer) init(x *xgb.Conn, root xproto.Window) {
 	cp.x, cp.root = x, root
+	cp.checkEvery, cp.seed = damageCheck, maphash.MakeSeed()
 	if err := shm.Init(x); err != nil {
 		cp.noSHM = true
 		return
@@ -58,8 +76,43 @@ func (c *Conn) Capture(force bool) (f *Frame, changed bool, err error) {
 		if cp.frame.Pix == nil {
 			return nil, false, nil
 		}
+		if !cp.polling && time.Since(cp.grabbed) < cp.checkEvery {
+			cp.hash() // the screen just went idle: remember what it shows
+			return &cp.frame, false, nil
+		}
+		return c.recheck()
+	}
+	if err := c.grabScreen(); err != nil {
+		return nil, false, err
+	}
+	if cp.polling {
+		cp.hash()
+	}
+	return &cp.frame, true, nil
+}
+
+// recheck grabs a screen DAMAGE calls idle and reports whether it changed
+// all the same. The first change it finds stops Capture trusting DAMAGE.
+func (c *Conn) recheck() (*Frame, bool, error) {
+	cp := &c.cap
+	cp.hash()
+	before := cp.sum
+	if err := c.grabScreen(); err != nil {
+		return nil, false, err
+	}
+	cp.hash()
+	if cp.sum == before {
 		return &cp.frame, false, nil
 	}
+	if !cp.polling {
+		cp.polling = true
+		slog.Warn("x11: DAMAGE missed a change on screen; comparing every frame from now on")
+	}
+	return &cp.frame, true, nil
+}
+
+func (c *Conn) grabScreen() error {
+	cp := &c.cap
 	w, h := c.Size()
 	// Subtract before copying: anything drawn during the copy then raises a
 	// fresh DAMAGE event and the next Capture picks it up.
@@ -67,9 +120,17 @@ func (c *Conn) Capture(force bool) (f *Frame, changed bool, err error) {
 	if err := cp.grab(w, h); err != nil {
 		c.dirty.Store(true)
 		c.sizeStale.Store(true) // the usual cause is a resize we have not seen yet
-		return nil, false, fmt.Errorf("x11: capture %dx%d: %w", w, h, err)
+		return fmt.Errorf("x11: capture %dx%d: %w", w, h, err)
 	}
-	return &cp.frame, true, nil
+	cp.grabbed, cp.summed = time.Now(), false
+	return nil
+}
+
+// hash sums the current frame unless that is already done.
+func (cp *capturer) hash() {
+	if !cp.summed {
+		cp.sum, cp.summed = maphash.Bytes(cp.seed, cp.frame.Pix[:cp.frame.Stride*cp.frame.Height]), true
+	}
 }
 
 func (cp *capturer) grab(w, h int) error {

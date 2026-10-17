@@ -15,12 +15,13 @@ image=localhost/rj-xtest
 out=$(mktemp -d)
 trap 'rm -rf "$out"; podman rm -f "rj-xtest-$$" >/dev/null 2>&1 || true' EXIT
 
-podman build -q -t "$image" -f "$here/Containerfile" "$here" >/dev/null
+# Run by ID: another checkout may retag the image between build and run.
+id=$(podman build -q -t "$image" -f "$here/Containerfile" "$here")
 cd "$root"
 for pkg in display x11 .; do
 	go test ${XTEST_GOFLAGS--race} -c -o "$out/$(basename "$(cd "internal/agent/$pkg" && pwd)").test" "./internal/agent/$pkg"
 done
-podman run --rm --init --name "rj-xtest-$$" -v "$out:/t:ro" "$image" sh -c '
+podman run --rm --init --name "rj-xtest-$$" -v "$out:/t:ro" "$id" sh -c '
 	cd /tmp
 	status=0
 	for t in /t/display.test /t/x11.test /t/agent.test; do
