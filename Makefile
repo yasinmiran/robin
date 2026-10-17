@@ -33,7 +33,7 @@ bin/remotejump: agents $(GOSRC) go.mod go.sum
 
 bin/remotejump-agent-linux-%: $(GOSRC) go.mod go.sum toolchain/*.sh
 	@set -e; \
-	t=$(target_$*); zig=$$(toolchain/zig.sh); prefix=$$(toolchain/openh264.sh $$t); \
+	t=$(target_$*); zig=$$(toolchain/zig.sh); prefix=$$(toolchain/openh264.sh $$t); toolchain/opus.sh $$t >/dev/null; \
 	echo "build agent linux/$* ($$t)"; \
 	CGO_ENABLED=1 GOOS=linux GOARCH=$* CC="$$zig cc -target $$t" CXX="$$zig c++ -target $$t" \
 	CGO_CFLAGS="-I$$prefix/include" CGO_LDFLAGS="-L$$prefix/lib" \
