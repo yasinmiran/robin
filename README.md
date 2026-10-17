@@ -135,6 +135,8 @@ The first time, a dialog comes up on the host's own screen and someone sitting
 there has to answer it. On GNOME, switch on Allow Remote Interaction before
 pressing Share, or the session is view only; the CLI says so if that happens,
 and also says, while it waits, what to approve and for how long (two minutes).
+KDE Plasma asks once for both the picture and the input, and Approve grants
+them together.
 Approval gets the agent a restore token from the portal. The agent keeps it
 next to itself on the host, in `wayland-restore-token`, readable only by you,
 and every later session starts with no dialog at all. Delete the file to be
@@ -284,21 +286,26 @@ list. On a shared client, use `--no-browser` and open the printed URL yourself.
 ```sh
 make test     # unit and integration tests; the encoders against real openh264 and libopus on linux/amd64
 make test-x   # capture, input, display, sound server and agent session tests against Xvfb and pulseaudio, in podman
-make test-wayland  # Wayland attach against headless mutter and the GNOME portal, in podman
+make test-wayland  # Wayland attach against headless GNOME 46, GNOME 49 and KDE Plasma 6.7, in podman
 make e2e      # the whole thing: podman host, Playwright and Chrome client
 make check    # all four
 ```
 
-`make test-wayland` boots mutter with a virtual monitor, PipeWire and
-xdg-desktop-portal-gnome in a container. Nobody sits at that screen, so the
-harness answers the consent dialog itself by clicking it through mutter's
-own remote desktop interface, a path only the tests use. It checks that the
-first session asks and the second restores without asking, that frames
-arrive and change, pointer, keys and held-key repeat, the clipboard both
-ways, view-only grants, and that no `gst-launch-1.0` or portal session
-outlives the agent, whether it closes or is killed. A tone played into that
-session's PipeWire must come out of the agent's capture through
-`pipewire-pulse`.
+`make test-wayland` boots three desktops, each in its own container with a
+virtual monitor, PipeWire and the desktop's own portal: mutter 46 on Ubuntu
+24.04, mutter 49 on Fedora 43, and kwin_wayland 6.7 with
+xdg-desktop-portal-kde on Fedora 43 (`WLTEST_DESKTOPS` picks fewer). Nobody
+sits at those screens, so the harness answers the consent dialog itself:
+through mutter's own remote desktop interface on GNOME, and by pressing
+Approve through the accessibility bus on KDE, paths only the tests use. It
+checks that the first session asks and the second restores without asking,
+that frames arrive and change, pointer, keys and held-key repeat, the
+clipboard both ways, view-only grants (GNOME only; KDE has none), and that
+no `gst-launch-1.0` or portal session outlives the agent, whether it closes
+or is killed. A tone played into each session's PipeWire must come out of
+the agent's capture through `pipewire-pulse`. KWin screencasts only when it
+composites with OpenGL, so the KDE container borrows the host's GPU render
+node, and is skipped, with a line saying so, on a machine without one.
 
 `make e2e` runs four scenarios against a fresh host container each: direct
 UDP, UDP blocked on the host from the start, UDP blocked mid-session, and
@@ -359,8 +366,11 @@ to print the comparison the ADR quotes.
 - Held keys on Wayland repeat at the host's own rate, and the browser's
   repeats are not sent. A held key during a network stall keeps repeating
   on the host until the key-up gets through.
-- The Wayland tests run against GNOME 46. KDE Plasma 6's portal was
-  checked by hand during design but is not in the suite.
+- The Wayland tests run against GNOME 46, GNOME 49 and KDE Plasma 6.7.
+  Other versions and distributions are untested.
+- KDE Plasma shares its screen only while KWin composites with OpenGL. With
+  KWin's QPainter fallback, used where it finds no GPU to render with, the
+  portal refuses to start and the session ends with "Start failed".
 - An attached X11 desktop arrives as one picture of all its monitors, gaps
   included, scaled to fit `--max-size`, so on a wide multi-monitor desktop
   small text gets hard to read.

@@ -470,6 +470,19 @@ covered. The agent talks D-Bus with `godbus`, so it stays pure Go. The
 mutter-direct path appears in one place, the test harness, which uses it to
 click the consent dialog in a container where nobody is at the screen.
 
+The same agent passes the same suites on GNOME 46, GNOME 49 and KDE Plasma
+6.7 without a line that knows which desktop it is on. Three differences
+showed up on KDE, none of them in the agent. KDE's dialog grants the
+devices the request names or nothing, so there is no view-only grant to
+handle there. KWin screencasts only while it composites with OpenGL: in a
+container without a GPU it falls back to QPainter and the portal fails
+Start with "Unsupported compositing type", so the KDE test container
+borrows the host's render node. And the harness answers KDE's dialog by
+pressing Approve through AT-SPI, which Qt serves only when
+`QT_LINUX_ACCESSIBILITY_ALWAYS_ON` is set, as the test session does.
+Restore tokens, the clipboard's MIME list, keysyms, the embedded cursor and
+discrete wheel steps behave as on GNOME.
+
 ### The restore token is a credential, spent by every Start
 
 Persistence is requested on `SelectDevices` with `persist_mode` 2, until

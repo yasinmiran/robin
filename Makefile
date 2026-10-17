@@ -76,9 +76,9 @@ test-short:
 test-x:
 	internal/agent/x11/testdata/xtest.sh
 
-# Wayland attach against headless mutter, PipeWire and the GNOME portal, in
+# Wayland attach against headless GNOME 46, GNOME 49 and KDE Plasma 6.7, in
 # podman: consent, restore, frames, input, clipboard, teardown and PipeWire
-# sound capture.
+# sound capture. KDE needs a GPU render node and is skipped without one.
 test-wayland:
 	internal/agent/wayland/testdata/wltest.sh
 
