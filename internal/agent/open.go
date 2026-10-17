@@ -59,10 +59,6 @@ func spawnX11(ctx context.Context, start protocol.Start, runDir string, env []st
 // errAttachUnavailable marks attach modes this build does not have yet.
 var errAttachUnavailable = errors.New("attaching to a running desktop is not available in this agent")
 
-func attachX11(ctx context.Context, start protocol.Start, log *slog.Logger) (*openedDesktop, error) {
-	return nil, fmt.Errorf("attach to X11 display %s: %w", start.Attach, errAttachUnavailable)
-}
-
 func attachWayland(ctx context.Context, start protocol.Start, log *slog.Logger) (*openedDesktop, error) {
 	return nil, fmt.Errorf("attach to the Wayland session: %w", errAttachUnavailable)
 }
