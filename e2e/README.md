@@ -26,8 +26,13 @@ once the layers are cached. The `wayland` scenario adds the GNOME host image
 (about 1 GB) and needs Go on the machine to build `rj-consent`.
 
 Exit status is non-zero if any scenario fails. Containers and the `rj-e2e`
-network are removed on exit, Ctrl-C included, and two runs cannot share a
-machine because the names are fixed.
+network are removed on exit, Ctrl-C included. Two runs can share a machine
+when each sets its own `RJ_E2E_ID` (which names the network, containers and
+images), `RJ_E2E_SUBNET` and `RJ_E2E_HOST_IP`:
+
+```sh
+RJ_E2E_ID=rj-e2e-2 RJ_E2E_SUBNET=10.89.43.0/24 RJ_E2E_HOST_IP=10.89.43.10 make e2e
+```
 
 ## Scenarios
 
