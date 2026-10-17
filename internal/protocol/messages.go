@@ -75,6 +75,9 @@ type Start struct {
 	Audio bool `json:"audio,omitempty"`
 	// Encoder picks the video encoder by name; empty is EncoderSoftware.
 	Encoder string `json:"encoder,omitempty"`
+	// EncoderFallback lets the agent use software when Encoder fails, since
+	// the CLI picked it on its own rather than the user asking for it.
+	EncoderFallback bool `json:"encoderFallback,omitempty"`
 }
 
 // Start limits the CLI fills in when the user names none, and the agent
@@ -115,6 +118,9 @@ type Ready struct {
 	AudioError string `json:"audioError,omitempty"`
 	// Encoder is the video encoder in use.
 	Encoder string `json:"encoder"`
+	// EncoderError says why the agent fell back to software from the encoder
+	// Start picked.
+	EncoderError string `json:"encoderError,omitempty"`
 }
 
 // Notice is something the user has to do or know before the desktop is ready.
@@ -220,9 +226,12 @@ const (
 	ModeAttach = "attach"
 
 	EncoderSoftware = "software"
-	// The hardware encoders run a host tool and are only used when asked for.
+	// The hardware encoders run a host tool.
 	EncoderVAAPI = "vaapi"
 	EncoderNVENC = "nvenc"
+	// EncoderAuto is the CLI's default: it picks one of the above from the
+	// probe and never sends EncoderAuto itself.
+	EncoderAuto = "auto"
 )
 
 // Cursor is the remote pointer image. The agent sends each distinct image

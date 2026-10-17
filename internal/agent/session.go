@@ -73,21 +73,10 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 	if err != nil {
 		return err
 	}
-	encoderName := start.Encoder
-	if encoderName == "" {
-		encoderName = protocol.EncoderSoftware
-	}
-	newEncoder, ok := o.Encoders[encoderName]
-	if !ok {
-		return fail(conn, fmt.Errorf("encoder %q is not available in this agent", encoderName))
-	}
-	// A hardware encoder rests on tools installed on the host. Find out now
-	// if they fail, not when the browser's first frame is due.
-	enc, err := newEncoder(320, 240, start.FPS, startBitrate)
+	encoderName, newEncoder, encoderErr, err := chooseEncoder(start, o.Encoders, log)
 	if err != nil {
-		return fail(conn, fmt.Errorf("encoder %s: %w", encoderName, err))
+		return fail(conn, err)
 	}
-	enc.Close()
 	runDir, err := makeRunDir(o.RunRoot)
 	if err != nil {
 		return fail(conn, err)
@@ -174,7 +163,7 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 	if err := conn.Send(protocol.Message{Type: protocol.TypeReady, Ready: &protocol.Ready{
 		Version: protocol.Version, AgentBuild: o.Build, Display: d.name, Session: d.session,
 		Width: width, Height: height, TunnelAddr: ln.Addr().String(),
-		Mode: d.mode, Audio: audio != nil, AudioError: audioErr, Encoder: encoderName,
+		Mode: d.mode, Audio: audio != nil, AudioError: audioErr, Encoder: encoderName, EncoderError: encoderErr,
 	}}); err != nil {
 		return err
 	}
