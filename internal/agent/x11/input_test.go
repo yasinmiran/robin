@@ -330,6 +330,24 @@ func TestShortcutsAndNamedKeys(t *testing.T) {
 	tx.assertNothingHeld(t)
 }
 
+// TestHeldKeysBounded proves a peer cannot exhaust the agent's memory by
+// sending key-down events with unique codes and never the matching key-up: the
+// held-key map must stay bounded however many arrive.
+func TestHeldKeysBounded(t *testing.T) {
+	tx := startX(t, "sleep 1000")
+	for i := 0; i < maxHeldKeys*8; i++ {
+		tx.input(t, key("Shift", fmt.Sprintf("Flood%d", i), true))
+	}
+	tx.c.kb.mu.Lock()
+	held := len(tx.c.kb.held)
+	tx.c.kb.mu.Unlock()
+	if held > maxHeldKeys {
+		t.Fatalf("held keys = %d after a flood of unique codes, want <= %d", held, maxHeldKeys)
+	}
+	tx.input(t, protocol.Control{T: protocol.ControlRelease})
+	tx.assertNothingHeld(t)
+}
+
 // TestServerAutorepeat documents whether the server repeats keys we hold:
 // it must not, or browser repeats would come on top.
 func TestServerAutorepeat(t *testing.T) {

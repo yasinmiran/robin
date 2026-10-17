@@ -20,6 +20,11 @@ const (
 	wheelStep      = 100.0 // browser pixels per wheel click
 	maxWheelClicks = 20    // per message, so a bogus delta cannot stall input
 	maxSpareKeys   = 16
+	// maxHeldKeys bounds the keys tracked as held at once. No real keyboard
+	// holds this many; the cap stops a peer that sends key-down events with
+	// unique codes and never the matching key-up from growing the map without
+	// bound.
+	maxHeldKeys = 64
 )
 
 // keyboard is the input state: the server's keymap as last read, the keys
@@ -141,6 +146,9 @@ func (k *keyboard) key(m protocol.Control) error {
 		k.fake(xproto.KeyRelease, byte(h.code))
 		k.fake(xproto.KeyPress, byte(h.code))
 		return nil
+	}
+	if len(k.held) >= maxHeldKeys {
+		return nil // a well-behaved browser never holds this many; ignore the flood
 	}
 	code, _, err := k.keycodeFor(sym)
 	if err != nil {
