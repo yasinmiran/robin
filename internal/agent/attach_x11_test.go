@@ -62,7 +62,7 @@ func rootSize(t *testing.T, x *xgb.Conn, root xproto.Window) (int, int) {
 func TestAttachX11(t *testing.T) {
 	live := liveDisplay(t, 1280, 800)
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	d, err := openDesktop(context.Background(), protocol.Start{Attach: live.Name}, t.TempDir(), nil, log)
+	d, err := openDesktop(context.Background(), protocol.Start{Attach: live.Name}, t.TempDir(), "", nil, nil, log)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestAttachX11(t *testing.T) {
 	}
 
 	// The X server going away ends the attached desktop.
-	d, err = openDesktop(context.Background(), protocol.Start{Attach: live.Name}, t.TempDir(), nil, log)
+	d, err = openDesktop(context.Background(), protocol.Start{Attach: live.Name}, t.TempDir(), "", nil, nil, log)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestAttachX11(t *testing.T) {
 	}
 	d.close()
 
-	if _, err := openDesktop(context.Background(), protocol.Start{Attach: live.Name}, t.TempDir(), nil, log); err == nil {
+	if _, err := openDesktop(context.Background(), protocol.Start{Attach: live.Name}, t.TempDir(), "", nil, nil, log); err == nil {
 		t.Error("attached to a display that is gone")
 	}
 }

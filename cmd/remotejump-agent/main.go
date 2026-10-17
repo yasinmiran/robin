@@ -79,8 +79,9 @@ func serve(args []string) int {
 	os.Stdout = os.Stderr
 
 	err = agent.Run(ctx, os.Stdin, out, agent.Options{
-		RunRoot: filepath.Join(filepath.Dir(exe), "run"),
-		Build:   version,
+		RunRoot:  filepath.Join(filepath.Dir(exe), "run"),
+		StateDir: filepath.Dir(exe),
+		Build:    version,
 		Encoders: map[string]agent.NewEncoderFunc{
 			protocol.EncoderSoftware: newEncoder,
 			protocol.EncoderVAAPI:    hardware(hwenc.NewOpener(hwenc.VAAPI, log)),

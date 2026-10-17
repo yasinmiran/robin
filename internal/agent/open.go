@@ -4,12 +4,13 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 
 	"github.com/yasinmiran/remotejump/internal/agent/desktop"
 	"github.com/yasinmiran/remotejump/internal/agent/display"
+	"github.com/yasinmiran/remotejump/internal/agent/wayland"
 	"github.com/yasinmiran/remotejump/internal/agent/x11"
 	"github.com/yasinmiran/remotejump/internal/protocol"
 )
@@ -26,13 +27,15 @@ type openedDesktop struct {
 }
 
 // openDesktop spawns a headless display or attaches to a running desktop,
-// as Start.Attach asks. env is added to the environment of anything spawned.
-func openDesktop(ctx context.Context, start protocol.Start, runDir string, env []string, log *slog.Logger) (*openedDesktop, error) {
+// as Start.Attach asks. ctx bounds the opening only. env is added to the
+// environment of anything spawned; stateDir keeps what outlives a session;
+// notify reaches the user before Ready.
+func openDesktop(ctx context.Context, start protocol.Start, runDir, stateDir string, env []string, notify func(protocol.Notice), log *slog.Logger) (*openedDesktop, error) {
 	switch start.Attach {
 	case "":
 		return spawnX11(ctx, start, runDir, env)
 	case protocol.AttachWayland:
-		return attachWayland(ctx, start, log)
+		return attachWayland(ctx, start, stateDir, notify, log)
 	default:
 		return attachX11(ctx, start, log)
 	}
@@ -56,9 +59,25 @@ func spawnX11(ctx context.Context, start protocol.Start, runDir string, env []st
 	}, nil
 }
 
-// errAttachUnavailable marks attach modes this build does not have yet.
-var errAttachUnavailable = errors.New("attaching to a running desktop is not available in this agent")
+// waylandTokenFile holds the portal's restore token in the agent's
+// directory. Its name must not start with agentbin.NamePrefix, or deploying
+// a new agent would delete it as a stale one.
+const waylandTokenFile = "wayland-restore-token"
 
-func attachWayland(ctx context.Context, start protocol.Start, log *slog.Logger) (*openedDesktop, error) {
-	return nil, fmt.Errorf("attach to the Wayland session: %w", errAttachUnavailable)
+func attachWayland(ctx context.Context, start protocol.Start, stateDir string, notify func(protocol.Notice), log *slog.Logger) (*openedDesktop, error) {
+	token := ""
+	if stateDir != "" {
+		token = filepath.Join(stateDir, waylandTokenFile)
+	}
+	w, err := wayland.Open(ctx, wayland.Options{
+		TokenFile: token, MaxWidth: start.MaxWidth, MaxHeight: start.MaxHeight, FPS: start.FPS,
+		Notify: notify, Log: log,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("attach to the Wayland session: %w", err)
+	}
+	return &openedDesktop{
+		desk: w, mode: protocol.ModeAttach, name: protocol.AttachWayland, done: w.Done(),
+		close: func() { w.Close() },
+	}, nil
 }

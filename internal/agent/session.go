@@ -45,7 +45,10 @@ type Options struct {
 	// RunRoot holds one private directory per live session. Directories left
 	// by sessions whose process is gone are removed on start.
 	RunRoot string
-	Build   string
+	// StateDir keeps what outlives a session, such as the Wayland portal's
+	// restore token. Empty keeps nothing.
+	StateDir string
+	Build    string
 	// Encoders maps Start.Encoder names to constructors. It must hold
 	// protocol.EncoderSoftware, the default.
 	Encoders map[string]NewEncoderFunc
@@ -112,7 +115,23 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 		}
 	}
 
-	d, err := openDesktop(ctx, start, runDir, desktopEnv, log)
+	// Opening can wait minutes on a consent dialog; a CLI that goes away
+	// meanwhile must not leave the dialog up.
+	openCtx, stopOpen := context.WithCancel(ctx)
+	go func() {
+		select {
+		case <-conn.Done():
+			stopOpen()
+		case <-openCtx.Done():
+		}
+	}()
+	notify := func(n protocol.Notice) {
+		if err := conn.Send(protocol.Message{Type: protocol.TypeNotice, Notice: &n}); err != nil {
+			log.Warn("send notice", "err", err)
+		}
+	}
+	d, err := openDesktop(openCtx, start, runDir, o.StateDir, desktopEnv, notify, log)
+	stopOpen()
 	if err != nil {
 		return fail(conn, err)
 	}
@@ -407,7 +426,7 @@ func (s *session) forwardCursor(ctx context.Context) {
 				return
 			}
 			s.mu.Lock()
-			if len(c.PNG) > 0 {
+			if len(c.PNG) > 0 || c.Hidden {
 				s.cursors[c.ID] = c
 			}
 			s.cursor = c.ID
