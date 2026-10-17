@@ -117,6 +117,11 @@ a fresh cookie in a 0600 file; the agent and its run directory are 0700.
 Input from the page is limited to what a keyboard, a pointer and a clipboard
 can do in that session.
 
+One exposure is on the client side: to open your browser the CLI hands the
+page URL, token included, to `open` or `xdg-open`, so for that moment another
+user logged in to the same client machine could read it from the process
+list. On a shared client, use `--no-browser` and open the printed URL yourself.
+
 ## Testing
 
 ```sh
