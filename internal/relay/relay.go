@@ -133,6 +133,9 @@ func (r *Relay) keep(candidate string) bool {
 
 func isLoopback(candidate string) bool {
 	f := strings.Fields(candidate)
+	if len(f) < 5 {
+		return false
+	}
 	ip := net.ParseIP(f[4])
 	return ip != nil && ip.IsLoopback()
 }
