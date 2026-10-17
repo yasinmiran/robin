@@ -219,7 +219,9 @@ async function exerciseControls(page) {
     return pc.signalingState === 'stable' && !pc.localDescription.sdp.includes(`a=ice-ufrag:${u}`);
   }, before, { timeout: 10000 });
   await page.waitForFunction(() => window.remotejump.state === 'connected', null, { timeout: 10000 });
-  await page.waitForTimeout(1000);
-  const after = (await page.evaluate(() => window.remotejump.stats())).framesDecoded;
-  check(after > decoded, `ICE restart renegotiates and video keeps flowing (${before} -> ${await ufrag()})`);
+  // Poll rather than sleep: under a loaded machine frames can take a few
+  // seconds to resume on the new path.
+  const flowing = await page.waitForFunction(async (d) => (await window.remotejump.stats()).framesDecoded > d, decoded, { timeout: 5000 })
+    .then(() => true, () => false);
+  check(flowing, `ICE restart renegotiates and video keeps flowing (${before} -> ${await ufrag()})`);
 }

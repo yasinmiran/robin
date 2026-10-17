@@ -1,6 +1,7 @@
 import { Input } from './input.js';
 import { Overlay } from './overlay.js';
 import { StatsSampler } from './stats.js';
+import { RemoteCursor } from './cursor.js';
 
 const CONTROL_CHANNEL = 'control';
 const ICE_GRACE_MS = 2000;
@@ -15,6 +16,7 @@ const video = document.getElementById('screen');
 const overlay = new Overlay();
 const sampler = new StatsSampler();
 const input = new Input(video, sendControl, () => channel?.readyState === 'open');
+const cursor = new RemoteCursor(video);
 
 let ws = null;
 let pc = null;
@@ -116,9 +118,13 @@ function createPeer(config) {
 
   const transceiver = pc.addTransceiver('video', { direction: 'recvonly' });
   preferH264(transceiver);
-  pc.ontrack = (e) => {
-    video.srcObject = e.streams[0] ?? new MediaStream([e.track]);
-  };
+  // Sound shares the video's stream, so the one element plays both.
+  pc.addTransceiver('audio', { direction: 'recvonly' });
+  // One stream for every remote track: the agent may answer an audio line
+  // it has nothing to send on, and that track must not replace the video.
+  const remote = new MediaStream();
+  video.srcObject = remote;
+  pc.ontrack = (e) => remote.addTrack(e.track);
 
   channel = pc.createDataChannel(CONTROL_CHANNEL, { ordered: true });
   channel.onopen = () => {
@@ -194,6 +200,10 @@ function checkHeartbeat() {
 }
 
 function onControl(c) {
+  if (c.t === 'cursor') {
+    if (c.cursor) cursor.apply(c.cursor);
+    return;
+  }
   if (c.t !== 'clipboard') return;
   lastRemoteClipboard = c.text ?? '';
   navigator.clipboard?.writeText(lastRemoteClipboard).catch(() => {

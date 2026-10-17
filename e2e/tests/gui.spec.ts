@@ -163,6 +163,22 @@ test('pointer: the remote cursor lands where the page points, within 2 px', asyn
   }
 });
 
+test('cursor: the page wears the remote pointer image, which changes over the xterm', async () => {
+  const cursorOf = () => page.evaluate(() => getComputedStyle(document.getElementById('screen')!).cursor);
+  const { width, height } = await host.displayGeometry();
+  const desk = await pagePoint(page, SCREEN, width - 20, height - 20);
+  await page.mouse.move(desk.x, desk.y, { steps: 3 });
+  await expect.poll(cursorOf, { message: 'a remote cursor image on the video', timeout: 5_000 }).toContain('url(');
+  const onDesk = await cursorOf();
+
+  let term: host.Rect | null = null;
+  await expect.poll(async () => (term = await host.terminal()), { message: 'an xterm is mapped', timeout: 15_000 }).not.toBeNull();
+  const t = term!;
+  const over = await pagePoint(page, SCREEN, t.x + t.width / 2, t.y + t.height / 2);
+  await page.mouse.move(over.x, over.y, { steps: 3 });
+  await expect.poll(cursorOf, { message: 'the xterm text cursor replaces the desktop arrow', timeout: 5_000 }).not.toBe(onDesk);
+});
+
 test('clipboard: browser to host and host to browser', async () => {
   const n = Date.now().toString(36);
   await page.evaluate((t) => (window as any).remotejump.sendClipboard(t), `rj-clip-${n}`);
