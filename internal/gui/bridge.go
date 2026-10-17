@@ -138,10 +138,6 @@ func (b *bridge) fromBrowser(ctx context.Context, br *web.Browser, done chan<- s
 		if err != nil {
 			break
 		}
-		if !b.relay.FromBrowser(m) {
-			b.log.Debug("dropping page message", "type", m.Type)
-			continue
-		}
 		if err := b.agent.Send(m); err != nil {
 			b.log.Warn("send to agent", "err", err)
 			break

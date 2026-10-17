@@ -162,18 +162,6 @@ func TestFingerprintRejectsMissingOrConflicting(t *testing.T) {
 	}
 }
 
-func TestFromBrowserOnlyOffersAndCandidates(t *testing.T) {
-	r := New(Policy{})
-	for typ, want := range map[protocol.Type]bool{
-		protocol.TypeOffer: true, protocol.TypeCandidate: true,
-		protocol.TypeStart: false, protocol.TypeBye: false, protocol.TypeHangup: false, protocol.TypeAnswer: false,
-	} {
-		if got := r.FromBrowser(protocol.Message{Type: typ}); got != want {
-			t.Errorf("%s: forward=%v want %v", typ, got, want)
-		}
-	}
-}
-
 func TestParseTransport(t *testing.T) {
 	for _, s := range []string{"auto", "direct", "tunnel"} {
 		if _, err := ParseTransport(s); err != nil {

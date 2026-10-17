@@ -1,5 +1,6 @@
-// Package relay applies the CLI's transport and trust policy to the signaling
-// it forwards between the browser and the agent.
+// Package relay applies the CLI's transport and trust policy to what the agent
+// sends the browser. The browser's side needs none: internal/web only ever
+// passes on offers and candidates.
 //
 // Transport: the agent's direct UDP candidates pass through, any TCP candidate
 // of its own is dropped, and one synthesized passive TCP candidate on the
@@ -41,7 +42,8 @@ func ParseTransport(s string) (Transport, error) {
 	return "", fmt.Errorf("unknown transport %q (want auto, direct or tunnel)", s)
 }
 
-// Policy is fixed for a session.
+// Policy says which candidates the browser gets and how to reach the tunnel.
+// It is fixed for a session.
 type Policy struct {
 	Transport Transport
 	// TunnelPort is the client loopback port that leads into the SSH forward
@@ -61,6 +63,7 @@ const TunnelPriority = 0<<24 | 0xffff<<8 | (256 - 1)
 var ErrFingerprintChanged = errors.New("relay: agent DTLS fingerprint changed mid-session")
 
 // Relay holds the per-session state: the policy and the pinned fingerprint.
+// It is not safe for concurrent use; the bridge feeds it from one goroutine.
 type Relay struct {
 	policy Policy
 	pinned string
@@ -76,12 +79,6 @@ func New(p Policy) *Relay {
 
 // Pinned returns the pinned agent fingerprint, or "" before the first answer.
 func (r *Relay) Pinned() string { return r.pinned }
-
-// FromBrowser reports whether a browser message may reach the agent. The
-// browser only ever offers and trickles; anything else is dropped.
-func (r *Relay) FromBrowser(m protocol.Message) bool {
-	return m.Type == protocol.TypeOffer || m.Type == protocol.TypeCandidate
-}
 
 // FromAgent turns one agent message into what the browser should receive.
 func (r *Relay) FromAgent(m protocol.Message) ([]protocol.Message, error) {
