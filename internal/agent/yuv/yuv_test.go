@@ -75,3 +75,22 @@ func BenchmarkFromBGRX1080p(b *testing.B) {
 		FromBGRX(dst, src, w*4)
 	}
 }
+
+func TestFromI420CropsOddSource(t *testing.T) {
+	// A 5x3 source: Y rows of 5, then 2 rows of 3 for U and for V.
+	src := []byte{
+		1, 2, 3, 4, 5,
+		6, 7, 8, 9, 10,
+		11, 12, 13, 14, 15,
+		20, 21, 22,
+		23, 24, 25,
+		30, 31, 32,
+		33, 34, 35,
+	}
+	dst := NewI420(5, 3)
+	FromI420(dst, src, 5, 3)
+	want := I420{Width: 4, Height: 2, Y: []byte{1, 2, 3, 4, 6, 7, 8, 9}, U: []byte{20, 21}, V: []byte{30, 31}}
+	if string(dst.Y) != string(want.Y) || string(dst.U) != string(want.U) || string(dst.V) != string(want.V) {
+		t.Fatalf("got Y=%v U=%v V=%v, want Y=%v U=%v V=%v", dst.Y, dst.U, dst.V, want.Y, want.U, want.V)
+	}
+}

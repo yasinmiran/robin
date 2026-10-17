@@ -1,5 +1,5 @@
-// Package yuv converts captured BGRX frames to the I420 layout the encoder
-// takes.
+// Package yuv converts captured frames to the tightly packed I420 layout the
+// encoder takes.
 package yuv
 
 import "sync"
@@ -80,4 +80,21 @@ func convertPair(r0, r1, y0, y1, u, v []byte) {
 
 func luma(r, g, b uint8) uint8 {
 	return uint8(((66*int32(r) + 129*int32(g) + 25*int32(b) + 128) >> 8) + 16)
+}
+
+// FromI420 fills dst from src, an I420 image of srcHeight rows whose Y rows
+// are stride bytes apart and whose U and V rows are (stride+1)/2 bytes apart.
+// src must cover dst's dimensions; anything beyond them is cropped.
+func FromI420(dst *I420, src []byte, stride, srcHeight int) {
+	cstride := (stride + 1) / 2
+	u := stride * srcHeight
+	v := u + cstride*((srcHeight+1)/2)
+	w, cw := dst.Width, dst.Width/2
+	for y := range dst.Height {
+		copy(dst.Y[y*w:(y+1)*w], src[y*stride:])
+	}
+	for y := range dst.Height / 2 {
+		copy(dst.U[y*cw:(y+1)*cw], src[u+y*cstride:])
+		copy(dst.V[y*cw:(y+1)*cw], src[v+y*cstride:])
+	}
 }

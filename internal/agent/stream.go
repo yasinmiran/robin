@@ -128,7 +128,8 @@ func (s *stream) run(ctx context.Context) {
 			continue
 		}
 		w, h := f.Width&^1, f.Height&^1
-		scaled := f.Width > s.maxW || f.Height > s.maxH
+		// An I420 desktop already delivers frames at the size it was asked for.
+		scaled := f.Format == desktop.BGRX && (f.Width > s.maxW || f.Height > s.maxH)
 		if scaled {
 			w, h = fit(f.Width, f.Height, s.maxW, s.maxH)
 		}
@@ -149,17 +150,20 @@ func (s *stream) run(ctx context.Context) {
 			}
 			appliedBitrate = br
 		}
-		if scaled {
+		if !scaled && scaler != nil {
+			scaler = nil
+			s.scale.Store(nil)
+		}
+		switch {
+		case f.Format == desktop.I420:
+			yuv.FromI420(img, f.Pix, f.Stride, f.Height)
+		case scaled:
 			if scaler == nil || !scaler.Fits(f.Width, f.Height, w, h) {
 				scaler = yuv.NewScaler(f.Width, f.Height, w, h)
 				s.scale.Store(&scale{f.Width, f.Height, w, h})
 			}
 			scaler.Convert(img, f.Pix, f.Stride)
-		} else {
-			if scaler != nil {
-				scaler = nil
-				s.scale.Store(nil)
-			}
+		default:
 			yuv.FromBGRX(img, f.Pix, f.Stride)
 		}
 		au, err := enc.Encode(img, now.Sub(began), force)

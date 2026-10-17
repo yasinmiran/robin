@@ -13,12 +13,24 @@ import (
 // someone else, as for a session the agent attached to.
 var ErrFixedSize = errors.New("desktop: size belongs to the attached session")
 
-// Frame is one captured picture: 4 bytes per pixel in B, G, R, X order, rows
-// Stride bytes apart. Implementations may reuse the buffer between captures.
+// Frame is one captured picture laid out as Format says. Implementations may
+// reuse the buffer between captures.
 type Frame struct {
 	Width, Height, Stride int
 	Pix                   []byte
+	Format                Format
 }
+
+// Format is the pixel layout of a Frame.
+type Format int
+
+const (
+	// BGRX is 4 bytes per pixel in B, G, R, X order, rows Stride bytes apart.
+	BGRX Format = iota
+	// I420 is planar 4:2:0: Height rows of Y, Stride bytes apart, then
+	// (Height+1)/2 rows each of U and V, (Stride+1)/2 bytes apart.
+	I420
+)
 
 // Desktop is a screen with input. Methods are safe for concurrent use.
 type Desktop interface {
