@@ -79,6 +79,7 @@ host cannot provide sound the session runs without it, and the CLI says why.
 | `--stun` | Google's public server | STUN servers for NAT traversal, comma-separated, or `none` |
 | `--no-browser` | | print the page URL on stdout instead of opening a browser |
 | `--listen` | `127.0.0.1:0` | address for the local page; loopback only |
+| `--ssh` | `ssh` | the ssh client to drive |
 | `-v` | | log the CLI and the agent to stderr |
 
 ## What the host needs
