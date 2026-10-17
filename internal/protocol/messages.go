@@ -27,6 +27,9 @@ const (
 	// Agent to CLI.
 	TypeReady Type = "ready"
 	TypeError Type = "error"
+	// TypeNotice comes before Ready, when the user has to act or know
+	// something while the agent gets the desktop ready.
+	TypeNotice Type = "notice"
 
 	// Relayed between browser and agent by the CLI.
 	TypeOffer     Type = "offer"
@@ -49,6 +52,7 @@ type Message struct {
 	SDP       string     `json:"sdp,omitempty"`
 	Candidate *Candidate `json:"candidate,omitempty"`
 	Error     string     `json:"error,omitempty"`
+	Notice    *Notice    `json:"notice,omitempty"`
 }
 
 // Start asks the agent to bring up a display and get ready for an offer.
@@ -94,6 +98,24 @@ type Ready struct {
 	// Encoder is the video encoder in use.
 	Encoder string `json:"encoder"`
 }
+
+// Notice is something the user has to do or know before the desktop is ready.
+type Notice struct {
+	// Kind is NoticeConsent or NoticeViewOnly.
+	Kind string `json:"kind"`
+	// Wait is how many seconds the agent waits for the user to act.
+	Wait int `json:"wait,omitempty"`
+}
+
+// Values for Notice.Kind.
+const (
+	// NoticeConsent means a dialog on the host's screen asks whether to share
+	// it, and someone there has to answer it.
+	NoticeConsent = "consent"
+	// NoticeViewOnly means the screen was shared but keyboard and pointer
+	// were not, so the browser's input is ignored.
+	NoticeViewOnly = "view-only"
+)
 
 // Config tells the browser how to build its RTCPeerConnection.
 type Config struct {
