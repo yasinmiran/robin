@@ -64,6 +64,13 @@ type Start struct {
 	// agent pick the lightest desktop it finds.
 	Session string   `json:"session,omitempty"`
 	STUN    []string `json:"stun,omitempty"`
+	// Attach names a running desktop to stream instead of spawning one: an
+	// X11 display such as ":0", or AttachWayland. Empty spawns.
+	Attach string `json:"attach,omitempty"`
+	// Audio asks for the desktop's sound as an Opus track.
+	Audio bool `json:"audio,omitempty"`
+	// Encoder picks the video encoder by name; empty is EncoderSoftware.
+	Encoder string `json:"encoder,omitempty"`
 }
 
 // Ready reports that the display is up and the agent accepts offers.
@@ -78,6 +85,12 @@ type Ready struct {
 	// forward over SSH: "host:port", or a path for a unix socket. Empty when the
 	// agent offers no tunnel.
 	TunnelAddr string `json:"tunnelAddr,omitempty"`
+	// Mode says how the desktop was obtained: ModeSpawn or ModeAttach.
+	Mode string `json:"mode"`
+	// Audio reports whether an audio track will be offered.
+	Audio bool `json:"audio"`
+	// Encoder is the video encoder in use.
+	Encoder string `json:"encoder"`
 }
 
 // Config tells the browser how to build its RTCPeerConnection.
@@ -116,6 +129,9 @@ const (
 	// restarts ICE when heartbeats stop, which catches a path that died in
 	// one direction only.
 	ControlHeartbeat ControlType = "heartbeat"
+	// ControlCursor goes from agent to browser when the remote pointer image
+	// changes.
+	ControlCursor ControlType = "cursor"
 )
 
 // Control is one message on the control data channel. Coordinates are in
@@ -144,4 +160,28 @@ type Control struct {
 
 	// Clipboard text.
 	Text string `json:"text,omitempty"`
+
+	// Cursor.
+	Cursor *Cursor `json:"cursor,omitempty"`
+}
+
+// Values for Start.Attach, Ready.Mode and Start.Encoder.
+const (
+	AttachWayland = "wayland"
+
+	ModeSpawn  = "spawn"
+	ModeAttach = "attach"
+
+	EncoderSoftware = "software"
+)
+
+// Cursor is the remote pointer image. The agent sends each distinct image
+// once with its PNG; later switches back to it carry only the ID.
+type Cursor struct {
+	ID   uint32 `json:"id"`
+	PNG  []byte `json:"png,omitempty"` // base64 in JSON
+	HotX int    `json:"hotX"`
+	HotY int    `json:"hotY"`
+	// Hidden means the remote pointer is invisible.
+	Hidden bool `json:"hidden,omitempty"`
 }

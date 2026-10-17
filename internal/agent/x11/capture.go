@@ -11,14 +11,12 @@ import (
 	"github.com/jezek/xgb/shm"
 	"github.com/jezek/xgb/xproto"
 	"golang.org/x/sys/unix"
+
+	"github.com/yasinmiran/remotejump/internal/agent/desktop"
 )
 
-// Frame is one captured screen in BGRX order: four bytes per pixel, the
-// fourth undefined, Stride bytes per row.
-type Frame struct {
-	Width, Height, Stride int
-	Pix                   []byte
-}
+// Frame is a captured picture; see desktop.Frame.
+type Frame = desktop.Frame
 
 // capturer holds the shared memory segment the server copies frames into.
 type capturer struct {

@@ -46,8 +46,9 @@ type Conn struct {
 	resizeMu sync.Mutex
 	scr      screenRes
 
-	kb   keyboard
-	clip clipboard
+	kb     keyboard
+	clip   clipboard
+	cursor cursorTracker
 
 	loopDone  chan struct{}
 	closeOnce sync.Once
@@ -103,6 +104,9 @@ func (c *Conn) init() error {
 		return fmt.Errorf("clipboard: %w", err)
 	}
 	c.cap.init(c.x, c.root)
+	if err := c.cursor.init(c.x, c.root); err != nil {
+		return fmt.Errorf("cursor: %w", err)
+	}
 	return nil
 }
 
@@ -217,6 +221,8 @@ func (c *Conn) loop() {
 			c.clip.onNotify(e)
 		case xfixes.SelectionNotifyEvent:
 			c.clip.onOwner(e)
+		case xfixes.CursorNotifyEvent:
+			c.cursor.onNotify(e)
 		}
 	}
 }
