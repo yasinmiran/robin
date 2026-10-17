@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/pkg/sftp"
+
+	"github.com/yasinmiran/remotejump/internal/tail"
 )
 
 // SFTP starts an sftp subsystem session over the master. Closing the client
@@ -17,7 +19,7 @@ import (
 func (m *Master) SFTP(ctx context.Context) (*sftp.Client, error) {
 	cmd := exec.CommandContext(ctx, m.ssh, m.subsystemArgs("sftp")...)
 	cmd.WaitDelay = time.Second
-	var stderr tailBuffer
+	var stderr tail.Buffer
 	cmd.Stderr = &stderr
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

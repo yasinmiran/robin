@@ -21,6 +21,7 @@ import (
 	"github.com/yasinmiran/remotejump/internal/protocol"
 	"github.com/yasinmiran/remotejump/internal/relay"
 	"github.com/yasinmiran/remotejump/internal/sshmux"
+	"github.com/yasinmiran/remotejump/internal/tail"
 	"github.com/yasinmiran/remotejump/internal/web"
 )
 
@@ -226,7 +227,7 @@ type agentProc struct {
 	conn  *protocol.Conn
 	stdin io.WriteCloser
 	wait  func() error
-	tail  *tailBuffer
+	log   *tail.Buffer // the end of the agent's stderr
 	once  sync.Once
 }
 
@@ -244,18 +245,18 @@ func startAgent(ctx context.Context, m *sshmux.Master, path string, verbose bool
 	if err != nil {
 		return nil, err
 	}
-	tail := &tailBuffer{max: 8 << 10}
+	logTail := &tail.Buffer{Max: 8 << 10}
 	if verbose {
-		cmd.Stderr = io.MultiWriter(tail, prefixWriter(stderr, "agent: "))
+		cmd.Stderr = io.MultiWriter(logTail, prefixWriter(stderr, "agent: "))
 	} else {
-		cmd.Stderr = tail
+		cmd.Stderr = logTail
 	}
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start agent: %w", err)
 	}
 	return &agentProc{
 		conn:  protocol.NewConn(stdout, stdin, protocol.DefaultPingInterval, protocol.DefaultIdleTimeout),
-		stdin: stdin, wait: cmd.Wait, tail: tail,
+		stdin: stdin, wait: cmd.Wait, log: logTail,
 	}, nil
 }
 
@@ -310,7 +311,7 @@ func (a *agentProc) explain(err error) error {
 	if err == nil {
 		return nil
 	}
-	if t := strings.TrimSpace(a.tail.String()); t != "" {
+	if t := strings.TrimSpace(a.log.String()); t != "" {
 		return fmt.Errorf("%w\nagent log:\n%s", err, t)
 	}
 	return err

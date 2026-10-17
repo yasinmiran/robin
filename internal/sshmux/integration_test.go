@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/yasinmiran/remotejump/internal/sshmux/sshtest"
+	"github.com/yasinmiran/remotejump/internal/tail"
 )
 
 func dial(t *testing.T) *Master {
@@ -323,7 +324,7 @@ func TestDoneOnMasterExit(t *testing.T) {
 
 func TestDialUnknownHostKey(t *testing.T) {
 	s := sshtest.Start(t)
-	var stderr tailBuffer
+	var stderr tail.Buffer
 	args := append([]string{"-o", "UserKnownHostsFile=/dev/null"}, s.Args...)
 	m, err := Dial(t.Context(), s.Dest, Options{Args: args, Stderr: &stderr})
 	if err == nil {

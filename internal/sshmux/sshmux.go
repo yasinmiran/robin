@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/yasinmiran/remotejump/internal/tail"
 )
 
 // Options configures every ssh invocation of a Master.
@@ -43,7 +45,7 @@ type Master struct {
 	ctl  string
 
 	cmd     *exec.Cmd
-	stderr  tailBuffer
+	stderr  tail.Buffer
 	done    chan struct{}
 	waitErr error
 
@@ -306,28 +308,4 @@ func unsafeShellRune(r rune) bool {
 		return false
 	}
 	return !strings.ContainsRune("_-./:@,+%", r)
-}
-
-// tailBuffer keeps the last few kilobytes written to it.
-type tailBuffer struct {
-	mu sync.Mutex
-	b  []byte
-}
-
-const tailMax = 4 << 10
-
-func (t *tailBuffer) Write(p []byte) (int, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.b = append(t.b, p...)
-	if len(t.b) > tailMax {
-		t.b = t.b[len(t.b)-tailMax:]
-	}
-	return len(p), nil
-}
-
-func (t *tailBuffer) String() string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return string(t.b)
 }

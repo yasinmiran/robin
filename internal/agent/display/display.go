@@ -24,6 +24,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/yasinmiran/remotejump/internal/tail"
 )
 
 const (
@@ -345,7 +347,7 @@ type proc struct {
 	group      int // process group id, which is not always this process's pid
 	exited     chan struct{}
 	err        error // valid once exited is closed
-	stderr     tail
+	stderr     tail.Buffer
 	stderrDone chan struct{} // nil when stderr is not captured
 }
 
@@ -407,31 +409,6 @@ func (p *proc) exitError(what string) error {
 		return fmt.Errorf("%s %s: %s", what, status, s)
 	}
 	return fmt.Errorf("%s %s", what, status)
-}
-
-// tail keeps the last few KiB written to it: enough to explain a failure
-// without letting a chatty session grow memory.
-type tail struct {
-	mu  sync.Mutex
-	buf []byte
-}
-
-const tailSize = 4096
-
-func (t *tail) Write(b []byte) (int, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.buf = append(t.buf, b...)
-	if over := len(t.buf) - tailSize; over > 0 {
-		t.buf = append(t.buf[:0], t.buf[over:]...)
-	}
-	return len(b), nil
-}
-
-func (t *tail) String() string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return string(t.buf)
 }
 
 func sessionEnv(base []string, display, xauthority string) []string {

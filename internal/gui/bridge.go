@@ -183,29 +183,6 @@ func openBrowser(url string) error {
 	return nil
 }
 
-// tailBuffer keeps the last max bytes written to it.
-type tailBuffer struct {
-	mu  sync.Mutex
-	max int
-	b   []byte
-}
-
-func (t *tailBuffer) Write(p []byte) (int, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.b = append(t.b, p...)
-	if over := len(t.b) - t.max; over > 0 {
-		t.b = append(t.b[:0], t.b[over:]...)
-	}
-	return len(p), nil
-}
-
-func (t *tailBuffer) String() string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return string(t.b)
-}
-
 // prefixWriter prefixes each line written to w.
 func prefixWriter(w io.Writer, prefix string) io.Writer {
 	return &linePrefixer{w: w, prefix: []byte(prefix)}

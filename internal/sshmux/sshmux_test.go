@@ -1,7 +1,6 @@
 package sshmux
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -136,14 +135,5 @@ func TestControlDirFallback(t *testing.T) {
 	}
 	if fi.Mode().Perm() != 0o700 {
 		t.Errorf("mode %v, want 0700", fi.Mode().Perm())
-	}
-}
-
-func TestTailBuffer(t *testing.T) {
-	var b tailBuffer
-	b.Write(bytes.Repeat([]byte("a"), tailMax))
-	b.Write([]byte("end"))
-	if s := b.String(); len(s) != tailMax || !strings.HasSuffix(s, "end") {
-		t.Errorf("len %d, suffix %q", len(s), s[len(s)-3:])
 	}
 }
