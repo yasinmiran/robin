@@ -64,6 +64,106 @@ Patent note: openh264 built from source is not covered by Cisco's binary
 licence. That is the same position as every other source build of an H.264
 encoder; Phase 2 hardware encoders do not change it.
 
+### Hardware H.264 through a host tool, and only when asked for
+
+`--encoder vaapi` and `--encoder nvenc` encode on the host's GPU. The agent
+is a fully static musl binary, which cannot dlopen the host's glibc libva,
+its VA driver or the NVIDIA libraries, and a second, dynamically linked
+helper would have to match every distribution's glibc and driver ABI. So
+the agent runs a tool the host already has as a subprocess (`internal/agent/hwenc`):
+ffmpeg with `h264_vaapi` or `h264_nvenc`, or `gst-launch-1.0` with
+GStreamer's va, vaapi or nvcodec encoder. Frames go in as raw NV12 on
+stdin; `vaapih264enc` on Intel's driver takes nothing else, so the agent
+interleaves the chroma itself rather than paying for a `videoconvert`. One
+access unit per frame comes back on stdout.
+
+Where an access unit ends is the first problem. A raw Annex-B stream only
+shows it when the next one begins, a frame later, and the stream loop waits
+for each frame's access unit before it sends anything. So each tool wraps
+its output in a container that states lengths: GStreamer in `multipartmux`
+parts with a Content-Length, ffmpeg in FLV tags. FLV keeps the SPS and PPS
+in its sequence header, and some encoders send them only once, so the
+reader puts them back in front of every IDR, which a browser that joins or
+recovers decodes from alone. GStreamer could have used FLV as well, had a
+test pipeline through `flvmux` not hung in 1.20.
+
+The second problem is that a running tool takes no orders: it cannot be
+asked for an IDR or told a new bitrate (the va plugin can change its
+bitrate in PLAYING, but `gst-launch-1.0` gives no way to reach it). The
+encoder restarts the tool for both, since a fresh one starts with an IDR at
+whatever bitrate it is given; on the Intel iGPU below that takes about 40
+ms (35 to 50) from the request to the IDR, start included, against 5 to 7
+ms for openh264.
+A periodic keyframe was the other option and lost: frames reach the encoder
+only when the screen changes, so a GOP counted in frames is not a period in
+time, and a two-second timer would spend an IDR (about 100 KB at 2 Mbit/s,
+a fifth of the budget) every two seconds to make recovery take a second on
+average. The tools get an effectively infinite GOP instead. For bitrate, a
+restart waits until the congestion controller's target has moved twofold
+from what the tool runs at, and at least two seconds since its start,
+because each one costs an IDR. In between, a token bucket holding 500 ms of
+the target skips frames when the output runs ahead of it; a skipped frame
+is retried on the next tick, as with openh264. The bucket is not optional:
+on full-screen noise at 1080p the Intel encoder sent 4.4 Mbit/s against a
+500 kbit/s target and against a 2 Mbit/s one, and neither the QP range nor
+the CPB size moved it. With the bucket it sent 2.0 to 2.1 Mbit/s against 2
+Mbit/s. A target stepped 500, 4000, 500 kbit/s was followed at 583, 2702,
+616 kbit/s, where openh264 gives 672, 2588, 669.
+
+Rate control is VBR with the target as the peak and 70% of it as the
+average. Under CBR the hardware spent the whole target on any picture, 17 to
+20 Mbit/s at a 20 Mbit/s target for a typing pattern openh264 sends in 62
+kbit/s, and a QP floor (`min-qp`, `-qmin`) changed nothing. Under VBR the
+same frames cost 0.7 to 1.6 Mbit/s and scrolling 2.3 to 2.9 Mbit/s, where
+openh264 spends 8.
+
+What it buys, measured with `TestCompare` on an i7-13800H and its iGPU
+(iHD 22.3, ffmpeg 4.4, GStreamer 1.20), per encoded frame at 30 fps with a
+target high enough that nothing is skipped, ranges over typing, scrolling, a
+video window and full-screen noise:
+
+| | openh264 | ffmpeg `h264_vaapi` | GStreamer `vaapih264enc` |
+|---|---|---|---|
+| time per frame, 1080p | 1.2 to 3.2 ms | 4.8 to 5.1 ms | 5.5 to 6.1 ms |
+| CPU, agent and tool, 1080p | 2.9 to 8.5 ms | 2.6 to 2.8 ms | 3.2 to 3.9 ms |
+| time per frame, 2160p | 5.0 to 10.1 ms | 18.6 to 19.8 ms | 30.8 to 34.2 ms |
+| CPU, agent and tool, 2160p | 12.2 to 28.2 ms | 11.5 to 12.5 ms | 21.1 to 22.1 ms |
+
+Most of the hardware routes' CPU is the copy: a 2160p frame is 12 MB
+through a pipe and into a GPU surface, about 5 ms of it in the agent. In a
+real session it evened out. Scrolling an xterm through the CLI and Chrome
+cost about a fifth of a core at 1440x900 and about one core at 3840x2160
+with either encoder, since capture, colour conversion and the copy into the
+pipe stay in the agent and outweigh what the GPU takes off it. So hardware
+encoding helps where openh264 is the bottleneck, on slow CPUs and on busy
+4K content, and costs latency everywhere: several milliseconds a frame
+through the pipe and a restart per requested keyframe. That is why it is
+opt-in, and why nothing picks it on its own.
+
+The first `Open` tries each route the host offers on a 320x240 frame,
+ffmpeg first since it measured faster and cheaper, and keeps the first that
+returns a Baseline IDR before a second frame is sent; a tool that held
+frames back would pair every picture with the one before. Low-power
+variants are tried as well: on this GPU iHD 24.1 lists H.264 encoding only
+under the low-power entrypoint, and the va plugin then offers only
+`vah264lpenc`. ffmpeg can report a
+failed encoder and then wait on stdin forever, so once it prints an error,
+which with `-loglevel error` is all it prints, the frame in flight gets
+100 ms more. Each tool runs in its own process group, killed whole on close
+and by Pdeathsig if the agent dies first. The session opens a small
+encoder before it brings the desktop up, so a host whose tools fail
+reports it to the CLI instead of streaming a black screen, and the CLI
+checks the probe (a render node the user can open, or a loaded NVIDIA
+driver, and a tool with the right encoder) before it deploys anything.
+
+Verified on Ubuntu 22.04 (GStreamer 1.20, ffmpeg 4.4) and, in a rootless
+podman container on the same GPU, Ubuntu 24.04 (GStreamer 1.24 with the va
+and vaapi plugins, ffmpeg 6.1, iHD 24.1): every route emits Constrained
+Baseline that ffmpeg decodes, and Chrome decoded both the ffmpeg and the
+GStreamer route at 30 fps under `profile-level-id=42e01f`. The NVENC routes
+follow the vendors' documented options and have not been run on NVIDIA
+hardware.
+
 ### Spawn mode requires Xvfb on the host; we do not bundle it
 
 Xvfb 21.1 supports RandR resize up to the size it was started with, as long as

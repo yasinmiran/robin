@@ -72,6 +72,7 @@ host cannot provide sound the session runs without it, and the CLI says why.
 | `--fps` | `30` | frame rate cap (20 on small hosts) |
 | `--hidpi` | off | size the remote display in the browser's device pixels: sharp text on Retina screens, about four times the pixels to encode. Raise `--max-size` to go fully native |
 | `--max-kbps` | `10000` | video bitrate ceiling; congestion control works below it |
+| `--encoder` | `software` | `vaapi` or `nvenc` to encode on the host's GPU; see [Hardware encoding](#hardware-encoding) |
 | `--session` | lightest found | command to run in the display, e.g. `startxfce4` |
 | `--attach` | | stream a desktop already running on the host: `auto`, or an X display such as `:1` |
 | `--audio` | `true` | stream the desktop's sound; `--audio=false` leaves it out |
@@ -111,6 +112,49 @@ The agent goes to `~/.cache/remotejump` (or `$XDG_RUNTIME_DIR/remotejump`, or
 by hash and reused across sessions. It runs as you, starts its own display on
 a free number, and when the SSH channel closes it kills everything it started
 and removes its files.
+
+## Hardware encoding
+
+```sh
+remotejump gui --encoder vaapi build-box   # Intel or AMD, through VA-API
+remotejump gui --encoder nvenc gpu-box     # NVIDIA
+```
+
+The agent is a static binary and cannot load the host's GPU libraries, so
+for these it pipes frames through a tool the host already has: ffmpeg, or
+GStreamer's `gst-launch-1.0`. VA-API needs a render node in `/dev/dri` you
+can open (usually that means being in the `render` group) and either ffmpeg
+built with `h264_vaapi` or `gst-launch-1.0` with GStreamer's va or vaapi
+plugin and gst-plugins-good. NVENC needs the NVIDIA driver loaded, and
+ffmpeg with `h264_nvenc` or GStreamer's nvcodec plugin. On Debian and
+Ubuntu, `sudo apt install ffmpeg` brings both encoders. The CLI checks all
+of this against the probe before it deploys anything and says what is
+missing; the agent then tries each route the host offers on a test frame,
+ffmpeg first, and if none works the error lists why each one failed.
+
+Software stays the default, and nothing switches to hardware by itself,
+because on a reasonably fast CPU it saves little. On an i7-13800H with its
+iGPU, a session scrolling a terminal cost about a fifth of a core at
+1440x900 and about one core at 3840x2160 with either encoder: copying each
+frame out to the tool eats most of what the GPU saves. It pays where
+openh264 is the bottleneck, on slow CPUs and on busy 4K content (28 ms of
+CPU per frame for openh264 against 12 ms through ffmpeg). What it costs:
+
+- A keyframe the browser asks for takes about 40 ms instead of 5, because a
+  running tool cannot be asked for one and is restarted instead.
+- Each frame spends 5 ms in the encoder at 1080p and about 20 ms at 2160p
+  through ffmpeg, against 1 to 3 and 5 to 10 ms for openh264; GStreamer's
+  vaapi plugin takes 31 to 34 ms at 2160p, a whole frame at 30 fps.
+- Congestion control is followed by skipping frames, and the tool is
+  restarted at the new bitrate when the target has moved twofold, at most
+  every two seconds.
+- The first GStreamer run on a host builds its plugin registry, which can
+  take a few seconds.
+- NVENC follows NVIDIA's documented options but has not been run on NVIDIA
+  hardware yet.
+
+The measurements and the reasons behind the design are in the
+[ADR](docs/adr/0001-architecture.md#hardware-h264-through-a-host-tool-and-only-when-asked-for).
 
 ## What the client needs
 
@@ -182,6 +226,14 @@ with the same processes, autorepeat and keymaps. See
 so congestion control is tested separately over a shaped virtual link
 (`go test ./internal/agent/peer -run Congestion`).
 
+The hardware encoders are tested against stand-in tools everywhere, and
+against the real GPU wherever `make test` runs on a host that has one: every
+route the host offers must produce a Baseline IDR first, P slices after, an
+IDR on request and the target bitrate on noise, and ffmpeg, where it is
+installed, must decode the result. Set `RJ_HWENC_REQUIRE=vaapi` (or `nvenc`) to make a missing GPU fail
+the run instead of skipping it, and `RJ_HWENC_COMPARE=1` with the openh264
+build tag to print the comparison the ADR quotes.
+
 ## Known limits
 
 - Attaching works with X11 desktops. On a Wayland session `--attach auto`
@@ -216,3 +268,6 @@ so congestion control is tested separately over a shaped virtual link
 - The macOS client builds but has not been run; neither has building the
   agents from a Mac.
 - One browser per session; a second tab is refused until the first closes.
+- Hardware encoding answers a keyframe request about 35 ms later than
+  software and adds a few milliseconds to every frame, and the NVENC route
+  is untested on real hardware; see [Hardware encoding](#hardware-encoding).
