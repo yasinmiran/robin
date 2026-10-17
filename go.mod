@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/coder/websocket v1.8.15
+	github.com/godbus/dbus/v5 v5.2.4
 	github.com/jezek/xgb v1.3.0
 	github.com/jfreymuth/pulse v0.1.3
 	github.com/pion/ice/v4 v4.4.7
@@ -16,7 +17,6 @@ require (
 )
 
 require (
-	github.com/godbus/dbus/v5 v5.2.4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/pion/datachannel v1.6.3 // indirect
