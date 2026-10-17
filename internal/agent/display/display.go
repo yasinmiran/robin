@@ -49,6 +49,8 @@ type Options struct {
 	// Env holds extra variables for the session, such as the address of a
 	// sound server the agent started.
 	Env []string
+	// Log receives warnings about startup; nil discards them.
+	Log *slog.Logger
 }
 
 // Display is a running Xvfb with a session inside it.
@@ -77,6 +79,10 @@ type Display struct {
 func Spawn(ctx context.Context, o Options) (_ *Display, err error) {
 	if o.MaxWidth <= 0 || o.MaxHeight <= 0 {
 		return nil, fmt.Errorf("display: bad size %dx%d", o.MaxWidth, o.MaxHeight)
+	}
+	log := o.Log
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
 	}
 	plan, err := pickSession(o.Session, exec.LookPath)
 	if err != nil {
@@ -140,7 +146,7 @@ func Spawn(ctx context.Context, o Options) (_ *Display, err error) {
 		group = d.companion.group
 		wctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		if err := waitForWindow(wctx, num, cookie); err != nil {
-			slog.Warn("terminal window not mapped yet; starting the window manager anyway", "err", err)
+			log.Warn("terminal window not mapped yet; starting the window manager anyway", "err", err)
 		}
 		cancel()
 	}

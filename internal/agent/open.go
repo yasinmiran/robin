@@ -33,7 +33,7 @@ type openedDesktop struct {
 func openDesktop(ctx context.Context, start protocol.Start, runDir, stateDir string, env []string, notify func(protocol.Notice), log *slog.Logger) (*openedDesktop, error) {
 	switch start.Attach {
 	case "":
-		return spawnX11(ctx, start, runDir, env)
+		return spawnX11(ctx, start, runDir, env, log)
 	case protocol.AttachWayland:
 		return attachWayland(ctx, start, stateDir, notify, log)
 	default:
@@ -41,9 +41,9 @@ func openDesktop(ctx context.Context, start protocol.Start, runDir, stateDir str
 	}
 }
 
-func spawnX11(ctx context.Context, start protocol.Start, runDir string, env []string) (*openedDesktop, error) {
+func spawnX11(ctx context.Context, start protocol.Start, runDir string, env []string, log *slog.Logger) (*openedDesktop, error) {
 	disp, err := display.Spawn(ctx, display.Options{
-		RunDir: runDir, MaxWidth: start.MaxWidth, MaxHeight: start.MaxHeight, Session: start.Session, Env: env,
+		RunDir: runDir, MaxWidth: start.MaxWidth, MaxHeight: start.MaxHeight, Session: start.Session, Env: env, Log: log,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("spawn display: %w", err)
