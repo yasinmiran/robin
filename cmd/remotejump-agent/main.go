@@ -24,6 +24,7 @@ import (
 	"github.com/yasinmiran/remotejump/internal/agent"
 	"github.com/yasinmiran/remotejump/internal/agent/audio"
 	"github.com/yasinmiran/remotejump/internal/agent/h264"
+	"github.com/yasinmiran/remotejump/internal/agent/hwenc"
 	"github.com/yasinmiran/remotejump/internal/protocol"
 )
 
@@ -78,9 +79,13 @@ func serve(args []string) int {
 	os.Stdout = os.Stderr
 
 	err = agent.Run(ctx, os.Stdin, out, agent.Options{
-		RunRoot:  filepath.Join(filepath.Dir(exe), "run"),
-		Build:    version,
-		Encoders: map[string]agent.NewEncoderFunc{protocol.EncoderSoftware: newEncoder},
+		RunRoot: filepath.Join(filepath.Dir(exe), "run"),
+		Build:   version,
+		Encoders: map[string]agent.NewEncoderFunc{
+			protocol.EncoderSoftware: newEncoder,
+			protocol.EncoderVAAPI:    hardware(hwenc.NewOpener(hwenc.VAAPI, log)),
+			protocol.EncoderNVENC:    hardware(hwenc.NewOpener(hwenc.NVENC, log)),
+		},
 		NewAudio: newAudio,
 		Log:      log,
 	})
@@ -101,4 +106,15 @@ func newAudio(ctx context.Context, o agent.AudioOptions) (agent.AudioSource, []s
 		return nil, nil, err // not src: a nil *audio.Source would make a non-nil interface
 	}
 	return src, env, nil
+}
+
+func hardware(o *hwenc.Opener) agent.NewEncoderFunc {
+	return func(width, height, fps, bitrate int) (agent.Encoder, error) {
+		e, err := o.Open(width, height, fps, bitrate)
+		if err != nil {
+			// Not e: a nil *hwenc.Encoder would be a non-nil Encoder.
+			return nil, err
+		}
+		return e, nil
+	}
 }

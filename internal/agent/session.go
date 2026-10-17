@@ -77,6 +77,13 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 	if !ok {
 		return fail(conn, fmt.Errorf("encoder %q is not available in this agent", encoderName))
 	}
+	// A hardware encoder rests on tools installed on the host. Find out now
+	// if they fail, not when the browser's first frame is due.
+	enc, err := newEncoder(320, 240, start.FPS, startBitrate)
+	if err != nil {
+		return fail(conn, fmt.Errorf("encoder %s: %w", encoderName, err))
+	}
+	enc.Close()
 	runDir, err := makeRunDir(o.RunRoot)
 	if err != nil {
 		return fail(conn, err)

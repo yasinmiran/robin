@@ -180,6 +180,9 @@ const (
 	ModeAttach = "attach"
 
 	EncoderSoftware = "software"
+	// The hardware encoders run a host tool and are only used when asked for.
+	EncoderVAAPI = "vaapi"
+	EncoderNVENC = "nvenc"
 )
 
 // Cursor is the remote pointer image. The agent sends each distinct image
