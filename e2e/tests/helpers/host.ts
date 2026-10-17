@@ -85,7 +85,7 @@ export async function setClipboard(text: string): Promise<void> {
 // leftovers lists session processes still running as rj. The bracketed
 // patterns keep pgrep from matching the remote shell that carries them.
 export async function leftovers(): Promise<string> {
-  const r = await sshRaw(`pgrep -u rj -fa '[X]vfb|[r]emotejump-agent|[o]penbox|[x]term'`);
+  const r = await sshRaw(`pgrep -u rj -fa '[X]vfb|[r]emotejump-agent|[o]penbox|[x]term|[p]ulseaudio'`);
   if (r.code > 1) throw new Error(`pgrep: exit ${r.code}: ${r.stderr.trim()}`);
   return r.stdout.trim();
 }
@@ -102,6 +102,11 @@ export async function agentLeftovers(): Promise<string> {
   const r = await sshRaw(`pgrep -u rj -fa '[r]emotejump-agent'; find ~/.cache/remotejump/run -mindepth 1 -maxdepth 1 2>/dev/null`);
   return r.stdout.trim();
 }
+
+// playNoise plays seconds of white noise into the session's sound server,
+// as a program on the remote desktop would, and resolves when it ends.
+export const playNoise = (seconds: number) =>
+  ssh(`head -c ${seconds * 48000 * 4} /dev/urandom | rj-x paplay --raw --format=s16le --rate=48000 --channels=2`, (seconds + 20) * 1000);
 
 // diagnostics describes the host side of a session for a failure report: the
 // run dir, the agent's processes and what is mapped on its display.

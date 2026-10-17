@@ -208,6 +208,39 @@ test('resize: display and video follow a 1000x700 viewport within 10 s', async (
     .toBe('video 1000x700, display 1000x700');
 });
 
+test('sound: the desktop is heard once the speaker is turned on', async ({}, testInfo) => {
+  expect(cli!.stderrTail(), 'the CLI reports no missing sound').not.toContain('no sound from');
+  const audio = () =>
+    page.evaluate(async () => {
+      let out = { packets: 0, energy: 0 };
+      (await ((window as any).remotejump.pc as RTCPeerConnection).getStats()).forEach((s: any) => {
+        if (s.type === 'inbound-rtp' && s.kind === 'audio') out = { packets: s.packetsReceived ?? 0, energy: s.totalAudioEnergy ?? 0 };
+      });
+      return out;
+    });
+  const sound = page.locator('#sound');
+  await page.mouse.move(640, 5); // brings the tucked HUD back
+  await expect(sound, 'the speaker toggle').toBeVisible({ timeout: 10_000 });
+  expect(await page.evaluate(() => (window as any).remotejump.muted), 'muted until clicked').toBe(true);
+  // The agent sends packets even for silence, so the track is live before
+  // anything plays.
+  await expect.poll(async () => (await audio()).packets, { message: 'audio packets arrive' }).toBeGreaterThan(0);
+
+  await sound.click();
+  expect(await page.evaluate(() => (window as any).remotejump.muted), 'muted after the click').toBe(false);
+  // Chrome reports energy only for audio it plays, which a muted element
+  // does not.
+  const before = (await audio()).energy;
+  const playing = host.playNoise(5);
+  await expect
+    .poll(async () => (await audio()).energy, { message: 'totalAudioEnergy grows while the host plays noise', timeout: 15_000 })
+    .toBeGreaterThan(before);
+  await playing;
+  testInfo.annotations.push({ type: 'audio', description: JSON.stringify(await audio()) });
+  // The session's programs get a cookie in the run dir, so libpulse writes none.
+  expect(await host.exists('/home/rj/.config/pulse'), '~/.config/pulse on the host').toBe(false);
+});
+
 if (SCENARIO === 'direct') {
   test('transport: direct session uses UDP', async ({}, testInfo) => {
     expect((await connectedStats(testInfo, 'direct')).transport).toBe('udp');

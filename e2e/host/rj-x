@@ -1,5 +1,6 @@
 #!/bin/bash
-# Runs a command against the agent's display: rj-x xdotool getdisplaygeometry
+# Runs a command against the agent's display and sound server:
+# rj-x xdotool getdisplaygeometry
 # An attached agent has no display of its own; then it is rj's desktop (rj-live).
 set -euo pipefail
 
@@ -15,4 +16,8 @@ else
   rj-rundir
 fi
 export DISPLAY
+# The session's private sound server, as its programs see it.
+if [[ -n ${dir:-} && -S $dir/pulse/native ]]; then
+  export PULSE_SERVER=unix:$dir/pulse/native PULSE_COOKIE=$dir/pulse/cookie
+fi
 exec "$@"

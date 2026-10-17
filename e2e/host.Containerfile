@@ -1,5 +1,6 @@
 # The remote host for remotejump e2e: sshd plus what spawn mode needs on a real
-# host (Xvfb, a light session), plus the tools the tests use to inspect it.
+# host (Xvfb, a light session, pulseaudio for sound), plus the tools the tests
+# use to inspect it.
 # Build context: e2e/host.
 FROM docker.io/library/ubuntu:24.04
 
@@ -8,6 +9,7 @@ RUN apt-get update \
       openssh-server \
       xvfb xauth xkb-data x11-xkb-utils xfonts-base \
       openbox xterm dbus-x11 \
+      pulseaudio pulseaudio-utils \
       x11-utils x11-xserver-utils xdotool xclip \
       iptables sudo procps netcat-openbsd \
  && rm -rf /var/lib/apt/lists/* \

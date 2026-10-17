@@ -2,10 +2,10 @@
 
 End-to-end tests for `remotejump gui`. A real browser (Google Chrome in a
 Playwright container) runs the real CLI against an sshd container that has
-nothing on it but what a user's Linux box would have: OpenSSH, Xvfb, openbox and
-xterm. Nothing is mocked between the two, so a pass means SSH bootstrap, the
-agent, H.264 encode and decode, WebRTC, input, clipboard, resize and teardown all
-worked over a real network.
+nothing on it but what a user's Linux box would have: OpenSSH, Xvfb, openbox,
+xterm and pulseaudio. Nothing is mocked between the two, so a pass means SSH
+bootstrap, the agent, H.264 encode and decode, Opus, WebRTC, input, clipboard,
+resize and teardown all worked over a real network.
 
 ## Running
 
@@ -55,10 +55,14 @@ Every scenario also checks, in this order:
    display (`xdotool getdisplaygeometry`) within 10 s. In `attach` the desktop
    keeps its size instead: video and display stay 1280x800 and only the video
    element shrinks.
-6. **Transport**: per the table above, from `remotejump.stats()`.
-7. **Teardown**: SIGINT to the CLI's process group (what Ctrl-C does) makes it
-   exit 0 within 10 s, after which no `Xvfb`, `remotejump-agent`, `openbox` or
-   `xterm` runs as `rj` and the agent's run dir is gone. Stdout must have held
+6. **Sound**: the CLI reported no missing sound, the page shows the speaker
+   toggle muted and receives audio packets, and once the toggle is clicked,
+   noise played on the host with `paplay` through the session's sound server
+   raises Chrome's `totalAudioEnergy`. Nothing wrote to `~/.config/pulse`.
+7. **Transport**: per the table above, from `remotejump.stats()`.
+8. **Teardown**: SIGINT to the CLI's process group (what Ctrl-C does) makes it
+   exit 0 within 10 s, after which no `Xvfb`, `remotejump-agent`, `openbox`,
+   `xterm` or `pulseaudio` runs as `rj` and the agent's run dir is gone. Stdout must have held
    nothing but the URL. Set `RJ_SIGINT_PID_ONLY=1` to signal only the CLI.
    In `attach` the agent and its run dir go while rj's desktop stays:
    `rj-live state` (the same Xvfb, openbox and xterm, display size, autorepeat
@@ -99,8 +103,9 @@ Open a trace with `npx playwright show-trace <zip>` from `e2e/` (after
   with a key generated per run; `rj` may `sudo` only `iptables` and `ip6tables`.
   `rj-rundir` finds the agent's run dir (`~/.cache/remotejump/run/*`,
   `$XDG_RUNTIME_DIR/remotejump`, `/tmp/remotejump-1000`), `rj-x` runs a command
-  on the agent's display (rj's own desktop when the agent attached to it),
-  `rj-live` starts that desktop and reports its state, and `rj-block-udp` drops
+  on the agent's display and sound server (rj's own desktop when the agent
+  attached to it), `rj-live` starts that desktop and reports its state, and
+  `rj-block-udp` drops
   non-loopback UDP.
 - `client.Containerfile`: Playwright plus Chrome stable and OpenSSH. The
   `PW_VERSION` build arg must match `@playwright/test` in `package.json`; the
