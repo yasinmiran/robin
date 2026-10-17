@@ -31,10 +31,12 @@ type Desktop interface {
 	// Input applies a key, pointer, wheel or release message.
 	Input(m protocol.Control) error
 	SetClipboard(text string) error
-	// Clipboard delivers clipboard text set by programs on the desktop.
+	// Clipboard delivers clipboard text set by programs on the desktop. It is
+	// closed when the desktop goes away.
 	Clipboard() <-chan string
-	// Cursor delivers pointer image changes. A nil channel means the desktop
-	// cannot report them and the browser keeps its own pointer.
+	// Cursor delivers pointer image changes and is closed when the desktop
+	// goes away. A nil channel means the desktop cannot report them and the
+	// browser keeps its own pointer.
 	Cursor() <-chan protocol.Cursor
 	Close() error
 }

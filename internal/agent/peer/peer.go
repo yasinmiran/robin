@@ -156,8 +156,8 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 	// gives the browser's ICE restart time to land.
 	se.SetICETimeouts(2*time.Second, 30*time.Second, time.Second)
 	var pcRef atomic.Pointer[webrtc.PeerConnection]
-	se.SetICEBindingRequestHandler(func(m *stun.Message, _, _ ice.Candidate, pair *ice.CandidatePair) bool {
-		return followNomination(m, pair, pcRef.Load())
+	se.SetICEBindingRequestHandler(func(msg *stun.Message, _, _ ice.Candidate, pair *ice.CandidatePair) bool {
+		return followNomination(msg, pair, pcRef.Load())
 	})
 	if cfg.TCPMux != nil {
 		se.SetICETCPMux(cfg.TCPMux)
@@ -171,11 +171,11 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 	}
 
 	api := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithInterceptorRegistry(reg), webrtc.WithSettingEngine(se))
-	var ice []webrtc.ICEServer
+	var servers []webrtc.ICEServer
 	if len(cfg.STUN) > 0 {
-		ice = []webrtc.ICEServer{{URLs: cfg.STUN}}
+		servers = []webrtc.ICEServer{{URLs: cfg.STUN}}
 	}
-	pcConfig := webrtc.Configuration{ICEServers: ice}
+	pcConfig := webrtc.Configuration{ICEServers: servers}
 	if cfg.Certificate != nil {
 		pcConfig.Certificates = []webrtc.Certificate{*cfg.Certificate}
 	}

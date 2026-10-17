@@ -196,6 +196,7 @@ func (c *Conn) Close() error {
 func (c *Conn) loop() {
 	defer close(c.loopDone)
 	defer c.clip.closeUpdates()
+	defer close(c.cursor.updates)
 	for {
 		ev, xerr := c.x.WaitForEvent()
 		if ev == nil && xerr == nil {

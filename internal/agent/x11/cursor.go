@@ -25,9 +25,15 @@ type cursorTracker struct {
 	x       *xgb.Conn
 	updates chan protocol.Cursor
 
-	mu   sync.Mutex
-	sent map[uint32]bool
+	mu sync.Mutex
+	// sent holds the last maxSentCursors serials published with an image;
+	// X mints a serial per cursor object, so it must not grow forever. An
+	// evicted serial is simply encoded again.
+	sent  map[uint32]bool
+	order []uint32
 }
+
+const maxSentCursors = 64
 
 func (t *cursorTracker) init(x *xgb.Conn, root xproto.Window) error {
 	t.x = x
@@ -60,7 +66,14 @@ func (t *cursorTracker) refresh(serial uint32) {
 		return
 	}
 	t.mu.Lock()
-	t.sent[img.CursorSerial] = true
+	if !t.sent[img.CursorSerial] {
+		t.sent[img.CursorSerial] = true
+		t.order = append(t.order, img.CursorSerial)
+		if len(t.order) > maxSentCursors {
+			delete(t.sent, t.order[0])
+			t.order = t.order[1:]
+		}
+	}
 	t.mu.Unlock()
 	t.publish(protocol.Cursor{ID: img.CursorSerial, PNG: buf.Bytes(), HotX: int(img.Xhot), HotY: int(img.Yhot)})
 }
@@ -92,5 +105,6 @@ func cursorImage(w, h int, argb []uint32) *image.NRGBA {
 	return m
 }
 
-// Cursor delivers pointer image changes, newest first.
+// Cursor delivers pointer image changes. Only the newest is kept if the reader
+// falls behind, and the channel is closed when the connection ends.
 func (c *Conn) Cursor() <-chan protocol.Cursor { return c.cursor.updates }
