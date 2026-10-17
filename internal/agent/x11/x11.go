@@ -17,6 +17,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -61,6 +62,55 @@ func Open(display, xauthority string) (*Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("x11: connect %s: %w", display, err)
 	}
+	return newConn(x, display)
+}
+
+// noCookie is presented when no authority file holds a cookie the server
+// takes. The server refuses it and falls back to host-based access, which is
+// how an xhost +si:localuser:$USER setup lets the user in.
+var noCookie = make([]byte, 16)
+
+// Attach connects to a display someone else runs. It tries the cookie for
+// display in each authority file in turn, then no cookie at all. It returns
+// the file whose cookie the server took, or "" when it needed none.
+func Attach(display string, xauthorities []string) (*Conn, string, error) {
+	num, err := displayNumber(display)
+	if err != nil {
+		return nil, "", fmt.Errorf("x11: %w", err)
+	}
+	var tried []string
+	for _, path := range append(slices.Clip(xauthorities), "") {
+		cookie := noCookie
+		if path != "" {
+			if cookie, err = readCookie(path, num); err != nil {
+				tried = append(tried, err.Error())
+				continue
+			}
+		}
+		nc, err := dialSocket(num)
+		if err != nil {
+			return nil, "", fmt.Errorf("x11: no X server on %s: %w", display, err)
+		}
+		x, err := xgb.NewConnNetWithCookieHex(nc, hex.EncodeToString(cookie))
+		if err != nil {
+			nc.Close()
+			if path == "" {
+				path = "without a cookie"
+			}
+			tried = append(tried, fmt.Sprintf("%s: %v", path, err))
+			continue
+		}
+		c, err := newConn(x, display)
+		if err != nil {
+			return nil, "", err
+		}
+		c.kb.global = true
+		return c, path, nil
+	}
+	return nil, "", fmt.Errorf("x11: %s refused every way in: %s", display, strings.Join(tried, "; "))
+}
+
+func newConn(x *xgb.Conn, display string) (*Conn, error) {
 	c := &Conn{x: x, loopDone: make(chan struct{})}
 	if err := c.init(); err != nil {
 		x.Close()
@@ -100,9 +150,7 @@ func (c *Conn) init() error {
 	}
 	c.w, c.h = int(geo.Width), int(geo.Height)
 
-	if err := c.kb.init(c.x, setup); err != nil {
-		return err
-	}
+	c.kb.init(c.x, setup)
 	if err := c.clip.init(c.x, c.root, c.maxReq, c.loopDone); err != nil {
 		return fmt.Errorf("clipboard: %w", err)
 	}
@@ -179,12 +227,20 @@ func (c *Conn) setSize(w, h int) {
 	c.sizeMu.Unlock()
 }
 
+// Done is closed when the connection ends, through Close or because the
+// server went away.
+func (c *Conn) Done() <-chan struct{} { return c.loopDone }
+
 // Close releases every key and button still held, puts back the keymap
-// entries and autorepeat it changed, and disconnects. It is safe to call
+// entries and autorepeat it changed, hands clipboard text it still serves
+// to the session's clipboard manager, and disconnects. It is safe to call
 // more than once.
 func (c *Conn) Close() error {
 	c.closeOnce.Do(func() {
 		c.kb.close()
+		c.clip.handOff()
+		// A round trip, so the server has applied all of that before we go.
+		xproto.GetInputFocus(c.x).Reply()
 		c.x.Close()
 		<-c.loopDone
 		c.cap.close()
@@ -245,6 +301,20 @@ func dial(display, xauthority string) (*xgb.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
+	nc, err := dialSocket(num)
+	if err != nil {
+		return nil, err
+	}
+	x, err := xgb.NewConnNetWithCookieHex(nc, hex.EncodeToString(cookie))
+	if err != nil {
+		nc.Close()
+		return nil, err
+	}
+	return x, nil
+}
+
+// dialSocket connects to the unix socket of local display number num.
+func dialSocket(num string) (net.Conn, error) {
 	sock := "/tmp/.X11-unix/X" + num
 	nc, err := net.Dial("unix", sock)
 	if err != nil {
@@ -255,12 +325,7 @@ func dial(display, xauthority string) (*xgb.Conn, error) {
 			return nil, err
 		}
 	}
-	x, err := xgb.NewConnNetWithCookieHex(nc, hex.EncodeToString(cookie))
-	if err != nil {
-		nc.Close()
-		return nil, err
-	}
-	return x, nil
+	return nc, nil
 }
 
 // displayNumber extracts "7" from ":7", ":7.0" or "unix:7".

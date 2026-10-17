@@ -39,13 +39,22 @@ type keyboard struct {
 	perCode  int
 	syms     []xproto.Keysym // perCode entries per keycode from min
 
-	spares  []spare
-	clock   uint64
-	repeats [32]byte           // per-key autorepeat as we found it, restored on close
-	held    map[string]heldKey // by KeyboardEvent.code
+	spares []spare
+	clock  uint64
+	held   map[string]heldKey // by KeyboardEvent.code
+	// buttons and the wheel remainders are what the pointer holds.
 	buttons map[byte]bool
 	wheelX  float64
 	wheelY  float64
+
+	// global switches the server's autorepeat as a whole rather than per
+	// key; see disableAutorepeat.
+	global bool
+	// repeatOff reports that we switched autorepeat off; globalRepeat and
+	// repeats hold it as we found it, restored on close.
+	repeatOff    bool
+	globalRepeat bool
+	repeats      [32]byte
 }
 
 type heldKey struct {
@@ -59,27 +68,44 @@ type spare struct {
 	lastUsed uint64
 }
 
-func (k *keyboard) init(x *xgb.Conn, setup *xproto.SetupInfo) error {
+func (k *keyboard) init(x *xgb.Conn, setup *xproto.SetupInfo) {
 	k.x = x
 	k.root = setup.DefaultScreen(x).Root
 	k.min, k.max = setup.MinKeycode, setup.MaxKeycode
 	k.held = map[string]heldKey{}
 	k.buttons = map[byte]bool{}
 	k.stale.Store(true)
-	return k.disableAutorepeat()
 }
 
 // disableAutorepeat stops the server repeating held keys: the browser sends
 // its own repeats, and a server repeating through a network stall turns one
-// Backspace into many. It is switched off per key, which survives a desktop
-// turning the global switch back on.
+// Backspace into many. It acts on the first key, so a session that only
+// watches a desktop leaves it as it was.
+//
+// A display we spawned has it switched off per key, which survives the
+// desktop turning the global switch back on as it starts. A desktop we
+// attached to has the global switch turned off instead, and turned off again
+// at every key press in case the desktop turned it on: per-key changes mark
+// every key's repeat setting as explicit in the XKB keymap, which putting
+// the bits back does not undo.
 func (k *keyboard) disableAutorepeat() error {
+	if k.repeatOff {
+		if k.global {
+			xproto.ChangeKeyboardControl(k.x, xproto.KbAutoRepeatMode, []uint32{xproto.AutoRepeatModeOff})
+		}
+		return nil
+	}
 	r, err := xproto.GetKeyboardControl(k.x).Reply()
 	if err != nil {
-		return fmt.Errorf("read keyboard control: %w", err)
+		return fmt.Errorf("x11: read keyboard control: %w", err)
 	}
+	k.repeatOff, k.globalRepeat = true, r.GlobalAutoRepeat != 0
 	copy(k.repeats[:], r.AutoRepeats)
-	k.setAutorepeat(func(xproto.Keycode) bool { return true }, xproto.AutoRepeatModeOff)
+	if k.global {
+		xproto.ChangeKeyboardControl(k.x, xproto.KbAutoRepeatMode, []uint32{xproto.AutoRepeatModeOff})
+	} else {
+		k.setAutorepeat(func(xproto.Keycode) bool { return true }, xproto.AutoRepeatModeOff)
+	}
 	return nil
 }
 
@@ -119,6 +145,11 @@ func (c *Conn) Input(m protocol.Control) error {
 }
 
 func (k *keyboard) key(m protocol.Control) error {
+	if m.Down {
+		if err := k.disableAutorepeat(); err != nil {
+			return err
+		}
+	}
 	if r, n := utf8.DecodeRuneInString(m.Key); n == len(m.Key) && r != utf8.RuneError {
 		if !m.Down || r < 0x20 || r == 0x7f {
 			return nil // typed on key-down; nothing is held
@@ -387,7 +418,13 @@ func (k *keyboard) close() {
 			xproto.ChangeKeyboardMapping(k.x, 1, s.code, 1, []xproto.Keysym{0})
 		}
 	}
-	k.setAutorepeat(func(c xproto.Keycode) bool { return k.repeats[c/8]&(1<<(c%8)) != 0 }, xproto.AutoRepeatModeOn)
+	switch {
+	case !k.repeatOff:
+	case k.global && k.globalRepeat:
+		xproto.ChangeKeyboardControl(k.x, xproto.KbAutoRepeatMode, []uint32{xproto.AutoRepeatModeOn})
+	case !k.global:
+		k.setAutorepeat(func(c xproto.Keycode) bool { return k.repeats[c/8]&(1<<(c%8)) != 0 }, xproto.AutoRepeatModeOn)
+	}
 }
 
 // fake sends one XTEST event. It is unchecked: a failure surfaces as an

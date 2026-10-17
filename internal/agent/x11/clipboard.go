@@ -16,7 +16,12 @@ import (
 // MaxClipboard caps clipboard text in either direction.
 const MaxClipboard = 1 << 20
 
-const ownTimeout = 2 * time.Second
+const (
+	ownTimeout = 2 * time.Second
+	// handOffTimeout bounds how long Close waits for a clipboard manager to
+	// copy the text we hold.
+	handOffTimeout = time.Second
+)
 
 // clipboard owns CLIPBOARD from a hidden window when the browser sets it, and
 // reads it whenever another client becomes the owner. The event loop calls
@@ -29,6 +34,7 @@ type clipboard struct {
 
 	setMu    sync.Mutex // one SetClipboard at a time
 	stamps   chan xproto.Timestamp
+	saved    chan struct{} // the clipboard manager answered SAVE_TARGETS
 	loopDone <-chan struct{}
 
 	mu    sync.Mutex
@@ -49,14 +55,17 @@ type incr struct {
 
 type atoms struct {
 	clipboard, targets, utf8, text, plain, incr, data, stamp xproto.Atom
+	manager, saveTargets, saveList                           xproto.Atom
 }
 
 func (cb *clipboard) init(x *xgb.Conn, root xproto.Window, maxReq int, loopDone <-chan struct{}) error {
 	cb.x, cb.maxReq, cb.loopDone = x, maxReq, loopDone
 	cb.stamps = make(chan xproto.Timestamp, 1)
+	cb.saved = make(chan struct{}, 1)
 	cb.updates = make(chan string, 1)
 	names := []string{"CLIPBOARD", "TARGETS", "UTF8_STRING", "TEXT", "text/plain;charset=utf-8",
-		"INCR", "_REMOTEJUMP_SELECTION", "_REMOTEJUMP_TIMESTAMP"}
+		"INCR", "_REMOTEJUMP_SELECTION", "_REMOTEJUMP_TIMESTAMP",
+		"CLIPBOARD_MANAGER", "SAVE_TARGETS", "_REMOTEJUMP_SAVE_TARGETS"}
 	ids := make([]xproto.Atom, len(names))
 	for i, n := range names {
 		r, err := xproto.InternAtom(x, false, uint16(len(n)), n).Reply()
@@ -65,7 +74,7 @@ func (cb *clipboard) init(x *xgb.Conn, root xproto.Window, maxReq int, loopDone 
 		}
 		ids[i] = r.Atom
 	}
-	cb.a = atoms{ids[0], ids[1], ids[2], ids[3], ids[4], ids[5], ids[6], ids[7]}
+	cb.a = atoms{ids[0], ids[1], ids[2], ids[3], ids[4], ids[5], ids[6], ids[7], ids[8], ids[9], ids[10]}
 
 	var err error
 	if cb.win, err = xproto.NewWindowId(x); err != nil {
@@ -184,8 +193,44 @@ func (cb *clipboard) onOwner(e xfixes.SelectionNotifyEvent) {
 	xproto.ConvertSelection(cb.x, cb.win, cb.a.clipboard, cb.a.utf8, cb.a.data, e.SelectionTimestamp)
 }
 
-// onNotify handles the owner's answer to our ConvertSelection.
+// handOff asks the session's clipboard manager, when it runs one, to copy
+// the text we serve, so that text stays on the clipboard once we disconnect
+// (the freedesktop.org clipboard manager protocol). Without a manager the
+// selection simply loses its owner, as when any X client exits.
+func (cb *clipboard) handOff() {
+	cb.mu.Lock()
+	owned := cb.owned
+	cb.mu.Unlock()
+	if !owned {
+		return
+	}
+	r, err := xproto.GetSelectionOwner(cb.x, cb.a.manager).Reply()
+	if err != nil || r.Owner == 0 {
+		return
+	}
+	list := []xproto.Atom{cb.a.utf8, xproto.AtomString, cb.a.text, cb.a.plain}
+	buf := make([]byte, 4*len(list))
+	for i, a := range list {
+		xgb.Put32(buf[4*i:], uint32(a))
+	}
+	xproto.ChangeProperty(cb.x, xproto.PropModeReplace, cb.win, cb.a.saveList, xproto.AtomAtom, 32, uint32(len(list)), buf)
+	xproto.ConvertSelection(cb.x, cb.win, cb.a.manager, cb.a.saveTargets, cb.a.saveList, xproto.TimeCurrentTime)
+	select {
+	case <-cb.saved:
+	case <-cb.loopDone:
+	case <-time.After(handOffTimeout):
+	}
+}
+
+// onNotify handles the answer to a ConvertSelection of ours.
 func (cb *clipboard) onNotify(e xproto.SelectionNotifyEvent) {
+	if e.Requestor == cb.win && e.Selection == cb.a.manager {
+		select {
+		case cb.saved <- struct{}{}:
+		default:
+		}
+		return
+	}
 	if e.Requestor != cb.win || e.Selection != cb.a.clipboard || e.Property == 0 {
 		return
 	}
