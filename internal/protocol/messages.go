@@ -138,7 +138,8 @@ const (
 )
 
 // Control is one message on the control data channel. Coordinates are in
-// remote display pixels; the browser scales from the video element.
+// pixels of the video, which the browser scales from the video element; the
+// agent maps them to the desktop when it streams the desktop scaled down.
 type Control struct {
 	T ControlType `json:"t"`
 

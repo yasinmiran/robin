@@ -11,6 +11,7 @@ import (
 	"github.com/yasinmiran/remotejump/internal/agent/desktop"
 	"github.com/yasinmiran/remotejump/internal/agent/peer"
 	"github.com/yasinmiran/remotejump/internal/agent/yuv"
+	"github.com/yasinmiran/remotejump/internal/protocol"
 )
 
 // Encoder turns I420 frames into H.264 access units in Annex-B form.
@@ -37,7 +38,7 @@ type stream struct {
 	desk desktop.Desktop
 	fps  int
 	// maxW and maxH cap the encoded size. A spawned display never exceeds
-	// them; an attached one can.
+	// them; an attached one can, and its frames are scaled down to fit.
 	maxW, maxH int
 	newEncoder NewEncoderFunc
 	log        *slog.Logger
@@ -45,6 +46,24 @@ type stream struct {
 	peer     atomic.Pointer[peer.Peer]
 	keyframe atomic.Bool
 	bitrate  atomic.Int64
+	// scale is how frames are shrunk on their way out, nil while they go
+	// out at desktop size.
+	scale atomic.Pointer[scale]
+}
+
+// scale is a desktop size and the smaller one its frames are encoded at.
+type scale struct{ deskW, deskH, w, h int }
+
+// toDesktop maps the position in a pointer event, which the page reports in
+// video pixels, to the desktop pixel at the centre of that video pixel.
+func (s *stream) toDesktop(m protocol.Control) protocol.Control {
+	sc := s.scale.Load()
+	if sc == nil || (m.T != protocol.ControlMove && m.T != protocol.ControlButton) {
+		return m
+	}
+	m.X = min((2*m.X+1)*sc.deskW/(2*sc.w), sc.deskW-1)
+	m.Y = min((2*m.Y+1)*sc.deskH/(2*sc.h), sc.deskH-1)
+	return m
 }
 
 func newStream(desk desktop.Desktop, fps, maxW, maxH int, newEncoder NewEncoderFunc, log *slog.Logger) *stream {
@@ -73,6 +92,7 @@ func (s *stream) run(ctx context.Context) {
 		// must encode the screen again even if nothing new was drawn.
 		stale          bool
 		img            *yuv.I420
+		scaler         *yuv.Scaler
 		appliedBitrate int64
 		began          = time.Now()
 		lastWrite      time.Time
@@ -108,6 +128,10 @@ func (s *stream) run(ctx context.Context) {
 			continue
 		}
 		w, h := f.Width&^1, f.Height&^1
+		scaled := f.Width > s.maxW || f.Height > s.maxH
+		if scaled {
+			w, h = fit(f.Width, f.Height, s.maxW, s.maxH)
+		}
 		if enc == nil || img.Width != w || img.Height != h {
 			closeEncoder()
 			br := s.bitrate.Load()
@@ -125,7 +149,19 @@ func (s *stream) run(ctx context.Context) {
 			}
 			appliedBitrate = br
 		}
-		yuv.FromBGRX(img, f.Pix, f.Stride)
+		if scaled {
+			if scaler == nil || !scaler.Fits(f.Width, f.Height, w, h) {
+				scaler = yuv.NewScaler(f.Width, f.Height, w, h)
+				s.scale.Store(&scale{f.Width, f.Height, w, h})
+			}
+			scaler.Convert(img, f.Pix, f.Stride)
+		} else {
+			if scaler != nil {
+				scaler = nil
+				s.scale.Store(nil)
+			}
+			yuv.FromBGRX(img, f.Pix, f.Stride)
+		}
 		au, err := enc.Encode(img, now.Sub(began), force)
 		if err != nil {
 			s.log.Warn("encode", "err", err)

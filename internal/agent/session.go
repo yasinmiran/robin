@@ -310,7 +310,7 @@ func (s *session) closePeer() {
 func (s *session) control(m protocol.Control) {
 	switch m.T {
 	case protocol.ControlKey, protocol.ControlMove, protocol.ControlButton, protocol.ControlWheel, protocol.ControlRelease:
-		if err := s.desk.Input(m); err != nil {
+		if err := s.desk.Input(s.stream.toDesktop(m)); err != nil {
 			s.log.Debug("input", "err", err)
 		}
 	case protocol.ControlResize:
