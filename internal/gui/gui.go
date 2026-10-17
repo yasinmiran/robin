@@ -97,6 +97,9 @@ func Run(ctx context.Context, o Options) error {
 		return fmt.Errorf("%s cannot run a headless desktop yet: missing %s\ninstall with: %s",
 			o.Dest, strings.Join(missing, ", "), report.InstallHint())
 	}
+	if err := report.CheckEncoder(o.Encoder); err != nil {
+		return fmt.Errorf("%s: %w", o.Dest, err)
+	}
 	a, err := agentbin.For(report.Arch)
 	if err != nil {
 		return err
