@@ -51,38 +51,46 @@ func (r *route) environ() []string {
 // arrive only when the screen changes.
 const gop = 1 << 20
 
-// gstRoute runs encoder, an element and its properties, between
-// rawvideoparse (gst-plugins-base), which cuts stdin into frames, and
-// multipartmux (gst-plugins-good), which frames the output. Every encoder
-// element used here takes its bitrate in kbit/s.
-func gstRoute(gst, name, encoder string, env ...string) route {
+// The tools run VBR with the target as their peak and averagePercent of it
+// as their average. Under CBR the hardware spends the whole target whatever
+// the picture: at 20 Mbit/s, all of it on a terminal where VBR sends tens of
+// kilobits (measured on an Intel iGPU). The frame budget holds the peak
+// either way.
+const averagePercent = 70
+
+// gstRoute runs an encoder element between rawvideoparse
+// (gst-plugins-base), which cuts stdin into frames, and multipartmux
+// (gst-plugins-good), which frames the output. encoder renders the element
+// and its properties for a peak bitrate in kbit/s.
+func gstRoute(gst, name string, encoder func(kbps int) string, env ...string) route {
 	return route{
 		name: name, path: gst, env: env, framing: newMultipartReader,
 		args: func(c config) []string {
 			pipeline := fmt.Sprintf("fdsrc fd=0 blocksize=%d ! rawvideoparse width=%d height=%d format=nv12 framerate=%d/1 ! "+
-				"%s bitrate=%d ! video/x-h264,profile=constrained-baseline,stream-format=byte-stream,alignment=au ! "+
+				"%s ! video/x-h264,profile=constrained-baseline,stream-format=byte-stream,alignment=au ! "+
 				"multipartmux boundary=remotejump ! fdsink fd=1 sync=false",
-				c.width*c.height*3/2, c.width, c.height, c.fps, encoder, c.bitrate/1000)
+				c.width*c.height*3/2, c.width, c.height, c.fps, encoder(c.bitrate/1000))
 			return append([]string{"-q"}, strings.Fields(pipeline)...)
 		},
 	}
 }
 
-// ffmpegRoute runs ffmpeg with input options before and encoder options
-// after the raw NV12 input.
-func ffmpegRoute(ffmpeg, name string, input, encoder func(config) []string) route {
+// ffmpegRoute runs ffmpeg with input options before the raw NV12 input and
+// encoder options after it.
+func ffmpegRoute(ffmpeg, name string, input, encoder []string) route {
 	return route{
 		name: name, path: ffmpeg, framing: newFLVReader, stderrFatal: true,
 		args: func(c config) []string {
 			args := []string{"-hide_banner", "-loglevel", "error", "-nostdin"}
-			args = append(args, input(c)...)
+			args = append(args, input...)
 			args = append(args,
 				"-f", "rawvideo", "-pix_fmt", "nv12", "-s", fmt.Sprintf("%dx%d", c.width, c.height),
 				"-r", strconv.Itoa(c.fps), "-i", "pipe:0")
-			args = append(args, encoder(c)...)
-			b := strconv.Itoa(c.bitrate)
+			args = append(args, encoder...)
+			peak := strconv.Itoa(c.bitrate)
 			return append(args,
-				"-b:v", b, "-maxrate", b, "-bufsize", b, "-g", strconv.Itoa(gop), "-bf", "0",
+				"-b:v", strconv.Itoa(c.bitrate*averagePercent/100), "-maxrate", peak, "-bufsize", peak,
+				"-g", strconv.Itoa(gop), "-bf", "0",
 				"-flush_packets", "1", "-flvflags", "no_duration_filesize", "-f", "flv", "pipe:1")
 		},
 	}
@@ -106,33 +114,34 @@ func vaapiRoutes() ([]route, error) {
 				if lp == "1" {
 					name += " (low power)"
 				}
-				rs = append(rs, ffmpegRoute(ffmpeg, name,
-					func(config) []string { return []string{"-vaapi_device", node} },
-					func(config) []string {
-						// async_depth 1 keeps ffmpeg 5 and later from holding
-						// a frame back; older versions ignore it.
-						return []string{"-vf", "hwupload", "-c:v", "h264_vaapi", "-profile:v", "constrained_baseline",
-							"-rc_mode", "CBR", "-low_power", lp, "-async_depth", "1", "-sei", "0"}
-					}))
+				// async_depth 1 keeps ffmpeg 5 and later from holding a
+				// frame back; older versions ignore it.
+				rs = append(rs, ffmpegRoute(ffmpeg, name, []string{"-vaapi_device", node},
+					[]string{"-vf", "hwupload", "-c:v", "h264_vaapi", "-profile:v", "constrained_baseline",
+						"-rc_mode", "VBR", "-low_power", lp, "-async_depth", "1", "-sei", "0"}))
 			}
 		}
 		if gst == "" {
 			continue
 		}
 		// The va plugin (GStreamer 1.22 and later) names the first device's
-		// elements plainly and prefixes the others with the device.
+		// elements plainly and prefixes the others with the device. Its
+		// bitrate is the VBR peak, as vaapih264enc's is.
 		va := "va"
 		if i > 0 {
 			va += filepath.Base(node)
 		}
 		for _, el := range []string{va + "h264enc", va + "h264lpenc"} {
-			rs = append(rs, gstRoute(gst, "gst-launch-1.0 "+el,
-				el+" rate-control=cbr key-int-max=1024 b-frames=0 ref-frames=1 cabac=false dct8x8=false aud=true"))
+			rs = append(rs, gstRoute(gst, "gst-launch-1.0 "+el, func(kbps int) string {
+				return fmt.Sprintf("%s rate-control=vbr bitrate=%d target-percentage=%d key-int-max=1024 b-frames=0 ref-frames=1 "+
+					"cabac=false dct8x8=false aud=true", el, kbps, averagePercent)
+			}))
 		}
 		for _, tune := range []string{"none", "low-power"} {
-			rs = append(rs, gstRoute(gst, "gst-launch-1.0 vaapih264enc tune="+tune+" on "+node,
-				fmt.Sprintf("vaapih264enc tune=%s rate-control=cbr keyframe-period=%d max-bframes=0 refs=1 aud=true", tune, gop),
-				"GST_VAAPI_DRM_DEVICE="+node))
+			rs = append(rs, gstRoute(gst, "gst-launch-1.0 vaapih264enc tune="+tune+" on "+node, func(kbps int) string {
+				return fmt.Sprintf("vaapih264enc tune=%s rate-control=vbr bitrate=%d target-percentage=%d keyframe-period=%d "+
+					"max-bframes=0 refs=1 aud=true", tune, kbps, averagePercent, gop)
+			}, "GST_VAAPI_DRM_DEVICE="+node))
 		}
 	}
 	return rs, nil
@@ -146,16 +155,16 @@ func nvencRoutes() ([]route, error) {
 	}
 	var rs []route
 	if ffmpeg != "" {
-		rs = append(rs, ffmpegRoute(ffmpeg, "ffmpeg h264_nvenc",
-			func(config) []string { return nil },
-			func(config) []string {
-				return []string{"-c:v", "h264_nvenc", "-profile:v", "baseline", "-preset", "llhp",
-					"-zerolatency", "1", "-delay", "0", "-rc", "cbr"}
-			}))
+		rs = append(rs, ffmpegRoute(ffmpeg, "ffmpeg h264_nvenc", nil,
+			[]string{"-c:v", "h264_nvenc", "-profile:v", "baseline", "-preset", "llhp",
+				"-zerolatency", "1", "-delay", "0", "-rc", "vbr"}))
 	}
 	if gst != "" {
-		rs = append(rs, gstRoute(gst, "gst-launch-1.0 nvh264enc",
-			"nvh264enc rc-mode=cbr gop-size=-1 bframes=0 zerolatency=true preset=low-latency-hp aud=true"))
+		// nvh264enc's bitrate is the VBR average; max-bitrate is the peak.
+		rs = append(rs, gstRoute(gst, "gst-launch-1.0 nvh264enc", func(kbps int) string {
+			return fmt.Sprintf("nvh264enc rc-mode=vbr bitrate=%d max-bitrate=%d gop-size=-1 bframes=0 zerolatency=true "+
+				"preset=low-latency-hp aud=true", kbps*averagePercent/100, kbps)
+		}))
 	}
 	return rs, nil
 }

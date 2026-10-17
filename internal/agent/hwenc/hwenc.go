@@ -72,7 +72,9 @@ func (o *Opener) Open(width, height, fps, bitrate int) (*Encoder, error) {
 	if o.err != nil {
 		return nil, o.err
 	}
-	return newEncoder(o.route, width, height, fps, bitrate), nil
+	e := newEncoder(o.route, width, height, fps, bitrate)
+	e.log = o.log
+	return e, nil
 }
 
 var hints = map[Kind]string{
@@ -137,6 +139,7 @@ var errClosed = errors.New("hwenc: encoder closed")
 // for concurrent use.
 type Encoder struct {
 	route *route
+	log   *slog.Logger // may be nil
 	cfg   config
 	// bitrate is the congestion controller's target in bits per second.
 	bitrate int
@@ -171,8 +174,16 @@ func (e *Encoder) Encode(img *yuv.I420, ts time.Duration, keyframe bool) ([]byte
 	if e.proc != nil && !keyframe && !e.budget.ok() {
 		return nil, nil
 	}
-	if e.proc != nil && ((keyframe && e.proc.frames > 0) || (e.offTarget() && ts-e.proc.started >= retargetGap)) {
-		e.stop()
+	if e.proc != nil {
+		switch {
+		case keyframe && e.proc.frames > 0:
+			e.stop()
+		case e.offTarget() && ts-e.proc.started >= retargetGap:
+			if e.log != nil {
+				e.log.Info("hardware encoder retarget", "from_kbps", e.proc.bitrate/1000, "to_kbps", e.bitrate/1000)
+			}
+			e.stop()
+		}
 	}
 	if e.proc == nil {
 		if e.failed && ts-e.failedAt < failureBackoff {
