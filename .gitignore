@@ -5,3 +5,4 @@
 !/internal/agentbin/agents/README.md
 /e2e/out/
 node_modules/
+/.claude/
