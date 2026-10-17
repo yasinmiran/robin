@@ -92,13 +92,15 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 		if o.NewAudio == nil {
 			audioErr = "this agent was built without audio"
 			log.Warn("audio requested but this agent has no audio support")
-		} else if audio, desktopEnv, err = o.NewAudio(ctx, AudioOptions{
+		} else if src, env, err := o.NewAudio(ctx, AudioOptions{
 			RunDir: runDir, Attached: start.Attach != "", Log: log,
 		}); err != nil {
+			// Nothing from a failed start may reach the desktop, its env least of
+			// all: it could point programs at a server that is not there.
 			audioErr = err.Error()
 			log.Warn("audio unavailable", "err", err)
-			audio = nil
 		} else {
+			audio, desktopEnv = src, env
 			defer audio.Close()
 		}
 	}
