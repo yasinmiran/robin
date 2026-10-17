@@ -1,11 +1,18 @@
 #!/bin/bash
 # Runs a command against the agent's display: rj-x xdotool getdisplaygeometry
+# An attached agent has no display of its own; then it is rj's desktop (rj-live).
 set -euo pipefail
 
-dir=$(rj-rundir)
-DISPLAY=$(<"$dir/display")
-export DISPLAY
-if [[ -f $dir/Xauthority ]]; then
-  export XAUTHORITY=$dir/Xauthority
+if dir=$(rj-rundir 2>/dev/null); then
+  DISPLAY=$(<"$dir/display")
+  if [[ -f $dir/Xauthority ]]; then
+    export XAUTHORITY=$dir/Xauthority
+  fi
+elif [[ -f $HOME/.rj-live/display ]]; then
+  DISPLAY=$(<"$HOME/.rj-live/display")
+  export XAUTHORITY=$HOME/.Xauthority
+else
+  rj-rundir
 fi
+export DISPLAY
 exec "$@"

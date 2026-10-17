@@ -1,0 +1,51 @@
+#!/bin/bash
+# rj's own desktop, for the attach scenario: the session a user would have
+# running before remotejump comes along.
+#
+#   rj-live start   start Xvfb on :5 with its cookie in ~/.Xauthority, as
+#                   startx does, then xterm and openbox; save its state
+#   rj-live state   print what an attached session must leave as it found it
+#   rj-live before  print the state saved at start
+set -euo pipefail
+
+num=5
+dir=$HOME/.rj-live
+
+state() {
+  export DISPLAY=:$num XAUTHORITY=$HOME/.Xauthority
+  echo "Xvfb $(pgrep -u rj -x Xvfb) openbox $(pgrep -u rj -x openbox) xterm $(pgrep -u rj -x xterm)"
+  echo "geometry $(xdotool getdisplaygeometry)"
+  xset q | sed -n '/auto repeat:/p;/auto repeating keys:/,/bell percent/p' | sed 's/ *bell percent.*//;s/ *key click.*//'
+  echo "core keymap $(xmodmap -pke | sha256sum | cut -c1-16)"
+  echo "xkb keymap $(xkbcomp -xkb "$DISPLAY" - 2>/dev/null | sha256sum | cut -c1-16)"
+}
+
+start() {
+  mkdir -p "$dir"
+  touch "$HOME/.Xauthority"
+  xauth -q -f "$HOME/.Xauthority" add ":$num" . "$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+  export DISPLAY=:$num XAUTHORITY=$HOME/.Xauthority
+  # setsid -f and no inherited descriptors, or the ssh that runs this never returns.
+  setsid -f Xvfb ":$num" -screen 0 1280x800x24 -auth "$XAUTHORITY" -nolisten tcp </dev/null >"$dir/Xvfb.log" 2>&1
+  for _ in $(seq 100); do
+    xdpyinfo >/dev/null 2>&1 && break
+    sleep 0.1
+  done
+  # The terminal first: openbox adopts it (see the ADR on spawn order).
+  setsid -f xterm -geometry 80x24+60+60 </dev/null >"$dir/xterm.log" 2>&1
+  xdotool search --sync --onlyvisible --class xterm >/dev/null
+  setsid -f openbox </dev/null >"$dir/openbox.log" 2>&1
+  for _ in $(seq 100); do
+    xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q 'window id' && break
+    sleep 0.1
+  done
+  echo ":$num" >"$dir/display"
+  state >"$dir/before"
+}
+
+case ${1:-} in
+  start) start ;;
+  state) state ;;
+  before) cat "$dir/before" ;;
+  *) echo "usage: rj-live start|state|before" >&2; exit 2 ;;
+esac

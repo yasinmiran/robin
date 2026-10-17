@@ -11,7 +11,7 @@ worked over a real network.
 
 ```sh
 # build bin/remotejump-linux-amd64 first (the repo Makefile does)
-e2e/run.sh                # direct, blocked, restart
+e2e/run.sh                # direct, blocked, restart, attach
 e2e/run.sh direct         # one scenario
 e2e/run.sh selftest       # the harness itself, no CLI needed
 RJ_BIN=/path/to/remotejump e2e/run.sh restart
@@ -37,6 +37,7 @@ cannot leak into the next one. The tests run in order against one session.
 | `direct` | open | the session comes up on UDP |
 | `blocked` | UDP dropped (except loopback) before the CLI starts | ICE-TCP through the SSH forward carries the whole session; the selected remote candidate is `127.0.0.1` |
 | `restart` | open, then UDP dropped mid-session | the page notices, restarts ICE and recovers onto TCP within 15 s (`RJ_RESTART_TIMEOUT_MS`; typically about 3 s), and input still works afterwards |
+| `attach` | open | `--attach auto` finds and streams the desktop rj already has running (`rj-live`: Xvfb on `:5` at 1280x800 with its cookie in `~/.Xauthority`, an xterm and openbox, started over ssh before the CLI) and leaves it as it was |
 
 Every scenario also checks, in this order:
 
@@ -51,12 +52,19 @@ Every scenario also checks, in this order:
 4. **Clipboard**: `remotejump.sendClipboard()` reaches `xclip -o` on the host,
    and a host `xclip -i` shows up in `remotejump.lastRemoteClipboard`.
 5. **Resize**: a 1000x700 viewport turns into a 1000x700 video and a 1000x700
-   display (`xdotool getdisplaygeometry`) within 10 s.
+   display (`xdotool getdisplaygeometry`) within 10 s. In `attach` the desktop
+   keeps its size instead: video and display stay 1280x800 and only the video
+   element shrinks.
 6. **Transport**: per the table above, from `remotejump.stats()`.
 7. **Teardown**: SIGINT to the CLI's process group (what Ctrl-C does) makes it
    exit 0 within 10 s, after which no `Xvfb`, `remotejump-agent`, `openbox` or
    `xterm` runs as `rj` and the agent's run dir is gone. Stdout must have held
    nothing but the URL. Set `RJ_SIGINT_PID_ONLY=1` to signal only the CLI.
+   In `attach` the agent and its run dir go while rj's desktop stays:
+   `rj-live state` (the same Xvfb, openbox and xterm, display size, autorepeat
+   and a hash of each keymap) must match what `rj-live start` saved before the
+   CLI ran. A test just before types a character the US keymap lacks (ж) and
+   sees autorepeat off, so the session did change both before putting them back.
 
 If a test fails, Playwright restarts the worker and the remaining tests get a
 new session, so one broken feature does not hide the others.
@@ -91,7 +99,9 @@ Open a trace with `npx playwright show-trace <zip>` from `e2e/` (after
   with a key generated per run; `rj` may `sudo` only `iptables` and `ip6tables`.
   `rj-rundir` finds the agent's run dir (`~/.cache/remotejump/run/*`,
   `$XDG_RUNTIME_DIR/remotejump`, `/tmp/remotejump-1000`), `rj-x` runs a command
-  on the agent's display, and `rj-block-udp` drops non-loopback UDP.
+  on the agent's display (rj's own desktop when the agent attached to it),
+  `rj-live` starts that desktop and reports its state, and `rj-block-udp` drops
+  non-loopback UDP.
 - `client.Containerfile`: Playwright plus Chrome stable and OpenSSH. The
   `PW_VERSION` build arg must match `@playwright/test` in `package.json`; the
   build fails if they drift.

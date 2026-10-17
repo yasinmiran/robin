@@ -38,7 +38,7 @@ let page: Page;
 let sessionStart = 0;
 
 test.beforeAll(async ({ browser }, testInfo) => {
-  expect(['direct', 'blocked', 'restart'], 'SCENARIO').toContain(SCENARIO);
+  expect(['direct', 'blocked', 'restart', 'attach'], 'SCENARIO').toContain(SCENARIO);
   testInfo.setTimeout(150_000);
   context = await browser.newContext({
     viewport: { width: 1280, height: 720 },
@@ -194,6 +194,7 @@ test('clipboard: browser to host and host to browser', async () => {
 });
 
 test('resize: display and video follow a 1000x700 viewport within 10 s', async () => {
+  test.skip(SCENARIO === 'attach', 'an attached desktop keeps its size; see the attach resize test');
   await page.setViewportSize({ width: 1000, height: 700 });
   await expect
     .poll(
@@ -248,7 +249,58 @@ if (SCENARIO === 'restart') {
   });
 }
 
+if (SCENARIO === 'attach') {
+  test('attach: a 1000x700 viewport scales the video and leaves the desktop its size', async () => {
+    const desk = await host.displayGeometry();
+    await page.setViewportSize({ width: 1000, height: 700 });
+    // Past the page's resize debounce and the agent's answer, had there been one.
+    await page.waitForTimeout(2_000);
+    const v = await page.$eval(SCREEN, (el) => {
+      const e = el as HTMLVideoElement;
+      return { w: e.videoWidth, h: e.videoHeight, box: e.getBoundingClientRect().width };
+    });
+    const g = await host.displayGeometry();
+    expect(`video ${v.w}x${v.h}, display ${g.width}x${g.height}`).toBe(
+      `video ${desk.width}x${desk.height}, display ${desk.width}x${desk.height}`,
+    );
+    expect(v.box, 'the video element shrank with the viewport').toBeLessThanOrEqual(1000);
+  });
+
+  test('transport: attached session uses UDP', async ({}, testInfo) => {
+    expect((await connectedStats(testInfo, 'attach')).transport).toBe('udp');
+  });
+
+  test('attach: a character the keymap lacks borrows a spare key, and autorepeat is off meanwhile', async () => {
+    // Playwright types only characters of a US layout as key events.
+    await page.evaluate(() => {
+      for (const type of ['keydown', 'keyup']) {
+        window.dispatchEvent(new KeyboardEvent(type, { key: 'ж', code: 'Semicolon', bubbles: true, cancelable: true }));
+      }
+    });
+    await expect
+      .poll(() => host.onDisplay(`sh -c 'xmodmap -pke | grep -cE "U0436|Cyrillic_zhe" || true'`), { message: 'a keycode bound to ж' })
+      .not.toBe('0');
+    expect(await host.onDisplay(`sh -c 'xset q | grep -o "auto repeat: *[a-z]*"'`)).toMatch(/off$/);
+    await page.keyboard.press('Backspace');
+  });
+
+  test('teardown: SIGINT ends the CLI and leaves the attached desktop as it found it', async ({}, testInfo) => {
+    expect(await host.agentLeftovers(), 'the agent is visible before teardown').not.toBe('');
+    const stop = await cli!.stop(10_000);
+    testInfo.annotations.push({ type: 'exit', description: JSON.stringify(stop) });
+    expect(stop.killed, 'CLI exited by itself within 10 s of SIGINT').toBe(false);
+    expect(stop.code, 'CLI exit code').toBe(0);
+
+    const left = Math.max(1_000, 10_000 - stop.afterMs);
+    await expect.poll(host.agentLeftovers, { message: 'agent processes and run dirs on the host', timeout: left }).toBe('');
+    // Same Xvfb, openbox and xterm, same size, autorepeat and keymaps.
+    expect(await host.liveState()).toBe(await host.liveBefore());
+    expect(cli!.extraStdout, 'stdout carries only the URL').toEqual([]);
+  });
+}
+
 test('teardown: SIGINT ends the CLI and leaves nothing behind on the host', async ({}, testInfo) => {
+  test.skip(SCENARIO === 'attach', 'the attached desktop outlives the session; see the attach teardown');
   const dir = await host.runDir();
   expect(await host.leftovers(), 'session processes are visible before teardown').not.toBe('');
 

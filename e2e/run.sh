@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the remotejump e2e suite in rootless podman.
 #
-#   ./run.sh                    every scenario: direct blocked restart
+#   ./run.sh                    every scenario: direct blocked restart attach
 #   ./run.sh direct restart     just those
 #   ./run.sh selftest           prove the harness itself, no CLI needed
 #
@@ -29,7 +29,7 @@ CLIENT_IMG=localhost/$NET-client
 RJ_BIN=${RJ_BIN:-bin/remotejump-linux-amd64}
 [[ $RJ_BIN = /* ]] || RJ_BIN=$ROOT/$RJ_BIN
 
-ALL_SCENARIOS=(direct blocked restart)
+ALL_SCENARIOS=(direct blocked restart attach)
 
 log() { printf '\033[1m[e2e]\033[0m %s\n' "$*" >&2; }
 die() { log "error: $*"; exit 2; }
@@ -137,9 +137,15 @@ run_scenario() {
     log "scenario $s: dropping non-loopback UDP on the host"
     on_client ssh rjhost rj-block-udp
   fi
+  local cli_args=${RJ_CLI_ARGS:-}
+  if [[ $s = attach ]]; then
+    log "scenario $s: starting rj's own desktop"
+    on_client ssh rjhost rj-live start
+    cli_args="--attach auto $cli_args"
+  fi
   on_client env SCENARIO="$s" \
     RJ_RESTART_TIMEOUT_MS="${RJ_RESTART_TIMEOUT_MS:-15000}" RJ_SIGINT_PID_ONLY="${RJ_SIGINT_PID_ONLY:-0}" \
-    RJ_CLI_ARGS="${RJ_CLI_ARGS:-}" \
+    RJ_CLI_ARGS="$cli_args" \
     npx playwright test tests/gui.spec.ts || status=$?
   save_host_state "$dir"
   remove_containers
@@ -317,8 +323,8 @@ main() {
   local s
   for s in "${scenarios[@]}"; do
     case $s in
-      selftest | direct | blocked | restart) ;;
-      *) die "unknown scenario '$s' (want selftest, direct, blocked or restart)" ;;
+      selftest | direct | blocked | restart | attach) ;;
+      *) die "unknown scenario '$s' (want selftest, direct, blocked, restart or attach)" ;;
     esac
   done
   command -v podman >/dev/null || die "podman not found"

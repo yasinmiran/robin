@@ -8,7 +8,7 @@ RUN apt-get update \
       openssh-server \
       xvfb xauth xkb-data x11-xkb-utils xfonts-base \
       openbox xterm dbus-x11 \
-      x11-utils xdotool xclip \
+      x11-utils x11-xserver-utils xdotool xclip \
       iptables sudo procps netcat-openbsd \
  && rm -rf /var/lib/apt/lists/* \
  && dbus-uuidgen > /etc/machine-id
@@ -24,9 +24,9 @@ RUN userdel -r ubuntu \
 
 COPY sshd_config /etc/ssh/sshd_config
 COPY sudoers-rj /etc/sudoers.d/rj
-COPY rj-rundir rj-x rj-block-udp /usr/local/bin/
+COPY rj-rundir rj-x rj-block-udp rj-live /usr/local/bin/
 RUN chmod 0440 /etc/sudoers.d/rj \
- && chmod 0755 /usr/local/bin/rj-rundir /usr/local/bin/rj-x /usr/local/bin/rj-block-udp \
+ && chmod 0755 /usr/local/bin/rj-rundir /usr/local/bin/rj-x /usr/local/bin/rj-block-udp /usr/local/bin/rj-live \
  && visudo -cf /etc/sudoers.d/rj
 
 EXPOSE 22

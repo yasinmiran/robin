@@ -92,6 +92,17 @@ export async function leftovers(): Promise<string> {
 
 export const blockUdp = () => ssh('rj-block-udp');
 
+// liveState describes rj's own desktop (host/rj-live): its processes,
+// autorepeat and keymaps. liveBefore is the same, saved before the CLI ran.
+export const liveState = () => ssh('rj-live state');
+export const liveBefore = () => ssh('rj-live before');
+
+// agentLeftovers lists agents still running as rj, and run dirs they left.
+export async function agentLeftovers(): Promise<string> {
+  const r = await sshRaw(`pgrep -u rj -fa '[r]emotejump-agent'; find ~/.cache/remotejump/run -mindepth 1 -maxdepth 1 2>/dev/null`);
+  return r.stdout.trim();
+}
+
 // diagnostics describes the host side of a session for a failure report: the
 // run dir, the agent's processes and what is mapped on its display.
 export async function diagnostics(): Promise<string> {
