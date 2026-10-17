@@ -539,18 +539,18 @@ func awaitStart(ctx context.Context, conn *protocol.Conn) (protocol.Start, error
 // normalize clamps the CLI's request to what the agent will do.
 func normalize(s protocol.Start) protocol.Start {
 	if s.MaxWidth <= 0 || s.MaxWidth > maxDimension {
-		s.MaxWidth = 1920
+		s.MaxWidth = protocol.DefaultMaxWidth
 	}
 	if s.MaxHeight <= 0 || s.MaxHeight > maxDimension {
-		s.MaxHeight = 1080
+		s.MaxHeight = protocol.DefaultMaxHeight
 	}
 	s.MaxWidth &^= 1
 	s.MaxHeight &^= 1
 	if s.FPS <= 0 || s.FPS > maxFPS {
-		s.FPS = 30
+		s.FPS = protocol.DefaultFPS
 	}
 	if s.MaxKbps <= 0 {
-		s.MaxKbps = 10_000
+		s.MaxKbps = protocol.DefaultMaxKbps
 	}
 	return s
 }

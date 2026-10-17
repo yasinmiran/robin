@@ -77,6 +77,24 @@ type Start struct {
 	Encoder string `json:"encoder,omitempty"`
 }
 
+// Start limits the CLI fills in when the user names none, and the agent
+// assumes when a Start leaves them out.
+const (
+	DefaultMaxWidth  = 1920
+	DefaultMaxHeight = 1080
+	DefaultFPS       = 30
+	DefaultMaxKbps   = 10_000
+)
+
+// Hosts with SmallHostCPUs cores or fewer get lower defaults, since
+// software H.264 at 1080p30 costs one to two cores.
+const (
+	SmallHostCPUs      = 2
+	SmallHostMaxWidth  = 1280
+	SmallHostMaxHeight = 720
+	SmallHostFPS       = 20
+)
+
 // Ready reports that the display is up and the agent accepts offers.
 type Ready struct {
 	Version    int    `json:"version"`

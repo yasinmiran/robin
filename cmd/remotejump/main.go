@@ -15,6 +15,7 @@ import (
 	"syscall"
 
 	"github.com/yasinmiran/remotejump/internal/gui"
+	"github.com/yasinmiran/remotejump/internal/protocol"
 	"github.com/yasinmiran/remotejump/internal/relay"
 )
 
@@ -56,9 +57,10 @@ func runGUI(args []string) int {
 		fs.PrintDefaults()
 	}
 	transport := fs.String("transport", "auto", "media path: auto (direct UDP, SSH tunnel as fallback), direct, or tunnel")
-	maxSize := fs.String("max-size", "", "largest remote resolution, WxH (default 1920x1080, 1280x720 on hosts with two cores or fewer)")
-	fps := fs.Int("fps", 0, "frame rate cap (default 30, 20 on small hosts)")
-	maxKbps := fs.Int("max-kbps", 0, "video bitrate ceiling in kbit/s (default 10000)")
+	maxSize := fs.String("max-size", "", fmt.Sprintf("largest remote resolution, WxH (default %dx%d, %dx%d on hosts with %d cores or fewer)",
+		protocol.DefaultMaxWidth, protocol.DefaultMaxHeight, protocol.SmallHostMaxWidth, protocol.SmallHostMaxHeight, protocol.SmallHostCPUs))
+	fps := fs.Int("fps", 0, fmt.Sprintf("frame rate cap (default %d, %d on small hosts)", protocol.DefaultFPS, protocol.SmallHostFPS))
+	maxKbps := fs.Int("max-kbps", 0, fmt.Sprintf("video bitrate ceiling in kbit/s (default %d)", protocol.DefaultMaxKbps))
 	session := fs.String("session", "", "command to run in the spawned display (default: the lightest desktop found)")
 	attach := fs.String("attach", "", `stream a desktop already running on the host instead of starting one: an X11 display such as ":0", "auto" for your active session, or "wayland"`)
 	audio := fs.Bool("audio", true, "stream the desktop's sound as well")

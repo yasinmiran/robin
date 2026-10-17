@@ -202,29 +202,29 @@ func runProbe(ctx context.Context, m *sshmux.Master) (*probe.Report, error) {
 	return r, nil
 }
 
-// startMessage fills in the session parameters, capping size and frame rate
-// on small hosts: software H.264 at 1080p30 costs one to two cores.
+// startMessage fills in the session parameters, with lower defaults on
+// small hosts.
 func startMessage(o Options, r *probe.Report) protocol.Start {
 	s := protocol.Start{
 		Version: protocol.Version, MaxWidth: o.MaxWidth, MaxHeight: o.MaxHeight,
 		FPS: o.FPS, MaxKbps: o.MaxKbps, Session: o.Session, STUN: o.STUN,
 		Attach: o.Attach, Audio: o.Audio, Encoder: o.Encoder,
 	}
-	small := r.CPUs > 0 && r.CPUs <= 2
+	small := r.CPUs > 0 && r.CPUs <= protocol.SmallHostCPUs
 	if s.MaxWidth <= 0 || s.MaxHeight <= 0 {
-		s.MaxWidth, s.MaxHeight = 1920, 1080
+		s.MaxWidth, s.MaxHeight = protocol.DefaultMaxWidth, protocol.DefaultMaxHeight
 		if small {
-			s.MaxWidth, s.MaxHeight = 1280, 720
+			s.MaxWidth, s.MaxHeight = protocol.SmallHostMaxWidth, protocol.SmallHostMaxHeight
 		}
 	}
 	if s.FPS <= 0 {
-		s.FPS = 30
+		s.FPS = protocol.DefaultFPS
 		if small {
-			s.FPS = 20
+			s.FPS = protocol.SmallHostFPS
 		}
 	}
 	if s.MaxKbps <= 0 {
-		s.MaxKbps = 10_000
+		s.MaxKbps = protocol.DefaultMaxKbps
 	}
 	return s
 }
