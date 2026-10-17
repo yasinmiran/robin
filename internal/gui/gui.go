@@ -100,6 +100,11 @@ func Run(ctx context.Context, o Options) error {
 	if err := report.CheckEncoder(o.Encoder); err != nil {
 		return fmt.Errorf("%s: %w", o.Dest, err)
 	}
+	if o.Attach == protocol.AttachWayland {
+		if err := checkWayland(o.Dest, report); err != nil {
+			return err
+		}
+	}
 	a, err := agentbin.For(report.Arch)
 	if err != nil {
 		return err
@@ -122,7 +127,7 @@ func Run(ctx context.Context, o Options) error {
 	if err := ag.conn.Send(protocol.Message{Type: protocol.TypeStart, Start: &start}); err != nil {
 		return ag.explain(err)
 	}
-	ready, err := ag.awaitReady(ctx)
+	ready, err := ag.awaitReady(ctx, hostOf(o.Dest), o.Stderr)
 	if err != nil {
 		return err
 	}
@@ -270,22 +275,39 @@ func startAgent(ctx context.Context, m *sshmux.Master, path string, verbose bool
 	}, nil
 }
 
-func (a *agentProc) awaitReady(ctx context.Context) (*protocol.Ready, error) {
+// awaitReady waits for the agent's Ready, telling the user about notices
+// that come first. A notice that asks the user to act extends the wait by
+// as long as the agent will wait for them.
+func (a *agentProc) awaitReady(ctx context.Context, host string, stderr io.Writer) (*protocol.Ready, error) {
 	type result struct {
 		m   protocol.Message
 		err error
 	}
 	got := make(chan result, 1)
-	go func() {
+	recv := func() {
 		m, err := a.conn.Recv()
 		got <- result{m, err}
-	}()
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-time.After(readyTimeout):
-		return nil, a.explain(errors.New("agent did not become ready"))
-	case r := <-got:
+	}
+	go recv()
+	deadline := time.NewTimer(readyTimeout)
+	defer deadline.Stop()
+	for {
+		var r result
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-deadline.C:
+			return nil, a.explain(errors.New("agent did not become ready"))
+		case r = <-got:
+		}
+		if r.err == nil && r.m.Type == protocol.TypeNotice && r.m.Notice != nil {
+			if text := noticeText(*r.m.Notice, host); text != "" {
+				fmt.Fprintln(stderr, text)
+			}
+			deadline.Reset(time.Duration(r.m.Notice.Wait)*time.Second + readyTimeout)
+			go recv()
+			continue
+		}
 		switch {
 		case r.err != nil:
 			return nil, a.explain(r.err)

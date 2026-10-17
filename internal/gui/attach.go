@@ -6,16 +6,22 @@ import (
 	"strings"
 
 	"github.com/yasinmiran/remotejump/internal/probe"
+	"github.com/yasinmiran/remotejump/internal/protocol"
 )
 
-// pickAttach chooses the running desktop that --attach auto means: the X
-// display of the user's active local X11 session, else the one X server
-// socket the user owns. GDM registers X11 sessions before their server
-// starts, so the session often names no display and the socket decides.
+// pickAttach chooses the running desktop that --attach auto means: the
+// user's Wayland session when it is the live one, else the X display of the
+// user's active local X11 session, else the one X server socket the user
+// owns. GDM registers X11 sessions before their server starts, so the
+// session often names no display and the socket decides.
 //
-// A user whose active session is Wayland gets no guess: the X server they
-// own there is Xwayland, whose root window shows none of the desktop.
+// A Wayland session runs Xwayland too, whose root window shows only its X11
+// windows, so an active Wayland session the probe cannot reach gets no X11
+// guess either.
 func pickAttach(r *probe.Report) (string, error) {
+	if waylandActive(r) {
+		return protocol.AttachWayland, nil
+	}
 	wayland := false
 	for _, s := range r.Sessions {
 		if !s.Active || s.Remote {
