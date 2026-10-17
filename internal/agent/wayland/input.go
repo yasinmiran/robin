@@ -66,8 +66,9 @@ func newInput(s *portalSession, frameW, frameH int) *input {
 	return in
 }
 
-// warmUp sends a key no layout has. GNOME drops the first key event of a
-// remote desktop session, and this way the one it drops is not the user's.
+// warmUp sends a key no layout has and a pointer motion of nothing. GNOME
+// drops the first key event of a remote desktop session, and at times the
+// first pointer event, and this way the ones it drops are not the user's.
 func (in *input) warmUp() error {
 	if in.viewOnly {
 		return nil
@@ -75,7 +76,10 @@ func (in *input) warmUp() error {
 	if err := in.keysym(xkVoidSymbol, true); err != nil {
 		return err
 	}
-	return in.keysym(xkVoidSymbol, false)
+	if err := in.keysym(xkVoidSymbol, false); err != nil {
+		return err
+	}
+	return in.s.call("NotifyPointerMotion", 0.0, 0.0)
 }
 
 func (in *input) apply(m protocol.Control) error {
