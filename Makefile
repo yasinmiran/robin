@@ -19,7 +19,7 @@ target_arm64 := aarch64-linux-musl
 
 export ZIG_GLOBAL_CACHE_DIR := $(CACHE)/zig
 
-.PHONY: all agents cli dist test test-short e2e clean
+.PHONY: all agents cli dist test test-short test-x check e2e clean
 .PRECIOUS: bin/remotejump-agent-linux-%
 
 all: cli
@@ -57,20 +57,27 @@ dist: agents
 bin/remotejump-linux-amd64: agents $(GOSRC) go.mod go.sum
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $@ ./cmd/remotejump
 
-# Unit and integration tests. On linux/amd64 the encoder and agent packages
-# are tested against the real openh264; elsewhere they build as stubs.
+# Unit and integration tests. The encoder package is tested against the real
+# openh264 on linux/amd64 hosts; everywhere else it builds as a stub.
 test:
+	$(GO) test ./...
 ifeq ($(HOST_OS)/$(HOST_ARCH),linux/amd64)
 	@set -e; t=$(target_amd64); zig=$$(toolchain/zig.sh); prefix=$$(toolchain/openh264.sh $$t); \
 	CGO_ENABLED=1 CC="$$zig cc -target $$t" CXX="$$zig c++ -target $$t" \
 	CGO_CFLAGS="-I$$prefix/include" CGO_LDFLAGS="-L$$prefix/lib" \
-	$(GO) test -tags openh264 ./...
-else
-	$(GO) test ./...
+	$(GO) test -tags openh264 ./internal/agent/h264/
 endif
 
 test-short:
 	$(GO) test -short ./...
+
+# The capture, input, display and agent session tests, against a real Xvfb in
+# a podman container.
+test-x:
+	internal/agent/x11/testdata/xtest.sh
+
+# Everything: unit, X and end-to-end.
+check: test test-x e2e
 
 e2e: bin/remotejump-linux-amd64
 	RJ_BIN=$(CURDIR)/bin/remotejump-linux-amd64 e2e/run.sh $(SCENARIOS)
