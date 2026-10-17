@@ -1,0 +1,68 @@
+#!/bin/bash
+# rj's GNOME Wayland session, for the wayland scenario: the desktop a user
+# would be logged in to before remotejump comes along.
+#
+#   rj-wayland start              mutter, PipeWire and the portals (session.sh),
+#                                 then the fullscreen probe window
+#   rj-wayland consent [view-only] answer the portal's dialog as the person at
+#                                 the screen would (rj-consent)
+#   rj-wayland run CMD...         run CMD in the session's environment
+#   rj-wayland events             what the probe window received, JSON lines
+#   rj-wayland redraw             move the probe's picture on by one frame
+#   rj-wayland leftovers          agent and gst-launch-1.0 processes, and
+#                                 portal or mutter sessions, still alive
+set -euo pipefail
+
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus WAYLAND_DISPLAY=wayland-0
+logs=/tmp/session-logs
+events=/tmp/probe.log
+
+start() {
+  mkdir -p "$logs"
+  # setsid and no inherited descriptors, or the ssh that runs this never returns.
+  LOG=$logs setsid -w /usr/local/lib/rj/session.sh </dev/null >"$logs/session.out" 2>&1 || {
+    cat "$logs/session.out" >&2
+    exit 1
+  }
+  GDK_BACKEND=wayland GSK_RENDERER=cairo setsid -f python3 -I /usr/local/lib/rj/probe.py \
+    </dev/null >"$events" 2>"$logs/probe.err"
+  for _ in $(seq 100); do
+    grep -q '"ev": "ready"' "$events" && return 0
+    sleep 0.1
+  done
+  echo "rj-wayland: the probe window never came up" >&2
+  cat "$logs/probe.err" >&2
+  exit 1
+}
+
+# sessions DEST PATH DEPTH prints how many objects sit DEPTH levels below
+# PATH: one per session. The portal nests them under the client's bus name
+# (session/1_42/TOKEN); mutter puts them right under Session (Session/u3).
+# PATH itself stays once a session has existed, so it never counts.
+sessions() {
+  gdbus introspect --session --dest "$1" --object-path "$2" --recurse 2>/dev/null |
+    grep -cE "^ *node $2(/[^/ ]+){$3} \{" || true
+}
+
+leftovers() {
+  # Bracketed patterns keep pgrep from matching this script's own shell.
+  pgrep -u rj -fa '[r]emotejump-agent|[g]st-launch-1.0' || true
+  local n
+  n=$(sessions org.freedesktop.portal.Desktop /org/freedesktop/portal/desktop/session 2)
+  ((n == 0)) || echo "$n portal sessions"
+  n=$(sessions org.gnome.Mutter.RemoteDesktop /org/gnome/Mutter/RemoteDesktop/Session 1)
+  ((n == 0)) || echo "$n mutter remote desktop sessions"
+  n=$(sessions org.gnome.Mutter.ScreenCast /org/gnome/Mutter/ScreenCast/Session 1)
+  ((n == 0)) || echo "$n mutter screencast sessions"
+}
+
+case ${1:-} in
+  start) start ;;
+  consent) shift; exec rj-consent "$@" ;;
+  run) shift; exec "$@" ;;
+  events) cat "$events" ;;
+  redraw) pkill -USR1 -u rj -f '[p]robe.py' ;;
+  leftovers) leftovers ;;
+  *) echo "usage: rj-wayland start|consent|run|events|redraw|leftovers" >&2; exit 2 ;;
+esac
