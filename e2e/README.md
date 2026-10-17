@@ -5,13 +5,14 @@ Playwright container) runs the real CLI against an sshd container that has
 nothing on it but what a user's Linux box would have: OpenSSH, Xvfb, openbox,
 xterm and pulseaudio. Nothing is mocked between the two, so a pass means SSH
 bootstrap, the agent, H.264 encode and decode, Opus, WebRTC, input, clipboard,
-resize and teardown all worked over a real network.
+resize and teardown all worked over a real network. The `wayland` scenario
+swaps the host for a headless GNOME Wayland session, reached the same way.
 
 ## Running
 
 ```sh
 # build bin/remotejump-linux-amd64 first (the repo Makefile does)
-e2e/run.sh                # direct, blocked, restart, attach
+e2e/run.sh                # direct, blocked, restart, attach, wayland
 e2e/run.sh direct         # one scenario
 e2e/run.sh selftest       # the harness itself, no CLI needed
 RJ_BIN=/path/to/remotejump e2e/run.sh restart
@@ -21,7 +22,8 @@ Prerequisites are rootless `podman` (3.4 is what this was built on), network
 access the first time for image pulls (Ubuntu, the Playwright image, Chrome from
 Google's apt repo, npm), and around 3.6 GB of disk for the two images. Docker
 is not supported. Every run builds both images first, which is a few seconds
-once the layers are cached.
+once the layers are cached. The `wayland` scenario adds the GNOME host image
+(about 1 GB) and needs Go on the machine to build `rj-consent`.
 
 Exit status is non-zero if any scenario fails. Containers and the `rj-e2e`
 network are removed on exit, Ctrl-C included, and two runs cannot share a
@@ -38,8 +40,9 @@ cannot leak into the next one. The tests run in order against one session.
 | `blocked` | UDP dropped (except loopback) before the CLI starts | ICE-TCP through the SSH forward carries the whole session; the selected remote candidate is `127.0.0.1` |
 | `restart` | open, then UDP dropped mid-session | the page notices, restarts ICE and recovers onto TCP within 15 s (`RJ_RESTART_TIMEOUT_MS`; typically about 3 s), and input still works afterwards |
 | `attach` | open | `--attach auto` finds and streams the desktop rj already has running (`rj-live`: Xvfb on `:5` at 1280x800 with its cookie in `~/.Xauthority`, an xterm and openbox, started over ssh before the CLI) and leaves it as it was |
+| `wayland` | open, Wayland host image | `--attach auto` finds rj's GNOME Wayland session (`rj-wayland start`: mutter with a 1280x720 virtual monitor, PipeWire with pipewire-pulse, the GNOME portal and a fullscreen probe window, started over ssh before the CLI), the portal's consent dialog is answered once, and a second run restores without it; see below |
 
-Every scenario also checks, in this order:
+The four X11 scenarios also check, in this order:
 
 1. **Frames**: a non-black frame within 20 s of the URL appearing, and
    `framesDecoded` grows after the host retitles the xterm (damage that does not
@@ -75,6 +78,36 @@ Every scenario also checks, in this order:
    and a hash of each keymap) must match what `rj-live start` saved before the
    CLI ran. A test just before types a character the US keymap lacks (ж) and
    sees autorepeat off, so the session did change both before putting them back.
+
+The `wayland` scenario runs `tests/wayland.spec.ts` instead, since its host
+has no X server for xdotool to ask. The probe window logs the input it gets
+in monitor pixels, and each key press or `rj-wayland redraw` moves its
+picture on a frame. In order:
+
+1. **Consent**: the CLI picks `wayland` for `--attach auto`, prints who has
+   to approve what on which screen and that it waits up to 2m0s, and reaches
+   Ready only after `rj-wayland consent` has answered the dialog as the
+   person at the screen would (`rj-consent` clicks through mutter's own
+   remote desktop interface, a path only tests use).
+2. **Frames**: video at the monitor's 1280x720, and `framesDecoded` grows
+   after a redraw that does not come from remotejump's input.
+3. **Cursor**: the page hides its own pointer over the video, and the
+   picture changes where the remote pointer moves, since it is drawn in.
+4. **Pointer**: motion lands in the probe window within 2 px of the mapped
+   pixel, and a click there arrives as one press and one release of button 1.
+5. **Keyboard**: `Hi!` typed in the page arrives as those three characters.
+6. **Latency**: the same 20 s still-screen check as the X11 scenarios.
+7. **Clipboard**: `remotejump.sendClipboard()` text is what the probe window
+   reads from the session's clipboard, and text it puts there shows up in
+   `remotejump.lastRemoteClipboard`, both through the portal.
+8. **Sound**: noise played into the session's PipeWire raises Chrome's
+   `totalAudioEnergy` once the speaker is on.
+9. **Teardown**: SIGINT ends the CLI with exit 0 within 10 s; then no agent,
+   `gst-launch-1.0`, portal session or mutter remote desktop or screencast
+   session is left, mutter still runs, and the restore token beside the
+   agent is mode 600.
+10. **Restore**: a second CLI run reaches Ready with no consent notice, its
+    frames decode and change, and it leaves nothing behind either.
 
 If a test fails, Playwright restarts the worker and the remaining tests get a
 new session, so one broken feature does not hide the others.
@@ -113,6 +146,15 @@ Open a trace with `npx playwright show-trace <zip>` from `e2e/` (after
   attached to it), `rj-live` starts that desktop and reports its state, and
   `rj-block-udp` drops
   non-loopback UDP.
+- `wlhost.Containerfile`, `wlhost/`: the Wayland host image, layered on the
+  image `internal/agent/wayland/testdata` builds for `make test-wayland`
+  (mutter, PipeWire, the GNOME portal, `session.sh`, `probe.py`), with sshd
+  and the same `rj` login. `run.sh` stages its build context and builds
+  `rj-consent` (`internal/agent/wayland/wltest/cmd/rj-consent`) into it; no
+  product binary links that package. `rj-wayland` starts the session and
+  the probe window, answers the dialog, reads what the probe logged, redraws
+  it, and lists agent, `gst-launch-1.0`, portal and mutter sessions still
+  alive.
 - `client.Containerfile`: Playwright plus Chrome stable and OpenSSH. The
   `PW_VERSION` build arg must match `@playwright/test` in `package.json`; the
   build fails if they drift.
@@ -120,7 +162,8 @@ Open a trace with `npx playwright show-trace <zip>` from `e2e/` (after
   `Host rjhost` in `/root/.ssh/config` (with `HostKeyAlias rjhost` and a
   pre-filled known_hosts), the CLI at `/usr/local/bin/remotejump`, and runs as
   root so the root-owned key mounts stay readable.
-- `tests/gui.spec.ts`: the scenarios. `tests/selftest.spec.ts`: the harness.
+- `tests/gui.spec.ts`: the X11 scenarios. `tests/wayland.spec.ts`: the
+  Wayland one. `tests/selftest.spec.ts`: the harness.
 - `tests/helpers/`: the CLI runner, the frame sampler, page-to-display
   coordinate mapping, and host checks. Host checks use their own ssh
   connections (`ControlPath=none`), never the CLI's master.

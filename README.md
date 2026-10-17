@@ -281,7 +281,15 @@ text runs in the remote shell, pointer position, clipboard both ways, resize,
 that sound played on the host is heard once the speaker is on, which
 transport ICE picked, and that nothing survives the CLI; for the attached
 desktop that means a resize leaves its screen alone and it outlives the session
-with the same processes, autorepeat and keymaps. See
+with the same processes, autorepeat and keymaps. A fifth scenario, `wayland`,
+runs the same CLI and browser against the headless GNOME session of
+`make test-wayland` over sshd: `--attach auto` picks it, the CLI waits while
+the harness answers the consent dialog, and Chrome then has to show the
+monitor with the remote pointer drawn in, land motion, clicks and typed text
+in a probe window, pass the clipboard both ways through the portal, play the
+session's PipeWire sound, and meet the same 400 ms latency bound. SIGINT
+must leave no agent, `gst-launch-1.0` or portal session and a 0600 restore
+token, and a second run must start without asking. See
 [e2e/README.md](e2e/README.md). Rootless containers cannot shape bandwidth,
 so congestion control is tested separately over a shaped virtual link
 (`go test ./internal/agent/peer -run Congestion`).
