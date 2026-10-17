@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the remotejump e2e suite in rootless podman.
 #
-#   ./run.sh                    every scenario: direct blocked restart attach
+#   ./run.sh                    every scenario: direct blocked restart attach wayland
 #   ./run.sh direct restart     just those
 #   ./run.sh selftest           prove the harness itself, no CLI needed
 #
@@ -25,11 +25,12 @@ HOST_CTR=$NET-host
 CLIENT_CTR=$NET-client
 HOST_IMG=localhost/$NET-host
 CLIENT_IMG=localhost/$NET-client
+WLHOST_IMG=localhost/$NET-wlhost
 
 RJ_BIN=${RJ_BIN:-bin/remotejump-linux-amd64}
 [[ $RJ_BIN = /* ]] || RJ_BIN=$ROOT/$RJ_BIN
 
-ALL_SCENARIOS=(direct blocked restart attach)
+ALL_SCENARIOS=(direct blocked restart attach wayland)
 
 log() { printf '\033[1m[e2e]\033[0m %s\n' "$*" >&2; }
 die() { log "error: $*"; exit 2; }
@@ -48,6 +49,20 @@ build_images() {
   podman build -q -t "$HOST_IMG" -f "$E2E/host.Containerfile" "$E2E/host" >/dev/null
   log "building $CLIENT_IMG"
   podman build -q -t "$CLIENT_IMG" -f "$E2E/client.Containerfile" "$E2E" >/dev/null
+}
+
+# build_wayland_image layers sshd and the session helpers over the headless
+# GNOME image the Wayland unit tests use, built by ID so another checkout
+# retagging it cannot swap it out underneath.
+build_wayland_image() {
+  local testdata=$ROOT/internal/agent/wayland/testdata ctx=$OUT/wlhost-context base
+  log "building $WLHOST_IMG"
+  base=$(podman build -q -f "$testdata/Containerfile" "$testdata")
+  rm -rf "$ctx"
+  mkdir -p "$ctx"
+  cp "$E2E/host/sshd_config" "$testdata/session.sh" "$testdata/probe.py" "$E2E/wlhost/rj-wayland" "$ctx/"
+  (cd "$ROOT" && CGO_ENABLED=0 go build -o "$ctx/rj-consent" ./internal/agent/wayland/wltest/cmd/rj-consent)
+  podman build -q --build-arg BASE="$base" -t "$WLHOST_IMG" -f "$E2E/wlhost.Containerfile" "$ctx" >/dev/null
 }
 
 create_network() {
@@ -79,13 +94,17 @@ EOF
   chmod 644 "$KEYS/client.pub"
 }
 
+# start_host [image]: the X11 host unless another image is named. PipeWire
+# and mutter share frames through /dev/shm, so the Wayland host gets more.
 start_host() {
+  local shm=256m
+  [[ ${1:-} = "$WLHOST_IMG" ]] && shm=512m
   podman run -d --name "$HOST_CTR" --hostname rjhost \
     --network "$NET" --ip "$HOST_IP" \
-    --init --cap-add NET_ADMIN --shm-size 256m --stop-timeout 2 \
+    --init --cap-add NET_ADMIN --shm-size "$shm" --stop-timeout 2 \
     -v "$KEYS/ssh_host_ed25519_key:/etc/ssh/rj/ssh_host_ed25519_key:ro" \
     -v "$KEYS/client.pub:/etc/ssh/authorized_keys.d/rj:ro" \
-    "$HOST_IMG" >/dev/null
+    "${1:-$HOST_IMG}" >/dev/null
 }
 
 # start_client <artifact dir> [extra podman run args...]
@@ -121,6 +140,9 @@ save_host_state() {
     echo "## processes"; ps -eo user,pid,ppid,etime,args
     echo "## iptables"; iptables -S; ip6tables -S
     echo "## remotejump dirs"; find /home/rj/.cache/remotejump /tmp/remotejump-1000 /run/user/1000 -maxdepth 4 -ls 2>/dev/null
+    for f in /tmp/session-logs/*.log /tmp/session-logs/*.err /tmp/probe.log; do
+      [ -f "$f" ] && { echo "## $f"; tail -n 60 "$f"; }
+    done
   ' >"$dir/host-state.txt" 2>&1 || true
 }
 
@@ -130,7 +152,13 @@ run_scenario() {
   mkdir -p "$dir"
   log "scenario $s: fresh host"
   remove_containers
-  start_host
+  local spec=tests/gui.spec.ts
+  if [[ $s = wayland ]]; then
+    start_host "$WLHOST_IMG"
+    spec=tests/wayland.spec.ts
+  else
+    start_host
+  fi
   start_client "$dir" -v "$RJ_BIN:/usr/local/bin/remotejump:ro"
   wait_for_sshd
   if [[ $s = blocked ]]; then
@@ -143,10 +171,15 @@ run_scenario() {
     on_client ssh rjhost rj-live start
     cli_args="--attach auto $cli_args"
   fi
+  if [[ $s = wayland ]]; then
+    log "scenario $s: starting rj's GNOME Wayland session"
+    on_client ssh rjhost rj-wayland start
+    cli_args="--attach auto $cli_args"
+  fi
   on_client env SCENARIO="$s" \
     RJ_RESTART_TIMEOUT_MS="${RJ_RESTART_TIMEOUT_MS:-15000}" RJ_SIGINT_PID_ONLY="${RJ_SIGINT_PID_ONLY:-0}" \
     RJ_CLI_ARGS="$cli_args" \
-    npx playwright test tests/gui.spec.ts || status=$?
+    npx playwright test "$spec" || status=$?
   save_host_state "$dir"
   remove_containers
   return "$status"
@@ -323,8 +356,8 @@ main() {
   local s
   for s in "${scenarios[@]}"; do
     case $s in
-      selftest | direct | blocked | restart | attach) ;;
-      *) die "unknown scenario '$s' (want selftest, direct, blocked, restart or attach)" ;;
+      selftest | direct | blocked | restart | attach | wayland) ;;
+      *) die "unknown scenario '$s' (want selftest, direct, blocked, restart, attach or wayland)" ;;
     esac
   done
   command -v podman >/dev/null || die "podman not found"
@@ -336,6 +369,7 @@ main() {
   trap 'exit 130' INT TERM
   mkdir -p "$OUT"
   build_images
+  [[ " ${scenarios[*]} " != *" wayland "* ]] || build_wayland_image
   create_network
   generate_keys
 
