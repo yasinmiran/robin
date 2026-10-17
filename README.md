@@ -217,8 +217,21 @@ The measurements and the reasons behind the design are in the
 ## What the client needs
 
 macOS or Linux with OpenSSH (ControlMaster support, so not the Windows
-build), and a browser that decodes H.264 in WebRTC: Chrome, Edge, Safari, or
-Firefox with its OpenH264 plugin. Chrome is what the end-to-end tests drive.
+build), and a browser that decodes H.264 in WebRTC. What the end-to-end
+tests prove for each:
+
+- **Chrome** runs every scenario: picture, input, latency, sound,
+  clipboard, resize, transports, attach and Wayland. Edge shares its engine.
+- **Firefox** passes every check of the direct scenario, latency and sound
+  included, given Cisco's OpenH264 plugin. Firefox downloads it by itself
+  on first use (it shows under Add-ons and themes, Plugins); a Firefox that
+  cannot fetch it offers no H.264, and the page stays black.
+- **Safari** is stood in for by Playwright's WebKit on Linux, which shares
+  Safari's WebRTC stack. It negotiates Constrained Baseline H.264, decodes
+  it, plays the sound, carries keyboard, clipboard and resize, and tears
+  down cleanly. That build renders no remote WebRTC video at all (a VP8
+  loopback in a blank page stays black too), so the picture and the pointer,
+  which is mapped onto the picture, have not been seen in Safari itself.
 
 ## How it works
 
@@ -304,8 +317,10 @@ monitor with the remote pointer drawn in, land motion, clicks and typed text
 in a probe window, pass the clipboard both ways through the portal, play the
 session's PipeWire sound, and meet the same 400 ms latency bound. SIGINT
 must leave no agent, `gst-launch-1.0` or portal session and a 0600 restore
-token, and a second run must start without asking. See
-[e2e/README.md](e2e/README.md). Rootless containers cannot shape bandwidth,
+token, and a second run must start without asking. The `firefox` and
+`webkit` scenarios repeat the direct one in Playwright's own Firefox and
+WebKit builds; see the client section above for what each of them proves.
+See [e2e/README.md](e2e/README.md). Rootless containers cannot shape bandwidth,
 so congestion control is tested separately over a shaped virtual link
 (`go test ./internal/agent/peer -run Congestion`).
 
@@ -372,9 +387,10 @@ to print the comparison the ADR quotes.
   changes; that is not a stall.
 - Through the SSH tunnel video is TCP inside TCP, so a lossy link shows
   head-of-line stalls that direct UDP would not.
-- Chrome is the only browser the tests drive. Edge and Safari share its
-  WebRTC stack; Firefox, which offers no playout-delay extension, has not
-  been tried.
+- Safari's picture and pointer are untested: the only WebKit the tests can
+  drive on Linux renders no remote WebRTC video (see What the client needs).
+- Firefox shows no picture until it has fetched its OpenH264 plugin, which
+  needs a network connection the first time.
 - The macOS client builds but has not been run; neither has building the
   agents from a Mac.
 - One browser per session; a second tab is refused until the first closes.

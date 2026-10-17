@@ -6,13 +6,15 @@ nothing on it but what a user's Linux box would have: OpenSSH, Xvfb, openbox,
 xterm and pulseaudio. Nothing is mocked between the two, so a pass means SSH
 bootstrap, the agent, H.264 encode and decode, Opus, WebRTC, input, clipboard,
 resize and teardown all worked over a real network. The `wayland` scenario
-swaps the host for a headless GNOME Wayland session, reached the same way.
+swaps the host for a headless GNOME Wayland session, reached the same way,
+and the `firefox` and `webkit` scenarios swap Chrome for Playwright's own
+Firefox and WebKit.
 
 ## Running
 
 ```sh
 # build bin/robin-linux-amd64 first (the repo Makefile does)
-e2e/run.sh                # direct, blocked, restart, attach, wayland
+e2e/run.sh                # direct, blocked, restart, attach, wayland, webkit, firefox
 e2e/run.sh direct         # one scenario
 e2e/run.sh selftest       # the harness itself, no CLI needed
 ROBIN_BIN=/path/to/robin e2e/run.sh restart
@@ -23,7 +25,10 @@ access the first time for image pulls (Ubuntu, the Playwright image, Chrome from
 Google's apt repo, npm), and around 3.6 GB of disk for the two images. Docker
 is not supported. Every run builds both images first, which is a few seconds
 once the layers are cached. The `wayland` scenario adds the GNOME host image
-(about 1 GB) and needs Go on the machine to build `robin-consent`.
+(about 1 GB) and needs Go on the machine to build `robin-consent`. The
+client image also fetches Cisco's OpenH264 plugin for Firefox (600 KB) from
+the URL Firefox's own plugin manifest names, and checks it against the
+manifest's sha512.
 
 Exit status is non-zero if any scenario fails. Containers and the `robin-e2e`
 network are removed on exit, Ctrl-C included. Two runs can share a machine
@@ -46,6 +51,8 @@ cannot leak into the next one. The tests run in order against one session.
 | `restart` | open, then UDP dropped mid-session | the page notices, restarts ICE and recovers onto TCP within 15 s (`ROBIN_RESTART_TIMEOUT_MS`; typically about 3 s), and input still works afterwards |
 | `attach` | open | `--attach auto` finds and streams the desktop the `robin` user already has running (`robin-live`: Xvfb on `:5` at 1280x800 with its cookie in `~/.Xauthority`, an xterm and openbox, started over ssh before the CLI) and leaves it as it was |
 | `wayland` | open, Wayland host image | `--attach auto` finds the `robin` user's GNOME Wayland session (`robin-wayland start`: mutter with a 1280x720 virtual monitor, PipeWire with pipewire-pulse, the GNOME portal and a fullscreen probe window, started over ssh before the CLI), the portal's consent dialog is answered once, and a second run restores without it; see below |
+| `firefox` | open | the direct scenario in Playwright's Firefox with the OpenH264 plugin: every check passes |
+| `webkit` | open | the direct scenario in Playwright's WebKit (Safari's WebRTC stack): H.264 negotiates and decodes, keyboard, clipboard, resize, sound, UDP and teardown work; see below for what it cannot show |
 
 The four X11 scenarios also check, in this order:
 
@@ -114,6 +121,26 @@ picture on a frame. In order:
 10. **Restore**: a second CLI run reaches Ready with no consent notice, its
     frames decode and change, and it leaves nothing behind either.
 
+The `firefox` and `webkit` scenarios run `tests/gui.spec.ts` against the
+direct scenario's host, as Playwright projects of the same names
+(`ROBIN_E2E_BROWSER` tells the spec which). Firefox runs every check above.
+Playwright's WebKit on Linux decodes WebRTC video but renders no remote
+track into a `<video>` element: in a blank page, a VP8 loopback between two
+peer connections stays at `readyState` 0 with `videoWidth` 0, where Chrome
+and Firefox show it, and a local canvas stream does render. So in `webkit`
+the checks that read the picture or map the pointer onto it (frames,
+keyboard through a click, latency, pointer, cursor) are skipped, and in
+their place:
+
+- **Frames**: from `getStats`, the negotiated codec is H.264 with
+  `profile-level-id=42e01f` and `packetization-mode=1`, keyframes decoded,
+  a decoded frame size, and `framesDecoded` growing after the host retitles
+  the xterm.
+- **Keyboard**: with the xterm focused from the host (there is no picture
+  to click), the typed command creates its file.
+- **Resize**: the decoded frame size, not the element's, follows the
+  viewport along with the display.
+
 If a test fails, Playwright restarts the worker and the remaining tests get a
 new session, so one broken feature does not hide the others.
 
@@ -131,9 +158,11 @@ hand-started Xvfb laid out like the agent's run dir.
 `e2e/out/<scenario>/`:
 
 - `cli.stderr.log`, `cli.stdout.log`: every CLI session in the run, with headers
-- `console.log`: the page console, including `[robin-state]` transitions
+- `console.log`: the page console, including `[robin-state]` transitions and
+  `[robin-csp]` lines for anything the page's CSP blocked
 - `report/index.html`: Playwright report; failing tests carry a screenshot, a
-  trace, the last CLI stderr and a `robin.stats()` snapshot
+  trace, the last CLI stderr, a `robin.stats()` snapshot and the browser's own
+  inbound video stats
 - `video/`: a recording of every page
 - `host-sshd.log`, `host-state.txt`: sshd log, process list, iptables rules and
   Robin's dirs on the host at the end of the scenario
