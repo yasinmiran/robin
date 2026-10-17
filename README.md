@@ -21,12 +21,12 @@ From a checkout, with Go 1.25 or newer:
 make
 ```
 
-That fetches a pinned zig toolchain and builds openh264 the first time (about
-half a minute, cached under `.cache/`), builds static agents for linux/amd64
-and linux/arm64, and embeds both in `bin/remotejump`. `make dist` cross-builds
-the CLI for macOS and Linux on amd64 and arm64 into `dist/`. The CLI itself is
-pure Go; only the agents need the C toolchain, and the build downloads it, so
-there is nothing to install by hand on Linux or macOS.
+That fetches a pinned zig toolchain and builds openh264 and libopus the first
+time (about half a minute, cached under `.cache/`), builds static agents for
+linux/amd64 and linux/arm64, and embeds both in `bin/remotejump`. `make dist`
+cross-builds the CLI for macOS and Linux on amd64 and arm64 into `dist/`. The
+CLI itself is pure Go; only the agents need the C toolchain, and the build
+downloads it, so there is nothing to install by hand on Linux or macOS.
 
 ## Usage
 
@@ -60,6 +60,10 @@ mapped back onto the full-size screen. Ending the session closes the agent's X
 connection and nothing else; autorepeat and the keys it bound for characters
 missing from the keymap go back to how they were, and clipboard text pasted
 from the browser is handed to the desktop's clipboard manager if one runs.
+The desktop's sound comes along. A browser only starts a video by itself
+while it is muted, so the page opens silent and the status tab shows a
+speaker: click it to hear the session, and again after a reload. When the
+host cannot provide sound the session runs without it, and the CLI says why.
 
 | Flag | Default | |
 |---|---|---|
@@ -70,6 +74,7 @@ from the browser is handed to the desktop's clipboard manager if one runs.
 | `--max-kbps` | `10000` | video bitrate ceiling; congestion control works below it |
 | `--session` | lightest found | command to run in the display, e.g. `startxfce4` |
 | `--attach` | | stream a desktop already running on the host: `auto`, or an X display such as `:1` |
+| `--audio` | `true` | stream the desktop's sound; `--audio=false` leaves it out |
 | `--stun` | Google's public server | STUN servers for NAT traversal, comma-separated, or `none` |
 | `--no-browser` | | print the page URL on stdout instead of opening a browser |
 | `--listen` | `127.0.0.1:0` | address for the local page; loopback only |
@@ -88,6 +93,14 @@ sudo apt install xvfb openbox xterm
 ```
 
 Attaching to a running desktop needs none of that, only the desktop.
+
+For sound in a spawned session the host also needs `pulseaudio`. The agent starts
+a private one with a null sink as its only output and its socket in the
+agent's run directory, so it touches neither the sound hardware nor a sound
+server you already run, and it stops with the session. Attached to a running
+desktop, the agent records that desktop's own sound server instead,
+PulseAudio or PipeWire alike, since PipeWire speaks the same protocol through
+`pipewire-pulse`.
 
 No GPU or monitor is needed; the session renders in software, and a light
 window manager keeps that cheap. Software H.264 at 1080p30 costs one to two
@@ -117,9 +130,10 @@ Firefox with its OpenH264 plugin. Chrome is what the end-to-end tests drive.
    session down instead of leaving a display running.
 5. It starts Xvfb and a session, or attaches to the X display already running,
    captures with MIT-SHM and DAMAGE, encodes with openh264, and sends over a
-   Pion peer connection. Keyboard, pointer,
-   clipboard and resize come back over a data channel and go in through XTest
-   and RandR.
+   Pion peer connection. Sound comes from the monitor of a PulseAudio sink,
+   read over its native protocol in Go, and goes out as Opus from libopus.
+   Keyboard, pointer, clipboard and resize come back over a data channel and
+   go in through XTest and RandR.
 6. The CLI serves the page on loopback and relays offer, answer and
    candidates between it and the agent, adding one passive TCP candidate that
    leads into an SSH forward to the agent.
@@ -136,7 +150,8 @@ websocket listen on 127.0.0.1 and require a random 256-bit token from the URL
 fragment, an exact `Origin` and `Host`, and allow one browser at a time. On
 the host, the agent's ICE-TCP listener binds loopback and only accepts ICE
 connections carrying the session's credentials; the X display is protected by
-a fresh cookie in a 0600 file; the agent and its run directory are 0700.
+a fresh cookie in a 0600 file; the session's sound server listens only on a
+socket inside the run directory; the agent and its run directory are 0700.
 Input from the page is limited to what a keyboard, a pointer and a clipboard
 can do in that session.
 
@@ -148,8 +163,8 @@ list. On a shared client, use `--no-browser` and open the printed URL yourself.
 ## Testing
 
 ```sh
-make test     # unit and integration tests; the encoder against real openh264 on linux/amd64
-make test-x   # capture, input, display and agent session tests against Xvfb, in podman
+make test     # unit and integration tests; the encoders against real openh264 and libopus on linux/amd64
+make test-x   # capture, input, display, sound server and agent session tests against Xvfb and pulseaudio, in podman
 make e2e      # the whole thing: podman host, Playwright and Chrome client
 make check    # all three
 ```
@@ -159,7 +174,8 @@ UDP, UDP blocked on the host from the start, UDP blocked mid-session, and
 `--attach auto` against a desktop the test user already has running. Each
 asserts that decoded frames are not black and change after typing, that typed
 text runs in the remote shell, pointer position, clipboard both ways, resize,
-which transport ICE picked, and that nothing survives the CLI; for the attached
+that sound played on the host is heard once the speaker is on, which
+transport ICE picked, and that nothing survives the CLI; for the attached
 desktop that means a resize leaves its screen alone and it outlives the session
 with the same processes, autorepeat and keymaps. See
 [e2e/README.md](e2e/README.md). Rootless containers cannot shape bandwidth,
@@ -176,8 +192,20 @@ so congestion control is tested separately over a shaped virtual link
   small text gets hard to read.
 - While attached, autorepeat is off for the whole display, keys held at the
   machine itself included, until the session ends.
-- No audio, and the remote cursor shape is not shown; the browser keeps its
-  own arrow.
+- Text pasted from the browser into an attached desktop outlives the session
+  only if that desktop runs a clipboard manager.
+- Sound in a spawned session needs `pulseaudio` on the host. Current Fedora
+  and Ubuntu desktops ship PipeWire without it, and their spawned sessions
+  are silent.
+- The page starts muted, because browsers autoplay only silent video: one
+  click on the speaker, again after each reload.
+- Sound goes one way; there is no microphone.
+- In-band FEC protects speech only. Opus sends speech in hybrid mode, whose
+  SILK layer repeats the previous frame at low rate; music stays in CELT,
+  which has no such redundancy, so a lost music packet is concealed by the
+  browser instead.
+- Attached, the sound is the monitor of whatever output was the default when
+  the session started, and the host's own speakers keep playing it.
 - Clipboard is plain text up to 255 KiB in each direction.
 - Keys map by character, so text arrives right whatever the client layout,
   but IME composition (CJK input) is not forwarded.

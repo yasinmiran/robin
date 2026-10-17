@@ -231,3 +231,65 @@ frame; the first difference switches Capture to comparing every frame, which
 still keeps an idle screen from being encoded. In the 130 s on mutter, 128 of
 those rechecks found nothing DAMAGE had missed. Each cost one MIT-SHM grab of
 2 to 4 ms and a hash of the 54 MB frame, about 13 ms.
+### Sound: the PulseAudio protocol in Go, Opus from a static libopus
+
+The agent records the desktop's sound and sends it as a stereo Opus track
+beside the video. Options for the capture:
+
+| Option | Verdict |
+|---|---|
+| libpulse through cgo | The static agent cannot load the host's libpulse, and a static copy brings its own dependencies along. Rejected. |
+| `parec` or `pw-record` as a subprocess | Needs those tools on the host, and one more process to supervise. Rejected. |
+| PipeWire's native protocol | A client of its own, and PulseAudio hosts would still need this one. Rejected. |
+| PulseAudio's native protocol in Go | No host libraries, and PipeWire serves the same protocol through `pipewire-pulse`, so one client covers both. **Chosen**, with the protocol layer of `jfreymuth/pulse` (MIT). |
+
+The agent drives that protocol layer itself, one connection and one record
+stream, rather than the library's client: it needs to hear when the server
+ends the stream, and to send its own server's cookie. The library prints
+opcodes it does not know with `fmt.Println`, which is harmless only because
+the agent's stdout has already been moved to stderr. The stream records the
+monitor of the server's default sink at 48 kHz stereo in 20 ms fragments, and
+each fragment is encoded on the protocol's read goroutine as it arrives; a
+session that falls behind loses packets rather than stalling the reader.
+
+A spawned desktop has no sound server, so the agent starts a private
+pulseaudio for it: no default script (`-n`), so no module touches sound cards
+or Bluetooth; a null sink as the default output; the native protocol on a
+socket in the run directory with a cookie beside it; `HOME` and the runtime
+and state paths inside the run directory; and a session bus address that leads
+nowhere, so it can neither meet the user's own sound server over D-Bus nor
+autolaunch a bus. The desktop's programs get `PULSE_SERVER` and
+`PULSE_COOKIE`; without the cookie variable libpulse writes a cookie into
+`~/.config/pulse`, which the e2e host checks for. The daemon is one process
+that forks nothing, in its own group with Pdeathsig, so it needs none of the
+display's watchdog; a test kills an agent with SIGKILL and checks the daemon
+goes with it. PipeWire as the private server was considered and not built: it
+needs WirePlumber to link streams, WirePlumber 0.4 and 0.5 take different
+configuration languages, and its default configuration claims the host's
+sound cards. Hosts with only PipeWire get sound when attached, not in a
+spawned session.
+
+The null sink needed `norewinds=1`. Each rewind drops what the monitor had
+queued, and with 20 ms fragments a silent desktop delivered a third of real
+time (parec agreed: 70% at 20 ms latency, all of it at 100 ms). Every packet
+advances the RTP clock by 20 ms, so the browser's clock would have fallen
+behind the desktop's. With rewinds off the monitor delivers exactly 50 frames
+a second, silent or not (`internal/agent/audio`, `TestCost`).
+
+Opus runs in `OPUS_APPLICATION_AUDIO` mode at 96 kbit/s and complexity 10,
+with in-band FEC on and 5% expected loss. Without some expected loss libopus
+never codes the redundancy. With it, speech-like sound goes out in hybrid
+mode, whose SILK layer carries the previous frame again at low rate, while
+tones and music stay in CELT, which has no in-band FEC, so a lost music
+packet is left to the browser's concealment. One cost: silence right after
+speech-like sound stays in hybrid mode at about 28 kbit/s until something
+else plays, where CELT codes silence at 1.2 kbit/s. Measured in the X test
+container, the whole audio path, agent and pulseaudio together, costs about
+1.5% of a core while silent and 4.5% while playing speech-like noise at 90
+kbit/s; complexity 5 would save about 1.5 points of that.
+
+Browsers autoplay only muted media, so the page starts muted and shows a
+speaker toggle once an audio track arrives; unmuting takes that click. Chrome
+reports `totalAudioEnergy` only for audio it plays: a muted element reports
+zero while packets arrive, so the e2e clicks the speaker before it plays
+noise on the host and checks the energy rises.
