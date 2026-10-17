@@ -18,6 +18,7 @@ import (
 	"github.com/pion/interceptor/pkg/gcc"
 	"github.com/pion/rtcp"
 	"github.com/pion/stun/v4"
+	"github.com/pion/transport/v5"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
 
@@ -41,6 +42,9 @@ type Config struct {
 	// IncludeLoopback gathers loopback candidates. The tunnel listener is
 	// loopback-only, so ICE-TCP needs this.
 	IncludeLoopback bool
+	// Net replaces the real network; tests use it to run over a shaped virtual
+	// link. Nil means the host network.
+	Net transport.Net
 	// Certificate is the DTLS identity. The agent keeps one for its whole
 	// session so the fingerprint the CLI pinned survives a page reload. Nil
 	// generates a fresh one.
@@ -98,7 +102,11 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 	reg := &interceptor.Registry{}
 	bweReady := make(chan cc.BandwidthEstimator, 1)
 	ccf, err := cc.NewInterceptor(func() (cc.BandwidthEstimator, error) {
+		// No pacer: the default one queues without bound, so a burst sent
+		// while the target falls drains for seconds and the delay that adds
+		// keeps the target at its floor. The encoder already holds the rate.
 		return gcc.NewSendSideBWE(
+			gcc.SendSideBWEPacer(gcc.NewNoOpPacer()),
 			gcc.SendSideBWEInitialBitrate(cfg.StartBitrate),
 			gcc.SendSideBWEMinBitrate(cfg.MinBitrate),
 			gcc.SendSideBWEMaxBitrate(cfg.MaxBitrate),
@@ -112,9 +120,15 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 	if err := webrtc.ConfigureTWCCHeaderExtensionSender(m, reg); err != nil {
 		return nil, err
 	}
-	if err := webrtc.ConfigureNack(m, reg); err != nil {
-		return nil, err
-	}
+	// Registered after the TWCC and congestion-control interceptors so
+	// retransmissions carry transport sequence numbers and count as sent.
+	var bwe atomic.Pointer[cc.BandwidthEstimator]
+	reg.Add(&nackResponderFactory{budget: func() int {
+		if e := bwe.Load(); e != nil {
+			return (*e).GetTargetBitrate()
+		}
+		return cfg.StartBitrate
+	}})
 	if err := webrtc.ConfigureRTCPReports(reg); err != nil {
 		return nil, err
 	}
@@ -135,6 +149,9 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 		})
 	}
 	se.SetIncludeLoopbackCandidate(cfg.IncludeLoopback)
+	if cfg.Net != nil {
+		se.SetNet(cfg.Net)
+	}
 
 	api := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithInterceptorRegistry(reg), webrtc.WithSettingEngine(se))
 	var ice []webrtc.ICEServer
@@ -154,6 +171,7 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 
 	select {
 	case p.bwe = <-bweReady:
+		bwe.Store(&p.bwe)
 	case <-time.After(5 * time.Second):
 		pc.Close()
 		return nil, errors.New("peer: congestion controller did not start")

@@ -56,13 +56,12 @@ func newBrowser(t *testing.T) *browser {
 // connect runs the offer/answer and trickle exchange the CLI would relay.
 func connect(t *testing.T, b *browser, p *Peer, agentCandidates <-chan protocol.Candidate) {
 	t.Helper()
+	// The CLI delivers the offer before any candidate; hold them until the
+	// agent has applied it.
+	browserCands := make(chan webrtc.ICECandidateInit, 64)
 	b.pc.OnICECandidate(func(c *webrtc.ICECandidate) {
-		if c == nil {
-			return
-		}
-		init := c.ToJSON()
-		if err := p.AddCandidate(protocol.Candidate{Candidate: init.Candidate, SDPMid: init.SDPMid, SDPMLineIndex: init.SDPMLineIndex}); err != nil {
-			t.Errorf("agent add candidate: %v", err)
+		if c != nil {
+			browserCands <- c.ToJSON()
 		}
 	})
 	offer, err := b.pc.CreateOffer(nil)
@@ -82,6 +81,12 @@ func connect(t *testing.T, b *browser, p *Peer, agentCandidates <-chan protocol.
 	if err := b.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: answer}); err != nil {
 		t.Fatal(err)
 	}
+	go func() {
+		for init := range browserCands {
+			// Errors here only come from a peer the test already closed.
+			p.AddCandidate(protocol.Candidate{Candidate: init.Candidate, SDPMid: init.SDPMid, SDPMLineIndex: init.SDPMLineIndex})
+		}
+	}()
 	go func() {
 		for c := range agentCandidates {
 			if c.Candidate == "" {
