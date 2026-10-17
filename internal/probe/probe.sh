@@ -207,9 +207,43 @@ commands() {
 	for c in Xvfb xkbcomp \
 		xfce4-session startxfce4 openbox-session openbox fluxbox icewm-session twm \
 		xterm x-terminal-emulator xfce4-terminal \
-		dbus-run-session dbus-launch; do
+		dbus-run-session dbus-launch \
+		pulseaudio pipewire pipewire-pulse wireplumber pactl \
+		ffmpeg gst-launch-1.0; do
 		p=$(command -v "$c" 2>/dev/null) && kv "cmd.$c" "$p"
 	done
+}
+
+# attachable reports what attaching to a running desktop needs: X cookies
+# for its display, the session bus for the portal, and its sound server.
+attachable() {
+	rt=${XDG_RUNTIME_DIR:-/run/user/$uid}
+	for f in "${XAUTHORITY:-}" "${HOME:-}/.Xauthority" "$rt/gdm/Xauthority" "$rt"/.mutter-Xwaylandauth.* "$rt"/xauth_*; do
+		[ -f "$f" ] && [ -r "$f" ] && kv xauth "$f"
+	done
+	[ -S "$rt/bus" ] && kv session_bus "$rt/bus"
+	[ -S "$rt/pulse/native" ] && kv pulse "$rt/pulse/native"
+	[ -S "$rt/pipewire-0" ] && kv pipewire "$rt/pipewire-0"
+	return 0
+}
+
+# encoders reports hardware H.264 encoders reachable through the host's
+# ffmpeg or GStreamer. Plugin files are checked rather than gst-inspect,
+# which can spend seconds building its registry.
+encoders() {
+	if have ffmpeg; then
+		limit ffmpeg -hide_banner -encoders 2>/dev/null | while IFS= read -r line; do
+			for e in h264_vaapi h264_nvenc h264_qsv; do
+				case " $line " in *" $e "*) kv ffmpeg_encoder "$e" ;; esac
+			done
+		done
+	fi
+	for d in /usr/lib/*/gstreamer-1.0 /usr/lib64/gstreamer-1.0 /usr/lib/gstreamer-1.0; do
+		for p in pipewire vaapi va nvcodec x264; do
+			[ -f "$d/libgst$p.so" ] && kv gst_plugin "$p"
+		done
+	done
+	return 0
 }
 
 reject() {
@@ -345,6 +379,8 @@ main() {
 	displays
 	gpu
 	commands
+	attachable
+	encoders
 	pick_agentdir
 	agents "$@"
 }

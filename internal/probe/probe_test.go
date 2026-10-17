@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -380,4 +381,24 @@ func parseFile(t *testing.T, name string) *Report {
 		t.Fatal(err)
 	}
 	return r
+}
+
+func TestParseAttachAndEncoderKeys(t *testing.T) {
+	out := "probe=1\nos=Linux\n" +
+		"xauth=/home/a/.Xauthority\nxauth=/run/user/1000/gdm/Xauthority\nxauth=/home/a/.Xauthority\n" +
+		"session_bus=/run/user/1000/bus\npulse=/run/user/1000/pulse/native\npipewire=/run/user/1000/pipewire-0\n" +
+		"ffmpeg_encoder=h264_vaapi\nffmpeg_encoder=h264_nvenc\ngst_plugin=pipewire\ngst_plugin=vaapi\ngst_plugin=pipewire\n"
+	r, err := Parse([]byte(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(r.XAuthority, []string{"/home/a/.Xauthority", "/run/user/1000/gdm/Xauthority"}) {
+		t.Errorf("XAuthority %q", r.XAuthority)
+	}
+	if r.SessionBus != "/run/user/1000/bus" || r.PulseSocket != "/run/user/1000/pulse/native" || r.PipeWireSocket != "/run/user/1000/pipewire-0" {
+		t.Errorf("sockets %q %q %q", r.SessionBus, r.PulseSocket, r.PipeWireSocket)
+	}
+	if !slices.Equal(r.FFmpegEncoders, []string{"h264_vaapi", "h264_nvenc"}) || !slices.Equal(r.GstPlugins, []string{"pipewire", "vaapi"}) {
+		t.Errorf("encoders %q plugins %q", r.FFmpegEncoders, r.GstPlugins)
+	}
 }

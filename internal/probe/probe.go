@@ -6,6 +6,7 @@ package probe
 import (
 	_ "embed"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -48,8 +49,19 @@ type Report struct {
 
 	GPU GPU
 
-	// Commands maps each spawn-mode command found on PATH to its path.
+	// Commands maps each command remotejump can use, found on PATH, to its path.
 	Commands map[string]string
+
+	// XAuthority lists readable X cookie files that may belong to a running
+	// display, for attaching to it.
+	XAuthority []string
+	// SessionBus, PulseSocket and PipeWireSocket are this user's sockets in
+	// the runtime directory, or "".
+	SessionBus, PulseSocket, PipeWireSocket string
+	// FFmpegEncoders are the host ffmpeg's hardware H.264 encoders, such as
+	// h264_vaapi. GstPlugins are the GStreamer plugins found among pipewire,
+	// vaapi, va, nvcodec and x264.
+	FFmpegEncoders, GstPlugins []string
 
 	// AgentDir is where the agent can be stored and executed, or "" when no
 	// candidate passed. AgentDirRejected says why each failed candidate did.
@@ -237,6 +249,19 @@ func (r *Report) set(key, val string) error {
 	case "nvidia_gpu":
 		r.GPU.NvidiaGPUs = append(r.GPU.NvidiaGPUs, val)
 
+	case "xauth":
+		r.XAuthority = appendNew(r.XAuthority, val)
+	case "session_bus":
+		r.SessionBus = val
+	case "pulse":
+		r.PulseSocket = val
+	case "pipewire":
+		r.PipeWireSocket = val
+	case "ffmpeg_encoder":
+		r.FFmpegEncoders = appendNew(r.FFmpegEncoders, val)
+	case "gst_plugin":
+		r.GstPlugins = appendNew(r.GstPlugins, val)
+
 	case "agentdir":
 		r.AgentDir = val
 	case "agentdir_rejected":
@@ -319,4 +344,11 @@ func goarch(machine string) string {
 		return "arm"
 	}
 	return ""
+}
+
+func appendNew(list []string, v string) []string {
+	if slices.Contains(list, v) {
+		return list
+	}
+	return append(list, v)
 }
