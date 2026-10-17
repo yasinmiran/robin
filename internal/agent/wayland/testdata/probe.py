@@ -3,9 +3,12 @@ stdout, so a test can check injected input in surface coordinates, which
 equal monitor coordinates here.
 
 F2 prints the clipboard's text; F3 sets the clipboard to "from-session".
---animate repaints the whole window 60 times a second, for frame rate tests.
+Each key press, and each SIGUSR1, moves the picture on by one frame, the way
+a terminal echoes what is typed. --animate repaints the whole window 60
+times a second, for frame rate tests.
 """
 import json
+import signal
 import sys
 import time
 
@@ -56,6 +59,8 @@ class Probe(Gtk.Application):
         win.add_controller(keys)
 
         self.clipboard = win.get_clipboard()
+        self.area = area
+        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, self.tick, area)
         if ANIMATE:
             # A fixed 60 Hz timer: a headless frame clock can run unthrottled.
             GLib.timeout_add(16, self.tick, area)
@@ -79,6 +84,7 @@ class Probe(Gtk.Application):
     def on_key(self, ctrl, keyval, keycode, state):
         name = Gdk.keyval_name(keyval)
         log(ev="key", keyval=name, text=chr(Gdk.keyval_to_unicode(keyval) or 0))
+        self.tick(self.area)
         if name == "F2":
             self.clipboard.read_text_async(None, self.on_text)
         elif name == "F3":
