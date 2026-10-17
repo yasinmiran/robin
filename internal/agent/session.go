@@ -17,6 +17,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"sync"
 	"syscall"
@@ -244,11 +245,35 @@ type session struct {
 
 	mu   sync.Mutex
 	peer *peer.Peer
-	// cursors holds every pointer image seen, so a page that connects later
-	// can be sent images the desktop reported before it arrived.
+	// cursors holds the last maxCursors pointer images, so a page that
+	// connects later can be sent images the desktop reported before it
+	// arrived. cursorOrder lists their IDs oldest first.
 	cursors      map[uint32]protocol.Cursor
+	cursorOrder  []uint32
 	cursor       uint32          // current pointer image
 	cursorsShown map[uint32]bool // images the current page already has
+}
+
+// maxCursors bounds the pointer images a session keeps. The X11 desktop
+// sends each image once in a window of the same size and names it by ID
+// after that, so this window must be no smaller and must forget in the
+// order images arrived.
+const maxCursors = 64
+
+// keepCursor stores c as the newest image, forgetting the oldest beyond
+// maxCursors. s.mu must be held.
+func (s *session) keepCursor(c protocol.Cursor) {
+	if _, ok := s.cursors[c.ID]; ok {
+		s.cursorOrder = slices.DeleteFunc(s.cursorOrder, func(id uint32) bool { return id == c.ID })
+	}
+	s.cursors[c.ID] = c
+	s.cursorOrder = append(s.cursorOrder, c.ID)
+	if len(s.cursorOrder) > maxCursors {
+		old := s.cursorOrder[0]
+		s.cursorOrder = s.cursorOrder[1:]
+		delete(s.cursors, old)
+		delete(s.cursorsShown, old)
+	}
 }
 
 // handle processes one CLI message; done reports a clean end of session.
@@ -427,7 +452,7 @@ func (s *session) forwardCursor(ctx context.Context) {
 			}
 			s.mu.Lock()
 			if len(c.PNG) > 0 || c.Hidden {
-				s.cursors[c.ID] = c
+				s.keepCursor(c)
 			}
 			s.cursor = c.ID
 			s.mu.Unlock()
