@@ -48,7 +48,7 @@ func noticeText(n protocol.Notice, host string) string {
 	switch n.Kind {
 	case protocol.NoticeConsent:
 		return fmt.Sprintf("robin: approve the screen sharing request on %s's screen, with remote interaction "+
-			"allowed (GNOME: switch on Allow Remote Interaction, then Share). Waiting up to %s. "+
+			"allowed (GNOME: switch on Allow Remote Interaction, then Share; KDE Plasma: Approve). Waiting up to %s. "+
 			"Once approved, later sessions start without asking.", host, time.Duration(n.Wait)*time.Second)
 	case protocol.NoticeViewOnly:
 		return fmt.Sprintf("robin: view only. %s shared its screen without remote interaction, so your "+

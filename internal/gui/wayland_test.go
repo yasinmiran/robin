@@ -114,6 +114,7 @@ func TestAwaitReadyTellsTheUserAboutConsent(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(stderr.String()), "\n")
 	if len(lines) != 2 ||
 		!strings.Contains(lines[0], "approve the screen sharing request on build-box's screen") || !strings.Contains(lines[0], "2m0s") ||
+		!strings.Contains(lines[0], "GNOME: switch on Allow Remote Interaction") || !strings.Contains(lines[0], "KDE Plasma: Approve") ||
 		!strings.HasPrefix(lines[1], "robin: view only. build-box shared its screen") {
 		t.Errorf("told the user:\n%s", stderr.String())
 	}
