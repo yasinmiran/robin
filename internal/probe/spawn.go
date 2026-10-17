@@ -3,17 +3,9 @@ package probe
 import (
 	"slices"
 	"strings"
+
+	"github.com/yasinmiran/remotejump/internal/sessions"
 )
-
-// Desktops are the session commands spawn mode can run inside Xvfb, in order
-// of preference. The probe looks for each of them.
-var Desktops = []string{
-	"xfce4-session", "startxfce4", "openbox-session", "openbox", "fluxbox", "icewm-session", "twm",
-}
-
-// Terminals are the terminal emulators spawn mode can open, in order of
-// preference. The probe looks for each of them.
-var Terminals = []string{"xterm", "x-terminal-emulator", "xfce4-terminal"}
 
 // requirement is something spawn mode needs, met by any one of commands.
 type requirement struct {
@@ -31,8 +23,9 @@ var (
 		"apt": "x11-xkb-utils", "dnf": "xkbcomp", "zypper": "xkbcomp",
 		"pacman": "xorg-xkbcomp", "apk": "xkbcomp",
 	}}
-	windowManager = requirement{"a window manager or desktop", Desktops, everywhere("openbox")}
-	terminal      = requirement{"a terminal", Terminals, everywhere("xterm")}
+	windowManager = requirement{"a window manager or desktop",
+		slices.Concat(sessions.Desktops, sessions.WindowManagers), everywhere("openbox")}
+	terminal = requirement{"a terminal", sessions.Terminals, everywhere("xterm")}
 
 	spawnRequirements = []*requirement{&xvfb, &xkbcomp, &windowManager, &terminal}
 )
@@ -106,6 +99,10 @@ func (r *Report) InstallHint() string {
 }
 
 func (r *Report) lacks(req *requirement) bool {
+	// A full desktop brings its own way to start programs.
+	if req == &terminal && !r.lacks(&requirement{commands: sessions.Desktops}) {
+		return false
+	}
 	for _, c := range req.commands {
 		if r.Commands[c] != "" {
 			return false

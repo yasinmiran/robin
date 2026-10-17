@@ -402,3 +402,16 @@ func TestParseAttachAndEncoderKeys(t *testing.T) {
 		t.Errorf("encoders %q plugins %q", r.FFmpegEncoders, r.GstPlugins)
 	}
 }
+
+func TestSpawnMissingTerminalOnlyWithoutDesktop(t *testing.T) {
+	r := &Report{Commands: map[string]string{"Xvfb": "/usr/bin/Xvfb", "xkbcomp": "/usr/bin/xkbcomp"}}
+	r.Commands["openbox"] = "/usr/bin/openbox"
+	if got := r.SpawnMissing(); !slices.Equal(got, []string{"a terminal"}) {
+		t.Errorf("window manager alone: missing %q, want a terminal", got)
+	}
+	delete(r.Commands, "openbox")
+	r.Commands["xfce4-session"] = "/usr/bin/xfce4-session"
+	if got := r.SpawnMissing(); len(got) != 0 {
+		t.Errorf("full desktop: missing %q, want nothing", got)
+	}
+}

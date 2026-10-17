@@ -205,7 +205,7 @@ gpu() {
 
 commands() {
 	for c in Xvfb xkbcomp \
-		xfce4-session startxfce4 openbox-session openbox fluxbox icewm-session twm \
+		xfce4-session openbox-session openbox fluxbox icewm-session twm \
 		xterm x-terminal-emulator xfce4-terminal \
 		dbus-run-session dbus-launch \
 		pulseaudio pipewire pipewire-pulse wireplumber pactl \
