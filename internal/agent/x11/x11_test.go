@@ -91,3 +91,21 @@ func TestOpen(t *testing.T) {
 		t.Error("Open with an empty Xauthority succeeded")
 	}
 }
+
+// waitMapped waits until a client window is viewable on the display, so a
+// test does not race a just-started program's first map.
+func waitMapped(t *testing.T, tx *testX) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		tree, err := xproto.QueryTree(tx.peer, tx.root).Reply()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, w := range tree.Children {
+			if a, err := xproto.GetWindowAttributes(tx.peer, w).Reply(); err == nil && a.MapState == xproto.MapStateViewable && !a.OverrideRedirect {
+				return
+			}
+		}
+	}
+	t.Fatal("no window was mapped")
+}

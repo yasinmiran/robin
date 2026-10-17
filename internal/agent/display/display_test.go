@@ -354,10 +354,17 @@ func TestAgentDeathKillsEverything(t *testing.T) {
 	if len(alive) > 0 {
 		t.Errorf("outlived the agent: %v", describe(alive))
 	}
-	time.Sleep(500 * time.Millisecond) // the watchdog exits right after its last kill
-	if w := findProcs(func(_ int, cmdline, _ string) bool {
-		return strings.Contains(cmdline, "remotejump-display-watchdog")
-	}); len(w) > 0 {
+	// The watchdog exits right after its last kill.
+	watchdog := func() []int {
+		return findProcs(func(_ int, cmdline, _ string) bool {
+			return strings.Contains(cmdline, "remotejump-display-watchdog")
+		})
+	}
+	w := watchdog()
+	for deadline := time.Now().Add(3 * time.Second); len(w) > 0 && time.Now().Before(deadline); w = watchdog() {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if len(w) > 0 {
 		t.Errorf("watchdog still running: %v", describe(w))
 	}
 }

@@ -395,7 +395,7 @@ func TestTypingIntoXterm(t *testing.T) {
 	}
 	t.Cleanup(func() { xt.Process.Kill(); xt.Wait() })
 	waitFile(t, out+".ready")
-	time.Sleep(300 * time.Millisecond)
+	waitMapped(t, tx)
 	tx.input(t, protocol.Control{T: protocol.ControlMove, X: 100, Y: 50}) // no WM: focus follows the pointer
 
 	text := `echo "Ünïcödé" æøå ÆØÅ €½ 😀 {~}`

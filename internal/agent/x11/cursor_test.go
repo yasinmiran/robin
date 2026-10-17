@@ -44,7 +44,7 @@ func TestCursorFollowsPointer(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { xt.Process.Kill(); xt.Wait() })
-	time.Sleep(500 * time.Millisecond)
+	waitMapped(t, tx)
 
 	// Over the xterm the pointer becomes its text cursor: a new image.
 	tx.input(t, protocol.Control{T: protocol.ControlMove, X: 60, Y: 40})
