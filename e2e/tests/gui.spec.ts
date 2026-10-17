@@ -142,6 +142,50 @@ test('keyboard: a typed command runs on the host and shows in the picture', asyn
   await typeIntoTerminal(`echo rj-e2e > /tmp/rj-e2e-${SCENARIO}`, `/tmp/rj-e2e-${SCENARIO}`, 'rj-e2e');
 });
 
+// A still screen sends only the keyframes Chrome asks for every 3 s, and
+// Chrome's jitter estimate grows on them until it holds new frames back for
+// about a second, so what is typed after a pause shows late.
+test('latency: after 20 s of a still screen, keystrokes show within 400 ms', async ({}, testInfo) => {
+  testInfo.setTimeout(60_000);
+  let term: host.Rect | null = null;
+  await expect.poll(async () => (term = await host.terminal()), { message: 'an xterm is mapped', timeout: 15_000 }).not.toBeNull();
+  const t = term!;
+  const centre = await pagePoint(page, SCREEN, t.x + t.width / 2, t.y + t.height / 2);
+  await page.mouse.click(centre.x, centre.y);
+  await page.waitForTimeout(20_000);
+
+  await page.evaluate((selector) => {
+    const w = window as any;
+    const video = document.querySelector(selector) as HTMLVideoElement;
+    w.rjKeys = [];
+    w.rjFrames = [];
+    window.addEventListener('keydown', (e) => e.key === 'x' && w.rjKeys.push(performance.now()), { capture: true });
+    const onFrame = (_: number, m: VideoFrameCallbackMetadata) => {
+      w.rjFrames.push({ presented: m.presentationTime, received: m.receiveTime ?? m.presentationTime });
+      video.requestVideoFrameCallback(onFrame);
+    };
+    video.requestVideoFrameCallback(onFrame);
+  }, SCREEN);
+  for (let i = 0; i < 4; i++) {
+    await page.keyboard.press('x');
+    await page.waitForTimeout(250);
+  }
+  // Held frames still surface, so a failure says by how much.
+  await page.waitForTimeout(1_500);
+  await page.keyboard.press('Control+U');
+
+  type Shown = { presented: number; received: number };
+  const { keys, frames } = await page.evaluate(() => ({
+    keys: (window as any).rjKeys as number[],
+    frames: (window as any).rjFrames as Shown[],
+  }));
+  const lag = keys.map((k) => Math.round((frames.find((f) => f.presented > k)?.presented ?? Infinity) - k));
+  const held = frames.map((f) => Math.round(f.presented - f.received));
+  testInfo.annotations.push({ type: 'latency', description: JSON.stringify({ lag, held }) });
+  expect(keys, 'keystrokes seen by the page').toHaveLength(4);
+  expect(Math.max(...lag), `ms from each keystroke to the next frame on screen: ${lag}`).toBeLessThan(400);
+});
+
 test('pointer: the remote cursor lands where the page points, within 2 px', async () => {
   const { width, height } = await host.displayGeometry();
   for (const [fx, fy] of [

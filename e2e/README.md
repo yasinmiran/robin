@@ -47,20 +47,26 @@ Every scenario also checks, in this order:
 2. **Keyboard**: clicking the xterm through the video and typing
    `echo rj-e2e > /tmp/rj-e2e-<scenario>` creates that file on the host, and
    the xterm region of the picture changes.
-3. **Pointer**: moving to two points on the page puts the X pointer within 2 px
+3. **Latency**: after 20 s of a still screen, four keystrokes 250 ms apart
+   each reach the screen within 400 ms (`requestVideoFrameCallback`). Without
+   the agent's zero playout delay, Chrome held the first of them for most of
+   a second.
+4. **Pointer**: moving to two points on the page puts the X pointer within 2 px
    of the matching display pixel (`xdotool getmouselocation`).
-4. **Clipboard**: `remotejump.sendClipboard()` reaches `xclip -o` on the host,
+5. **Cursor**: the page's CSS cursor is the remote pointer image, and it
+   changes when the pointer moves over the xterm.
+6. **Clipboard**: `remotejump.sendClipboard()` reaches `xclip -o` on the host,
    and a host `xclip -i` shows up in `remotejump.lastRemoteClipboard`.
-5. **Resize**: a 1000x700 viewport turns into a 1000x700 video and a 1000x700
+7. **Resize**: a 1000x700 viewport turns into a 1000x700 video and a 1000x700
    display (`xdotool getdisplaygeometry`) within 10 s. In `attach` the desktop
    keeps its size instead: video and display stay 1280x800 and only the video
    element shrinks.
-6. **Sound**: the CLI reported no missing sound, the page shows the speaker
+8. **Sound**: the CLI reported no missing sound, the page shows the speaker
    toggle muted and receives audio packets, and once the toggle is clicked,
    noise played on the host with `paplay` through the session's sound server
    raises Chrome's `totalAudioEnergy`. Nothing wrote to `~/.config/pulse`.
-7. **Transport**: per the table above, from `remotejump.stats()`.
-8. **Teardown**: SIGINT to the CLI's process group (what Ctrl-C does) makes it
+9. **Transport**: per the table above, from `remotejump.stats()`.
+10. **Teardown**: SIGINT to the CLI's process group (what Ctrl-C does) makes it
    exit 0 within 10 s, after which no `Xvfb`, `remotejump-agent`, `openbox`,
    `xterm` or `pulseaudio` runs as `rj` and the agent's run dir is gone. Stdout must have held
    nothing but the URL. Set `RJ_SIGINT_PID_ONLY=1` to signal only the CLI.
