@@ -267,7 +267,8 @@ outlives the agent, whether it closes or is killed.
 `make e2e` runs four scenarios against a fresh host container each: direct
 UDP, UDP blocked on the host from the start, UDP blocked mid-session, and
 `--attach auto` against a desktop the test user already has running. Each
-asserts that decoded frames are not black and change after typing, that typed
+asserts that decoded frames are not black and change after typing, that
+keystrokes after a 20 s pause reach the screen within 400 ms, that typed
 text runs in the remote shell, pointer position, clipboard both ways, resize,
 that sound played on the host is heard once the speaker is on, which
 transport ICE picked, and that nothing survives the CLI; for the attached

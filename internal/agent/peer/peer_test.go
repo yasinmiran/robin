@@ -1,6 +1,7 @@
 package peer
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -27,6 +28,9 @@ func newBrowser(t *testing.T) *browser {
 	t.Helper()
 	m := &webrtc.MediaEngine{}
 	if err := m.RegisterDefaultCodecs(); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RegisterHeaderExtension(webrtc.RTPHeaderExtensionCapability{URI: playoutDelayURI}, webrtc.RTPCodecTypeVideo); err != nil {
 		t.Fatal(err)
 	}
 	pc, err := webrtc.NewAPI(webrtc.WithMediaEngine(m)).NewPeerConnection(webrtc.Configuration{})
@@ -151,8 +155,22 @@ func TestPeerStreamsAndControls(t *testing.T) {
 	if got := tr.Codec().MimeType; !strings.EqualFold(got, webrtc.MimeTypeH264) {
 		t.Fatalf("track codec %s", got)
 	}
-	if _, _, err := tr.ReadRTP(); err != nil {
+	pkt, _, err := tr.ReadRTP()
+	if err != nil {
 		t.Fatalf("read rtp: %v", err)
+	}
+	// Every video packet asks the browser to show its frame without delay.
+	var playoutID uint8
+	for _, e := range b.pc.GetTransceivers()[0].Receiver().GetParameters().HeaderExtensions {
+		if e.URI == playoutDelayURI {
+			playoutID = uint8(e.ID)
+		}
+	}
+	if playoutID == 0 {
+		t.Fatal("playout delay extension not negotiated")
+	}
+	if got := pkt.GetExtension(playoutID); !bytes.Equal(got, []byte{0, 0, 0}) {
+		t.Errorf("playout delay extension %x, want min and max 0", got)
 	}
 
 	// A picture-loss indication from the browser becomes a keyframe request.

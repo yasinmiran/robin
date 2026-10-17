@@ -251,6 +251,24 @@ twice each, within a quarter of the target bitrate. A 4x overshooting start
 and a link that drops mid-session now both settle within about 10% of the
 link rate.
 
+### Zero playout delay on video
+
+Every video packet carries the playout-delay header extension with a minimum
+and maximum of zero, so Chrome decodes and shows a frame as soon as it is
+complete instead of holding it for its jitter estimate. On a still screen
+the agent sends nothing until Chrome, after 3 s without a frame, asks for a
+keyframe. The jitter estimate grows on that trickle of large frames until it
+holds new frames back for most of a second, so what you type after a pause
+showed late. The e2e measures it after 20 s of a still screen. Before the
+change, four keystrokes 250 ms apart produced one frame on screen, 414 ms
+after the first key and held 397 ms after it arrived; the last two
+keystrokes had not shown 1.5 s later. With the extension each keystroke
+reached the screen within 11 to 34 ms, with frames held about 1 ms. A
+desktop stream has no reason to smooth playout the way a call does, and a
+TCP fallback that delivers in bursts now shows each burst as it lands.
+Browsers that do not offer the extension, Firefox among them, keep their
+own playout timing.
+
 ### Trust: the DTLS fingerprint arrives over SSH
 
 The agent's SDP, including its DTLS fingerprint, reaches the browser only over

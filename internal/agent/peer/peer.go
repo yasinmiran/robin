@@ -149,6 +149,10 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 	if err := webrtc.ConfigureRTCPReports(reg); err != nil {
 		return nil, err
 	}
+	if err := m.RegisterHeaderExtension(webrtc.RTPHeaderExtensionCapability{URI: playoutDelayURI}, webrtc.RTPCodecTypeVideo); err != nil {
+		return nil, err
+	}
+	reg.Add(playoutDelayFactory{})
 
 	se := webrtc.SettingEngine{}
 	se.SetSCTPMaxMessageSize(MaxControlBytes)
