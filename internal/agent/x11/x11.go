@@ -82,7 +82,10 @@ func (c *Conn) init() error {
 		return err
 	}
 
-	c.damage, _ = damage.NewDamageId(c.x)
+	var err error
+	if c.damage, err = damage.NewDamageId(c.x); err != nil {
+		return fmt.Errorf("DAMAGE: %w", err)
+	}
 	if err := damage.CreateChecked(c.x, c.damage, xproto.Drawable(c.root), damage.ReportLevelNonEmpty).Check(); err != nil {
 		return fmt.Errorf("DAMAGE: %w", err)
 	}

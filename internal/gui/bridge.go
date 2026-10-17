@@ -40,7 +40,12 @@ type bridge struct {
 	cur *web.Browser
 }
 
-func (b *bridge) run(ctx context.Context, srv browsers, sshDone <-chan struct{}) error {
+// run relays until ctx ends, SSH drops, the agent goes away or the page
+// server stops. serveErr carries the page server's result.
+func (b *bridge) run(ctx context.Context, srv browsers, sshDone <-chan struct{}, serveErr <-chan error) error {
+	// Ending run must also end the accept loop below, whatever the reason.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	agentErr := make(chan error, 1)
 	go func() { agentErr <- b.fromAgent() }()
 
@@ -69,6 +74,9 @@ func (b *bridge) run(ctx context.Context, srv browsers, sshDone <-chan struct{})
 		case <-sshDone:
 			b.closeCurrent()
 			return errors.New("SSH connection to the host was lost")
+		case err := <-serveErr:
+			b.closeCurrent()
+			return fmt.Errorf("page server stopped: %w", err)
 		case err := <-agentErr:
 			b.closeCurrent()
 			if errors.Is(err, io.EOF) {
@@ -165,7 +173,14 @@ func openBrowser(url string) error {
 	if runtime.GOOS == "darwin" {
 		name = "open"
 	}
-	return exec.Command(name, url).Start()
+	cmd := exec.Command(name, url)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	// Reap the opener when it exits; it would otherwise stay a zombie for the
+	// whole session.
+	go cmd.Wait()
+	return nil
 }
 
 // tailBuffer keeps the last max bytes written to it.

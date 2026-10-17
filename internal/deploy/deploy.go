@@ -28,7 +28,7 @@ type Target struct {
 	// PresentHash is the SHA-256 of the agent already installed there, if any.
 	PresentHash string
 	// SHA256Tool is the host's hashing tool: sha256sum, shasum, openssl,
-	// busybox, or none.
+	// busybox, or empty when the host has none.
 	SHA256Tool string
 }
 

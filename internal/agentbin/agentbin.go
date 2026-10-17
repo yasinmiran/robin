@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -39,10 +40,9 @@ type Agent struct {
 }
 
 // Name is the agent's file name on the host. It changes with the content, so
-// a host never runs a stale agent under a current name. It needs the Hash
-// that For and FromFS fill in.
+// a host never runs a stale agent under a current name.
 func (a Agent) Name() string {
-	return NamePrefix + a.Hash[:16]
+	return NamePrefix + a.Hash[:min(len(a.Hash), 16)]
 }
 
 // Open returns the uncompressed binary.
@@ -65,8 +65,7 @@ type gzipFile struct {
 }
 
 func (g *gzipFile) Close() error {
-	g.Reader.Close()
-	return g.f.Close()
+	return errors.Join(g.Reader.Close(), g.f.Close())
 }
 
 var cache sync.Map // goarch -> func() (Agent, error)

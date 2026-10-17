@@ -134,8 +134,8 @@ type RejectedDir struct {
 	Path, Reason string
 }
 
-// AgentHash returns the lowercase hex SHA-256 of the agent file name in
-// AgentDir, or "" when the file is absent or the host cannot hash.
+// AgentHash returns the lowercase hex SHA-256 of the agent file called name
+// in AgentDir, or "" when there is no such file or the host cannot hash.
 func (r *Report) AgentHash(name string) string {
 	return r.agentHashes[name]
 }
@@ -321,10 +321,10 @@ func atoi(s string) (int, error) {
 }
 
 func excerpt(out []byte) string {
-	const max = 120
+	const limit = 120
 	s := strings.TrimSpace(string(out))
-	if len(s) > max {
-		s = s[:max] + "..."
+	if len(s) > limit {
+		s = s[:limit] + "..."
 	}
 	return s
 }

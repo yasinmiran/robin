@@ -1,7 +1,5 @@
 //go:build linux && cgo && openh264
 
-// Package h264 is the agent's software H.264 encoder: openh264, statically
-// linked, emitting Constrained Baseline Annex-B that browsers decode in WebRTC.
 package h264
 
 /*
@@ -271,6 +269,9 @@ func (e *Encoder) LastFrameType() FrameType { return e.last }
 
 // SetBitrate retargets rate control; it applies from the next frame.
 func (e *Encoder) SetBitrate(bps int) error {
+	if e.closed {
+		return errors.New("h264: encoder closed")
+	}
 	if rc := C.enc_set_bitrate(e.e, C.int(bps)); rc != 0 {
 		return fmt.Errorf("h264: set bitrate %d: openh264 error %d", bps, rc)
 	}

@@ -302,8 +302,10 @@ func (d *Display) startCmd(cmd *exec.Cmd, pgid int, logStderr bool) (*proc, erro
 	}
 	if pgid != 0 {
 		p.group = pgid
-	} else {
-		fmt.Fprintln(d.guard, p.group)
+	} else if _, err := fmt.Fprintln(d.guard, p.group); err != nil {
+		// A group the watchdog does not know about would outlive a killed agent.
+		p.kill()
+		return nil, fmt.Errorf("display: register with watchdog: %w", err)
 	}
 	return p, nil
 }

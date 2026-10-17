@@ -145,7 +145,8 @@ func Run(ctx context.Context, o Options) error {
 	}
 	serveCtx, stopServe := context.WithCancel(ctx)
 	defer stopServe()
-	go srv.Serve(serveCtx)
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.Serve(serveCtx) }()
 
 	if o.NoBrowser {
 		fmt.Fprintln(o.Stdout, srv.URL())
@@ -158,7 +159,7 @@ func Run(ctx context.Context, o Options) error {
 		agent: ag.conn, relay: relay.New(relay.Policy{Transport: o.Transport, TunnelPort: tunnelPort}),
 		config: protocol.Config{ICEServers: iceServers(start.STUN), HiDPI: o.HiDPI}, log: log,
 	}
-	err = b.run(ctx, srv, m.Done())
+	err = b.run(ctx, srv, m.Done(), serveErr)
 	// Ctrl+C in a terminal reaches ssh too, so the master may die first; a
 	// signal is a clean exit either way. The agent sees its stdin close and
 	// tears the display down by itself.
