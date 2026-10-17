@@ -6,9 +6,12 @@ import (
 	"context"
 	"log/slog"
 	"math"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -151,6 +154,81 @@ func TestServerDeathEndsThePackets(t *testing.T) {
 			t.Fatal("packets still open after the server died")
 		}
 	}
+}
+
+// TestCost reports what the audio path costs while something plays: CPU in
+// the agent (capture and encoding) and in the private server, and the
+// bitrate on the wire.
+func TestCost(t *testing.T) {
+	needServer(t)
+	src, env, err := Start(context.Background(), Options{RunDir: t.TempDir(), Log: quiet()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	server := src.srv.cmd.Process.Pid
+
+	measure := func(what string, d time.Duration) (kbps float64) {
+		for len(src.Packets()) > 0 {
+			<-src.Packets() // queued before the window opened
+		}
+		var bytes, packets int
+		self0, srv0, start := selfCPU(), procCPU(server), time.Now()
+		for deadline := time.After(d); ; {
+			select {
+			case pkt := <-src.Packets():
+				bytes += len(pkt)
+				packets++
+				continue
+			case <-deadline:
+			}
+			break
+		}
+		secs := time.Since(start).Seconds()
+		kbps = float64(bytes*8) / secs / 1000
+		t.Logf("%s: agent %.2f%% of a core, pulseaudio %.2f%%, %.1f kbit/s, %.1f packets/s", what,
+			100*(selfCPU()-self0)/secs, 100*(procCPU(server)-srv0)/secs, kbps, float64(packets)/secs)
+		if pps := float64(packets) / secs; pps < 45 || pps > 55 {
+			t.Errorf("%s: %.1f packets/s, want 50: the RTP clock would drift from real time", what, pps)
+		}
+		return kbps
+	}
+	time.Sleep(time.Second)
+	measure("silence", 3*time.Second)
+	play(t, env, noise(12))
+	time.Sleep(2 * time.Second) // paplay's prebuffer
+	if k := measure("noise", 8*time.Second); k < 40 {
+		t.Errorf("noise came through at %.1f kbit/s; the capture is not carrying it", k)
+	}
+}
+
+// noise is seconds of loud white noise as 16-bit stereo.
+func noise(seconds int) []byte {
+	b := make([]byte, seconds*48000*4)
+	r := rand.New(rand.NewPCG(1, 2))
+	for i := range b {
+		b[i] = byte(r.Uint32())
+	}
+	return b
+}
+
+func selfCPU() float64 {
+	var ru syscall.Rusage
+	syscall.Getrusage(syscall.RUSAGE_SELF, &ru)
+	return time.Duration(ru.Utime.Nano() + ru.Stime.Nano()).Seconds()
+}
+
+// procCPU is pid's user and system time in seconds, from /proc.
+func procCPU(pid int) float64 {
+	b, _ := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	_, rest, _ := strings.Cut(string(b), ") ")
+	f := strings.Fields(rest)
+	if len(f) < 13 {
+		return 0
+	}
+	ut, _ := strconv.ParseFloat(f[11], 64)
+	st, _ := strconv.ParseFloat(f[12], 64)
+	return (ut + st) / 100 // USER_HZ
 }
 
 func TestAttachWithoutAServer(t *testing.T) {

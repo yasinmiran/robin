@@ -115,9 +115,11 @@ func startServer(ctx context.Context, runDir string) (_ *server, err error) {
 }
 
 // serverScript is the daemon's whole configuration. Without -n's default
-// script nothing touches the host's sound hardware or Bluetooth.
+// script nothing touches the host's sound hardware or Bluetooth. Rewinds
+// are off because each one drops what the monitor had queued: with them a
+// 20 ms recording got 70% of real time, so the RTP clock would drift.
 func serverScript(socket, cookie string) string {
-	return "load-module module-null-sink sink_name=remotejump rate=48000 channels=2 sink_properties=device.description=remotejump\n" +
+	return "load-module module-null-sink sink_name=remotejump rate=48000 channels=2 norewinds=1 sink_properties=device.description=remotejump\n" +
 		"set-default-sink remotejump\n" +
 		"load-module module-native-protocol-unix socket=" + quoteArg(socket) + " auth-anonymous=0 auth-cookie=" + quoteArg(cookie) + "\n"
 }
