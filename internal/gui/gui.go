@@ -55,14 +55,24 @@ type Options struct {
 
 const readyTimeout = 60 * time.Second
 
-// Run holds one session until ctx ends, the agent exits or SSH drops.
-func Run(ctx context.Context, o Options) error {
+// Run holds one session until ctx ends, the agent exits or SSH drops. Its
+// error, like everything it writes to Stderr, is safe to print on a
+// terminal, whatever the host sent.
+func Run(ctx context.Context, o Options) (err error) {
 	if o.Stdout == nil {
 		o.Stdout = os.Stdout
 	}
 	if o.Stderr == nil {
 		o.Stderr = os.Stderr
 	}
+	// The host's text (the agent's log and errors, the probe's findings,
+	// what ssh prints) leaves through these two ways only.
+	o.Stderr = printableWriter{o.Stderr}
+	defer func() {
+		if err != nil {
+			err = printableError{err}
+		}
+	}()
 	log := o.Log
 	if log == nil {
 		log = slog.Default()
