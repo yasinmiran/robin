@@ -259,9 +259,10 @@ complete instead of holding it for its jitter estimate. On a still screen
 the agent sends nothing until Chrome, after 3 s without a frame, asks for a
 keyframe. The jitter estimate grows on that trickle of large frames until it
 holds new frames back for most of a second, so what you type after a pause
-showed late. The e2e measures it after 20 s of a still screen. Before the
-change, four keystrokes 250 ms apart produced one frame on screen, 414 ms
-after the first key and held 397 ms after it arrived; the last two
+showed late. The e2e measures it after 20 s of a still screen. In the
+direct UDP scenario, before the change, four keystrokes 250 ms apart
+produced one frame on screen, 414 ms after the first key and held 397 ms
+after it arrived; the last two
 keystrokes had not shown 1.5 s later. With the extension each keystroke
 reached the screen within 11 to 34 ms, with frames held about 1 ms. A
 desktop stream has no reason to smooth playout the way a call does, and a

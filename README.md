@@ -139,7 +139,9 @@ asked again. A view-only approval is never remembered, so the next run asks
 once more.
 
 Ending the session gives the screen back as it was. Stopping the share from
-the host's own indicator ends the remote session too.
+the host's own indicator ends the remote session too. Sound comes along as
+it does on X11, recorded from PipeWire's PulseAudio server, which current
+GNOME and Plasma desktops run.
 
 The agent reads the screen through GStreamer, so the host needs
 `gst-launch-1.0` and the PipeWire, base and good plugin sets. A desktop
@@ -262,7 +264,9 @@ own remote desktop interface, a path only the tests use. It checks that the
 first session asks and the second restores without asking, that frames
 arrive and change, pointer, keys and held-key repeat, the clipboard both
 ways, view-only grants, and that no `gst-launch-1.0` or portal session
-outlives the agent, whether it closes or is killed.
+outlives the agent, whether it closes or is killed. A tone played into that
+session's PipeWire must come out of the agent's capture through
+`pipewire-pulse`.
 
 `make e2e` runs four scenarios against a fresh host container each: direct
 UDP, UDP blocked on the host from the start, UDP blocked mid-session, and
