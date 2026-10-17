@@ -42,8 +42,11 @@ func TestCheckEncoder(t *testing.T) {
 		{"no hint on an unknown distro", "vaapi", Report{Distro: Distro{ID: "gentoo"}, GPU: intel}, []string{"needs ffmpeg"}},
 
 		{"nvenc through ffmpeg", "nvenc", Report{GPU: nvidia, FFmpegEncoders: []string{"h264_nvenc"}}, nil},
-		{"nvenc through gstreamer", "nvenc", Report{GPU: GPU{NvidiaSMI: "/usr/bin/nvidia-smi"}, Commands: gst, GstPlugins: []string{"nvcodec"}}, nil},
+		{"nvenc through gstreamer", "nvenc", Report{GPU: nvidia, Commands: gst, GstPlugins: []string{"nvcodec"}}, nil},
 		{"no nvidia gpu", "nvenc", Report{GPU: intel, FFmpegEncoders: []string{"h264_nvenc"}}, []string{"no NVIDIA GPU"}},
+		// Seen on a workstation with the NVIDIA utilities and no NVIDIA card.
+		{"nvidia-smi without a driver", "nvenc", Report{GPU: GPU{NvidiaSMI: "/usr/bin/nvidia-smi"}, FFmpegEncoders: []string{"h264_nvenc"}},
+			[]string{"no NVIDIA GPU"}},
 		{"nvidia without a tool", "nvenc", Report{Distro: Distro{ID: "arch"}, UID: 1000, GPU: nvidia, FFmpegEncoders: []string{"h264_vaapi"}},
 			[]string{"needs ffmpeg with h264_nvenc", "install with: sudo pacman -S ffmpeg"}},
 	} {

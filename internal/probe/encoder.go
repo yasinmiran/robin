@@ -85,7 +85,8 @@ func (r *Report) vaapiProblem() (string, bool) {
 }
 
 func (r *Report) nvencProblem() (string, bool) {
-	if len(r.GPU.NvidiaGPUs) == 0 && r.GPU.NvidiaSMI == "" {
+	// nvidia-smi alone proves nothing: it is installed on hosts with no GPU.
+	if len(r.GPU.NvidiaGPUs) == 0 {
 		return "no NVIDIA GPU with its driver loaded", false
 	}
 	gst := r.Commands["gst-launch-1.0"] != "" && slices.Contains(r.GstPlugins, "nvcodec")
