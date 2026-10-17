@@ -1,9 +1,9 @@
 # One command builds everything: `make`.
 #
 # The CLI (bin/remotejump) is pure Go and embeds the host agents. Each agent
-# is a fully static linux binary built with cgo against openh264, with a
-# pinned zig as the C toolchain, so this works from Linux or macOS with no
-# containers and no root.
+# is a fully static linux binary built with cgo against openh264 and libopus,
+# with a pinned zig as the C toolchain, so this works from Linux or macOS with
+# no containers and no root.
 
 GO       ?= go
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
@@ -37,7 +37,7 @@ bin/remotejump-agent-linux-%: $(GOSRC) go.mod go.sum toolchain/*.sh
 	echo "build agent linux/$* ($$t)"; \
 	CGO_ENABLED=1 GOOS=linux GOARCH=$* CC="$$zig cc -target $$t" CXX="$$zig c++ -target $$t" \
 	CGO_CFLAGS="-I$$prefix/include" CGO_LDFLAGS="-L$$prefix/lib" \
-	$(GO) build -trimpath -tags openh264,netgo,osusergo \
+	$(GO) build -trimpath -tags openh264,opus,netgo,osusergo \
 		-ldflags "-s -w -linkmode external -extldflags -static -X main.version=$(VERSION)" \
 		-o $@ ./cmd/remotejump-agent
 
@@ -57,15 +57,15 @@ dist: agents
 bin/remotejump-linux-amd64: agents $(GOSRC) go.mod go.sum
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $@ ./cmd/remotejump
 
-# Unit and integration tests. The encoder package is tested against the real
-# openh264 on linux/amd64 hosts; everywhere else it builds as a stub.
+# Unit and integration tests. The encoder packages are tested against the real
+# openh264 and libopus on linux/amd64 hosts; everywhere else they build as stubs.
 test:
 	$(GO) test ./...
 ifeq ($(HOST_OS)/$(HOST_ARCH),linux/amd64)
-	@set -e; t=$(target_amd64); zig=$$(toolchain/zig.sh); prefix=$$(toolchain/openh264.sh $$t); \
+	@set -e; t=$(target_amd64); zig=$$(toolchain/zig.sh); prefix=$$(toolchain/openh264.sh $$t); toolchain/opus.sh $$t >/dev/null; \
 	CGO_ENABLED=1 CC="$$zig cc -target $$t" CXX="$$zig c++ -target $$t" \
 	CGO_CFLAGS="-I$$prefix/include" CGO_LDFLAGS="-L$$prefix/lib" \
-	$(GO) test -tags openh264 ./internal/agent/h264/
+	$(GO) test -tags openh264,opus ./internal/agent/h264/ ./internal/agent/opus/
 endif
 
 test-short:
