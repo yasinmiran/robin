@@ -227,12 +227,14 @@ so congestion control is tested separately over a shaped virtual link
 (`go test ./internal/agent/peer -run Congestion`).
 
 The hardware encoders are tested against stand-in tools everywhere, and
-against the real GPU wherever `make test` runs on a host that has one: every
-route the host offers must produce a Baseline IDR first, P slices after, an
-IDR on request and the target bitrate on noise, and ffmpeg, where it is
-installed, must decode the result. Set `RJ_HWENC_REQUIRE=vaapi` (or `nvenc`) to make a missing GPU fail
-the run instead of skipping it, and `RJ_HWENC_COMPARE=1` with the openh264
-build tag to print the comparison the ADR quotes.
+against the real GPU wherever `make test` runs on a host that has one along
+with a tool to drive it (a GPU with neither ffmpeg nor a GStreamer encoder
+plugin skips): every route the host offers must produce a Baseline IDR
+first, P slices after, an IDR on request and the target bitrate on noise,
+and ffmpeg, where it is installed, must decode the result. Set
+`RJ_HWENC_REQUIRE=vaapi` (or `nvenc`) to make a missing route fail the run
+instead of skipping it, and `RJ_HWENC_COMPARE=1` with the openh264 build tag
+to print the comparison the ADR quotes.
 
 ## Known limits
 
