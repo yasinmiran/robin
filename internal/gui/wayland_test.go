@@ -54,6 +54,26 @@ func TestCheckWaylandSaysWhatToInstall(t *testing.T) {
 	}
 }
 
+// TestAwaitReadyShowsTheAgentError checks what the user reads when the agent
+// gives up before Ready: its message once, under one "agent:", then its log.
+func TestAwaitReadyShowsTheAgentError(t *testing.T) {
+	agentR, cliW := io.Pipe()
+	cliR, agentW := io.Pipe()
+	agent := protocol.NewConn(agentR, agentW, 0, 0)
+	defer agent.Close()
+	log := &tail.Buffer{Max: 1024}
+	log.Write([]byte("level=ERROR msg=\"session ended\"\n"))
+	a := &agentProc{conn: protocol.NewConn(cliR, cliW, 0, 0), log: log}
+	defer a.conn.Close()
+	go agent.Send(protocol.Message{Type: protocol.TypeError, Error: `expected start, got "offer"`})
+
+	_, err := a.awaitReady(context.Background(), "box", io.Discard)
+	want := "agent: expected start, got \"offer\"\nagent log:\nlevel=ERROR msg=\"session ended\""
+	if err == nil || err.Error() != want {
+		t.Errorf("error %q, want %q", err, want)
+	}
+}
+
 // TestAwaitReadyTellsTheUserAboutConsent plays an agent that waits on the
 // consent dialog, then grants view only.
 func TestAwaitReadyTellsTheUserAboutConsent(t *testing.T) {

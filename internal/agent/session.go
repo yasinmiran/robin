@@ -524,13 +524,13 @@ func awaitStart(ctx context.Context, conn *protocol.Conn) (protocol.Start, error
 	case err := <-errc:
 		return protocol.Start{}, err
 	case <-time.After(startTimeout):
-		return protocol.Start{}, errors.New("agent: no start message")
+		return protocol.Start{}, errors.New("no start message from the CLI")
 	case m := <-got:
 		if m.Type != protocol.TypeStart || m.Start == nil {
-			return protocol.Start{}, fail(conn, fmt.Errorf("agent: expected start, got %q", m.Type))
+			return protocol.Start{}, fail(conn, fmt.Errorf("expected start, got %q", m.Type))
 		}
 		if m.Start.Version != protocol.Version {
-			return protocol.Start{}, fail(conn, fmt.Errorf("agent speaks protocol %d, CLI speaks %d", protocol.Version, m.Start.Version))
+			return protocol.Start{}, fail(conn, fmt.Errorf("the CLI speaks protocol %d, this agent %d", m.Start.Version, protocol.Version))
 		}
 		return normalize(*m.Start), nil
 	}

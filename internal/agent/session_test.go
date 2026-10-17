@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -206,8 +207,10 @@ func TestSessionRejectsWrongVersion(t *testing.T) {
 	h := startAgent(t)
 	h.cli.Send(protocol.Message{Type: protocol.TypeStart, Start: &protocol.Start{Version: protocol.Version + 1}})
 	m, ok := <-h.msgs
-	if !ok || m.Type != protocol.TypeError || !strings.Contains(m.Error, "protocol") {
-		t.Fatalf("got %+v", m)
+	// The CLI shows this as "agent: <message>", so it names no agent itself.
+	want := fmt.Sprintf("the CLI speaks protocol %d, this agent %d", protocol.Version+1, protocol.Version)
+	if !ok || m.Type != protocol.TypeError || m.Error != want {
+		t.Fatalf("got %+v, want error %q", m, want)
 	}
 	select {
 	case <-h.exited:
@@ -216,6 +219,15 @@ func TestSessionRejectsWrongVersion(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("agent did not exit")
+	}
+}
+
+func TestSessionWantsStartFirst(t *testing.T) {
+	h := startAgent(t)
+	h.cli.Send(protocol.Message{Type: protocol.TypeOffer, SDP: "v=0"})
+	m, ok := <-h.msgs
+	if want := `expected start, got "offer"`; !ok || m.Type != protocol.TypeError || m.Error != want {
+		t.Fatalf("got %+v, want error %q", m, want)
 	}
 }
 
