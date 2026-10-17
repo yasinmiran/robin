@@ -77,6 +77,10 @@ func (o *Opener) Open(width, height, fps, bitrate int) (*Encoder, error) {
 	return e, nil
 }
 
+// chooseTimeout bounds all the trials together, so a host whose tools hang
+// gets the reasons from the agent before the CLI gives up waiting for it.
+const chooseTimeout = 40 * time.Second
+
 var hints = map[Kind]string{
 	VAAPI: "VA-API encoding needs ffmpeg with h264_vaapi, or gst-launch-1.0 with GStreamer's va or vaapi plugin and gst-plugins-good, " +
 		"a VA-API driver that encodes H.264, and a /dev/dri render node this user can open",
@@ -90,10 +94,15 @@ func (o *Opener) choose() {
 		return
 	}
 	var why []string
+	deadline := time.Now().Add(chooseTimeout)
 	for i := range routes {
 		r := &routes[i]
 		start := time.Now()
-		if err := trial(r, trialTimeout); err != nil {
+		if start.After(deadline) {
+			why = append(why, fmt.Sprintf("%s: not tried, the others took %v", r.name, chooseTimeout))
+			continue
+		}
+		if err := trial(r, min(trialTimeout, deadline.Sub(start))); err != nil {
 			why = append(why, r.name+": "+oneLine(err.Error()))
 			continue
 		}
