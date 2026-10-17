@@ -169,17 +169,29 @@ func grant(ctx context.Context, p *portal, o Options) (*portalSession, error) {
 // watch reports the desktop gone when the portal ends the session, as the
 // host's "stop sharing" button does, or when the frame reader dies.
 func (d *Desktop) watch() {
+	stopped := func(ok bool) error {
+		if !ok {
+			return errors.New("lost the desktop session's bus")
+		}
+		return errors.New("screen sharing was stopped on the host")
+	}
 	var err error
 	select {
 	case <-d.closing:
 		return
 	case _, ok := <-d.sess.closed:
-		err = errors.New("screen sharing was stopped on the host")
-		if !ok {
-			err = errors.New("lost the desktop session's bus")
-		}
+		err = stopped(ok)
 	case <-d.frames.exited:
 		err = d.frames.reason()
+		// A share stopped on the host takes the stream down too, and the
+		// portal's Closed, which says why, can come just after.
+		select {
+		case _, ok := <-d.sess.closed:
+			err = stopped(ok)
+		case <-time.After(time.Second):
+		case <-d.closing:
+			return
+		}
 	}
 	select {
 	case <-d.closing:
