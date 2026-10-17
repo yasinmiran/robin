@@ -164,6 +164,7 @@ async function connects(scheme) {
 
   await page.mouse.move(640, 10);
   await page.waitForTimeout(400);
+  await sound(page, scheme);
   await page.screenshot({ path: join(shots, `connected-${scheme}.png`) });
   await page.locator('#hud').screenshot({ path: join(shots, `hud-${scheme}.png`) });
   await page.mouse.move(640, 400);
@@ -179,6 +180,24 @@ async function connects(scheme) {
 
   check(errors.length === 0, `${scheme}: no console errors${errors.length ? `: ${errors.join(' | ')}` : ''}`);
   await context.close();
+}
+
+// sound checks the page autoplays muted and offers the speaker toggle once
+// the stand-in's audio track arrives, and that a click turns sound on.
+async function sound(page, scheme) {
+  const button = page.locator('#sound');
+  const shown = await button.waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false);
+  check(shown, `${scheme}: speaker toggle shown for the audio track`);
+  if (!shown) return;
+  check(await page.evaluate(() => window.remotejump.muted) && (await button.getAttribute('aria-pressed')) === 'false',
+    `${scheme}: sound starts muted`);
+  await page.locator('#hud').screenshot({ path: join(shots, `hud-muted-${scheme}.png`) });
+  await button.click();
+  await page.mouse.move(200, 10); // off the button, so its hover does not show
+  check(!(await page.evaluate(() => window.remotejump.muted)) && (await button.getAttribute('aria-pressed')) === 'true'
+    && !(await page.evaluate(() => window.remotejump.video.paused)),
+    `${scheme}: a click turns sound on and the video keeps playing`);
+  check(await page.evaluate(() => document.activeElement?.id !== 'sound'), `${scheme}: the toggle gives focus back`);
 }
 
 // exerciseControls sends what TestBrowserSmoke expects on the data channel.

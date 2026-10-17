@@ -42,6 +42,7 @@ export class Overlay {
   #notice = this.#hud.querySelector('.notice');
   #scrim = document.getElementById('scrim');
   #fullscreen = document.getElementById('fullscreen');
+  #sound = document.getElementById('sound');
   #tuckTimer = 0;
   #hovered = false;
 
@@ -79,8 +80,26 @@ export class Overlay {
     this.#label.textContent = title;
     this.#notice.textContent = body;
     this.#notice.hidden = false;
-    for (const el of [this.#transport, this.#picture, this.#fullscreen]) el.hidden = true;
+    for (const el of [this.#transport, this.#picture, this.#fullscreen, this.#sound]) el.hidden = true;
     this.#scrim.hidden = false;
+    this.#reveal();
+  }
+
+  // showSound offers the speaker toggle for media, which starts muted: a
+  // browser only autoplays muted media, and unmuting needs a user gesture.
+  showSound(media) {
+    if (!this.#sound.hidden || this.#hud.dataset.state === 'ended') return;
+    const reflect = () => {
+      this.#sound.setAttribute('aria-pressed', String(!media.muted));
+      this.#sound.title = media.muted ? 'Turn sound on' : 'Turn sound off';
+    };
+    this.#sound.addEventListener('click', () => {
+      this.#sound.blur(); // keys belong to the remote, not to this button
+      media.muted = !media.muted;
+    });
+    media.addEventListener('volumechange', reflect);
+    reflect();
+    this.#sound.hidden = false;
     this.#reveal();
   }
 

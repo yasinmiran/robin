@@ -149,12 +149,19 @@ body:has(#hud[data-state="reconnecting"]) #wire { opacity: 1; }
 #transport:not([data-kind="udp"]) .direct,
 #transport:not([data-kind="tcp"]) .tunnel { display: none; }
 
+/* The icon buttons sit together at the end of the row; their 28px boxes
+   overhang the glyphs, so the group pulls in to keep the row's rhythm. */
+.controls {
+  display: inline-flex;
+  margin-left: -6px;
+}
+
+#sound,
 #fullscreen {
   display: grid;
   place-items: center;
   width: 28px;
   height: 28px;
-  margin-left: -6px;
   padding: 0;
   color: var(--ink-soft);
   background: none;
@@ -162,8 +169,12 @@ body:has(#hud[data-state="reconnecting"]) #wire { opacity: 1; }
   border-radius: 7px;
   cursor: pointer;
 }
+#sound:hover,
 #fullscreen:hover { color: var(--ink); background: var(--veil-edge); }
+#sound:focus-visible,
 #fullscreen:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+#sound[aria-pressed="true"] { color: var(--ink); }
+#sound svg,
 #fullscreen svg {
   width: 16px;
   height: 16px;
@@ -176,6 +187,8 @@ body:has(#hud[data-state="reconnecting"]) #wire { opacity: 1; }
 #fullscreen .exit,
 :fullscreen #fullscreen .enter { display: none; }
 :fullscreen #fullscreen .exit { display: block; }
+#sound[aria-pressed="true"] .off,
+#sound[aria-pressed="false"] .on { display: none; }
 
 .notice {
   max-width: 42ch;

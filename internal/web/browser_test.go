@@ -179,9 +179,9 @@ func checkControls(t *testing.T, got []protocol.Control) {
 }
 
 // playAgent answers the page's offers with a Pion peer, the way the agent
-// would, streams the frames file once connected, and reports what the page
-// sends. Clipboard text "echo" from the page is answered with remote
-// clipboard text.
+// would, streams the frames file and Opus silence once connected, and
+// reports what the page sends. Clipboard text "echo" from the page is
+// answered with remote clipboard text.
 func playAgent(ctx context.Context, b *Browser, frames string, onOffer func(string), onControl func(protocol.Control)) error {
 	defer b.Close()
 	if err := b.Send(protocol.Message{Type: protocol.TypeConfig, Config: &protocol.Config{ICEServers: []protocol.ICEServer{}}}); err != nil {
@@ -263,10 +263,22 @@ func playAgent(ctx context.Context, b *Browser, frames string, onOffer func(stri
 				if _, err := pc.AddTrack(track); err != nil {
 					return err
 				}
+				sound, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{
+					MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2, SDPFmtpLine: "minptime=10;useinbandfec=1",
+				}, "audio", "remotejump")
+				if err != nil {
+					return err
+				}
+				if _, err := pc.AddTrack(sound); err != nil {
+					return err
+				}
 				var once sync.Once
 				pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
 					if s == webrtc.PeerConnectionStateConnected {
-						once.Do(func() { go stream(ctx, b.Done(), track, frames) })
+						once.Do(func() {
+							go stream(ctx, b.Done(), track, frames)
+							go hum(ctx, b.Done(), sound)
+						})
 					}
 				})
 			}
@@ -300,6 +312,23 @@ func playAgent(ctx context.Context, b *Browser, frames string, onOffer func(stri
 				SDPMLineIndex:    m.Candidate.SDPMLineIndex,
 				UsernameFragment: m.Candidate.UsernameFragment,
 			})
+		}
+	}
+}
+
+// hum sends what an idle desktop sounds like: Opus silence every 20 ms.
+func hum(ctx context.Context, done <-chan struct{}, track *webrtc.TrackLocalStaticSample) {
+	const frame = 20 * time.Millisecond
+	tick := time.NewTicker(frame)
+	defer tick.Stop()
+	for {
+		select {
+		case <-tick.C:
+			track.WriteSample(media.Sample{Data: []byte{0xf8, 0xff, 0xfe}, Duration: frame})
+		case <-done:
+			return
+		case <-ctx.Done():
+			return
 		}
 	}
 }

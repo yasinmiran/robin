@@ -38,6 +38,7 @@ window.remotejump = {
   stats: () => sampler.sample(pc),
   sendClipboard: (text) => input.sendClipboard(text),
   get lastRemoteClipboard() { return lastRemoteClipboard; },
+  get muted() { return video.muted; },
 };
 
 input.attach();
@@ -125,7 +126,10 @@ function createPeer(config) {
   // it has nothing to send on, and that track must not replace the video.
   const remote = new MediaStream();
   video.srcObject = remote;
-  pc.ontrack = (e) => remote.addTrack(e.track);
+  pc.ontrack = (e) => {
+    remote.addTrack(e.track);
+    if (e.track.kind === 'audio') overlay.showSound(video);
+  };
 
   channel = pc.createDataChannel(CONTROL_CHANNEL, { ordered: true });
   channel.onopen = () => {

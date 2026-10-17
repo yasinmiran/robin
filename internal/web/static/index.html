@@ -26,10 +26,16 @@
       <span class="stat" id="fps"></span>
       <span class="stat" id="bitrate"></span>
     </span>
-    <button id="fullscreen" type="button" aria-label="Enter full screen" title="Full screen">
-      <svg class="enter" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg>
-      <svg class="exit" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2v4H2M14 6h-4V2M10 14v-4h4M2 10h4v4"/></svg>
-    </button>
+    <span class="controls">
+      <button id="sound" type="button" aria-label="Sound" aria-pressed="false" title="Turn sound on" hidden>
+        <svg class="off" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6h2.5L8 3v10l-3.5-3H2z"/><path d="M10.5 5.75l4.5 4.5M15 5.75l-4.5 4.5"/></svg>
+        <svg class="on" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6h2.5L8 3v10l-3.5-3H2z"/><path d="M11 5.5a3.5 3.5 0 0 1 0 5M13 3.5a6.5 6.5 0 0 1 0 9"/></svg>
+      </button>
+      <button id="fullscreen" type="button" aria-label="Enter full screen" title="Full screen">
+        <svg class="enter" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg>
+        <svg class="exit" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2v4H2M14 6h-4V2M10 14v-4h4M2 10h4v4"/></svg>
+      </button>
+    </span>
   </div>
   <p class="notice" hidden></p>
 </header>
