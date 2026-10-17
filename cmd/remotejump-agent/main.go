@@ -68,6 +68,9 @@ func serve(args []string) int {
 	// stdin closing.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
+	// Once the SSH channel is gone, a write to stdout or stderr would kill the
+	// process with SIGPIPE before it removes the display and its files.
+	signal.Ignore(syscall.SIGPIPE)
 	// Stdout belongs to signaling. Nothing else may write there.
 	out := os.Stdout
 	os.Stdout = os.Stderr

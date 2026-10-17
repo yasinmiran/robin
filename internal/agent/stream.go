@@ -131,6 +131,7 @@ func (s *stream) run(ctx context.Context) {
 		if force {
 			s.keyframe.Store(false)
 			lastKey = now
+			s.log.Info("keyframe", "w", w, "h", h, "bytes", len(au), "kbps", appliedBitrate/1000)
 		}
 		stale = len(au) == 0
 		if stale {
