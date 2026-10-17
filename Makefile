@@ -77,7 +77,8 @@ test-x:
 	internal/agent/x11/testdata/xtest.sh
 
 # Wayland attach against headless mutter, PipeWire and the GNOME portal, in
-# podman: consent, restore, frames, input, clipboard and teardown.
+# podman: consent, restore, frames, input, clipboard, teardown and PipeWire
+# sound capture.
 test-wayland:
 	internal/agent/wayland/testdata/wltest.sh
 

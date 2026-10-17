@@ -133,6 +133,22 @@ func TestAttachedDesktopIsHeard(t *testing.T) {
 	}
 }
 
+// TestAttachedPipeWireIsHeard records the user's PipeWire through
+// pipewire-pulse, as an attached session does on a current GNOME or Plasma
+// desktop. PipeWire takes no cookie, and none exists here.
+func TestAttachedPipeWireIsHeard(t *testing.T) {
+	if os.Getenv("RJ_PIPEWIRE_PULSE") == "" {
+		t.Skip("needs the user's PipeWire with pipewire-pulse; run internal/agent/wayland/testdata/wltest.sh")
+	}
+	src, _, err := Start(context.Background(), Options{RunDir: t.TempDir(), Attached: true, Log: quiet()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	play(t, nil, sine(3, 523, 784))
+	checkTone(t, listen(t, src), 523, 784)
+}
+
 // TestServerDeathEndsThePackets: the session carries on without sound when
 // the server goes away underneath it.
 func TestServerDeathEndsThePackets(t *testing.T) {

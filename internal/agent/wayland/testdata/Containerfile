@@ -2,7 +2,7 @@ FROM docker.io/library/ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     mutter gnome-shell xdg-desktop-portal xdg-desktop-portal-gnome \
-    pipewire pipewire-bin wireplumber gstreamer1.0-pipewire gstreamer1.0-tools \
+    pipewire pipewire-bin pipewire-pulse pulseaudio-utils wireplumber gstreamer1.0-pipewire gstreamer1.0-tools \
     gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
     dbus dbus-daemon dbus-user-session libglib2.0-bin \
     libgl1-mesa-dri libegl-mesa0 mesa-vulkan-drivers \

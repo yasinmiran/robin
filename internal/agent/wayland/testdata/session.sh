@@ -1,6 +1,7 @@
 #!/bin/sh
 # Boots a headless GNOME Wayland session as the container user: session bus,
-# PipeWire, WirePlumber and mutter with one virtual monitor. The portals start
+# PipeWire with its PulseAudio server and a null sink for speakers,
+# WirePlumber and mutter with one virtual monitor. The portals start
 # on demand through D-Bus activation. Logs go to $LOG.
 set -eu
 SIZE=${SIZE:-1280x720}
@@ -27,6 +28,11 @@ wait_for "$XDG_RUNTIME_DIR/bus"
 pipewire >"$LOG/pipewire.log" 2>&1 &
 wait_for "$XDG_RUNTIME_DIR/pipewire-0"
 wireplumber >"$LOG/wireplumber.log" 2>&1 &
+pipewire-pulse >"$LOG/pipewire-pulse.log" 2>&1 &
+wait_for "$XDG_RUNTIME_DIR/pulse/native"
+# A desktop has speakers; this one plays into a null sink.
+pactl load-module module-null-sink sink_name=rj_speakers >/dev/null
+pactl set-default-sink rj_speakers
 mutter --headless --wayland --no-x11 --virtual-monitor "$SIZE" >"$LOG/mutter.log" 2>&1 &
 wait_for "$XDG_RUNTIME_DIR/wayland-0" || {
 	cat "$LOG/mutter.log" >&2
