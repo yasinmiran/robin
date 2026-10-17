@@ -207,3 +207,21 @@ func BenchmarkCapture1080p(b *testing.B) {
 		})
 	}
 }
+
+func TestPixelHashIgnoresPadding(t *testing.T) {
+	a := make([]byte, 64*4)
+	for i := range a {
+		a[i] = byte(i * 7)
+	}
+	b := append([]byte(nil), a...)
+	for i := 3; i < len(b); i += 4 {
+		b[i] ^= 0xff
+	}
+	if pixelHash(a) != pixelHash(b) {
+		t.Fatal("frames differing only in padding hash differently")
+	}
+	b[5]++
+	if pixelHash(a) == pixelHash(b) {
+		t.Fatal("a colour change did not change the hash")
+	}
+}

@@ -3,8 +3,8 @@
 package x11
 
 import (
+	"encoding/binary"
 	"fmt"
-	"hash/maphash"
 	"log/slog"
 	"sync"
 	"time"
@@ -37,7 +37,6 @@ type capturer struct {
 
 	grabbed    time.Time // when frame was taken
 	checkEvery time.Duration
-	seed       maphash.Seed
 	sum        uint64 // hash of frame, once summed is set
 	summed     bool
 	// polling means DAMAGE was caught missing a change: every Capture then
@@ -52,7 +51,7 @@ type segment struct {
 
 func (cp *capturer) init(x *xgb.Conn, root xproto.Window) {
 	cp.x, cp.root = x, root
-	cp.checkEvery, cp.seed = damageCheck, maphash.MakeSeed()
+	cp.checkEvery = damageCheck
 	if err := shm.Init(x); err != nil {
 		cp.noSHM = true
 		return
@@ -129,7 +128,7 @@ func (c *Conn) grabScreen() error {
 // hash sums the current frame unless that is already done.
 func (cp *capturer) hash() {
 	if !cp.summed {
-		cp.sum, cp.summed = maphash.Bytes(cp.seed, cp.frame.Pix[:cp.frame.Stride*cp.frame.Height]), true
+		cp.sum, cp.summed = pixelHash(cp.frame.Pix[:cp.frame.Stride*cp.frame.Height]), true
 	}
 }
 
@@ -201,4 +200,22 @@ func (cp *capturer) close() {
 	cp.mu.Lock()
 	defer cp.mu.Unlock()
 	cp.release()
+}
+
+// pixelHash sums the colour bytes of BGRX pixels. The fourth byte of each
+// pixel is padding the server leaves undefined, so it is masked out: a
+// driver that writes noise there must not look like a screen that changes.
+func pixelHash(pix []byte) uint64 {
+	const colour = 0x00ffffff00ffffff
+	h := uint64(14695981039346656037)
+	i := 0
+	for ; i+8 <= len(pix); i += 8 {
+		h = (h ^ binary.LittleEndian.Uint64(pix[i:])&colour) * 1099511628211
+	}
+	for ; i < len(pix); i++ {
+		if i%4 != 3 {
+			h = (h ^ uint64(pix[i])) * 1099511628211
+		}
+	}
+	return h
 }
