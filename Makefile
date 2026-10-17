@@ -19,7 +19,7 @@ target_arm64 := aarch64-linux-musl
 
 export ZIG_GLOBAL_CACHE_DIR := $(CACHE)/zig
 
-.PHONY: all agents cli dist test test-short test-x check e2e clean
+.PHONY: all agents cli dist test test-short test-x test-wayland check e2e clean
 .PRECIOUS: bin/remotejump-agent-linux-%
 
 all: cli
@@ -76,8 +76,13 @@ test-short:
 test-x:
 	internal/agent/x11/testdata/xtest.sh
 
-# Everything: unit, X and end-to-end.
-check: test test-x e2e
+# Wayland attach against headless mutter, PipeWire and the GNOME portal, in
+# podman: consent, restore, frames, input, clipboard and teardown.
+test-wayland:
+	internal/agent/wayland/testdata/wltest.sh
+
+# Everything: unit, X, Wayland and end-to-end.
+check: test test-x test-wayland e2e
 
 e2e: bin/remotejump-linux-amd64
 	RJ_BIN=$(CURDIR)/bin/remotejump-linux-amd64 e2e/run.sh $(SCENARIOS)
