@@ -15,6 +15,7 @@ import (
 	"github.com/jezek/xgb"
 	"github.com/jezek/xgb/xproto"
 
+	"github.com/yasinmiran/remotejump/internal/agent/keysym"
 	"github.com/yasinmiran/remotejump/internal/protocol"
 )
 
@@ -137,7 +138,9 @@ func typedSyms(evs []keyEvent) []xproto.Keysym {
 	return out
 }
 
-func isModifierSym(s xproto.Keysym) bool { return s >= 0xffe1 && s <= 0xffee || s == xkISOLevel3Shift }
+func isModifierSym(s xproto.Keysym) bool {
+	return s >= 0xffe1 && s <= 0xffee || s == keysym.ISOLevel3Shift
+}
 
 func (tx *testX) input(t *testing.T, ms ...protocol.Control) {
 	t.Helper()

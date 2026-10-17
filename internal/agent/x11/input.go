@@ -13,6 +13,7 @@ import (
 	"github.com/jezek/xgb/xproto"
 	"github.com/jezek/xgb/xtest"
 
+	"github.com/yasinmiran/remotejump/internal/agent/keysym"
 	"github.com/yasinmiran/remotejump/internal/protocol"
 )
 
@@ -213,7 +214,7 @@ func (k *keyboard) typeRune(r rune) error {
 	}
 	var shift xproto.Keycode
 	if level == 1 && !shiftHeld {
-		if shift, _, err = k.keycodeFor(xkShiftL); err != nil {
+		if shift, _, err = k.keycodeFor(keysym.ShiftL); err != nil {
 			return err
 		}
 	}

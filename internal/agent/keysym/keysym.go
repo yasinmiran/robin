@@ -1,27 +1,27 @@
-//go:build linux
-
-package wayland
+// Package keysym maps browser keyboard events to the keysyms of
+// <X11/keysymdef.h>, which both the X11 and the Wayland desktop take.
+package keysym
 
 import (
 	"strconv"
 	"strings"
 )
 
-// Keysyms from <X11/keysymdef.h> that named keys map to.
+// Keysyms that callers handle specially.
 const (
-	xkShiftL         = 0xffe1
-	xkShiftR         = 0xffe2
-	xkControlL       = 0xffe3
-	xkControlR       = 0xffe4
-	xkAltL           = 0xffe9
-	xkAltR           = 0xffea
-	xkSuperL         = 0xffeb
-	xkSuperR         = 0xffec
-	xkISOLevel3Shift = 0xfe03
-	xkF1             = 0xffbe
-	// xkVoidSymbol is on no layout, so a compositor that looks it up drops
-	// it without delivering anything.
-	xkVoidSymbol = 0xffffff
+	ShiftL         = 0xffe1
+	ShiftR         = 0xffe2
+	ISOLevel3Shift = 0xfe03
+)
+
+const (
+	controlL = 0xffe3
+	controlR = 0xffe4
+	altL     = 0xffe9
+	altR     = 0xffea
+	superL   = 0xffeb
+	superR   = 0xffec
+	f1       = 0xffbe
 )
 
 // namedKeys maps KeyboardEvent.key values that are not characters.
@@ -44,12 +44,12 @@ var namedKeys = map[string]uint32{
 	"PrintScreen": 0xff61,
 }
 
-// namedKeysym maps a non-character key. Modifiers take their kind from key
-// and their side from code, so a remapped key keeps its meaning.
+// Named maps a non-character key. Modifiers take their kind from key and
+// their side from code, so a remapped key keeps its meaning.
 //
 // CapsLock and NumLock are deliberately absent: the browser already applies
 // them to key, and a lock on the remote side would apply them again.
-func namedKeysym(key, code string) (uint32, bool) {
+func Named(key, code string) (uint32, bool) {
 	right := strings.HasSuffix(code, "Right")
 	side := func(l, r uint32) (uint32, bool) {
 		if right {
@@ -59,30 +59,30 @@ func namedKeysym(key, code string) (uint32, bool) {
 	}
 	switch key {
 	case "AltGraph":
-		return xkISOLevel3Shift, true
+		return ISOLevel3Shift, true
 	case "Shift":
-		return side(xkShiftL, xkShiftR)
+		return side(ShiftL, ShiftR)
 	case "Control":
-		return side(xkControlL, xkControlR)
+		return side(controlL, controlR)
 	case "Alt":
-		return side(xkAltL, xkAltR)
+		return side(altL, altR)
 	case "Meta", "OS":
-		return side(xkSuperL, xkSuperR)
+		return side(superL, superR)
 	}
 	if ks, ok := namedKeys[key]; ok {
 		return ks, true
 	}
 	if n, ok := strings.CutPrefix(key, "F"); ok {
 		if i, err := strconv.Atoi(n); err == nil && i >= 1 && i <= 24 {
-			return xkF1 + uint32(i-1), true
+			return f1 + uint32(i-1), true
 		}
 	}
 	return 0, false
 }
 
-// runeKeysym returns the keysym for a character: Latin-1 keysyms equal the
-// code point, everything else uses the Unicode keysym range.
-func runeKeysym(r rune) uint32 {
+// Rune returns the keysym for a character: Latin-1 keysyms equal the code
+// point, everything else uses the Unicode keysym range.
+func Rune(r rune) uint32 {
 	if r >= 0x20 && r <= 0x7e || r >= 0xa0 && r <= 0xff {
 		return uint32(r)
 	}

@@ -9,8 +9,13 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"github.com/yasinmiran/remotejump/internal/agent/keysym"
 	"github.com/yasinmiran/remotejump/internal/protocol"
 )
+
+// xkVoidSymbol is on no layout, so a compositor that looks it up drops it
+// without delivering anything.
+const xkVoidSymbol = 0xffffff
 
 const (
 	wheelStep     = 100.0 // browser pixels per wheel step
@@ -115,13 +120,13 @@ func (in *input) key(m protocol.Control) error {
 		if !m.Down || r < 0x20 || r == 0x7f {
 			return nil // typed on key-down; nothing is held
 		}
-		sym := runeKeysym(r)
+		sym := keysym.Rune(r)
 		if err := in.keysym(sym, true); err != nil {
 			return err
 		}
 		return in.keysym(sym, false)
 	}
-	sym, ok := namedKeysym(m.Key, m.Code)
+	sym, ok := keysym.Named(m.Key, m.Code)
 	if !ok {
 		return nil // Dead, Unidentified, locks, keys we do not map
 	}

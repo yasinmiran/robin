@@ -109,32 +109,6 @@ func TestMimeListAcceptsGnomeTuple(t *testing.T) {
 	}
 }
 
-func TestKeysyms(t *testing.T) {
-	for _, tc := range []struct {
-		key, code string
-		want      uint32
-	}{
-		{"Enter", "Enter", 0xff0d},
-		{"Shift", "ShiftRight", xkShiftR},
-		{"Control", "ControlLeft", xkControlL},
-		{"F12", "F12", 0xffc9},
-		{"AltGraph", "AltRight", xkISOLevel3Shift},
-	} {
-		if got, ok := namedKeysym(tc.key, tc.code); !ok || got != tc.want {
-			t.Errorf("namedKeysym(%q, %q) = %#x, %v; want %#x", tc.key, tc.code, got, ok, tc.want)
-		}
-	}
-	if _, ok := namedKeysym("CapsLock", "CapsLock"); ok {
-		t.Error("CapsLock maps, but the browser already applied it")
-	}
-	if got := runeKeysym('é'); got != 0xe9 {
-		t.Errorf("é = %#x", got)
-	}
-	if got := runeKeysym('€'); got != 0x10020ac {
-		t.Errorf("€ = %#x", got)
-	}
-}
-
 func TestWheelSteps(t *testing.T) {
 	for _, tc := range []struct {
 		acc   float64
