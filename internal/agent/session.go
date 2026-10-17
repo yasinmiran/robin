@@ -87,12 +87,15 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 	// sound server's address.
 	var audio AudioSource
 	var desktopEnv []string
+	var audioErr string
 	if start.Audio {
 		if o.NewAudio == nil {
+			audioErr = "this agent was built without audio"
 			log.Warn("audio requested but this agent has no audio support")
 		} else if audio, desktopEnv, err = o.NewAudio(ctx, AudioOptions{
 			RunDir: runDir, Attached: start.Attach != "", Log: log,
 		}); err != nil {
+			audioErr = err.Error()
 			log.Warn("audio unavailable", "err", err)
 			audio = nil
 		} else {
@@ -142,7 +145,7 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 	if err := conn.Send(protocol.Message{Type: protocol.TypeReady, Ready: &protocol.Ready{
 		Version: protocol.Version, AgentBuild: o.Build, Display: d.name, Session: d.session,
 		Width: width, Height: height, TunnelAddr: ln.Addr().String(),
-		Mode: d.mode, Audio: audio != nil, Encoder: encoderName,
+		Mode: d.mode, Audio: audio != nil, AudioError: audioErr, Encoder: encoderName,
 	}}); err != nil {
 		return err
 	}

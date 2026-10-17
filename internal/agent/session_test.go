@@ -56,8 +56,9 @@ type harness struct {
 	pc   *webrtc.PeerConnection
 }
 
-// startAgent runs Run against pipes, as the CLI would over SSH.
-func startAgent(t *testing.T) *harness {
+// startAgent runs Run against pipes, as the CLI would over SSH. configure
+// may adjust the Options first.
+func startAgent(t *testing.T, configure ...func(*Options)) *harness {
 	t.Helper()
 	if _, err := exec.LookPath("Xvfb"); err != nil {
 		t.Skip("Xvfb not installed; run via internal/agent/x11/testdata/xtest.sh")
@@ -71,12 +72,16 @@ func startAgent(t *testing.T) *harness {
 		cli: protocol.NewConn(outR, inW, protocol.DefaultPingInterval, 0),
 	}
 	enc := &fakeEncoder{sizes: h.sizes}
+	o := Options{
+		RunRoot: h.root, Build: "test", Log: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})),
+		Encoders: map[string]NewEncoderFunc{protocol.EncoderSoftware: func(w, hgt, fps, bps int) (Encoder, error) { return enc, nil }},
+	}
+	for _, c := range configure {
+		c(&o)
+	}
 	go func() {
 		defer close(h.exited)
-		h.runErr = Run(context.Background(), inR, outW, Options{
-			RunRoot: h.root, Build: "test", Log: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})),
-			Encoders: map[string]NewEncoderFunc{protocol.EncoderSoftware: func(w, hgt, fps, bps int) (Encoder, error) { return enc, nil }},
-		})
+		h.runErr = Run(context.Background(), inR, outW, o)
 		outW.Close()
 	}()
 	go h.route()
@@ -132,11 +137,13 @@ func (h *harness) recv(want protocol.Type) protocol.Message {
 	}
 }
 
-func (h *harness) start() *protocol.Ready {
+func (h *harness) start(configure ...func(*protocol.Start)) *protocol.Ready {
 	h.t.Helper()
-	if err := h.cli.Send(protocol.Message{Type: protocol.TypeStart, Start: &protocol.Start{
-		Version: protocol.Version, Width: 800, Height: 600, MaxWidth: 1280, MaxHeight: 720, FPS: 30,
-	}}); err != nil {
+	start := protocol.Start{Version: protocol.Version, Width: 800, Height: 600, MaxWidth: 1280, MaxHeight: 720, FPS: 30}
+	for _, c := range configure {
+		c(&start)
+	}
+	if err := h.cli.Send(protocol.Message{Type: protocol.TypeStart, Start: &start}); err != nil {
 		h.t.Fatal(err)
 	}
 	return h.recv(protocol.TypeReady).Ready

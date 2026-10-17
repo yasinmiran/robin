@@ -218,10 +218,14 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 			pc.Close()
 			return nil, err
 		}
-		if _, err := pc.AddTrack(p.audio); err != nil {
+		audioSender, err := pc.AddTrack(p.audio)
+		if err != nil {
 			pc.Close()
 			return nil, err
 		}
+		// Feedback the browser addresses to the audio stream reaches the
+		// interceptors only if it is read.
+		go p.readRTCP(audioSender)
 	}
 
 	pc.OnICECandidate(func(c *webrtc.ICECandidate) {

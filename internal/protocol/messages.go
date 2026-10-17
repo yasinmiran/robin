@@ -89,6 +89,8 @@ type Ready struct {
 	Mode string `json:"mode"`
 	// Audio reports whether an audio track will be offered.
 	Audio bool `json:"audio"`
+	// AudioError says why there is no audio track when Start asked for one.
+	AudioError string `json:"audioError,omitempty"`
 	// Encoder is the video encoder in use.
 	Encoder string `json:"encoder"`
 }

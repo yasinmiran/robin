@@ -22,6 +22,7 @@ import (
 	"github.com/jezek/xgb"
 
 	"github.com/yasinmiran/remotejump/internal/agent"
+	"github.com/yasinmiran/remotejump/internal/agent/audio"
 	"github.com/yasinmiran/remotejump/internal/agent/h264"
 	"github.com/yasinmiran/remotejump/internal/protocol"
 )
@@ -80,6 +81,7 @@ func serve(args []string) int {
 		RunRoot:  filepath.Join(filepath.Dir(exe), "run"),
 		Build:    version,
 		Encoders: map[string]agent.NewEncoderFunc{protocol.EncoderSoftware: newEncoder},
+		NewAudio: newAudio,
 		Log:      log,
 	})
 	if err != nil {
@@ -91,4 +93,12 @@ func serve(args []string) int {
 
 func newEncoder(width, height, fps, bitrate int) (agent.Encoder, error) {
 	return h264.New(width, height, fps, bitrate)
+}
+
+func newAudio(ctx context.Context, o agent.AudioOptions) (agent.AudioSource, []string, error) {
+	src, env, err := audio.Start(ctx, audio.Options{RunDir: o.RunDir, Attached: o.Attached, Log: o.Log})
+	if err != nil {
+		return nil, nil, err // not src: a nil *audio.Source would make a non-nil interface
+	}
+	return src, env, nil
 }
