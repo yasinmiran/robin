@@ -174,3 +174,27 @@ func TestExplainNamesThePortalPackages(t *testing.T) {
 		t.Errorf("got %q", err)
 	}
 }
+
+// TestRequestWaitsPastMalformedResponses: a Response without a uint32 code
+// and a results dict, which no portal sends, neither crashes the agent nor
+// passes for success.
+func TestRequestWaitsPastMalformedResponses(t *testing.T) {
+	resp := make(chan *dbus.Signal, 8)
+	for _, body := range [][]any{
+		nil,
+		{uint32(0)},
+		{"0", vardict{}},
+		{uint32(0), map[string]string{"restore_token": "forged"}},
+		{uint32(0), vardict{"restore_token": dbus.MakeVariant("real")}},
+	} {
+		resp <- &dbus.Signal{Body: body}
+	}
+	r := &pending{method: "org.freedesktop.portal.RemoteDesktop.Start", resp: resp, stop: func() {}}
+	results, err := r.wait(t.Context(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := results["restore_token"].Value().(string); got != "real" {
+		t.Errorf("results %v, want the well-formed response's", results)
+	}
+}

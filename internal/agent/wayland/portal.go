@@ -150,8 +150,16 @@ func (r *pending) wait(ctx context.Context, slow <-chan time.Time, onSlow func()
 			if !ok {
 				return nil, fmt.Errorf("%s: session bus closed", shortName(r.method))
 			}
-			code, _ := sig.Body[0].(uint32)
-			results, _ := sig.Body[1].(vardict)
+			// Anything on the user's bus can send a signal; a Response
+			// that is not (u, a{sv}) is not the portal's.
+			if len(sig.Body) != 2 {
+				continue
+			}
+			code, codeOK := sig.Body[0].(uint32)
+			results, resultsOK := sig.Body[1].(vardict)
+			if !codeOK || !resultsOK {
+				continue
+			}
 			switch code {
 			case 0:
 				return results, nil
