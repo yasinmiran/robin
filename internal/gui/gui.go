@@ -287,8 +287,9 @@ func startAgent(ctx context.Context, m *sshmux.Master, path string, verbose bool
 
 // awaitReady waits for the agent's Ready, telling the user about notices
 // that come first. A notice that asks the user to act extends the wait by
-// as long as the agent will wait for them.
+// as long as the agent will wait for them, within maxReadyWait.
 func (a *agentProc) awaitReady(ctx context.Context, host string, stderr io.Writer) (*protocol.Ready, error) {
+	start := time.Now()
 	wait := readyTimeout
 	for {
 		waitCtx, cancel := context.WithTimeoutCause(ctx, wait, errors.New("agent did not become ready"))
@@ -298,7 +299,7 @@ func (a *agentProc) awaitReady(ctx context.Context, host string, stderr io.Write
 			if text := noticeText(*m.Notice, host); text != "" {
 				fmt.Fprintln(stderr, text)
 			}
-			wait = time.Duration(m.Notice.Wait)*time.Second + readyTimeout
+			wait = readyWait(start, time.Now(), m.Notice.Wait)
 			continue
 		}
 		switch {
@@ -315,6 +316,22 @@ func (a *agentProc) awaitReady(ctx context.Context, host string, stderr io.Write
 		}
 		return m.Ready, nil
 	}
+}
+
+// maxConsentWait caps how far one notice may stretch the wait for Ready, and
+// maxReadyWait the whole wait, however many notices come. The agent gives
+// the user two minutes, at most twice in one start.
+const (
+	maxConsentWait = 5 * time.Minute
+	maxReadyWait   = readyTimeout + 2*maxConsentWait
+)
+
+// readyWait is how long to wait for the agent's next message after a notice,
+// received at now by an awaitReady that began at start, saying the agent
+// waits secs seconds for the user.
+func readyWait(start, now time.Time, secs int) time.Duration {
+	secs = min(max(secs, 0), int(maxConsentWait/time.Second))
+	return min(time.Duration(secs)*time.Second+readyTimeout, start.Add(maxReadyWait).Sub(now))
 }
 
 // stop closes the agent's stdin, which is its signal to tear the display

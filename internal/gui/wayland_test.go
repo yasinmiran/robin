@@ -118,3 +118,30 @@ func TestAwaitReadyTellsTheUserAboutConsent(t *testing.T) {
 		t.Errorf("told the user:\n%s", stderr.String())
 	}
 }
+
+// TestReadyWaitIsBounded checks that notices cannot hold the CLI past
+// maxReadyWait, whatever wait they claim and however many arrive.
+func TestReadyWaitIsBounded(t *testing.T) {
+	start := time.Now()
+	if got, want := readyWait(start, start, 120), 120*time.Second+readyTimeout; got != want {
+		t.Errorf("a two-minute consent wait gives %v, want %v", got, want)
+	}
+	for _, tc := range []struct {
+		name string
+		now  time.Time
+		secs int
+	}{
+		{"a wait of decades", start, 1 << 30},
+		{"a notice just before the limit", start.Add(maxReadyWait - time.Second), 120},
+		{"a notice past the limit", start.Add(maxReadyWait + time.Hour), 120},
+		{"a negative wait", start, -1 << 30},
+	} {
+		got := readyWait(start, tc.now, tc.secs)
+		if end := tc.now.Add(got); end.After(start.Add(maxReadyWait)) {
+			t.Errorf("%s: waits until %v after start, past the %v limit", tc.name, end.Sub(start), maxReadyWait)
+		}
+		if tc.secs < 0 && got != readyTimeout {
+			t.Errorf("%s: waits %v, want %v", tc.name, got, readyTimeout)
+		}
+	}
+}

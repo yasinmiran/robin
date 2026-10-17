@@ -475,7 +475,9 @@ The wait for an answer is two minutes. Without a token the agent tells the
 CLI at once, with a `notice` message before `Ready`; with one it waits two
 seconds first, since a valid token answers immediately and only a revoked
 one brings the dialog back. The CLI prints who has to do what on which
-screen, and stretches its own wait for `Ready` to match. If the CLI goes
+screen, and stretches its own wait for `Ready` to match, by at most five
+minutes a notice and eleven in all, so an agent that keeps sending notices
+cannot hold it for ever. If the CLI goes
 away meanwhile, the agent closes the request, which by the portal spec ends
 the dialog too.
 
