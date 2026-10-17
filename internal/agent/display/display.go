@@ -128,7 +128,7 @@ func Spawn(ctx context.Context, o Options) (_ *Display, err error) {
 		return nil, err
 	}
 
-	env := append(sessionEnv(os.Environ(), d.Name, d.XAuthority), o.Env...)
+	env := append(withLocale(sessionEnv(os.Environ(), d.Name, d.XAuthority), localeFiles), o.Env...)
 	group := 0
 	if plan.companion != nil {
 		// The terminal goes first and the window manager adopts it when it

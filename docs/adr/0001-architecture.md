@@ -186,6 +186,15 @@ starts but only handles map requests later, and a terminal mapped in that
 window stayed unmanaged and invisible for 12 to 19 seconds (measured in the
 e2e host image, with and without network, so not a DNS stall).
 
+The session gets a locale even when SSH brought none. With PAM, sshd reads
+the system default into the environment, and many clients pass their own
+`LANG` on; without either, as with the `UsePAM no` sshd of the manual run on
+an Ubuntu 22.04 workstation, the desktop ran in the C locale and xterm showed
+the prompt's UTF-8 as mojibake and misdrew the line after editing it. The agent
+now does what a display manager does: it keeps any `LANG`, `LC_ALL` or
+`LC_CTYPE` it was given, else takes `LANG` from `/etc/locale.conf` or
+`/etc/default/locale`, else uses `C.UTF-8`.
+
 ### X11 in pure Go
 
 Capture (MIT-SHM `GetImage`, DAMAGE to skip idle frames), input (XTest),
