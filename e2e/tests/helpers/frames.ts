@@ -44,7 +44,7 @@ function sampleInPage({ selector, save, compare, region, delta }: SampleArgs): F
   if (!w || !h) return { width: 0, height: 0, mean: 0, std: 0 };
 
   const g = window as any;
-  const canvas: HTMLCanvasElement = (g.__rjCanvas ??= document.createElement('canvas'));
+  const canvas: HTMLCanvasElement = (g.__robinCanvas ??= document.createElement('canvas'));
   if (canvas.width !== w) canvas.width = w;
   if (canvas.height !== h) canvas.height = h;
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
@@ -64,9 +64,9 @@ function sampleInPage({ selector, save, compare, region, delta }: SampleArgs): F
   const mean = sum / n;
   const result: FrameSample = { width: w, height: h, mean, std: Math.sqrt(Math.max(0, sumSq / n - mean * mean)) };
 
-  g.__rjFrames ??= {};
+  g.__robinFrames ??= {};
   if (compare) {
-    const ref = g.__rjFrames[compare];
+    const ref = g.__robinFrames[compare];
     if (!ref) throw new Error(`no saved frame ${compare}`);
     if (ref.w !== w || ref.h !== h) {
       result.changed = result.compared = n;
@@ -86,7 +86,7 @@ function sampleInPage({ selector, save, compare, region, delta }: SampleArgs): F
       result.compared = (x1 - x0) * (y1 - y0);
     }
   }
-  if (save) g.__rjFrames[save] = { w, h, luma };
+  if (save) g.__robinFrames[save] = { w, h, luma };
   return result;
 }
 

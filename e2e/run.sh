@@ -122,7 +122,7 @@ start_client() {
 }
 
 on_client() { podman exec -i "$CLIENT_CTR" "$@"; }
-on_host_as_rj() { podman exec -i --user robin "$HOST_CTR" "$@"; }
+on_host_as_robin() { podman exec -i --user robin "$HOST_CTR" "$@"; }
 client_ip() { podman inspect -f "{{(index .NetworkSettings.Networks \"$NET\").IPAddress}}" "$CLIENT_CTR"; }
 
 wait_for_sshd() {
@@ -254,14 +254,14 @@ t_master() {
 }
 
 t_forward_unix_to_tcp() {
-  on_host_as_rj sh -c 'printf tok-tcp | nc -N -l 127.0.0.1 9999 >/dev/null 2>&1 &' &&
+  on_host_as_robin sh -c 'printf tok-tcp | nc -N -l 127.0.0.1 9999 >/dev/null 2>&1 &' &&
     on_client rm -f /tmp/x.sock &&
     on_client ssh -S "$M" -O forward -L /tmp/x.sock:127.0.0.1:9999 robinhost &&
     retry expect_eq tok-tcp on_client timeout 5 nc -N -U /tmp/x.sock </dev/null
 }
 
 t_forward_tcp_to_unix() {
-  on_host_as_rj sh -c 'rm -f /tmp/robin-e2e.sock; printf tok-unix | nc -N -lU /tmp/robin-e2e.sock >/dev/null 2>&1 &' &&
+  on_host_as_robin sh -c 'rm -f /tmp/robin-e2e.sock; printf tok-unix | nc -N -lU /tmp/robin-e2e.sock >/dev/null 2>&1 &' &&
     on_client ssh -S "$M" -O forward -L 127.0.0.1:19999:/tmp/robin-e2e.sock robinhost &&
     retry expect_eq tok-unix on_client timeout 5 nc -N 127.0.0.1 19999 </dev/null
 }
@@ -269,7 +269,7 @@ t_forward_tcp_to_unix() {
 # Chrome's active ICE-TCP candidate binds the interface address and connects to
 # the passive candidate on 127.0.0.1, so the forward must accept that source.
 t_forward_from_interface_addr() {
-  on_host_as_rj sh -c 'rm -f /tmp/robin-e2e.sock; printf tok-bound | nc -N -lU /tmp/robin-e2e.sock >/dev/null 2>&1 &' &&
+  on_host_as_robin sh -c 'rm -f /tmp/robin-e2e.sock; printf tok-bound | nc -N -lU /tmp/robin-e2e.sock >/dev/null 2>&1 &' &&
     retry expect_eq tok-bound on_client timeout 5 nc -N -s "$(client_ip)" 127.0.0.1 19999 </dev/null
 }
 
@@ -280,7 +280,7 @@ t_master_exit() { on_client ssh -S "$M" -O exit robinhost 2>/dev/null; }
 # 127.0.0.1) reaches a listener.
 udp_delivered() {
   local where=$1 ip=$2 port=$3 token=udp-$RANDOM listen send
-  if [[ $where = host ]]; then listen=on_host_as_rj; send=on_client; else listen=on_client; send=on_host_as_rj; fi
+  if [[ $where = host ]]; then listen=on_host_as_robin; send=on_client; else listen=on_client; send=on_host_as_robin; fi
   [[ $ip = 127.0.0.1 ]] && send=$listen
   $listen sh -c "rm -f /tmp/udp-$port; timeout 4 nc -u -l $ip $port >/tmp/udp-$port 2>/dev/null &"
   local i
