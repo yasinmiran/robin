@@ -244,6 +244,19 @@ func TestAutoSession(t *testing.T) {
 	if gw, gt := pgid(wm), pgid(term); gw != gt {
 		t.Errorf("terminal in group %d, window manager in %d", gt, gw)
 	}
+	// The terminal must be on screen promptly: started in openbox's startup
+	// window, it used to stay unmapped for 12 s or more.
+	if _, err := exec.LookPath("xdotool"); err == nil {
+		visible := false
+		for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline) && !visible; time.Sleep(50 * time.Millisecond) {
+			cmd := exec.Command("xdotool", "search", "--onlyvisible", "--class", "xterm")
+			cmd.Env = append(os.Environ(), "DISPLAY="+d.Name, "XAUTHORITY="+d.XAuthority)
+			visible = cmd.Run() == nil
+		}
+		if !visible {
+			t.Error("terminal not visible within 2 s of Spawn")
+		}
+	}
 	select {
 	case err := <-d.Done():
 		t.Fatalf("Done fired: %v", err)

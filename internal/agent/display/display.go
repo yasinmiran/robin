@@ -124,19 +124,24 @@ func Spawn(ctx context.Context, o Options) (_ *Display, err error) {
 	}
 
 	env := sessionEnv(os.Environ(), d.Name, d.XAuthority)
-	if d.session, err = d.start(plan.main, env, 0, true); err != nil {
-		return nil, fmt.Errorf("display: start session: %w", err)
-	}
+	group := 0
 	if plan.companion != nil {
-		wctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		if err := waitForWM(wctx, num, cookie); err != nil {
-			slog.Warn("window manager not ready; starting the terminal anyway", "err", err)
-		}
-		cancel()
-		// Same group as the session, so Close and the watchdog take both.
-		if d.companion, err = d.start(plan.companion, env, d.session.pgid(), false); err != nil {
+		// The terminal goes first and the window manager adopts it when it
+		// starts. A window mapped just after openbox announces itself can stay
+		// unmanaged and invisible for over ten seconds.
+		if d.companion, err = d.start(plan.companion, env, 0, false); err != nil {
 			return nil, fmt.Errorf("display: start terminal: %w", err)
 		}
+		group = d.companion.group
+		wctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		if err := waitForWindow(wctx, num, cookie); err != nil {
+			slog.Warn("terminal window not mapped yet; starting the window manager anyway", "err", err)
+		}
+		cancel()
+	}
+	// One group for the whole session, so Close and the watchdog take both.
+	if d.session, err = d.start(plan.main, env, group, true); err != nil {
+		return nil, fmt.Errorf("display: start session: %w", err)
 	}
 	go d.watch()
 	return d, nil
@@ -292,8 +297,10 @@ func (d *Display) startCmd(cmd *exec.Cmd, pgid int, logStderr bool) (*proc, erro
 			close(p.stderrDone)
 		}()
 	}
-	if pgid == 0 {
-		fmt.Fprintln(d.guard, p.pgid())
+	if pgid != 0 {
+		p.group = pgid
+	} else {
+		fmt.Fprintln(d.guard, p.group)
 	}
 	return p, nil
 }
@@ -330,6 +337,7 @@ func waitGroups(ps []*proc, d time.Duration) {
 // proc is one started child and its exit status.
 type proc struct {
 	cmd        *exec.Cmd
+	group      int // process group id, which is not always this process's pid
 	exited     chan struct{}
 	err        error // valid once exited is closed
 	stderr     tail
@@ -340,7 +348,7 @@ func startProc(cmd *exec.Cmd) (*proc, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	p := &proc{cmd: cmd, exited: make(chan struct{})}
+	p := &proc{cmd: cmd, group: cmd.Process.Pid, exited: make(chan struct{})}
 	go func() {
 		p.err = cmd.Wait()
 		close(p.exited)
@@ -348,16 +356,16 @@ func startProc(cmd *exec.Cmd) (*proc, error) {
 	return p, nil
 }
 
-func (p *proc) pgid() int { return p.cmd.Process.Pid }
+func (p *proc) pgid() int { return p.group }
 
 func (p *proc) signalGroup(sig syscall.Signal) {
-	if p != nil {
+	if p != nil && p.group > 0 {
 		syscall.Kill(-p.pgid(), sig)
 	}
 }
 
 func (p *proc) groupAlive() bool {
-	return p != nil && syscall.Kill(-p.pgid(), 0) != syscall.ESRCH
+	return p != nil && p.group > 0 && syscall.Kill(-p.pgid(), 0) != syscall.ESRCH
 }
 
 func (p *proc) kill() {
