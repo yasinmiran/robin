@@ -271,9 +271,11 @@ holds new frames back for most of a second, so what you type after a pause
 showed late. The e2e measures it after 20 s of a still screen. In the
 direct UDP scenario, before the change, four keystrokes 250 ms apart
 produced one frame on screen, 414 ms after the first key and held 397 ms
-after it arrived; the last two
-keystrokes had not shown 1.5 s later. With the extension each keystroke
-reached the screen within 11 to 34 ms, with frames held about 1 ms. A
+after it arrived; the last two keystrokes had not shown 1.5 s later. With
+the extension each keystroke reached the screen within 11 to 34 ms, with
+frames held about 1 ms, and the other scenarios agree: 9 to 33 ms through
+the SSH tunnel, 7 to 31 ms after failing over to it mid-session, 6 to 36 ms
+attached. A
 desktop stream has no reason to smooth playout the way a call does, and a
 TCP fallback that delivers in bursts now shows each burst as it lands.
 Browsers that do not offer the extension, Firefox among them, keep their
