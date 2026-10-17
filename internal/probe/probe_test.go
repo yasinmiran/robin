@@ -51,7 +51,7 @@ func TestParseFixtures(t *testing.T) {
 		{"ubuntu-server.txt", summary{
 			Arch: "amd64", Distro: "ubuntu", UID: 1000,
 			SessionTypes: []string{"tty"},
-			AgentDir:     "/home/alice/.cache/remotejump",
+			AgentDir:     "/home/alice/.cache/robin",
 			Missing:      allMissing,
 			Hint:         "sudo apt install xvfb openbox xterm",
 		}},
@@ -59,7 +59,7 @@ func TestParseFixtures(t *testing.T) {
 			Arch: "amd64", Distro: "ubuntu", UID: 1000,
 			SessionTypes: []string{"wayland", "tty"},
 			X11:          []string{":0 bob", ":1024 gdm"},
-			AgentDir:     "/home/bob/.cache/remotejump",
+			AgentDir:     "/home/bob/.cache/robin",
 			Missing:      []string{"Xvfb", "a window manager or desktop"},
 			Hint:         "sudo apt install xvfb openbox",
 		}},
@@ -67,34 +67,34 @@ func TestParseFixtures(t *testing.T) {
 			Arch: "amd64", Distro: "fedora", UID: 1000,
 			SessionTypes: []string{"x11"},
 			X11:          []string{":0 root"},
-			AgentDir:     "/home/carol/.cache/remotejump",
+			AgentDir:     "/home/carol/.cache/robin",
 		}},
 		{"alpine-arm64.txt", summary{
 			Arch: "arm64", Distro: "alpine", UID: 1000,
-			AgentDir: "/home/dave/.cache/remotejump",
+			AgentDir: "/home/dave/.cache/robin",
 			Missing:  []string{"a terminal"},
 			Hint:     "sudo apk add xterm",
 		}},
 		{"noexec-home.txt", summary{
 			Arch: "amd64", Distro: "rocky", UID: 51234,
 			SessionTypes: []string{"tty"},
-			AgentDir:     "/run/user/51234/remotejump",
-			Rejected:     []RejectedDir{{"/home/erik/.cache/remotejump", "noexec"}},
+			AgentDir:     "/run/user/51234/robin",
+			Rejected:     []RejectedDir{{"/home/erik/.cache/robin", "noexec"}},
 			Missing:      allMissing,
 			Hint:         "sudo dnf install epel-release && sudo dnf install xorg-x11-server-Xvfb openbox xterm",
 		}},
 		{"missing-xvfb.txt", summary{
 			Arch: "amd64", Distro: "debian", UID: 1001,
 			SessionTypes: []string{"tty"},
-			AgentDir:     "/home/frank/.cache/remotejump",
+			AgentDir:     "/home/frank/.cache/robin",
 			Missing:      []string{"Xvfb"},
 			Hint:         "sudo apt install xvfb",
 		}},
 		{"hostile-tmp.txt", summary{
 			Arch: "amd64", Distro: "almalinux", UID: 40017,
 			Rejected: []RejectedDir{
-				{"/cluster/home/gina/.cache/remotejump", "mkdir"},
-				{"/tmp/remotejump-40017", "owner"},
+				{"/cluster/home/gina/.cache/robin", "mkdir"},
+				{"/tmp/robin-40017", "owner"},
 			},
 			Missing: []string{"a window manager or desktop", "a terminal"},
 			Hint:    "sudo dnf install epel-release && sudo dnf install openbox xterm",
@@ -106,7 +106,7 @@ func TestParseFixtures(t *testing.T) {
 			Arch: "amd64", Distro: "ubuntu", UID: 1000,
 			SessionTypes: []string{"tty", "x11"},
 			X11:          []string{":1 alice"},
-			AgentDir:     "/home/alice/.cache/remotejump",
+			AgentDir:     "/home/alice/.cache/robin",
 			Missing:      []string{"Xvfb", "a window manager or desktop"},
 			Hint:         "sudo apt install xvfb openbox",
 		}},
@@ -119,34 +119,34 @@ func TestParseFixtures(t *testing.T) {
 		{"real-opensuse-tumbleweed.txt", rootSummary("opensuse-tumbleweed", "zypper install xorg-x11-server-Xvfb openbox xterm")},
 		{"real-alpine-spawn-ready.txt", summary{
 			Arch: "amd64", Distro: "alpine", UID: 1000,
-			AgentDir: "/home/dave/.cache/remotejump",
+			AgentDir: "/home/dave/.cache/robin",
 		}},
 		{"real-alpine-live-displays.txt", summary{
 			Arch: "amd64", Distro: "alpine", UID: 1000,
 			X11:      []string{":7 root", ":8 dave"},
-			AgentDir: "/home/dave/.cache/remotejump",
+			AgentDir: "/home/dave/.cache/robin",
 			Missing:  []string{"a window manager or desktop", "a terminal"},
 			Hint:     "sudo apk add openbox xterm",
 		}},
-		{"real-noexec-cache.txt", rejectedSummary("/run/user/0/remotejump",
-			RejectedDir{"/root/.cache/remotejump", "noexec"})},
+		{"real-noexec-cache.txt", rejectedSummary("/run/user/0/robin",
+			RejectedDir{"/root/.cache/robin", "noexec"})},
 		{"real-tmp-symlink.txt", rejectedSummary("",
-			RejectedDir{"/root/.cache/remotejump", "noexec"},
-			RejectedDir{"/tmp/remotejump-0", "symlink"})},
+			RejectedDir{"/root/.cache/robin", "noexec"},
+			RejectedDir{"/tmp/robin-0", "symlink"})},
 		{"real-tmp-perms.txt", rejectedSummary("",
-			RejectedDir{"/root/.cache/remotejump", "noexec"},
-			RejectedDir{"/tmp/remotejump-0", "perms"})},
+			RejectedDir{"/root/.cache/robin", "noexec"},
+			RejectedDir{"/tmp/robin-0", "perms"})},
 		{"real-tmp-owner.txt", func() summary {
 			s := rejectedSummary("",
-				RejectedDir{"/root/.cache/remotejump", "noexec"},
-				RejectedDir{"/tmp/remotejump-0", "owner"})
+				RejectedDir{"/root/.cache/robin", "noexec"},
+				RejectedDir{"/tmp/robin-0", "owner"})
 			s.Distro, s.Hint = "alpine", "apk add xvfb openbox xterm"
 			return s
 		}()},
 		{"real-nonroot-tmp.txt", summary{
 			Arch: "amd64", Distro: "ubuntu", UID: 1000,
-			AgentDir: "/tmp/remotejump-1000",
-			Rejected: []RejectedDir{{"/nonexistent/.cache/remotejump", "mkdir"}},
+			AgentDir: "/tmp/robin-1000",
+			Rejected: []RejectedDir{{"/nonexistent/.cache/robin", "mkdir"}},
 			Missing:  allMissing,
 			Hint:     "sudo apt install xvfb openbox xterm",
 		}},
@@ -166,7 +166,7 @@ func TestParseFixtures(t *testing.T) {
 func rootSummary(distro, hint string) summary {
 	return summary{
 		Arch: "amd64", Distro: distro,
-		AgentDir: "/root/.cache/remotejump",
+		AgentDir: "/root/.cache/robin",
 		Missing:  allMissing,
 		Hint:     hint,
 	}
@@ -211,10 +211,10 @@ func TestParseDesktopWayland(t *testing.T) {
 			"dbus-run-session":    "/usr/bin/dbus-run-session",
 			"dbus-launch":         "/usr/bin/dbus-launch",
 		},
-		AgentDir:   "/home/bob/.cache/remotejump",
+		AgentDir:   "/home/bob/.cache/robin",
 		SHA256Tool: "sha256sum",
 		agentHashes: map[string]string{
-			"remotejump-agent-linux-amd64": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+			"robin-agent-linux-amd64": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
 		},
 	}
 	if got := parseFile(t, "ubuntu-desktop-wayland.txt"); !reflect.DeepEqual(got, want) {
@@ -313,11 +313,11 @@ func TestParseTolerance(t *testing.T) {
 }
 
 func TestRejectedPathWithColon(t *testing.T) {
-	r, err := Parse([]byte("probe=1\nagentdir_rejected=/home/a:b/.cache/remotejump:noexec\n"))
+	r, err := Parse([]byte("probe=1\nagentdir_rejected=/home/a:b/.cache/robin:noexec\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []RejectedDir{{"/home/a:b/.cache/remotejump", "noexec"}}
+	want := []RejectedDir{{"/home/a:b/.cache/robin", "noexec"}}
 	if !reflect.DeepEqual(r.AgentDirRejected, want) {
 		t.Errorf("got %+v, want %+v", r.AgentDirRejected, want)
 	}

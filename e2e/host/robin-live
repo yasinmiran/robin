@@ -1,20 +1,20 @@
 #!/bin/bash
-# rj's own desktop, for the attach scenario: the session a user would have
-# running before remotejump comes along.
+# robin's own desktop, for the attach scenario: the session a user would have
+# running before robin comes along.
 #
-#   rj-live start   start Xvfb on :5 with its cookie in ~/.Xauthority, as
+#   robin-live start   start Xvfb on :5 with its cookie in ~/.Xauthority, as
 #                   startx does, then xterm, openbox and the user's
 #                   pulseaudio; save its state
-#   rj-live state   print what an attached session must leave as it found it
-#   rj-live before  print the state saved at start
+#   robin-live state   print what an attached session must leave as it found it
+#   robin-live before  print the state saved at start
 set -euo pipefail
 
 num=5
-dir=$HOME/.rj-live
+dir=$HOME/.robin-live
 
 state() {
   export DISPLAY=:$num XAUTHORITY=$HOME/.Xauthority
-  echo "Xvfb $(pgrep -u rj -x Xvfb) openbox $(pgrep -u rj -x openbox) xterm $(pgrep -u rj -x xterm) pulseaudio $(pgrep -u rj -x pulseaudio)"
+  echo "Xvfb $(pgrep -u robin -x Xvfb) openbox $(pgrep -u robin -x openbox) xterm $(pgrep -u robin -x xterm) pulseaudio $(pgrep -u robin -x pulseaudio)"
   echo "geometry $(xdotool getdisplaygeometry)"
   xset q | sed -n '/auto repeat:/p;/auto repeating keys:/,/bell percent/p' | sed 's/ *bell percent.*//;s/ *key click.*//'
   echo "core keymap $(xmodmap -pke | sha256sum | cut -c1-16)"
@@ -57,5 +57,5 @@ case ${1:-} in
   start) start ;;
   state) state ;;
   before) cat "$dir/before" ;;
-  *) echo "usage: rj-live start|state|before" >&2; exit 2 ;;
+  *) echo "usage: robin-live start|state|before" >&2; exit 2 ;;
 esac

@@ -16,9 +16,9 @@ import (
 	"github.com/jezek/xgb/xproto"
 	"github.com/pion/webrtc/v4"
 
-	"github.com/yasinmiran/remotejump/internal/agent/desktop"
-	"github.com/yasinmiran/remotejump/internal/agent/display"
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/agent/desktop"
+	"github.com/yasinmiran/robin/internal/agent/display"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // liveDisplay starts an X session for the agent to attach to, as the user's

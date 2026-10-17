@@ -1,6 +1,6 @@
 //go:build linux
 
-// Package agent runs one remotejump session on the host: it speaks signaling
+// Package agent runs one robin session on the host: it speaks signaling
 // on stdio, owns the desktop, and streams it to whichever browser the CLI
 // relays.
 package agent
@@ -26,9 +26,9 @@ import (
 	"github.com/pion/ice/v4"
 	"github.com/pion/webrtc/v4"
 
-	"github.com/yasinmiran/remotejump/internal/agent/desktop"
-	"github.com/yasinmiran/remotejump/internal/agent/peer"
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/agent/desktop"
+	"github.com/yasinmiran/robin/internal/agent/peer"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // Limits applied to whatever the CLI asks for.

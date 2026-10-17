@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yasinmiran/remotejump/internal/agent/opus"
+	"github.com/yasinmiran/robin/internal/agent/opus"
 )
 
 // Options say where the sound comes from.

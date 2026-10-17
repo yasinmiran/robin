@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yasinmiran/remotejump/internal/sshmux/sshtest"
-	"github.com/yasinmiran/remotejump/internal/tail"
+	"github.com/yasinmiran/robin/internal/sshmux/sshtest"
+	"github.com/yasinmiran/robin/internal/tail"
 )
 
 func dial(t *testing.T) *Master {

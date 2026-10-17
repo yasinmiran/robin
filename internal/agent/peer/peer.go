@@ -22,7 +22,7 @@ import (
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
 
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // H264Fmtp is the one video format the agent offers: Constrained Baseline in
@@ -205,7 +205,7 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 
 	p.track, err = webrtc.NewTrackLocalStaticSample(
 		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: 90000, SDPFmtpLine: H264Fmtp},
-		"video", "remotejump",
+		"video", "robin",
 	)
 	if err != nil {
 		pc.Close()
@@ -218,7 +218,7 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 	}
 	go p.readRTCP(sender)
 	if cfg.Audio {
-		if p.audio, err = webrtc.NewTrackLocalStaticSample(opusCapability, "audio", "remotejump"); err != nil {
+		if p.audio, err = webrtc.NewTrackLocalStaticSample(opusCapability, "audio", "robin"); err != nil {
 			pc.Close()
 			return nil, err
 		}

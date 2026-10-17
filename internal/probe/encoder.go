@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // CheckEncoder reports whether the host has what the named video encoder

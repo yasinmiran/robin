@@ -11,7 +11,7 @@ import (
 	"github.com/pion/transport/v5/vnet"
 	"github.com/pion/webrtc/v4"
 
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // TestCongestionControlAdaptsToLink streams through a shaped virtual link with

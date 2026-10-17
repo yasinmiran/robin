@@ -1,12 +1,15 @@
-# remotejump
+# Robin
 
-`remotejump gui <host>` opens a Linux desktop from `<host>` in your browser.
+Named for Nico Robin, who sprouts eyes and hands on any surface she can
+see. This one sprouts yours on any Linux box you can ssh to.
+
+`robin gui <host>` opens a Linux desktop from `<host>` in your browser.
 The only thing the host needs beforehand is SSH access you already have: the
 CLI connects with your own `ssh`, copies a small static agent over, starts a
 headless X session as you, and streams it back over WebRTC. No signaling
 server, no ports opened for auth, no root.
 
-![A remotejump session: an xterm on the remote desktop, the status tab at the top](docs/img/session.png)
+![A Robin session: an xterm on the remote desktop, the status tab at the top](docs/img/session.png)
 
 Media goes straight over UDP when the network allows it. When it does not
 (UDP blocked, or a host you only reach through `ProxyJump`), it rides the SSH
@@ -23,7 +26,7 @@ make
 
 That fetches a pinned zig toolchain and builds openh264 and libopus the first
 time (about half a minute, cached under `.cache/`), builds static agents for
-linux/amd64 and linux/arm64, and embeds both in `bin/remotejump`. `make dist`
+linux/amd64 and linux/arm64, and embeds both in `bin/robin`. `make dist`
 cross-builds the CLI for macOS and Linux on amd64 and arm64 into `dist/`. The
 CLI itself is pure Go; only the agents need the C toolchain, and the build
 downloads it, so there is nothing to install by hand on Linux or macOS.
@@ -31,12 +34,12 @@ downloads it, so there is nothing to install by hand on Linux or macOS.
 ## Usage
 
 ```sh
-remotejump gui alice@build-box
-remotejump gui build-box -- -p 2222 -i ~/.ssh/other_key   # anything after -- goes to ssh
-remotejump gui --max-size 2560x1440 --fps 60 workstation
-remotejump gui --no-browser lab-node                     # print the URL instead of opening it
-remotejump gui --attach auto workstation                 # the desktop you are logged in to there
-remotejump gui --attach wayland workstation              # your GNOME or Plasma session on Wayland
+robin gui alice@build-box
+robin gui build-box -- -p 2222 -i ~/.ssh/other_key   # anything after -- goes to ssh
+robin gui --max-size 2560x1440 --fps 60 workstation
+robin gui --no-browser lab-node                     # print the URL instead of opening it
+robin gui --attach auto workstation                 # the desktop you are logged in to there
+robin gui --attach wayland workstation              # your GNOME or Plasma session on Wayland
 ```
 
 Your `~/.ssh/config`, agent, `ProxyJump`, `ProxyCommand`, certificates and
@@ -114,8 +117,8 @@ No GPU or monitor is needed; the session renders in software, and a light
 window manager keeps that cheap. Software H.264 at 1080p30 costs one to two
 cores, which is why small hosts get a lower default size and frame rate.
 
-The agent goes to `~/.cache/remotejump` (or `$XDG_RUNTIME_DIR/remotejump`, or
-`/tmp/remotejump-$UID` when the home directory is mounted `noexec`), checked
+The agent goes to `~/.cache/robin` (or `$XDG_RUNTIME_DIR/robin`, or
+`/tmp/robin-$UID` when the home directory is mounted `noexec`), checked
 by hash and reused across sessions. It runs as you, starts its own display on
 a free number, and when the SSH channel closes it kills everything it started
 and removes its files.
@@ -159,8 +162,8 @@ nothing: repeated frames are not encoded.
 ## Hardware encoding
 
 ```sh
-remotejump gui --encoder vaapi build-box   # Intel or AMD, through VA-API
-remotejump gui --encoder nvenc gpu-box     # NVIDIA
+robin gui --encoder vaapi build-box   # Intel or AMD, through VA-API
+robin gui --encoder nvenc gpu-box     # NVIDIA
 ```
 
 The agent is a static binary and cannot load the host's GPU libraries, so
@@ -300,8 +303,8 @@ with a tool to drive it (a GPU with neither ffmpeg nor a GStreamer encoder
 plugin skips): every route the host offers must produce a Baseline IDR
 first, P slices after, an IDR on request and the target bitrate on noise,
 and ffmpeg, where it is installed, must decode the result. Set
-`RJ_HWENC_REQUIRE=vaapi` (or `nvenc`) to make a missing route fail the run
-instead of skipping it, and `RJ_HWENC_COMPARE=1` with the openh264 build tag
+`ROBIN_HWENC_REQUIRE=vaapi` (or `nvenc`) to make a missing route fail the run
+instead of skipping it, and `ROBIN_HWENC_COMPARE=1` with the openh264 build tag
 to print the comparison the ADR quotes.
 
 ## Known limits

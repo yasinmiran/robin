@@ -1,19 +1,19 @@
 #!/bin/bash
 # Runs a command against the agent's display and sound server:
-# rj-x xdotool getdisplaygeometry
-# An attached agent has no display of its own; then it is rj's desktop (rj-live).
+# robin-x xdotool getdisplaygeometry
+# An attached agent has no display of its own; then it is robin's desktop (robin-live).
 set -euo pipefail
 
-if dir=$(rj-rundir 2>/dev/null); then
+if dir=$(robin-rundir 2>/dev/null); then
   DISPLAY=$(<"$dir/display")
   if [[ -f $dir/Xauthority ]]; then
     export XAUTHORITY=$dir/Xauthority
   fi
-elif [[ -f $HOME/.rj-live/display ]]; then
-  DISPLAY=$(<"$HOME/.rj-live/display")
+elif [[ -f $HOME/.robin-live/display ]]; then
+  DISPLAY=$(<"$HOME/.robin-live/display")
   export XAUTHORITY=$HOME/.Xauthority
 else
-  rj-rundir
+  robin-rundir
 fi
 export DISPLAY
 # The session's private sound server, as its programs see it.

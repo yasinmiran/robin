@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // TestSessionReportsBrokenEncoder checks that an encoder whose host tools

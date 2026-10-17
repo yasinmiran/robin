@@ -6,7 +6,7 @@ import { pagePoint } from './helpers/coords';
 import { CHANGED_FLOOR, isNonBlack, sampleFrame, waitForStillFrame } from './helpers/frames';
 import * as host from './helpers/host';
 
-// One remotejump session per scenario, shared by the tests below in order.
+// One robin session per scenario, shared by the tests below in order.
 // When a test fails Playwright restarts the worker, so beforeAll brings up a
 // fresh session for the tests that remain. Playwright traces this context
 // (trace: retain-on-failure in the config).
@@ -15,7 +15,7 @@ const SCENARIO = process.env.SCENARIO ?? '';
 const OUT = path.resolve('out');
 const SCREEN = '#screen';
 const FIRST_FRAME_MS = 20_000;
-const RESTART_TIMEOUT_MS = Number(process.env.RJ_RESTART_TIMEOUT_MS ?? 15_000);
+const RESTART_TIMEOUT_MS = Number(process.env.ROBIN_RESTART_TIMEOUT_MS ?? 15_000);
 
 type Endpoint = { address: string; port: number; protocol: string; candidateType: string };
 type Stats = {
@@ -29,8 +29,8 @@ type Stats = {
   kbps: number;
 };
 
-const state = (page: Page) => page.evaluate(() => (window as any).remotejump?.state as string | undefined);
-const stats = (page: Page) => page.evaluate(() => (window as any).remotejump.stats() as Promise<Stats>);
+const state = (page: Page) => page.evaluate(() => (window as any).robin?.state as string | undefined);
+const stats = (page: Page) => page.evaluate(() => (window as any).robin.stats() as Promise<Stats>);
 
 let cli: Cli | undefined;
 let context: BrowserContext;
@@ -53,14 +53,14 @@ test.beforeAll(async ({ browser }, testInfo) => {
   sessionStart = Date.now();
   await page.goto(cli.url);
   await expect
-    .poll(() => page.evaluate(() => typeof (window as any).remotejump), { message: 'window.remotejump exists', timeout: 15_000 })
+    .poll(() => page.evaluate(() => typeof (window as any).robin), { message: 'window.robin exists', timeout: 15_000 })
     .toBe('object');
   // Logs every state change to console.log, for reading a failure afterwards.
   await page.evaluate(() => {
     let last: string | undefined;
     setInterval(() => {
-      const s = (window as any).remotejump?.state;
-      if (s !== last) console.log(`[rj-state] ${last} -> ${s}`);
+      const s = (window as any).robin?.state;
+      if (s !== last) console.log(`[robin-state] ${last} -> ${s}`);
       last = s;
     }, 100);
   });
@@ -71,11 +71,11 @@ test.afterEach(async ({}, testInfo) => {
   if (testInfo.status === testInfo.expectedStatus || !page) return;
   const snapshot = await page
     .evaluate(async () => {
-      const rj = (window as any).remotejump;
-      return { state: rj?.state, stats: await rj?.stats?.().catch((e: Error) => String(e)) };
+      const robin = (window as any).robin;
+      return { state: robin?.state, stats: await robin?.stats?.().catch((e: Error) => String(e)) };
     })
     .catch((e) => ({ error: String(e) }));
-  await testInfo.attach('remotejump', { body: JSON.stringify(snapshot, null, 2), contentType: 'application/json' });
+  await testInfo.attach('robin', { body: JSON.stringify(snapshot, null, 2), contentType: 'application/json' });
   if (cli) await testInfo.attach('cli stderr (tail)', { body: cli.stderrTail(), contentType: 'text/plain' });
   await testInfo.attach('host', { body: await host.diagnostics().catch(String), contentType: 'text/plain' });
 });
@@ -139,7 +139,7 @@ test('frames decode: non-black within 20 s, framesDecoded increasing', async () 
 });
 
 test('keyboard: a typed command runs on the host and shows in the picture', async () => {
-  await typeIntoTerminal(`echo rj-e2e > /tmp/rj-e2e-${SCENARIO}`, `/tmp/rj-e2e-${SCENARIO}`, 'rj-e2e');
+  await typeIntoTerminal(`echo robin-e2e > /tmp/robin-e2e-${SCENARIO}`, `/tmp/robin-e2e-${SCENARIO}`, 'robin-e2e');
 });
 
 // A still screen sends only the keyframes Chrome asks for every 3 s, and
@@ -157,11 +157,11 @@ test('latency: after 20 s of a still screen, keystrokes show within 400 ms', asy
   await page.evaluate((selector) => {
     const w = window as any;
     const video = document.querySelector(selector) as HTMLVideoElement;
-    w.rjKeys = [];
-    w.rjFrames = [];
-    window.addEventListener('keydown', (e) => e.key === 'x' && w.rjKeys.push(performance.now()), { capture: true });
+    w.robinKeys = [];
+    w.robinFrames = [];
+    window.addEventListener('keydown', (e) => e.key === 'x' && w.robinKeys.push(performance.now()), { capture: true });
     const onFrame = (_: number, m: VideoFrameCallbackMetadata) => {
-      w.rjFrames.push({ presented: m.presentationTime, received: m.receiveTime ?? m.presentationTime });
+      w.robinFrames.push({ presented: m.presentationTime, received: m.receiveTime ?? m.presentationTime });
       video.requestVideoFrameCallback(onFrame);
     };
     video.requestVideoFrameCallback(onFrame);
@@ -176,8 +176,8 @@ test('latency: after 20 s of a still screen, keystrokes show within 400 ms', asy
 
   type Shown = { presented: number; received: number };
   const { keys, frames } = await page.evaluate(() => ({
-    keys: (window as any).rjKeys as number[],
-    frames: (window as any).rjFrames as Shown[],
+    keys: (window as any).robinKeys as number[],
+    frames: (window as any).robinFrames as Shown[],
   }));
   const lag = keys.map((k) => Math.round((frames.find((f) => f.presented > k)?.presented ?? Infinity) - k));
   const held = frames.map((f) => Math.round(f.presented - f.received));
@@ -225,16 +225,16 @@ test('cursor: the page wears the remote pointer image, which changes over the xt
 
 test('clipboard: browser to host and host to browser', async () => {
   const n = Date.now().toString(36);
-  await page.evaluate((t) => (window as any).remotejump.sendClipboard(t), `rj-clip-${n}`);
-  await expect.poll(host.clipboard, { message: 'host clipboard', timeout: 10_000 }).toBe(`rj-clip-${n}`);
+  await page.evaluate((t) => (window as any).robin.sendClipboard(t), `robin-clip-${n}`);
+  await expect.poll(host.clipboard, { message: 'host clipboard', timeout: 10_000 }).toBe(`robin-clip-${n}`);
 
-  await host.setClipboard(`rj-back-${n}`);
+  await host.setClipboard(`robin-back-${n}`);
   await expect
-    .poll(() => page.evaluate(() => (window as any).remotejump.lastRemoteClipboard), {
-      message: 'remotejump.lastRemoteClipboard',
+    .poll(() => page.evaluate(() => (window as any).robin.lastRemoteClipboard), {
+      message: 'robin.lastRemoteClipboard',
       timeout: 10_000,
     })
-    .toBe(`rj-back-${n}`);
+    .toBe(`robin-back-${n}`);
 });
 
 test('resize: display and video follow a 1000x700 viewport within 10 s', async () => {
@@ -257,7 +257,7 @@ test('sound: the desktop is heard once the speaker is turned on', async ({}, tes
   const audio = () =>
     page.evaluate(async () => {
       let out = { packets: 0, energy: 0 };
-      (await ((window as any).remotejump.pc as RTCPeerConnection).getStats()).forEach((s: any) => {
+      (await ((window as any).robin.pc as RTCPeerConnection).getStats()).forEach((s: any) => {
         if (s.type === 'inbound-rtp' && s.kind === 'audio') out = { packets: s.packetsReceived ?? 0, energy: s.totalAudioEnergy ?? 0 };
       });
       return out;
@@ -265,13 +265,13 @@ test('sound: the desktop is heard once the speaker is turned on', async ({}, tes
   const sound = page.locator('#sound');
   await page.mouse.move(640, 5); // brings the tucked HUD back
   await expect(sound, 'the speaker toggle').toBeVisible({ timeout: 10_000 });
-  expect(await page.evaluate(() => (window as any).remotejump.muted), 'muted until clicked').toBe(true);
+  expect(await page.evaluate(() => (window as any).robin.muted), 'muted until clicked').toBe(true);
   // The agent sends packets even for silence, so the track is live before
   // anything plays.
   await expect.poll(async () => (await audio()).packets, { message: 'audio packets arrive' }).toBeGreaterThan(0);
 
   await sound.click();
-  expect(await page.evaluate(() => (window as any).remotejump.muted), 'muted after the click').toBe(false);
+  expect(await page.evaluate(() => (window as any).robin.muted), 'muted after the click').toBe(false);
   // Chrome reports energy only for audio it plays, which a muted element
   // does not.
   const before = (await audio()).energy;
@@ -284,7 +284,7 @@ test('sound: the desktop is heard once the speaker is turned on', async ({}, tes
   // A spawned session's programs get a cookie in the run dir, so libpulse
   // writes none. An attached desktop's own server keeps its cookie there.
   if (SCENARIO !== 'attach') {
-    expect(await host.exists('/home/rj/.config/pulse'), '~/.config/pulse on the host').toBe(false);
+    expect(await host.exists('/home/robin/.config/pulse'), '~/.config/pulse on the host').toBe(false);
   }
 });
 
@@ -325,7 +325,7 @@ if (SCENARIO === 'restart') {
 
     const after = await connectedStats(testInfo, 'after block');
     expect(after.remote.address).toBe('127.0.0.1');
-    await typeIntoTerminal('echo rj-e2e-tcp > /tmp/rj-e2e-restart-tcp', '/tmp/rj-e2e-restart-tcp', 'rj-e2e-tcp');
+    await typeIntoTerminal('echo robin-e2e-tcp > /tmp/robin-e2e-restart-tcp', '/tmp/robin-e2e-restart-tcp', 'robin-e2e-tcp');
   });
 }
 

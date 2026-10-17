@@ -2,7 +2,7 @@
 // between that page and the CLI over a websocket.
 //
 // The page and its websocket are the one unauthenticated surface of
-// remotejump: whatever drives them drives the remote desktop. Every request
+// robin: whatever drives them drives the remote desktop. Every request
 // must carry the listener's own Host, the websocket must come from the page's
 // own Origin and present the random token from URL, and only one browser may
 // be connected at a time.
@@ -36,7 +36,7 @@ var static embed.FS
 // selects. The page also offers tokenPrefix followed by the token, which is
 // how the token travels without appearing in any URL.
 const (
-	subprotocol = "remotejump"
+	subprotocol = "robin"
 	tokenPrefix = "token."
 )
 

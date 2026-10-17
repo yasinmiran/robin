@@ -1,15 +1,15 @@
 #!/bin/bash
-# rj's GNOME Wayland session, for the wayland scenario: the desktop a user
-# would be logged in to before remotejump comes along.
+# robin's GNOME Wayland session, for the wayland scenario: the desktop a user
+# would be logged in to before robin comes along.
 #
-#   rj-wayland start              mutter, PipeWire and the portals (session.sh),
+#   robin-wayland start              mutter, PipeWire and the portals (session.sh),
 #                                 then the fullscreen probe window
-#   rj-wayland consent [view-only] answer the portal's dialog as the person at
-#                                 the screen would (rj-consent)
-#   rj-wayland run CMD...         run CMD in the session's environment
-#   rj-wayland events             what the probe window received, JSON lines
-#   rj-wayland redraw             move the probe's picture on by one frame
-#   rj-wayland leftovers          agent and gst-launch-1.0 processes, and
+#   robin-wayland consent [view-only] answer the portal's dialog as the person at
+#                                 the screen would (robin-consent)
+#   robin-wayland run CMD...         run CMD in the session's environment
+#   robin-wayland events             what the probe window received, JSON lines
+#   robin-wayland redraw             move the probe's picture on by one frame
+#   robin-wayland leftovers          agent and gst-launch-1.0 processes, and
 #                                 portal or mutter sessions, still alive
 set -euo pipefail
 
@@ -21,17 +21,17 @@ events=/tmp/probe.log
 start() {
   mkdir -p "$logs"
   # setsid and no inherited descriptors, or the ssh that runs this never returns.
-  LOG=$logs setsid -w /usr/local/lib/rj/session.sh </dev/null >"$logs/session.out" 2>&1 || {
+  LOG=$logs setsid -w /usr/local/lib/robin/session.sh </dev/null >"$logs/session.out" 2>&1 || {
     cat "$logs/session.out" >&2
     exit 1
   }
-  GDK_BACKEND=wayland GSK_RENDERER=cairo setsid -f python3 -I /usr/local/lib/rj/probe.py \
+  GDK_BACKEND=wayland GSK_RENDERER=cairo setsid -f python3 -I /usr/local/lib/robin/probe.py \
     </dev/null >"$events" 2>"$logs/probe.err"
   for _ in $(seq 100); do
     grep -q '"ev": "ready"' "$events" && return 0
     sleep 0.1
   done
-  echo "rj-wayland: the probe window never came up" >&2
+  echo "robin-wayland: the probe window never came up" >&2
   cat "$logs/probe.err" >&2
   exit 1
 }
@@ -47,7 +47,7 @@ sessions() {
 
 leftovers() {
   # Bracketed patterns keep pgrep from matching this script's own shell.
-  pgrep -u rj -fa '[r]emotejump-agent|[g]st-launch-1.0' || true
+  pgrep -u robin -fa '[r]emotejump-agent|[g]st-launch-1.0' || true
   local n
   n=$(sessions org.freedesktop.portal.Desktop /org/freedesktop/portal/desktop/session 2)
   ((n == 0)) || echo "$n portal sessions"
@@ -59,10 +59,10 @@ leftovers() {
 
 case ${1:-} in
   start) start ;;
-  consent) shift; exec rj-consent "$@" ;;
+  consent) shift; exec robin-consent "$@" ;;
   run) shift; exec "$@" ;;
   events) cat "$events" ;;
-  redraw) pkill -USR1 -u rj -f '[p]robe.py' ;;
+  redraw) pkill -USR1 -u robin -f '[p]robe.py' ;;
   leftovers) leftovers ;;
-  *) echo "usage: rj-wayland start|consent|run|events|redraw|leftovers" >&2; exit 2 ;;
+  *) echo "usage: robin-wayland start|consent|run|events|redraw|leftovers" >&2; exit 2 ;;
 esac

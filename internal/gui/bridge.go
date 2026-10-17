@@ -11,9 +11,9 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/yasinmiran/remotejump/internal/protocol"
-	"github.com/yasinmiran/remotejump/internal/relay"
-	"github.com/yasinmiran/remotejump/internal/web"
+	"github.com/yasinmiran/robin/internal/protocol"
+	"github.com/yasinmiran/robin/internal/relay"
+	"github.com/yasinmiran/robin/internal/web"
 )
 
 // signaling is what the bridge needs from the agent's stdio connection.

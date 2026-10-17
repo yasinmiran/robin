@@ -3,7 +3,7 @@ package hwenc
 import (
 	"math/rand/v2"
 
-	"github.com/yasinmiran/remotejump/internal/agent/yuv"
+	"github.com/yasinmiran/robin/internal/agent/yuv"
 )
 
 // The patterns are the h264 package's rate-control content, at any size.

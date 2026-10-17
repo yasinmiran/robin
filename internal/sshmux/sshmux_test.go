@@ -78,7 +78,7 @@ func splitArgs(out []byte) []string {
 }
 
 func TestArgs(t *testing.T) {
-	m := &Master{ssh: "ssh", args: []string{"-F", "cfg", "-p", "2222"}, dest: "host", ctl: "/tmp/rj-1/ctl"}
+	m := &Master{ssh: "ssh", args: []string{"-F", "cfg", "-p", "2222"}, dest: "host", ctl: "/tmp/robin-1/ctl"}
 
 	want := []string{
 		"-o", "ControlMaster=yes", "-o", "ControlPersist=no",
@@ -86,7 +86,7 @@ func TestArgs(t *testing.T) {
 		"-o", "ExitOnForwardFailure=yes", "-o", "ClearAllForwardings=yes",
 		"-o", "RemoteCommand=none",
 		"-F", "cfg", "-p", "2222",
-		"-S", "/tmp/rj-1/ctl", "-N", "-n", "--", "host",
+		"-S", "/tmp/robin-1/ctl", "-N", "-n", "--", "host",
 	}
 	if got := m.masterArgs(); !slices.Equal(got, want) {
 		t.Errorf("masterArgs:\n got %q\nwant %q", got, want)
@@ -95,7 +95,7 @@ func TestArgs(t *testing.T) {
 	session := []string{
 		"-F", os.DevNull,
 		"-o", "ControlMaster=no", "-o", "ProxyCommand=false", "-o", "BatchMode=yes",
-		"-S", "/tmp/rj-1/ctl", "-T", "-a", "-x", "-e", "none",
+		"-S", "/tmp/robin-1/ctl", "-T", "-a", "-x", "-e", "none",
 	}
 	want = append(slices.Clone(session), "--", "host", "-v; echo hi")
 	if got := m.childArgs("-v; echo hi"); !slices.Equal(got, want) {
@@ -126,7 +126,7 @@ func TestControlDirFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
-	if !strings.HasPrefix(dir, "/tmp/rj-") {
+	if !strings.HasPrefix(dir, "/tmp/robin-") {
 		t.Errorf("controlDir = %s, want under /tmp", dir)
 	}
 	fi, err := os.Stat(dir)

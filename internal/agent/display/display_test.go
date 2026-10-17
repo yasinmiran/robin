@@ -21,7 +21,7 @@ import (
 
 // helperEnv makes the test binary act as an agent that spawns a display and
 // waits to be killed; see TestAgentDeathKillsEverything.
-const helperEnv = "RJ_DISPLAY_TEST_HELPER"
+const helperEnv = "ROBIN_DISPLAY_TEST_HELPER"
 
 func TestMain(m *testing.M) {
 	if dir := os.Getenv(helperEnv); dir != "" {
@@ -316,7 +316,7 @@ func TestCloseKillsEverything(t *testing.T) {
 		t.Errorf("RunDir not cleaned: %v", left)
 	}
 	if watchdogs := findProcs(func(_ int, cmdline, _ string) bool {
-		return strings.Contains(cmdline, "remotejump-display-watchdog")
+		return strings.Contains(cmdline, "robin-display-watchdog")
 	}); len(watchdogs) > 0 {
 		t.Errorf("watchdog survived Close: %v", describe(watchdogs))
 	}
@@ -357,7 +357,7 @@ func TestAgentDeathKillsEverything(t *testing.T) {
 	// The watchdog exits right after its last kill.
 	watchdog := func() []int {
 		return findProcs(func(_ int, cmdline, _ string) bool {
-			return strings.Contains(cmdline, "remotejump-display-watchdog")
+			return strings.Contains(cmdline, "robin-display-watchdog")
 		})
 	}
 	w := watchdog()

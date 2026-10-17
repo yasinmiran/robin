@@ -1,4 +1,4 @@
-// Package gui runs `remotejump gui`: it connects over SSH, probes the host,
+// Package gui runs `robin gui`: it connects over SSH, probes the host,
 // deploys and starts the agent, forwards the ICE-TCP tunnel, serves the
 // browser page and relays signaling between the page and the agent.
 package gui
@@ -15,14 +15,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yasinmiran/remotejump/internal/agentbin"
-	"github.com/yasinmiran/remotejump/internal/deploy"
-	"github.com/yasinmiran/remotejump/internal/probe"
-	"github.com/yasinmiran/remotejump/internal/protocol"
-	"github.com/yasinmiran/remotejump/internal/relay"
-	"github.com/yasinmiran/remotejump/internal/sshmux"
-	"github.com/yasinmiran/remotejump/internal/tail"
-	"github.com/yasinmiran/remotejump/internal/web"
+	"github.com/yasinmiran/robin/internal/agentbin"
+	"github.com/yasinmiran/robin/internal/deploy"
+	"github.com/yasinmiran/robin/internal/probe"
+	"github.com/yasinmiran/robin/internal/protocol"
+	"github.com/yasinmiran/robin/internal/relay"
+	"github.com/yasinmiran/robin/internal/sshmux"
+	"github.com/yasinmiran/robin/internal/tail"
+	"github.com/yasinmiran/robin/internal/web"
 )
 
 // Options are the user's choices for one session. Zero values pick defaults.
@@ -144,7 +144,7 @@ func Run(ctx context.Context, o Options) (err error) {
 	log.Info("agent ready", "mode", ready.Mode, "display", ready.Display, "session", ready.Session,
 		"size", fmt.Sprintf("%dx%d", ready.Width, ready.Height), "encoder", ready.Encoder, "audio", ready.Audio)
 	if o.Audio && !ready.Audio {
-		fmt.Fprintf(o.Stderr, "remotejump: no sound from %s: %s\n", o.Dest, ready.AudioError)
+		fmt.Fprintf(o.Stderr, "robin: no sound from %s: %s\n", o.Dest, ready.AudioError)
 	}
 
 	tunnelPort := 0
@@ -179,7 +179,7 @@ func Run(ctx context.Context, o Options) (err error) {
 	if ready.Mode == protocol.ModeAttach {
 		desktop = "attached to " + ready.Display
 	}
-	fmt.Fprintf(o.Stderr, "remotejump: %s on %s; press Ctrl+C to end the session\n", desktop, o.Dest)
+	fmt.Fprintf(o.Stderr, "robin: %s on %s; press Ctrl+C to end the session\n", desktop, o.Dest)
 
 	b := &bridge{
 		agent: ag.conn, relay: relay.New(relay.Policy{Transport: o.Transport, TunnelPort: tunnelPort}),
@@ -207,7 +207,7 @@ func runProbe(ctx context.Context, m *sshmux.Master) (*probe.Report, error) {
 		return nil, fmt.Errorf("probe host: %w", err)
 	}
 	if r.OS != "Linux" {
-		return nil, fmt.Errorf("host runs %s; remotejump gui needs Linux", r.OS)
+		return nil, fmt.Errorf("host runs %s; robin gui needs Linux", r.OS)
 	}
 	return r, nil
 }

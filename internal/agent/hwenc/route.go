@@ -68,7 +68,7 @@ func gstRoute(gst, name string, encoder func(kbps int) string, env ...string) ro
 		args: func(c config) []string {
 			pipeline := fmt.Sprintf("fdsrc fd=0 blocksize=%d ! rawvideoparse width=%d height=%d format=nv12 framerate=%d/1 ! "+
 				"%s ! video/x-h264,profile=constrained-baseline,stream-format=byte-stream,alignment=au ! "+
-				"multipartmux boundary=remotejump ! fdsink fd=1 sync=false",
+				"multipartmux boundary=robin ! fdsink fd=1 sync=false",
 				c.width*c.height*3/2, c.width, c.height, c.fps, encoder(c.bitrate/1000))
 			return append([]string{"-q"}, strings.Fields(pipeline)...)
 		},

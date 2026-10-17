@@ -11,7 +11,7 @@ import (
 
 	"github.com/pkg/sftp"
 
-	"github.com/yasinmiran/remotejump/internal/tail"
+	"github.com/yasinmiran/robin/internal/tail"
 )
 
 // SFTP starts an sftp subsystem session over the master. Closing the client

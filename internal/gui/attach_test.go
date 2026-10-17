@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yasinmiran/remotejump/internal/probe"
+	"github.com/yasinmiran/robin/internal/probe"
 )
 
 func fixture(t *testing.T, name string) *probe.Report {

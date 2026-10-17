@@ -1,4 +1,4 @@
-module github.com/yasinmiran/remotejump
+module github.com/yasinmiran/robin
 
 go 1.25.0
 

@@ -70,7 +70,7 @@ func startServer(ctx context.Context, runDir string) (_ *server, err error) {
 	if err := os.WriteFile(s.cookie, cookie, 0o600); err != nil {
 		return nil, fmt.Errorf("pulseaudio: %w", err)
 	}
-	script := filepath.Join(dir, "remotejump.pa")
+	script := filepath.Join(dir, "robin.pa")
 	if err := os.WriteFile(script, []byte(serverScript(s.socket, s.cookie)), 0o600); err != nil {
 		return nil, fmt.Errorf("pulseaudio: %w", err)
 	}
@@ -119,8 +119,8 @@ func startServer(ctx context.Context, runDir string) (_ *server, err error) {
 // are off because each one drops what the monitor had queued: with them a
 // 20 ms recording got 70% of real time, so the RTP clock would drift.
 func serverScript(socket, cookie string) string {
-	return "load-module module-null-sink sink_name=remotejump rate=48000 channels=2 norewinds=1 sink_properties=device.description=remotejump\n" +
-		"set-default-sink remotejump\n" +
+	return "load-module module-null-sink sink_name=robin rate=48000 channels=2 norewinds=1 sink_properties=device.description=robin\n" +
+		"set-default-sink robin\n" +
 		"load-module module-native-protocol-unix socket=" + quoteArg(socket) + " auth-anonymous=0 auth-cookie=" + quoteArg(cookie) + "\n"
 }
 

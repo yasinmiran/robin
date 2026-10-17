@@ -1,6 +1,6 @@
 //go:build linux
 
-// Command remotejump-agent is the host half of remotejump. The CLI copies it
+// Command robin-agent is the host half of robin. The CLI copies it
 // to the host and runs it over SSH; it is not meant to be started by hand.
 //
 // It speaks JSON-lines signaling on stdin and stdout, logs to stderr, and
@@ -21,27 +21,27 @@ import (
 
 	"github.com/jezek/xgb"
 
-	"github.com/yasinmiran/remotejump/internal/agent"
-	"github.com/yasinmiran/remotejump/internal/agent/audio"
-	"github.com/yasinmiran/remotejump/internal/agent/h264"
-	"github.com/yasinmiran/remotejump/internal/agent/hwenc"
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/agent"
+	"github.com/yasinmiran/robin/internal/agent/audio"
+	"github.com/yasinmiran/robin/internal/agent/h264"
+	"github.com/yasinmiran/robin/internal/agent/hwenc"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: remotejump-agent serve [-v] | version")
+		fmt.Fprintln(os.Stderr, "usage: robin-agent serve [-v] | version")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
 	case "version":
-		fmt.Println("remotejump-agent", version)
+		fmt.Println("robin-agent", version)
 	case "serve":
 		os.Exit(serve(os.Args[2:]))
 	default:
-		fmt.Fprintf(os.Stderr, "remotejump-agent: unknown command %q\n", os.Args[1])
+		fmt.Fprintf(os.Stderr, "robin-agent: unknown command %q\n", os.Args[1])
 		os.Exit(2)
 	}
 }

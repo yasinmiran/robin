@@ -13,7 +13,7 @@ import (
 
 	"github.com/jfreymuth/pulse/proto"
 
-	"github.com/yasinmiran/remotejump/internal/agent/opus"
+	"github.com/yasinmiran/robin/internal/agent/opus"
 )
 
 const (
@@ -80,7 +80,7 @@ func record(socket string, cookie []byte, onFrame func([]int16), onEnd func(erro
 	}
 	c.SetVersion(auth.Version)
 	if err := c.Request(&proto.SetClientName{Props: proto.PropList{
-		"application.name":       proto.PropListString("remotejump"),
+		"application.name":       proto.PropListString("robin"),
 		"application.process.id": proto.PropListString(fmt.Sprint(os.Getpid())),
 	}}, &proto.SetClientNameReply{}); err != nil {
 		return nil, fmt.Errorf("introduce the client: %w", err)
@@ -102,7 +102,7 @@ func record(socket string, cookie []byte, onFrame func([]int16), onEnd func(erro
 		BufferFragSize:     frameBytes,
 		AdjustLatency:      true,
 		DirectOnInputIndex: proto.Undefined,
-		Properties:         proto.PropList{"media.name": proto.PropListString("remotejump desktop sound")},
+		Properties:         proto.PropList{"media.name": proto.PropListString("robin desktop sound")},
 		ChannelVolumes:     proto.ChannelVolumes{proto.VolumeNorm, proto.VolumeNorm},
 	}, &reply); err != nil {
 		return nil, fmt.Errorf("record %s.monitor: %w", info.DefaultSinkName, err)

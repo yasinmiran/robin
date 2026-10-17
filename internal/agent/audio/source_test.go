@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yasinmiran/remotejump/internal/agent/opus"
+	"github.com/yasinmiran/robin/internal/agent/opus"
 )
 
 // listen decodes what src emits until a second of sound has come through, and
@@ -137,7 +137,7 @@ func TestAttachedDesktopIsHeard(t *testing.T) {
 // pipewire-pulse, as an attached session does on a current GNOME or Plasma
 // desktop. PipeWire takes no cookie, and none exists here.
 func TestAttachedPipeWireIsHeard(t *testing.T) {
-	if os.Getenv("RJ_PIPEWIRE_PULSE") == "" {
+	if os.Getenv("ROBIN_PIPEWIRE_PULSE") == "" {
 		t.Skip("needs the user's PipeWire with pipewire-pulse; run internal/agent/wayland/testdata/wltest.sh")
 	}
 	src, _, err := Start(context.Background(), Options{RunDir: t.TempDir(), Attached: true, Log: quiet()})

@@ -25,7 +25,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yasinmiran/remotejump/internal/tail"
+	"github.com/yasinmiran/robin/internal/tail"
 )
 
 const (
@@ -261,7 +261,7 @@ while read -r g; do set -- "$@" "$g"; done
 for g; do kill -TERM -"$g"; done
 sleep 2
 for g; do kill -KILL -"$g"; done`
-	cmd := exec.Command("/bin/sh", "-c", script, "remotejump-display-watchdog")
+	cmd := exec.Command("/bin/sh", "-c", script, "robin-display-watchdog")
 	cmd.Stdin = r
 	// Its own group and no Pdeathsig: it has to outlive the agent.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

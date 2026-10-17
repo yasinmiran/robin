@@ -10,10 +10,10 @@ const URL_LINE = /^http:\/\/127\.0\.0\.1:\d+\/#\S+$/;
 
 // SIGINT goes to the CLI's whole process group, as Ctrl-C in a terminal does,
 // so ssh children the CLI did not move out of its group get it too. Set
-// RJ_SIGINT_PID_ONLY=1 to signal the CLI process alone.
-const signalGroup = process.env.RJ_SIGINT_PID_ONLY !== '1';
+// ROBIN_SIGINT_PID_ONLY=1 to signal the CLI process alone.
+const signalGroup = process.env.ROBIN_SIGINT_PID_ONLY !== '1';
 
-// Cli runs `remotejump gui --no-browser <host>`: one URL line on stdout, logs on
+// Cli runs `robin gui --no-browser <host>`: one URL line on stdout, logs on
 // stderr (appended to <dir>/cli.stderr.log), SIGINT to end the session.
 export class Cli {
   readonly extraStdout: string[] = [];
@@ -29,17 +29,17 @@ export class Cli {
     exited.then((e) => (this.exit = e));
   }
 
-  static start(dir: string, host = 'rjhost', timeoutMs = 90_000): Promise<Cli> {
+  static start(dir: string, host = 'robinhost', timeoutMs = 90_000): Promise<Cli> {
     const stderrPath = path.join(dir, 'cli.stderr.log');
     const stderr = fs.createWriteStream(stderrPath, { flags: 'a' });
     const stdoutLog = fs.createWriteStream(path.join(dir, 'cli.stdout.log'), { flags: 'a' });
     // Verbose, so the saved stderr carries the agent's log (ICE states, resizes).
-    const args = ['gui', '--no-browser', '-v', ...(process.env.RJ_CLI_ARGS ?? '').split(' ').filter(Boolean), host];
-    const header = `--- ${new Date().toISOString()} remotejump ${args.join(' ')}\n`;
+    const args = ['gui', '--no-browser', '-v', ...(process.env.ROBIN_CLI_ARGS ?? '').split(' ').filter(Boolean), host];
+    const header = `--- ${new Date().toISOString()} robin ${args.join(' ')}\n`;
     stderr.write(header);
     stdoutLog.write(header);
 
-    const proc = spawn('remotejump', args, {
+    const proc = spawn('robin', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true, // own process group, like a foreground job
     });

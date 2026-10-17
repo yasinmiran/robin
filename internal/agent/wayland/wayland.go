@@ -22,8 +22,8 @@ import (
 
 	"github.com/godbus/dbus/v5"
 
-	"github.com/yasinmiran/remotejump/internal/agent/desktop"
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/agent/desktop"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // DefaultConsentWait is how long Open waits for someone to answer the

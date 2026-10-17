@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yasinmiran/remotejump/internal/probe"
-	"github.com/yasinmiran/remotejump/internal/protocol"
-	"github.com/yasinmiran/remotejump/internal/tail"
+	"github.com/yasinmiran/robin/internal/probe"
+	"github.com/yasinmiran/robin/internal/protocol"
+	"github.com/yasinmiran/robin/internal/tail"
 )
 
 func TestPickAttachTakesTheActiveWaylandSession(t *testing.T) {
@@ -114,7 +114,7 @@ func TestAwaitReadyTellsTheUserAboutConsent(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(stderr.String()), "\n")
 	if len(lines) != 2 ||
 		!strings.Contains(lines[0], "approve the screen sharing request on build-box's screen") || !strings.Contains(lines[0], "2m0s") ||
-		!strings.HasPrefix(lines[1], "remotejump: view only. build-box shared its screen") {
+		!strings.HasPrefix(lines[1], "robin: view only. build-box shared its screen") {
 		t.Errorf("told the user:\n%s", stderr.String())
 	}
 }

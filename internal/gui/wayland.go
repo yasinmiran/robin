@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yasinmiran/remotejump/internal/probe"
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/probe"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // checkWayland refuses --attach wayland on a host that cannot do it, saying
@@ -47,11 +47,11 @@ func waylandActive(r *probe.Report) bool {
 func noticeText(n protocol.Notice, host string) string {
 	switch n.Kind {
 	case protocol.NoticeConsent:
-		return fmt.Sprintf("remotejump: approve the screen sharing request on %s's screen, with remote interaction "+
+		return fmt.Sprintf("robin: approve the screen sharing request on %s's screen, with remote interaction "+
 			"allowed (GNOME: switch on Allow Remote Interaction, then Share). Waiting up to %s. "+
 			"Once approved, later sessions start without asking.", host, time.Duration(n.Wait)*time.Second)
 	case protocol.NoticeViewOnly:
-		return fmt.Sprintf("remotejump: view only. %s shared its screen without remote interaction, so your "+
+		return fmt.Sprintf("robin: view only. %s shared its screen without remote interaction, so your "+
 			"keyboard and mouse do nothing there. To take control, end this session, run it again "+
 			"and allow remote interaction in the dialog.", host)
 	}

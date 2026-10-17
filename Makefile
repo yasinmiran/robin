@@ -1,6 +1,6 @@
 # One command builds everything: `make`.
 #
-# The CLI (bin/remotejump) is pure Go and embeds the host agents. Each agent
+# The CLI (bin/robin) is pure Go and embeds the host agents. Each agent
 # is a fully static linux binary built with cgo against openh264 and libopus,
 # with a pinned zig as the C toolchain, so this works from Linux or macOS with
 # no containers and no root.
@@ -20,18 +20,18 @@ target_arm64 := aarch64-linux-musl
 export ZIG_GLOBAL_CACHE_DIR := $(CACHE)/zig
 
 .PHONY: all agents cli dist test test-short test-x test-wayland check e2e clean
-.PRECIOUS: bin/remotejump-agent-linux-%
+.PRECIOUS: bin/robin-agent-linux-%
 
 all: cli
 
-cli: bin/remotejump
+cli: bin/robin
 
-agents: $(foreach a,$(ARCHES),$(AGENTS)/remotejump-agent-linux-$(a).gz)
+agents: $(foreach a,$(ARCHES),$(AGENTS)/robin-agent-linux-$(a).gz)
 
-bin/remotejump: agents $(GOSRC) go.mod go.sum
-	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $@ ./cmd/remotejump
+bin/robin: agents $(GOSRC) go.mod go.sum
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $@ ./cmd/robin
 
-bin/remotejump-agent-linux-%: $(GOSRC) go.mod go.sum toolchain/*.sh
+bin/robin-agent-linux-%: $(GOSRC) go.mod go.sum toolchain/*.sh
 	@set -e; \
 	t=$(target_$*); zig=$$(toolchain/zig.sh); prefix=$$(toolchain/openh264.sh $$t); toolchain/opus.sh $$t >/dev/null; \
 	echo "build agent linux/$* ($$t)"; \
@@ -39,23 +39,23 @@ bin/remotejump-agent-linux-%: $(GOSRC) go.mod go.sum toolchain/*.sh
 	CGO_CFLAGS="-I$$prefix/include" CGO_LDFLAGS="-L$$prefix/lib" \
 	$(GO) build -trimpath -tags openh264,opus,netgo,osusergo \
 		-ldflags "-s -w -linkmode external -extldflags -static -X main.version=$(VERSION)" \
-		-o $@ ./cmd/remotejump-agent
+		-o $@ ./cmd/robin-agent
 
-$(AGENTS)/remotejump-agent-linux-%.gz: bin/remotejump-agent-linux-%
+$(AGENTS)/robin-agent-linux-%.gz: bin/robin-agent-linux-%
 	gzip -9 -n -c $< >$@
 
 # Release CLIs for every client platform, each embedding every agent.
 dist: agents
 	@set -e; for p in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do \
 		os=$${p%/*}; arch=$${p#*/}; \
-		echo "build dist/remotejump-$$os-$$arch"; \
+		echo "build dist/robin-$$os-$$arch"; \
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) build -trimpath \
-			-ldflags "-s -w -X main.version=$(VERSION)" -o dist/remotejump-$$os-$$arch ./cmd/remotejump; \
+			-ldflags "-s -w -X main.version=$(VERSION)" -o dist/robin-$$os-$$arch ./cmd/robin; \
 	done
 
 # The linux/amd64 CLI the e2e client container runs.
-bin/remotejump-linux-amd64: agents $(GOSRC) go.mod go.sum
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $@ ./cmd/remotejump
+bin/robin-linux-amd64: agents $(GOSRC) go.mod go.sum
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $@ ./cmd/robin
 
 # Unit and integration tests. The encoder packages are tested against the real
 # openh264 and libopus on linux/amd64 hosts; everywhere else they build as stubs.
@@ -85,8 +85,8 @@ test-wayland:
 # Everything: unit, X, Wayland and end-to-end.
 check: test test-x test-wayland e2e
 
-e2e: bin/remotejump-linux-amd64
-	RJ_BIN=$(CURDIR)/bin/remotejump-linux-amd64 e2e/run.sh $(SCENARIOS)
+e2e: bin/robin-linux-amd64
+	ROBIN_BIN=$(CURDIR)/bin/robin-linux-amd64 e2e/run.sh $(SCENARIOS)
 
 clean:
 	rm -rf bin dist $(AGENTS)/*.gz

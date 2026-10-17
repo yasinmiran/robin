@@ -1,6 +1,6 @@
 #!/bin/bash
 # Drops all UDP that is not on loopback, in and out, for IPv4 and IPv6. Runs as
-# rj through sudo so it exercises the same path a test uses mid-session.
+# robin through sudo so it exercises the same path a test uses mid-session.
 # Idempotent.
 set -euo pipefail
 

@@ -15,8 +15,8 @@ import (
 	"github.com/jezek/xgb"
 	"github.com/jezek/xgb/xproto"
 
-	"github.com/yasinmiran/remotejump/internal/agent/keysym"
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/agent/keysym"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // observer is a full-screen window on the peer connection that records the

@@ -49,7 +49,7 @@ type Report struct {
 
 	GPU GPU
 
-	// Commands maps each command remotejump can use, found on PATH, to its path.
+	// Commands maps each command robin can use, found on PATH, to its path.
 	Commands map[string]string
 
 	// XAuthority lists readable X cookie files that may belong to a running

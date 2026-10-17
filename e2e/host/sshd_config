@@ -2,7 +2,7 @@
 # sshd_config.d. The host key and authorized keys are mounted per run.
 Port 22
 AddressFamily inet
-HostKey /etc/ssh/rj/ssh_host_ed25519_key
+HostKey /etc/ssh/robin/ssh_host_ed25519_key
 AuthorizedKeysFile /etc/ssh/authorized_keys.d/%u
 
 PubkeyAuthentication yes

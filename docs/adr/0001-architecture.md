@@ -1,10 +1,10 @@
-# ADR 0001: architecture of `remotejump gui`
+# ADR 0001: architecture of `robin gui`
 
 Status: accepted, 2026-10-16
 
 ## Context
 
-`remotejump gui <host>` opens a remote Linux desktop in one command. The only
+`robin gui <host>` opens a remote Linux desktop in one command. The only
 thing the host has beforehand is SSH access the user already has. SSH is the
 control plane (auth, probing, deploying the agent, signaling); WebRTC over UDP
 is the data plane (video out, input back). No signaling server, no extra ports

@@ -11,8 +11,8 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../../../.." && pwd)
-image=localhost/rj-wltest
-name=rj-wltest-$$
+image=localhost/robin-wltest
+name=robin-wltest-$$
 out=$(mktemp -d)
 cleanup() {
 	podman rm -f "$name" >/dev/null 2>&1 || true
@@ -44,14 +44,14 @@ podman exec -u root "$name" sh -c '
 	mkdir -p /run/user/1000 /run/dbus
 	chown 1000:1000 /run/user/1000
 	chmod 700 /run/user/1000
-	dbus-daemon --config-file=/etc/rj-system-bus.conf --fork'
+	dbus-daemon --config-file=/etc/robin-system-bus.conf --fork'
 podman exec "$name" /t/session.sh
 
 status=0
 for t in "wayland.test" "agent.test -test.run=Wayland" "audio.test -test.run=PipeWire"; do
 	echo "== $t"
 	# shellcheck disable=SC2086 # $t is a binary and its own arguments
-	podman exec -w /tmp -e XDG_RUNTIME_DIR=/run/user/1000 -e RJ_WAYLAND_PROBE=/t/probe.py -e RJ_PIPEWIRE_PULSE=1 \
+	podman exec -w /tmp -e XDG_RUNTIME_DIR=/run/user/1000 -e ROBIN_WAYLAND_PROBE=/t/probe.py -e ROBIN_PIPEWIRE_PULSE=1 \
 		"$name" /t/$t -test.v -test.timeout=5m "$@" || status=1
 done
 if [ "$status" != 0 ]; then

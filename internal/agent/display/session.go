@@ -6,7 +6,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/yasinmiran/remotejump/internal/sessions"
+	"github.com/yasinmiran/robin/internal/sessions"
 )
 
 // sessionPlan is what to run inside the display.

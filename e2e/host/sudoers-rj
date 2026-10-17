@@ -1,1 +1,1 @@
-rj ALL=(root) NOPASSWD: /usr/sbin/iptables, /usr/sbin/ip6tables
+robin ALL=(root) NOPASSWD: /usr/sbin/iptables, /usr/sbin/ip6tables

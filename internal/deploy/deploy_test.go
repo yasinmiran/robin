@@ -20,9 +20,9 @@ import (
 
 	"github.com/pkg/sftp"
 
-	"github.com/yasinmiran/remotejump/internal/agentbin"
-	"github.com/yasinmiran/remotejump/internal/sshmux"
-	"github.com/yasinmiran/remotejump/internal/sshmux/sshtest"
+	"github.com/yasinmiran/robin/internal/agentbin"
+	"github.com/yasinmiran/robin/internal/sshmux"
+	"github.com/yasinmiran/robin/internal/sshmux/sshtest"
 )
 
 func testAgent(t *testing.T) (agentbin.Agent, []byte) {
@@ -33,7 +33,7 @@ func testAgent(t *testing.T) (agentbin.Agent, []byte) {
 	w := gzip.NewWriter(&gz)
 	w.Write(bin)
 	w.Close()
-	a, err := agentbin.FromFS(fstest.MapFS{"remotejump-agent-linux-amd64.gz": {Data: gz.Bytes()}}, "amd64")
+	a, err := agentbin.FromFS(fstest.MapFS{"robin-agent-linux-amd64.gz": {Data: gz.Bytes()}}, "amd64")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestEnsureSkipsWhenPresent(t *testing.T) {
 
 func TestEnsureRejectsRelativeDir(t *testing.T) {
 	a, _ := testAgent(t)
-	if _, err := Ensure(t.Context(), offline{}, Target{Dir: ".cache/remotejump"}, a); err == nil {
+	if _, err := Ensure(t.Context(), offline{}, Target{Dir: ".cache/robin"}, a); err == nil {
 		t.Fatal("relative dir accepted")
 	}
 }
@@ -247,9 +247,9 @@ func TestEnsureRemovesStaleFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	touch("remotejump-agent-0123456789abcdef", 0)
-	touch(".remotejump-agent-0123456789abcdef.tmp-ABANDONED", 2*time.Hour)
-	touch(".remotejump-agent-0123456789abcdef.tmp-INFLIGHT", time.Minute)
+	touch("robin-agent-0123456789abcdef", 0)
+	touch(".robin-agent-0123456789abcdef.tmp-ABANDONED", 2*time.Hour)
+	touch(".robin-agent-0123456789abcdef.tmp-INFLIGHT", time.Minute)
 	touch("unrelated", 0)
 
 	got, err := Ensure(t.Context(), m, Target{Dir: dir, SHA256Tool: "none"}, a)
@@ -257,7 +257,7 @@ func TestEnsureRemovesStaleFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertInstalled(t, got, bin)
-	want := []string{".remotejump-agent-0123456789abcdef.tmp-INFLIGHT", a.Name(), "unrelated"}
+	want := []string{".robin-agent-0123456789abcdef.tmp-INFLIGHT", a.Name(), "unrelated"}
 	slices.Sort(want)
 	if names := ls(t, dir); !slices.Equal(names, want) {
 		t.Errorf("dir holds %q, want %q", names, want)
@@ -275,7 +275,7 @@ func TestEnsureKeepsRunningAgentAlive(t *testing.T) {
 	m := dial(t)
 	a, _ := testAgent(t)
 	dir := t.TempDir()
-	old := filepath.Join(dir, "remotejump-agent-0123456789abcdef")
+	old := filepath.Join(dir, "robin-agent-0123456789abcdef")
 	data, err := os.ReadFile(sleep)
 	if err != nil {
 		t.Fatal(err)

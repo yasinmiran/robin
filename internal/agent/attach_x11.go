@@ -8,10 +8,10 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/yasinmiran/remotejump/internal/agent/desktop"
-	"github.com/yasinmiran/remotejump/internal/agent/display"
-	"github.com/yasinmiran/remotejump/internal/agent/x11"
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/agent/desktop"
+	"github.com/yasinmiran/robin/internal/agent/display"
+	"github.com/yasinmiran/robin/internal/agent/x11"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // attachX11 streams an X display the user already runs, such as the desktop

@@ -12,7 +12,7 @@ import (
 	"github.com/jezek/xgb/xfixes"
 	"github.com/jezek/xgb/xproto"
 
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // maxCursorSide bounds the images forwarded; X cursors are rarely over 64 px

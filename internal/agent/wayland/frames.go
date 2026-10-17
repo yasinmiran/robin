@@ -16,7 +16,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yasinmiran/remotejump/internal/agent/desktop"
+	"github.com/yasinmiran/robin/internal/agent/desktop"
 )
 
 // firstFrameTimeout bounds the wait for the stream's first picture.

@@ -18,7 +18,7 @@ func TestWithLocale(t *testing.T) {
 		t.Fatal(err)
 	}
 	missing := filepath.Join(dir, "missing")
-	base := []string{"HOME=/home/rj", "PATH=/usr/bin"}
+	base := []string{"HOME=/home/robin", "PATH=/usr/bin"}
 
 	for _, tc := range []struct {
 		name  string

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Reports what this host offers remotejump as key=value lines on stdout.
+# Reports what this host offers robin as key=value lines on stdout.
 #
 #   sh -s -- <agent file name>... < probe.sh
 #
@@ -312,9 +312,9 @@ pick_agentdir() {
 	agentdir=
 	cache=${XDG_CACHE_HOME:-}
 	[ -z "$cache" ] && [ -n "${HOME:-}" ] && cache=$HOME/.cache
-	[ -n "$cache" ] && try_dir "$cache/remotejump" parents && return
-	[ -n "${XDG_RUNTIME_DIR:-}" ] && try_dir "$XDG_RUNTIME_DIR/remotejump" "" && return
-	try_dir "/tmp/remotejump-$uid" ""
+	[ -n "$cache" ] && try_dir "$cache/robin" parents && return
+	[ -n "${XDG_RUNTIME_DIR:-}" ] && try_dir "$XDG_RUNTIME_DIR/robin" "" && return
+	try_dir "/tmp/robin-$uid" ""
 }
 
 sha256() {

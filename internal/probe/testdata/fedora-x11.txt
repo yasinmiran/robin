@@ -44,5 +44,5 @@ cmd.startxfce4=/usr/bin/startxfce4
 cmd.xfce4-terminal=/usr/bin/xfce4-terminal
 cmd.dbus-run-session=/usr/bin/dbus-run-session
 cmd.dbus-launch=/usr/bin/dbus-launch
-agentdir=/home/carol/.cache/remotejump
+agentdir=/home/carol/.cache/robin
 sha256_tool=sha256sum

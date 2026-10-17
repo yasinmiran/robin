@@ -18,14 +18,14 @@ import (
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
 
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // TestBrowserSmoke loads the client in system Chrome through URL, answers its
 // offer with a Pion peer standing in for the agent, streams it H.264 that
 // Chrome encoded beforehand, and checks what crosses the websocket and the
 // data channel. It needs `npm ci` in testdata/browser. Set
-// REMOTEJUMP_SCREENSHOTS to keep the screenshots it takes.
+// ROBIN_SCREENSHOTS to keep the screenshots it takes.
 func TestBrowserSmoke(t *testing.T) {
 	dir := filepath.Join("testdata", "browser")
 	if _, err := os.Stat(filepath.Join(dir, "node_modules", "playwright-core")); err != nil {
@@ -35,7 +35,7 @@ func TestBrowserSmoke(t *testing.T) {
 	if err != nil {
 		t.Skip("browser smoke test needs node on PATH")
 	}
-	shots := os.Getenv("REMOTEJUMP_SCREENSHOTS")
+	shots := os.Getenv("ROBIN_SCREENSHOTS")
 	if shots == "" {
 		shots = t.TempDir()
 	}
@@ -256,7 +256,7 @@ func playAgent(ctx context.Context, b *Browser, frames string, onOffer func(stri
 					MimeType:    webrtc.MimeTypeH264,
 					ClockRate:   90000,
 					SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f",
-				}, "video", "remotejump")
+				}, "video", "robin")
 				if err != nil {
 					return err
 				}
@@ -265,7 +265,7 @@ func playAgent(ctx context.Context, b *Browser, frames string, onOffer func(stri
 				}
 				sound, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{
 					MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2, SDPFmtpLine: "minptime=10;useinbandfec=1",
-				}, "audio", "remotejump")
+				}, "audio", "robin")
 				if err != nil {
 					return err
 				}

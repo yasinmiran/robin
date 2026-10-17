@@ -23,5 +23,5 @@ dri_rw=yes
 vainfo=/usr/bin/vainfo
 vainfo_driver=Intel iHD driver for Intel(R) Gen Graphics - 24.1.0 ()
 vainfo_h264_encode=yes
-agentdir=/root/.cache/remotejump
+agentdir=/root/.cache/robin
 sha256_tool=sha256sum

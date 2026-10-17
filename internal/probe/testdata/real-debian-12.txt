@@ -15,5 +15,5 @@ env.DISPLAY=
 env.WAYLAND_DISPLAY=
 env.XDG_CURRENT_DESKTOP=
 env.XDG_RUNTIME_DIR=
-agentdir=/root/.cache/remotejump
+agentdir=/root/.cache/robin
 sha256_tool=sha256sum

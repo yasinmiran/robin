@@ -45,5 +45,5 @@ nvidia_smi=/usr/bin/nvidia-smi
 cmd.xkbcomp=/usr/bin/xkbcomp
 cmd.x-terminal-emulator=/usr/bin/x-terminal-emulator
 cmd.dbus-run-session=/usr/bin/dbus-run-session
-agentdir=/home/alice/.cache/remotejump
+agentdir=/home/alice/.cache/robin
 sha256_tool=sha256sum

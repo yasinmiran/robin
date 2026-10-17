@@ -27,7 +27,7 @@ func gz(t *testing.T, data []byte) []byte {
 func TestFromFS(t *testing.T) {
 	bin := bytes.Repeat([]byte("\x7fELF agent "), 10000)
 	sum := sha256.Sum256(bin)
-	fsys := fstest.MapFS{"remotejump-agent-linux-arm64.gz": {Data: gz(t, bin)}}
+	fsys := fstest.MapFS{"robin-agent-linux-arm64.gz": {Data: gz(t, bin)}}
 
 	a, err := FromFS(fsys, "arm64")
 	if err != nil {
@@ -36,7 +36,7 @@ func TestFromFS(t *testing.T) {
 	if a.Arch != "arm64" || a.Hash != hex.EncodeToString(sum[:]) || a.Size != int64(len(bin)) {
 		t.Fatalf("got %+v", a)
 	}
-	if want := "remotejump-agent-" + a.Hash[:16]; a.Name() != want {
+	if want := "robin-agent-" + a.Hash[:16]; a.Name() != want {
 		t.Errorf("Name = %s, want %s", a.Name(), want)
 	}
 	for range 2 {
@@ -55,9 +55,9 @@ func TestFromFS(t *testing.T) {
 func TestFromFSErrors(t *testing.T) {
 	good := gz(t, []byte("agent"))
 	fsys := fstest.MapFS{
-		"remotejump-agent-linux-amd64.gz":   {Data: good},
-		"remotejump-agent-linux-riscv64.gz": {Data: good[:len(good)-4]},
-		"remotejump-agent-linux-mips.gz":    {Data: []byte("not gzip")},
+		"robin-agent-linux-amd64.gz":   {Data: good},
+		"robin-agent-linux-riscv64.gz": {Data: good[:len(good)-4]},
+		"robin-agent-linux-mips.gz":    {Data: []byte("not gzip")},
 	}
 	_, err := FromFS(fsys, "arm64")
 	if err == nil || !strings.Contains(err.Error(), "make") {

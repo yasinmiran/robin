@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 func nextCursor(t *testing.T, tx *testX, what string) protocol.Cursor {

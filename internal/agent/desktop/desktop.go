@@ -6,7 +6,7 @@ package desktop
 import (
 	"errors"
 
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // ErrFixedSize is returned by Resize when the desktop's size belongs to

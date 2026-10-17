@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yasinmiran/remotejump/internal/agent/yuv"
+	"github.com/yasinmiran/robin/internal/agent/yuv"
 )
 
 // Kind is a family of hardware encoders.

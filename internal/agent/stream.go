@@ -8,10 +8,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/yasinmiran/remotejump/internal/agent/desktop"
-	"github.com/yasinmiran/remotejump/internal/agent/peer"
-	"github.com/yasinmiran/remotejump/internal/agent/yuv"
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/agent/desktop"
+	"github.com/yasinmiran/robin/internal/agent/peer"
+	"github.com/yasinmiran/robin/internal/agent/yuv"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // Encoder turns I420 frames into H.264 access units in Annex-B form.

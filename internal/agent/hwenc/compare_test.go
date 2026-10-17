@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yasinmiran/remotejump/internal/agent/h264"
-	"github.com/yasinmiran/remotejump/internal/agent/yuv"
+	"github.com/yasinmiran/robin/internal/agent/h264"
+	"github.com/yasinmiran/robin/internal/agent/yuv"
 )
 
 type encoder interface {
@@ -29,11 +29,11 @@ type contender struct {
 // in the tool, at 1080p and 2160p; the bitrate each sends against a 2 Mbit/s
 // target; how a 500, 4000, 500 kbit/s target sequence is followed; and how
 // long a requested keyframe takes. It is a measuring aid: set
-// RJ_HWENC_COMPARE=1 and build with the openh264 tag, as the Makefile builds
+// ROBIN_HWENC_COMPARE=1 and build with the openh264 tag, as the Makefile builds
 // the agent, to run it.
 func TestCompare(t *testing.T) {
-	if os.Getenv("RJ_HWENC_COMPARE") == "" {
-		t.Skip("set RJ_HWENC_COMPARE=1")
+	if os.Getenv("ROBIN_HWENC_COMPARE") == "" {
+		t.Skip("set ROBIN_HWENC_COMPARE=1")
 	}
 	probe, err := h264.New(64, 64, 30, 1_000_000)
 	if err != nil {

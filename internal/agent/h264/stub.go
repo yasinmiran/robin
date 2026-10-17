@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/yasinmiran/remotejump/internal/agent/yuv"
+	"github.com/yasinmiran/robin/internal/agent/yuv"
 )
 
 // ErrUnavailable means this binary was built without the openh264 tag, so it

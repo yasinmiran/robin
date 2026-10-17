@@ -19,15 +19,15 @@ const TRANSPORT_LABELS = {
 const NOTICES = {
   closed: [
     'Session ended',
-    'The connection to remotejump closed. Reload this page to reconnect if remotejump is still running, or run it again.',
+    'The connection to Robin closed. Reload this page to reconnect if Robin is still running, or run it again.',
   ],
   refused: [
     'Could not connect',
-    'This link has expired or is open in another tab. Use the link remotejump printed most recently.',
+    'This link has expired or is open in another tab. Use the link Robin printed most recently.',
   ],
   'no-token': [
     'This link is incomplete',
-    'Open the full link remotejump printed, including the part after the #.',
+    'Open the full link Robin printed, including the part after the #.',
   ],
 };
 

@@ -14,8 +14,8 @@ import (
 
 	"github.com/pion/webrtc/v4"
 
-	"github.com/yasinmiran/remotejump/internal/agent/wayland/wltest"
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/agent/wayland/wltest"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // TestSessionAttachesToWayland runs a whole session against the GNOME
@@ -24,7 +24,7 @@ import (
 // the monitor's size, and the page is told to hide its own pointer, since
 // the picture carries the remote one.
 func TestSessionAttachesToWayland(t *testing.T) {
-	if os.Getenv("RJ_WAYLAND_PROBE") == "" {
+	if os.Getenv("ROBIN_WAYLAND_PROBE") == "" {
 		t.Skip("needs a GNOME Wayland session; run internal/agent/wayland/testdata/wltest.sh")
 	}
 	inR, inW := io.Pipe()

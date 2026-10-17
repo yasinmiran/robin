@@ -9,8 +9,8 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"github.com/yasinmiran/remotejump/internal/agent/keysym"
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/agent/keysym"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // xkVoidSymbol is on no layout, so a compositor that looks it up drops it

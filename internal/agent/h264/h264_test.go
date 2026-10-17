@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yasinmiran/remotejump/internal/agent/yuv"
+	"github.com/yasinmiran/robin/internal/agent/yuv"
 )
 
 const (
@@ -236,10 +236,10 @@ func TestSetBitrateTakesEffect(t *testing.T) {
 }
 
 // TestCompareModes prints the screen and camera content modes side by side.
-// It is a tuning aid: set RJ_H264_COMPARE=1 to run it.
+// It is a tuning aid: set ROBIN_H264_COMPARE=1 to run it.
 func TestCompareModes(t *testing.T) {
-	if os.Getenv("RJ_H264_COMPARE") == "" {
-		t.Skip("set RJ_H264_COMPARE=1")
+	if os.Getenv("ROBIN_H264_COMPARE") == "" {
+		t.Skip("set ROBIN_H264_COMPARE=1")
 	}
 	for _, target := range []int{1_000_000, 4_000_000} {
 		for _, mode := range []struct {

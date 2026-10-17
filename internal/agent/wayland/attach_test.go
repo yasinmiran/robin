@@ -22,9 +22,9 @@ import (
 	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/introspect"
 
-	"github.com/yasinmiran/remotejump/internal/agent/desktop"
-	"github.com/yasinmiran/remotejump/internal/agent/wayland/wltest"
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/agent/desktop"
+	"github.com/yasinmiran/robin/internal/agent/wayland/wltest"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // The tests in this file drive a real GNOME Wayland session through
@@ -32,7 +32,7 @@ import (
 // headless mutter; anywhere else they skip.
 
 var (
-	probeScript = os.Getenv("RJ_WAYLAND_PROBE")
+	probeScript = os.Getenv("ROBIN_WAYLAND_PROBE")
 	// tokenFile is shared by the tests in one run, so each restores the
 	// grant an earlier one got, as consecutive sessions would.
 	tokenFile string
@@ -238,7 +238,7 @@ func TestAttachEndsWhenTheStreamDies(t *testing.T) {
 // portal must end the session when the process's bus connection drops.
 func TestAttachTornDownWhenAgentDies(t *testing.T) {
 	needSession(t)
-	if os.Getenv("RJ_WAYLAND_HOLD") != "" {
+	if os.Getenv("ROBIN_WAYLAND_HOLD") != "" {
 		d, _ := open(t, true)
 		defer d.Close()
 		fmt.Println("holding")
@@ -246,7 +246,7 @@ func TestAttachTornDownWhenAgentDies(t *testing.T) {
 		return
 	}
 	cmd := exec.Command(os.Args[0], "-test.run=^TestAttachTornDownWhenAgentDies$")
-	cmd.Env = append(os.Environ(), "RJ_WAYLAND_HOLD=1")
+	cmd.Env = append(os.Environ(), "ROBIN_WAYLAND_HOLD=1")
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)

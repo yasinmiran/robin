@@ -19,8 +19,8 @@ import (
 
 	"github.com/pion/webrtc/v4"
 
-	"github.com/yasinmiran/remotejump/internal/agent/yuv"
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/agent/yuv"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // fakeEncoder records the frame sizes it is asked to encode and emits a

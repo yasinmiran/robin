@@ -1,4 +1,4 @@
-// Command remotejump opens a remote Linux desktop in the browser, using
+// Command robin opens a remote Linux desktop in the browser, using
 // nothing on the host but the SSH access the user already has.
 package main
 
@@ -14,17 +14,17 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/yasinmiran/remotejump/internal/gui"
-	"github.com/yasinmiran/remotejump/internal/protocol"
-	"github.com/yasinmiran/remotejump/internal/relay"
+	"github.com/yasinmiran/robin/internal/gui"
+	"github.com/yasinmiran/robin/internal/protocol"
+	"github.com/yasinmiran/robin/internal/relay"
 )
 
 var version = "dev"
 
 const defaultSTUN = "stun:stun.l.google.com:19302"
 
-const usage = `usage: remotejump gui [flags] [user@]host [-- ssh-args...]
-       remotejump version
+const usage = `usage: robin gui [flags] [user@]host [-- ssh-args...]
+       robin version
 
 gui opens a desktop on host in your browser. It connects with your ssh
 config and agent, copies a small agent to the host, starts a headless X
@@ -41,11 +41,11 @@ func main() {
 	case "gui":
 		os.Exit(runGUI(os.Args[2:]))
 	case "version", "--version", "-version":
-		fmt.Println("remotejump", version)
+		fmt.Println("robin", version)
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 	default:
-		fmt.Fprintf(os.Stderr, "remotejump: unknown command %q\n\n%s", os.Args[1], usage)
+		fmt.Fprintf(os.Stderr, "robin: unknown command %q\n\n%s", os.Args[1], usage)
 		os.Exit(2)
 	}
 }
@@ -143,6 +143,6 @@ func parseSTUN(s string) []string {
 }
 
 func fail(err error) int {
-	fmt.Fprintln(os.Stderr, "remotejump:", err)
+	fmt.Fprintln(os.Stderr, "robin:", err)
 	return 1
 }

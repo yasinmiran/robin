@@ -17,5 +17,5 @@ env.XDG_CURRENT_DESKTOP=
 env.XDG_RUNTIME_DIR=
 cmd.dbus-run-session=/usr/sbin/dbus-run-session
 cmd.dbus-launch=/usr/sbin/dbus-launch
-agentdir=/root/.cache/remotejump
+agentdir=/root/.cache/robin
 sha256_tool=sha256sum

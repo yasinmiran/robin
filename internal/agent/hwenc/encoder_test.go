@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yasinmiran/remotejump/internal/agent/yuv"
+	"github.com/yasinmiran/robin/internal/agent/yuv"
 )
 
 const tick = time.Second / 30
@@ -132,7 +132,7 @@ func TestBitrateRestartsOnlyForLargeMoves(t *testing.T) {
 func TestBudgetHoldsTargetBitrate(t *testing.T) {
 	const target = 1_000_000
 	// Every slice is 10 kB, 2.4 Mbit/s at 30 frames a second.
-	e := newEncoder(fakeRoute("multipart:normal", "RJ_HWENC_FAKE_AU=10000"), 64, 48, 30, target)
+	e := newEncoder(fakeRoute("multipart:normal", "ROBIN_HWENC_FAKE_AU=10000"), 64, 48, 30, target)
 	defer e.Close()
 	img := yuv.NewI420(64, 48)
 	bits, skipped := 0, 0
@@ -201,7 +201,7 @@ func TestStalledToolTimesOut(t *testing.T) {
 
 func TestCloseKillsProcessGroup(t *testing.T) {
 	pidfile := filepath.Join(t.TempDir(), "pid")
-	e := newEncoder(fakeRoute("multipart:spawn", "RJ_HWENC_FAKE_PIDFILE="+pidfile), 64, 48, 30, 1_000_000)
+	e := newEncoder(fakeRoute("multipart:spawn", "ROBIN_HWENC_FAKE_PIDFILE="+pidfile), 64, 48, 30, 1_000_000)
 	if _, err := e.Encode(yuv.NewI420(64, 48), 0, true); err != nil {
 		t.Fatal(err)
 	}

@@ -1,5 +1,5 @@
 {
-  "name": "remotejump-web-smoke",
+  "name": "robin-web-smoke",
   "private": true,
   "type": "module",
   "description": "Drives the embedded client in system Chrome for internal/web's browser smoke test.",

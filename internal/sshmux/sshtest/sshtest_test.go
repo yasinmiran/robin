@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yasinmiran/remotejump/internal/sshmux/sshtest"
+	"github.com/yasinmiran/robin/internal/sshmux/sshtest"
 )
 
 func TestStart(t *testing.T) {

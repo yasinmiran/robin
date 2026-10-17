@@ -17,8 +17,8 @@ import (
 
 	"github.com/pkg/sftp"
 
-	"github.com/yasinmiran/remotejump/internal/agentbin"
-	"github.com/yasinmiran/remotejump/internal/sshmux"
+	"github.com/yasinmiran/robin/internal/agentbin"
+	"github.com/yasinmiran/robin/internal/sshmux"
 )
 
 // Target describes the host side, as the probe reports it.

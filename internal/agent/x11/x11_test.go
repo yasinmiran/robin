@@ -12,7 +12,7 @@ import (
 	"github.com/jezek/xgb/randr"
 	"github.com/jezek/xgb/xproto"
 
-	"github.com/yasinmiran/remotejump/internal/agent/display"
+	"github.com/yasinmiran/robin/internal/agent/display"
 )
 
 const maxW, maxH = 1920, 1080

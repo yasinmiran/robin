@@ -14,7 +14,7 @@ import (
 
 	"github.com/godbus/dbus/v5"
 
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 const (
@@ -350,7 +350,7 @@ func (s *portalSession) call(method string, args ...any) error {
 func randomToken() string {
 	b := make([]byte, 8)
 	rand.Read(b)
-	return "rj" + hex.EncodeToString(b)
+	return "robin" + hex.EncodeToString(b)
 }
 
 func shortName(method string) string {

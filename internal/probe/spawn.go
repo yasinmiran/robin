@@ -4,7 +4,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/yasinmiran/remotejump/internal/sessions"
+	"github.com/yasinmiran/robin/internal/sessions"
 )
 
 // requirement is something spawn mode needs, met by any one of commands.

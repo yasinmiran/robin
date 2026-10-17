@@ -18,7 +18,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // Transport selects which candidates the browser gets.
@@ -170,7 +170,7 @@ func (r *Relay) tunnelCandidate(sdp string) (protocol.Candidate, bool) {
 
 // TunnelCandidate is the candidate line for a tunnel entry on port.
 func TunnelCandidate(port int) string {
-	return "candidate:rjtunnel 1 tcp " + strconv.Itoa(TunnelPriority) + " 127.0.0.1 " + strconv.Itoa(port) + " typ host tcptype passive"
+	return "candidate:robintunnel 1 tcp " + strconv.Itoa(TunnelPriority) + " 127.0.0.1 " + strconv.Itoa(port) + " typ host tcptype passive"
 }
 
 // transportOf returns the lowercased transport field of a candidate line, or

@@ -12,13 +12,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yasinmiran/remotejump/internal/agent/yuv"
+	"github.com/yasinmiran/robin/internal/agent/yuv"
 )
 
 // requireEnv names the kinds that must work, comma-separated, for a host
 // that is known to have them; otherwise the hardware tests skip when a kind
 // is missing.
-const requireEnv = "RJ_HWENC_REQUIRE"
+const requireEnv = "ROBIN_HWENC_REQUIRE"
 
 // workingRoutes returns the routes to kind that pass the trial on this host.
 func workingRoutes(t *testing.T, kind Kind) []route {

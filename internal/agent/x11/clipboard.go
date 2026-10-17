@@ -64,8 +64,8 @@ func (cb *clipboard) init(x *xgb.Conn, root xproto.Window, maxReq int, loopDone 
 	cb.saved = make(chan struct{}, 1)
 	cb.updates = make(chan string, 1)
 	names := []string{"CLIPBOARD", "TARGETS", "UTF8_STRING", "TEXT", "text/plain;charset=utf-8",
-		"INCR", "_REMOTEJUMP_SELECTION", "_REMOTEJUMP_TIMESTAMP",
-		"CLIPBOARD_MANAGER", "SAVE_TARGETS", "_REMOTEJUMP_SAVE_TARGETS"}
+		"INCR", "_ROBIN_SELECTION", "_ROBIN_TIMESTAMP",
+		"CLIPBOARD_MANAGER", "SAVE_TARGETS", "_ROBIN_SAVE_TARGETS"}
 	ids := make([]xproto.Atom, len(names))
 	for i, n := range names {
 		r, err := xproto.InternAtom(x, false, uint16(len(n)), n).Reply()

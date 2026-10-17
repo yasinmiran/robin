@@ -16,13 +16,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yasinmiran/remotejump/internal/agent/yuv"
+	"github.com/yasinmiran/robin/internal/agent/yuv"
 )
 
 // The tests stand in for ffmpeg and gst-launch-1.0 with this test binary:
 // run with fakeEnv set, it reads NV12 frames on stdin and writes framed
 // access units on stdout as the real tools do.
-const fakeEnv = "RJ_HWENC_FAKE"
+const fakeEnv = "ROBIN_HWENC_FAKE"
 
 func TestMain(m *testing.M) {
 	if mode := os.Getenv(fakeEnv); mode != "" {
@@ -41,7 +41,7 @@ func TestMain(m *testing.M) {
 //	lag     hold each access unit back until the next frame arrives
 //	high    as normal, with a High profile SPS
 //	spawn   as normal, after starting a grandchild in its process group
-//	        whose pid goes to the file named by RJ_HWENC_FAKE_PIDFILE
+//	        whose pid goes to the file named by ROBIN_HWENC_FAKE_PIDFILE
 //	parent  not a tool: open an Encoder on a normal fake, encode a frame,
 //	        print the tool's pid and wait to be killed
 func fakeRoute(mode string, env ...string) *route {
@@ -90,15 +90,15 @@ func fake(mode string, args []string) {
 	}
 	w, _ := strconv.Atoi(args[0])
 	h, _ := strconv.Atoi(args[1])
-	// RJ_HWENC_FAKE_AU sets the size of every slice, to load the budget.
-	size, _ := strconv.Atoi(os.Getenv("RJ_HWENC_FAKE_AU"))
+	// ROBIN_HWENC_FAKE_AU sets the size of every slice, to load the budget.
+	size, _ := strconv.Atoi(os.Getenv("ROBIN_HWENC_FAKE_AU"))
 	if behaviour == "spawn" {
 		c := exec.Command("sleep", "300")
 		if err := c.Start(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		os.WriteFile(os.Getenv("RJ_HWENC_FAKE_PIDFILE"), []byte(strconv.Itoa(c.Process.Pid)), 0o600)
+		os.WriteFile(os.Getenv("ROBIN_HWENC_FAKE_PIDFILE"), []byte(strconv.Itoa(c.Process.Pid)), 0o600)
 	}
 	sps := fakeSPS
 	if behaviour == "high" {
@@ -137,7 +137,7 @@ func writeAU(b []byte, framing string, n int, nals [][]byte) []byte {
 		for _, nal := range nals {
 			au = append(append(au, startCode...), nal...)
 		}
-		b = fmt.Appendf(b, "--remotejump\r\nContent-Type: video/x-h264\r\nContent-Length: %d\r\n\r\n", len(au))
+		b = fmt.Appendf(b, "--robin\r\nContent-Type: video/x-h264\r\nContent-Length: %d\r\n\r\n", len(au))
 		return append(append(b, au...), "\r\n"...)
 	}
 	if n == 0 {

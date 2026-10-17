@@ -10,7 +10,7 @@ const ICE_GRACE_MS = 2000;
 // agent-to-browser direction of UDP dies; a restart moves to a working path.
 const HEARTBEAT_STALL_MS = 3500;
 const STATS_EVERY_MS = 1000;
-const TOKEN_KEY = 'remotejump.token';
+const TOKEN_KEY = 'robin.token';
 
 const video = document.getElementById('screen');
 const overlay = new Overlay();
@@ -31,7 +31,7 @@ let statsTimer = 0;
 let signals = Promise.resolve();
 let earlyCandidates = [];
 
-window.remotejump = {
+window.robin = {
   get pc() { return pc; },
   get state() { return state; },
   video,
@@ -64,7 +64,7 @@ function connect(token) {
     return;
   }
   try {
-    ws = new WebSocket(`ws://${location.host}/ws`, ['remotejump', `token.${token}`]);
+    ws = new WebSocket(`ws://${location.host}/ws`, ['robin', `token.${token}`]);
   } catch {
     end('refused');
     return;
@@ -74,7 +74,7 @@ function connect(token) {
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
     // Signals apply in arrival order: a candidate must not race its answer.
-    signals = signals.then(() => onSignal(m)).catch((err) => console.warn('remotejump: signal', m.type, err));
+    signals = signals.then(() => onSignal(m)).catch((err) => console.warn('robin: signal', m.type, err));
   };
 }
 
@@ -111,7 +111,7 @@ async function addCandidate(c) {
   try {
     await pc.addIceCandidate(c?.candidate ? c : { candidate: '' });
   } catch (err) {
-    console.warn('remotejump: candidate', err);
+    console.warn('robin: candidate', err);
   }
 }
 
@@ -150,7 +150,7 @@ function createPeer(config) {
       await pc.setLocalDescription();
       sendSignal({ type: 'offer', sdp: pc.localDescription.sdp });
     } catch (err) {
-      console.warn('remotejump: offer', err);
+      console.warn('robin: offer', err);
     }
   };
   pc.onicecandidate = (e) => {

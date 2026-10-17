@@ -13,8 +13,8 @@ import (
 	"github.com/jezek/xgb/xproto"
 	"github.com/jezek/xgb/xtest"
 
-	"github.com/yasinmiran/remotejump/internal/agent/keysym"
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/agent/keysym"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 const (

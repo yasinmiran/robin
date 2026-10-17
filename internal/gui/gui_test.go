@@ -3,7 +3,7 @@ package gui
 import (
 	"testing"
 
-	"github.com/yasinmiran/remotejump/internal/probe"
+	"github.com/yasinmiran/robin/internal/probe"
 )
 
 func TestStartMessageDefaults(t *testing.T) {

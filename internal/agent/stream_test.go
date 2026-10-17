@@ -5,7 +5,7 @@ package agent
 import (
 	"testing"
 
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 func TestToDesktop(t *testing.T) {

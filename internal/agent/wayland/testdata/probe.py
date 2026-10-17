@@ -28,7 +28,7 @@ def log(**kw):
 
 class Probe(Gtk.Application):
     def __init__(self):
-        super().__init__(application_id="dev.remotejump.Probe")
+        super().__init__(application_id="dev.robin.Probe")
         self.frame = 0
 
     def do_activate(self):

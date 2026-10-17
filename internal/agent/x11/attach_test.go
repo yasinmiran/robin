@@ -15,7 +15,7 @@ import (
 	"github.com/jezek/xgb"
 	"github.com/jezek/xgb/xproto"
 
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // onDisplay runs a command against the test display.
@@ -158,7 +158,7 @@ func TestCloseHandsClipboardToManager(t *testing.T) {
 		}
 		return r.Atom
 	}
-	manager, saveTargets, clipboard, utf8, prop := atom("CLIPBOARD_MANAGER"), atom("SAVE_TARGETS"), atom("CLIPBOARD"), atom("UTF8_STRING"), atom("RJ_TEST_SAVED")
+	manager, saveTargets, clipboard, utf8, prop := atom("CLIPBOARD_MANAGER"), atom("SAVE_TARGETS"), atom("CLIPBOARD"), atom("UTF8_STRING"), atom("ROBIN_TEST_SAVED")
 
 	// Without a clipboard manager Close does not wait for one.
 	c, _, err := Attach(tx.d.Name, []string{tx.d.XAuthority})

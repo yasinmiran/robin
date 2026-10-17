@@ -50,8 +50,8 @@ func TestFramerCutsWholeFrames(t *testing.T) {
 func TestServerScriptQuotesPaths(t *testing.T) {
 	s := serverScript(`/run/a "b"/native`, `/run/c\d/cookie`)
 	for _, want := range []string{
-		"load-module module-null-sink sink_name=remotejump rate=48000 channels=2 norewinds=1 ",
-		"set-default-sink remotejump\n",
+		"load-module module-null-sink sink_name=robin rate=48000 channels=2 norewinds=1 ",
+		"set-default-sink robin\n",
 		`socket="/run/a \"b\"/native"`,
 		`auth-cookie="/run/c\\d/cookie"`,
 		"auth-anonymous=0",

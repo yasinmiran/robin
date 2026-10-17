@@ -15,7 +15,7 @@ import (
 
 	"github.com/pion/webrtc/v4"
 
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // opusSilence is a complete 20 ms Opus packet of silence.
@@ -71,7 +71,7 @@ func TestSessionStreamsAudio(t *testing.T) {
 	h := startAgent(t, func(o *Options) {
 		o.NewAudio = func(_ context.Context, ao AudioOptions) (AudioSource, []string, error) {
 			asked <- ao
-			return fake, []string{"RJ_TEST_SOUND=unix:/nowhere"}, nil
+			return fake, []string{"ROBIN_TEST_SOUND=unix:/nowhere"}, nil
 		}
 	})
 	ready := h.start(func(s *protocol.Start) { s.Audio = true })
@@ -82,7 +82,7 @@ func TestSessionStreamsAudio(t *testing.T) {
 	if ao.Attached || !strings.HasPrefix(ao.RunDir, h.root+"/") {
 		t.Errorf("NewAudio got %+v; want spawn mode in this session's run dir", ao)
 	}
-	if !sessionHasEnv(filepath.Join(ao.RunDir, "Xauthority"), "RJ_TEST_SOUND=unix:/nowhere") {
+	if !sessionHasEnv(filepath.Join(ao.RunDir, "Xauthority"), "ROBIN_TEST_SOUND=unix:/nowhere") {
 		t.Error("no program on the desktop has the sound server's address")
 	}
 

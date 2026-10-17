@@ -6,7 +6,7 @@ import { pagePoint } from './helpers/coords';
 import { isNonBlack, sampleFrame, waitForStillFrame } from './helpers/frames';
 import * as wl from './helpers/wayland';
 
-// The wayland scenario: `remotejump gui --attach auto` against a host whose
+// The wayland scenario: `robin gui --attach auto` against a host whose
 // user is logged in to a headless GNOME Wayland session, with a fullscreen
 // probe window that logs the input it receives. The portal asks before
 // anything is shared; the harness answers as the person at the screen would.
@@ -35,12 +35,12 @@ const lastRun = () => {
   const s = stderrText();
   return s.slice(s.lastIndexOf('\n--- ') + 1);
 };
-const stats = (p: Page) => p.evaluate(() => (window as any).remotejump.stats() as Promise<{ framesDecoded: number }>);
+const stats = (p: Page) => p.evaluate(() => (window as any).robin.stats() as Promise<{ framesDecoded: number }>);
 
 async function open(url: string) {
   await page.goto(url);
   await expect
-    .poll(() => page.evaluate(() => typeof (window as any).remotejump), { message: 'window.remotejump exists', timeout: 15_000 })
+    .poll(() => page.evaluate(() => typeof (window as any).robin), { message: 'window.robin exists', timeout: 15_000 })
     .toBe('object');
   await expect
     .poll(async () => isNonBlack(await sampleFrame(page, SCREEN)), { message: 'a non-black frame', timeout: 20_000, intervals: [250] })
@@ -85,11 +85,11 @@ test.afterEach(async ({}, testInfo) => {
   if (testInfo.status === testInfo.expectedStatus || !page) return;
   const snapshot = await page
     .evaluate(async () => {
-      const rj = (window as any).remotejump;
-      return { state: rj?.state, stats: await rj?.stats?.().catch((e: Error) => String(e)) };
+      const robin = (window as any).robin;
+      return { state: robin?.state, stats: await robin?.stats?.().catch((e: Error) => String(e)) };
     })
     .catch((e) => ({ error: String(e) }));
-  await testInfo.attach('remotejump', { body: JSON.stringify(snapshot, null, 2), contentType: 'application/json' });
+  await testInfo.attach('robin', { body: JSON.stringify(snapshot, null, 2), contentType: 'application/json' });
   if (cli) await testInfo.attach('cli stderr (tail)', { body: cli.stderrTail(), contentType: 'text/plain' });
   await testInfo.attach('host', { body: await wl.diagnostics().catch(String), contentType: 'text/plain' });
 });
@@ -103,7 +103,7 @@ test('consent: --attach auto picks the Wayland session and the CLI waits for the
   const log = stderrText();
   expect(log).toMatch(/msg=attaching to=wayland/);
   const asked = log.indexOf(CONSENT);
-  expect(log.slice(asked).split('\n')[0], 'the consent line').toMatch(/on rjhost's screen.*Waiting up to 2m0s/);
+  expect(log.slice(asked).split('\n')[0], 'the consent line').toMatch(/on robinhost's screen.*Waiting up to 2m0s/);
   expect(log.indexOf('agent ready', asked), 'Ready after the consent line').toBeGreaterThan(asked);
   expect(log).toMatch(/agent ready" mode=attach display=wayland .*size=1280x720/);
 });
@@ -189,11 +189,11 @@ test('latency: after 20 s of a still screen, keystrokes show within 400 ms', asy
   await page.evaluate((selector) => {
     const w = window as any;
     const video = document.querySelector(selector) as HTMLVideoElement;
-    w.rjKeys = [];
-    w.rjFrames = [];
-    window.addEventListener('keydown', (e) => e.key === 'x' && w.rjKeys.push(performance.now()), { capture: true });
+    w.robinKeys = [];
+    w.robinFrames = [];
+    window.addEventListener('keydown', (e) => e.key === 'x' && w.robinKeys.push(performance.now()), { capture: true });
     const onFrame = (_: number, m: VideoFrameCallbackMetadata) => {
-      w.rjFrames.push({ presented: m.presentationTime, received: m.receiveTime ?? m.presentationTime });
+      w.robinFrames.push({ presented: m.presentationTime, received: m.receiveTime ?? m.presentationTime });
       video.requestVideoFrameCallback(onFrame);
     };
     video.requestVideoFrameCallback(onFrame);
@@ -206,8 +206,8 @@ test('latency: after 20 s of a still screen, keystrokes show within 400 ms', asy
 
   type Shown = { presented: number; received: number };
   const { keys, frames } = await page.evaluate(() => ({
-    keys: (window as any).rjKeys as number[],
-    frames: (window as any).rjFrames as Shown[],
+    keys: (window as any).robinKeys as number[],
+    frames: (window as any).robinFrames as Shown[],
   }));
   const lag = keys.map((k) => Math.round((frames.find((f) => f.presented > k)?.presented ?? Infinity) - k));
   const held = frames.map((f) => Math.round(f.presented - f.received));
@@ -217,8 +217,8 @@ test('latency: after 20 s of a still screen, keystrokes show within 400 ms', asy
 });
 
 test('clipboard: browser to session and session to browser, through the portal', async () => {
-  const text = `rj-clip-${Date.now().toString(36)}`;
-  await page.evaluate((t) => (window as any).remotejump.sendClipboard(t), text);
+  const text = `robin-clip-${Date.now().toString(36)}`;
+  await page.evaluate((t) => (window as any).robin.sendClipboard(t), text);
   // F2 has the probe window read the session's clipboard.
   await expect
     .poll(
@@ -234,8 +234,8 @@ test('clipboard: browser to session and session to browser, through the portal',
   // F3 has it take the clipboard with "from-session".
   await page.keyboard.press('F3');
   await expect
-    .poll(() => page.evaluate(() => (window as any).remotejump.lastRemoteClipboard), {
-      message: 'remotejump.lastRemoteClipboard',
+    .poll(() => page.evaluate(() => (window as any).robin.lastRemoteClipboard), {
+      message: 'robin.lastRemoteClipboard',
       timeout: 10_000,
     })
     .toBe('from-session');
@@ -246,7 +246,7 @@ test('sound: what the desktop plays through PipeWire is heard once the speaker i
   const audio = () =>
     page.evaluate(async () => {
       let out = { packets: 0, energy: 0 };
-      (await ((window as any).remotejump.pc as RTCPeerConnection).getStats()).forEach((s: any) => {
+      (await ((window as any).robin.pc as RTCPeerConnection).getStats()).forEach((s: any) => {
         if (s.type === 'inbound-rtp' && s.kind === 'audio') out = { packets: s.packetsReceived ?? 0, energy: s.totalAudioEnergy ?? 0 };
       });
       return out;
@@ -257,7 +257,7 @@ test('sound: what the desktop plays through PipeWire is heard once the speaker i
   await expect.poll(async () => (await audio()).packets, { message: 'audio packets arrive' }).toBeGreaterThan(0);
 
   await sound.click();
-  expect(await page.evaluate(() => (window as any).remotejump.muted), 'muted after the click').toBe(false);
+  expect(await page.evaluate(() => (window as any).robin.muted), 'muted after the click').toBe(false);
   const before = (await audio()).energy;
   const playing = wl.playNoise(5);
   await expect
@@ -276,7 +276,7 @@ test('teardown: SIGINT ends the CLI, the share and the agent; the desktop lives 
 
   const left = Math.max(1_000, 10_000 - stop.afterMs);
   await expect.poll(wl.leftovers, { message: 'agent, gst-launch-1.0 and portal or mutter sessions on the host', timeout: left }).toBe('');
-  expect(await wl.sessionAlive(), "rj's GNOME session still runs").toBe(true);
+  expect(await wl.sessionAlive(), "robin's GNOME session still runs").toBe(true);
   expect(await wl.tokenMode(), 'the restore token, owner-only').toBe('600');
   expect(cli!.extraStdout, 'stdout carries only the URL').toEqual([]);
 });

@@ -1,4 +1,4 @@
-# The client for remotejump e2e: Playwright, Google Chrome stable and OpenSSH.
+# The client for robin e2e: Playwright, Google Chrome stable and OpenSSH.
 # Chrome stable because it is what users run, and H.264 decode in Chromium
 # builds depends on how they were built (selftest reports both).
 # Build context: e2e. PW_VERSION must match @playwright/test in package.json.

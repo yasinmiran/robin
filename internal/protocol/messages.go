@@ -1,4 +1,4 @@
-// Package protocol defines the messages the remotejump CLI, the host agent and
+// Package protocol defines the messages the robin CLI, the host agent and
 // the browser client exchange.
 //
 // Signaling (Message) travels as JSON lines over the agent's stdin and stdout,

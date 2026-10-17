@@ -72,7 +72,7 @@ async function encodeDesktop() {
       g.fillStyle = '#2b3136';
       g.fillRect(140, 110, 720, 30);
       g.fillStyle = '#c9d1d6';
-      g.fillText('yasin@devbox: ~/src/remotejump', 160, 130);
+      g.fillText('yasin@devbox: ~/src/robin', 160, 130);
       g.font = '15px monospace';
       const lines = ['$ go test ./...', 'ok   internal/protocol   0.41s', 'ok   internal/web        1.07s', '$ uptime', ' 23:14:02 up 12 days,  load average: 0.21, 0.30, 0.28', '$ '];
       lines.forEach((l, n) => g.fillText(l, 160, 170 + n * 22));
@@ -117,7 +117,7 @@ async function rejected(name, target, title) {
   let opened = false;
   page.on('websocket', (ws) => ws.on('framereceived', () => { opened = true; }));
   await page.goto(target);
-  await page.waitForFunction(() => window.remotejump?.state === 'ended');
+  await page.waitForFunction(() => window.robin?.state === 'ended');
   check(!opened, `${name}: no signaling reaches the page`);
   check((await page.textContent('#state-label')) === title, `${name}: shows "${title}"`);
   await page.screenshot({ path: join(shots, `ended-${name.replace(' ', '-')}.png`) });
@@ -131,7 +131,7 @@ async function connecting() {
   await page.routeWebSocket(/\/ws$/, () => {});
   await page.goto(url);
   await page.waitForTimeout(700);
-  check((await page.evaluate(() => window.remotejump.state)) === 'connecting', 'stalled signaling shows connecting');
+  check((await page.evaluate(() => window.robin.state)) === 'connecting', 'stalled signaling shows connecting');
   await page.screenshot({ path: join(shots, 'connecting-dark.png') });
   await page.close();
 }
@@ -145,18 +145,18 @@ async function connects(scheme) {
   page.on('pageerror', (e) => errors.push(String(e)));
 
   await page.goto(url);
-  await page.waitForFunction(() => window.remotejump.pc?.localDescription?.type === 'offer');
+  await page.waitForFunction(() => window.robin.pc?.localDescription?.type === 'offer');
   check((await page.evaluate(() => location.hash)) === '', `${scheme}: token removed from the address bar`);
 
-  await page.waitForFunction(() => window.remotejump.state === 'connected', null, { timeout: 15000 });
-  const stats = await page.evaluate(() => window.remotejump.stats());
+  await page.waitForFunction(() => window.robin.state === 'connected', null, { timeout: 15000 });
+  const stats = await page.evaluate(() => window.robin.stats());
   check(stats.transport === 'udp' && stats.local?.port > 0 && stats.remote?.port > 0,
     `${scheme}: stats report the selected pair (${stats.transport} ${stats.local?.candidateType} -> ${stats.remote?.candidateType})`);
   await page.waitForSelector('#transport:not([hidden])');
 
-  await page.waitForFunction(() => window.remotejump.video.videoWidth > 0, null, { timeout: 10000 });
+  await page.waitForFunction(() => window.robin.video.videoWidth > 0, null, { timeout: 10000 });
   await page.waitForTimeout(1500); // let the bitrate and frame rate settle
-  const video = await page.evaluate(() => window.remotejump.stats());
+  const video = await page.evaluate(() => window.robin.stats());
   check(video.frameWidth === 1280 && video.frameHeight === 720 && video.framesDecoded > 0 && video.fps > 0 && video.kbps > 0,
     `${scheme}: stats report decoded video (${video.frameWidth}x${video.frameHeight}, ${video.fps} fps, ${video.kbps} kb/s)`);
 
@@ -174,7 +174,7 @@ async function connects(scheme) {
 
   if (scheme === 'dark') {
     await page.reload();
-    await page.waitForFunction(() => window.remotejump?.state === 'connected', null, { timeout: 15000 });
+    await page.waitForFunction(() => window.robin?.state === 'connected', null, { timeout: 15000 });
     check(true, 'reload reconnects with the token kept for this tab');
   }
 
@@ -189,13 +189,13 @@ async function sound(page, scheme) {
   const shown = await button.waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false);
   check(shown, `${scheme}: speaker toggle shown for the audio track`);
   if (!shown) return;
-  check(await page.evaluate(() => window.remotejump.muted) && (await button.getAttribute('aria-pressed')) === 'false',
+  check(await page.evaluate(() => window.robin.muted) && (await button.getAttribute('aria-pressed')) === 'false',
     `${scheme}: sound starts muted`);
   await page.locator('#hud').screenshot({ path: join(shots, `hud-muted-${scheme}.png`) });
   await button.click();
   await page.mouse.move(200, 10); // off the button, so its hover does not show
-  check(!(await page.evaluate(() => window.remotejump.muted)) && (await button.getAttribute('aria-pressed')) === 'true'
-    && !(await page.evaluate(() => window.remotejump.video.paused)),
+  check(!(await page.evaluate(() => window.robin.muted)) && (await button.getAttribute('aria-pressed')) === 'true'
+    && !(await page.evaluate(() => window.robin.video.paused)),
     `${scheme}: a click turns sound on and the video keeps playing`);
   check(await page.evaluate(() => document.activeElement?.id !== 'sound'), `${scheme}: the toggle gives focus back`);
 }
@@ -216,10 +216,10 @@ async function exerciseControls(page) {
   await page.mouse.up({ button: 'right' });
   await page.mouse.wheel(0, 120);
   await page.keyboard.press('a');
-  await page.evaluate(() => window.remotejump.sendClipboard('from the local hook'));
+  await page.evaluate(() => window.robin.sendClipboard('from the local hook'));
 
-  await page.evaluate(() => window.remotejump.sendClipboard('echo'));
-  await page.waitForFunction(() => window.remotejump.lastRemoteClipboard === 'from the remote', null, { timeout: 5000 })
+  await page.evaluate(() => window.robin.sendClipboard('echo'));
+  await page.waitForFunction(() => window.robin.lastRemoteClipboard === 'from the remote', null, { timeout: 5000 })
     .then(() => check(true, 'remote clipboard reaches the page'), () => check(false, 'remote clipboard reaches the page'));
 
   await page.evaluate(() => navigator.clipboard.writeText('pasted locally'));
@@ -229,18 +229,18 @@ async function exerciseControls(page) {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.waitForTimeout(400);
 
-  const ufrag = () => page.evaluate(() => window.remotejump.pc.localDescription.sdp.match(/a=ice-ufrag:(\S+)/)[1]);
+  const ufrag = () => page.evaluate(() => window.robin.pc.localDescription.sdp.match(/a=ice-ufrag:(\S+)/)[1]);
   const before = await ufrag();
-  const decoded = (await page.evaluate(() => window.remotejump.stats())).framesDecoded;
-  await page.evaluate(() => window.remotejump.pc.restartIce());
+  const decoded = (await page.evaluate(() => window.robin.stats())).framesDecoded;
+  await page.evaluate(() => window.robin.pc.restartIce());
   await page.waitForFunction((u) => {
-    const pc = window.remotejump.pc;
+    const pc = window.robin.pc;
     return pc.signalingState === 'stable' && !pc.localDescription.sdp.includes(`a=ice-ufrag:${u}`);
   }, before, { timeout: 10000 });
-  await page.waitForFunction(() => window.remotejump.state === 'connected', null, { timeout: 10000 });
+  await page.waitForFunction(() => window.robin.state === 'connected', null, { timeout: 10000 });
   // Poll rather than sleep: under a loaded machine frames can take a few
   // seconds to resume on the new path.
-  const flowing = await page.waitForFunction(async (d) => (await window.remotejump.stats()).framesDecoded > d, decoded, { timeout: 5000 })
+  const flowing = await page.waitForFunction(async (d) => (await window.robin.stats()).framesDecoded > d, decoded, { timeout: 5000 })
     .then(() => true, () => false);
   check(flowing, `ICE restart renegotiates and video keeps flowing (${before} -> ${await ufrag()})`);
 }

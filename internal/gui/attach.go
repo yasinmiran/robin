@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/yasinmiran/remotejump/internal/probe"
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/probe"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // pickAttach chooses the running desktop that --attach auto means: the

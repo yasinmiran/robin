@@ -31,8 +31,8 @@ wireplumber >"$LOG/wireplumber.log" 2>&1 &
 pipewire-pulse >"$LOG/pipewire-pulse.log" 2>&1 &
 wait_for "$XDG_RUNTIME_DIR/pulse/native"
 # A desktop has speakers; this one plays into a null sink.
-pactl load-module module-null-sink sink_name=rj_speakers >/dev/null
-pactl set-default-sink rj_speakers
+pactl load-module module-null-sink sink_name=robin_speakers >/dev/null
+pactl set-default-sink robin_speakers
 mutter --headless --wayland --no-x11 --virtual-monitor "$SIZE" >"$LOG/mutter.log" 2>&1 &
 wait_for "$XDG_RUNTIME_DIR/wayland-0" || {
 	cat "$LOG/mutter.log" >&2

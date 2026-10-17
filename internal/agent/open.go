@@ -8,11 +8,11 @@ import (
 	"log/slog"
 	"path/filepath"
 
-	"github.com/yasinmiran/remotejump/internal/agent/desktop"
-	"github.com/yasinmiran/remotejump/internal/agent/display"
-	"github.com/yasinmiran/remotejump/internal/agent/wayland"
-	"github.com/yasinmiran/remotejump/internal/agent/x11"
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/agent/desktop"
+	"github.com/yasinmiran/robin/internal/agent/display"
+	"github.com/yasinmiran/robin/internal/agent/wayland"
+	"github.com/yasinmiran/robin/internal/agent/x11"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // openedDesktop is a desktop plus what the session needs to know about it.

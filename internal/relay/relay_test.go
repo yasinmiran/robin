@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yasinmiran/remotejump/internal/protocol"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 const (
@@ -102,7 +102,7 @@ func TestAnswerGetsTunnelCandidate(t *testing.T) {
 				t.Fatalf("want answer + tunnel candidate, got %+v", out)
 			}
 			c := out[1].Candidate
-			if c.Candidate != "candidate:rjtunnel 1 tcp 16777215 127.0.0.1 4000 typ host tcptype passive" {
+			if c.Candidate != "candidate:robintunnel 1 tcp 16777215 127.0.0.1 4000 typ host tcptype passive" {
 				t.Fatalf("tunnel candidate %q", c.Candidate)
 			}
 			if *c.SDPMid != "0" || *c.SDPMLineIndex != 0 {

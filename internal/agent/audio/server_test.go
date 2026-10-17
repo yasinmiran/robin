@@ -20,7 +20,7 @@ import (
 
 // helperEnv makes the test binary act as an agent that starts a server and
 // waits to be killed; see TestServerDiesWithTheAgent.
-const helperEnv = "RJ_AUDIO_TEST_HELPER"
+const helperEnv = "ROBIN_AUDIO_TEST_HELPER"
 
 func TestMain(m *testing.M) {
 	if dir := os.Getenv(helperEnv); dir != "" {
@@ -128,7 +128,7 @@ func TestPrivateServerCapturesWhatPlays(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rec.close()
-	if rec.sink != "remotejump" {
+	if rec.sink != "robin" {
 		t.Errorf("recording sink %q, want the null sink", rec.sink)
 	}
 

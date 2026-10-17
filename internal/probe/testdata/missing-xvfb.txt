@@ -29,5 +29,5 @@ cmd.openbox-session=/usr/bin/openbox-session
 cmd.openbox=/usr/bin/openbox
 cmd.xterm=/usr/bin/xterm
 cmd.x-terminal-emulator=/usr/bin/x-terminal-emulator
-agentdir=/home/frank/.cache/remotejump
+agentdir=/home/frank/.cache/robin
 sha256_tool=sha256sum

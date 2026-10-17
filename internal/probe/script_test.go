@@ -30,7 +30,7 @@ func TestScriptShells(t *testing.T) {
 		ran++
 		t.Run(strings.Join(shell, "-"), func(t *testing.T) {
 			cache := t.TempDir()
-			agentDir := filepath.Join(cache, "remotejump")
+			agentDir := filepath.Join(cache, "robin")
 			if err := os.Mkdir(agentDir, 0o700); err != nil {
 				t.Fatal(err)
 			}
@@ -156,50 +156,50 @@ func TestScriptContainers(t *testing.T) {
 			name:  "noexec-cache-falls-back-to-runtime-dir",
 			image: ubuntu,
 			flags: append(noexecCache, "--tmpfs", "/run/user/0:rw,exec,mode=700", "-e", "XDG_RUNTIME_DIR=/run/user/0"),
-			check: agentDir("/run/user/0/remotejump", "/root/.cache/remotejump:noexec"),
+			check: agentDir("/run/user/0/robin", "/root/.cache/robin:noexec"),
 		},
 		{
 			name: "tmp-fresh", image: ubuntu, flags: noexecCache,
-			check: agentDir("/tmp/remotejump-0", "/root/.cache/remotejump:noexec"),
+			check: agentDir("/tmp/robin-0", "/root/.cache/robin:noexec"),
 		},
 		{
 			name: "tmp-symlink", image: ubuntu, flags: noexecCache,
-			setup: "mkdir -m 700 /srv/t && ln -s /srv/t /tmp/remotejump-0",
-			check: agentDir("", "/root/.cache/remotejump:noexec", "/tmp/remotejump-0:symlink"),
+			setup: "mkdir -m 700 /srv/t && ln -s /srv/t /tmp/robin-0",
+			check: agentDir("", "/root/.cache/robin:noexec", "/tmp/robin-0:symlink"),
 		},
 		{
 			name: "tmp-dangling-symlink", image: alpine, flags: noexecCache,
-			setup: "ln -s /nowhere /tmp/remotejump-0",
-			check: agentDir("", "/root/.cache/remotejump:noexec", "/tmp/remotejump-0:symlink"),
+			setup: "ln -s /nowhere /tmp/robin-0",
+			check: agentDir("", "/root/.cache/robin:noexec", "/tmp/robin-0:symlink"),
 		},
 		{
 			name: "tmp-world-writable", image: ubuntu, flags: noexecCache,
-			setup: "mkdir -m 777 /tmp/remotejump-0",
-			check: agentDir("", "/root/.cache/remotejump:noexec", "/tmp/remotejump-0:perms"),
+			setup: "mkdir -m 777 /tmp/robin-0",
+			check: agentDir("", "/root/.cache/robin:noexec", "/tmp/robin-0:perms"),
 		},
 		{
 			name: "tmp-group-writable", image: alpine, flags: noexecCache,
-			setup: "mkdir -m 770 /tmp/remotejump-0",
-			check: agentDir("", "/root/.cache/remotejump:noexec", "/tmp/remotejump-0:perms"),
+			setup: "mkdir -m 770 /tmp/robin-0",
+			check: agentDir("", "/root/.cache/robin:noexec", "/tmp/robin-0:perms"),
 		},
 		{
 			name: "tmp-other-owner", image: alpine, flags: noexecCache,
-			setup: "mkdir -m 700 /tmp/remotejump-0 && chown 1000:1000 /tmp/remotejump-0",
-			check: agentDir("", "/root/.cache/remotejump:noexec", "/tmp/remotejump-0:owner"),
+			setup: "mkdir -m 700 /tmp/robin-0 && chown 1000:1000 /tmp/robin-0",
+			check: agentDir("", "/root/.cache/robin:noexec", "/tmp/robin-0:owner"),
 		},
 		{
 			name: "tmp-file", image: ubuntu, flags: noexecCache,
-			setup: "touch /tmp/remotejump-0",
-			check: agentDir("", "/root/.cache/remotejump:noexec", "/tmp/remotejump-0:notdir"),
+			setup: "touch /tmp/robin-0",
+			check: agentDir("", "/root/.cache/robin:noexec", "/tmp/robin-0:notdir"),
 		},
 		{
 			name: "non-root-without-home", image: ubuntu,
 			flags: []string{"--user", "1000:1000", "-e", "HOME=/nonexistent"},
-			check: agentDir("/tmp/remotejump-1000", "/nonexistent/.cache/remotejump:mkdir"),
+			check: agentDir("/tmp/robin-1000", "/nonexistent/.cache/robin:mkdir"),
 		},
 		{
 			name: "agent-hashes", image: alpine,
-			setup:  "mkdir -m 700 -p /root/.cache/remotejump && printf hello >/root/.cache/remotejump/agent-amd64",
+			setup:  "mkdir -m 700 -p /root/.cache/robin && printf hello >/root/.cache/robin/agent-amd64",
 			agents: []string{"agent-amd64", "agent-arm64", "../../../etc/passwd"},
 			check: func(t *testing.T, r *Report) {
 				const hello = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
@@ -224,7 +224,7 @@ func TestScriptContainers(t *testing.T) {
 			}
 			agents := tt.agents
 			if agents == nil {
-				agents = []string{"remotejump-agent-linux-amd64"}
+				agents = []string{"robin-agent-linux-amd64"}
 			}
 			probe := shell + " -s -- " + strings.Join(agents, " ")
 			if tt.setup != "" {
@@ -272,7 +272,7 @@ func bare(distro, hint string) func(*testing.T, *Report) {
 		if got := r.InstallHint(); got != hint {
 			t.Errorf("InstallHint() = %q, want %q", got, hint)
 		}
-		agentDir("/root/.cache/remotejump")(t, r)
+		agentDir("/root/.cache/robin")(t, r)
 	}
 }
 

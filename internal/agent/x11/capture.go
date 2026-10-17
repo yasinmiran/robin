@@ -15,7 +15,7 @@ import (
 	"github.com/jezek/xgb/xproto"
 	"golang.org/x/sys/unix"
 
-	"github.com/yasinmiran/remotejump/internal/agent/desktop"
+	"github.com/yasinmiran/robin/internal/agent/desktop"
 )
 
 // Frame is a captured picture; see desktop.Frame.

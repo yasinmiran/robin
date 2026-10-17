@@ -16,16 +16,16 @@ import (
 	"sync"
 )
 
-// The Makefile writes remotejump-agent-linux-<goarch>.gz here. README.md keeps
+// The Makefile writes robin-agent-linux-<goarch>.gz here. README.md keeps
 // the directory, and so the embed, valid in a fresh checkout.
 //
 //go:embed agents
 var embedded embed.FS
 
-const filePrefix, fileSuffix = "remotejump-agent-linux-", ".gz"
+const filePrefix, fileSuffix = "robin-agent-linux-", ".gz"
 
 // NamePrefix starts the host file name of every agent version.
-const NamePrefix = "remotejump-agent-"
+const NamePrefix = "robin-agent-"
 
 // Agent is one bundled agent binary.
 type Agent struct {
@@ -96,7 +96,7 @@ func Names() []string {
 	return names
 }
 
-// FromFS reads remotejump-agent-linux-<goarch>.gz from the root of fsys.
+// FromFS reads robin-agent-linux-<goarch>.gz from the root of fsys.
 func FromFS(fsys fs.FS, goarch string) (Agent, error) {
 	a := Agent{Arch: goarch, fsys: fsys, file: filePrefix + goarch + fileSuffix}
 	if _, ok := archOf(a.file); !ok {

@@ -26,5 +26,5 @@ session_class=user
 session_active=yes
 session_state=active
 cmd.dbus-run-session=/usr/bin/dbus-run-session
-agentdir=/home/alice/.cache/remotejump
+agentdir=/home/alice/.cache/robin
 sha256_tool=sha256sum

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Runs the remotejump e2e suite in rootless podman.
+# Runs the robin e2e suite in rootless podman.
 #
 #   ./run.sh                    every scenario: direct blocked restart attach wayland
 #   ./run.sh direct restart     just those
 #   ./run.sh selftest           prove the harness itself, no CLI needed
 #
-# RJ_BIN overrides the CLI binary (default bin/remotejump-linux-amd64, relative
-# to the repo root). RJ_RESTART_TIMEOUT_MS, RJ_SIGINT_PID_ONLY and RJ_CLI_ARGS
-# (extra flags for `remotejump gui`, which always runs with -v) pass through
+# ROBIN_BIN overrides the CLI binary (default bin/robin-linux-amd64, relative
+# to the repo root). ROBIN_RESTART_TIMEOUT_MS, ROBIN_SIGINT_PID_ONLY and ROBIN_CLI_ARGS
+# (extra flags for `robin gui`, which always runs with -v) pass through
 # to the tests. Artifacts land in e2e/out/<scenario>/.
 set -euo pipefail
 
@@ -16,19 +16,19 @@ ROOT=$(dirname "$E2E")
 OUT=$E2E/out
 KEYS=$OUT/keys
 
-# RJ_E2E_ID names the network, containers and images, so runs from several
+# ROBIN_E2E_ID names the network, containers and images, so runs from several
 # checkouts can proceed at once given distinct subnets.
-NET=${RJ_E2E_ID:-rj-e2e}
-SUBNET=${RJ_E2E_SUBNET:-10.89.42.0/24}
-HOST_IP=${RJ_E2E_HOST_IP:-10.89.42.10}
+NET=${ROBIN_E2E_ID:-robin-e2e}
+SUBNET=${ROBIN_E2E_SUBNET:-10.89.42.0/24}
+HOST_IP=${ROBIN_E2E_HOST_IP:-10.89.42.10}
 HOST_CTR=$NET-host
 CLIENT_CTR=$NET-client
 HOST_IMG=localhost/$NET-host
 CLIENT_IMG=localhost/$NET-client
 WLHOST_IMG=localhost/$NET-wlhost
 
-RJ_BIN=${RJ_BIN:-bin/remotejump-linux-amd64}
-[[ $RJ_BIN = /* ]] || RJ_BIN=$ROOT/$RJ_BIN
+ROBIN_BIN=${ROBIN_BIN:-bin/robin-linux-amd64}
+[[ $ROBIN_BIN = /* ]] || ROBIN_BIN=$ROOT/$ROBIN_BIN
 
 ALL_SCENARIOS=(direct blocked restart attach wayland)
 
@@ -60,8 +60,8 @@ build_wayland_image() {
   base=$(podman build -q -f "$testdata/Containerfile" "$testdata")
   rm -rf "$ctx"
   mkdir -p "$ctx"
-  cp "$E2E/host/sshd_config" "$testdata/session.sh" "$testdata/probe.py" "$E2E/wlhost/rj-wayland" "$ctx/"
-  (cd "$ROOT" && CGO_ENABLED=0 go build -o "$ctx/rj-consent" ./internal/agent/wayland/wltest/cmd/rj-consent)
+  cp "$E2E/host/sshd_config" "$testdata/session.sh" "$testdata/probe.py" "$E2E/wlhost/robin-wayland" "$ctx/"
+  (cd "$ROOT" && CGO_ENABLED=0 go build -o "$ctx/robin-consent" ./internal/agent/wayland/wltest/cmd/robin-consent)
   podman build -q --build-arg BASE="$base" -t "$WLHOST_IMG" -f "$E2E/wlhost.Containerfile" "$ctx" >/dev/null
 }
 
@@ -73,15 +73,15 @@ create_network() {
 generate_keys() {
   rm -rf "$KEYS"
   mkdir -p "$KEYS"
-  ssh-keygen -q -t ed25519 -N '' -C rj-e2e-client -f "$KEYS/client"
-  ssh-keygen -q -t ed25519 -N '' -C rj-e2e-host -f "$KEYS/ssh_host_ed25519_key"
+  ssh-keygen -q -t ed25519 -N '' -C robin-e2e-client -f "$KEYS/client"
+  ssh-keygen -q -t ed25519 -N '' -C robin-e2e-host -f "$KEYS/ssh_host_ed25519_key"
   # HostKeyAlias keys known_hosts by name, so a fresh host IP never matters.
-  echo "rjhost $(cut -d' ' -f1,2 "$KEYS/ssh_host_ed25519_key.pub")" >"$KEYS/known_hosts"
+  echo "robinhost $(cut -d' ' -f1,2 "$KEYS/ssh_host_ed25519_key.pub")" >"$KEYS/known_hosts"
   cat >"$KEYS/ssh_config" <<EOF
-Host rjhost
+Host robinhost
   HostName $HOST_IP
-  HostKeyAlias rjhost
-  User rj
+  HostKeyAlias robinhost
+  User robin
   IdentityFile /keys/client
   IdentitiesOnly yes
   UserKnownHostsFile /keys/known_hosts
@@ -99,11 +99,11 @@ EOF
 start_host() {
   local shm=256m
   [[ ${1:-} = "$WLHOST_IMG" ]] && shm=512m
-  podman run -d --name "$HOST_CTR" --hostname rjhost \
+  podman run -d --name "$HOST_CTR" --hostname robinhost \
     --network "$NET" --ip "$HOST_IP" \
     --init --cap-add NET_ADMIN --shm-size "$shm" --stop-timeout 2 \
-    -v "$KEYS/ssh_host_ed25519_key:/etc/ssh/rj/ssh_host_ed25519_key:ro" \
-    -v "$KEYS/client.pub:/etc/ssh/authorized_keys.d/rj:ro" \
+    -v "$KEYS/ssh_host_ed25519_key:/etc/ssh/robin/ssh_host_ed25519_key:ro" \
+    -v "$KEYS/client.pub:/etc/ssh/authorized_keys.d/robin:ro" \
     "${1:-$HOST_IMG}" >/dev/null
 }
 
@@ -122,12 +122,12 @@ start_client() {
 }
 
 on_client() { podman exec -i "$CLIENT_CTR" "$@"; }
-on_host_as_rj() { podman exec -i --user rj "$HOST_CTR" "$@"; }
+on_host_as_rj() { podman exec -i --user robin "$HOST_CTR" "$@"; }
 client_ip() { podman inspect -f "{{(index .NetworkSettings.Networks \"$NET\").IPAddress}}" "$CLIENT_CTR"; }
 
 wait_for_sshd() {
   local deadline=$((SECONDS + 30))
-  until on_client ssh -o ConnectTimeout=2 rjhost true 2>/dev/null; do
+  until on_client ssh -o ConnectTimeout=2 robinhost true 2>/dev/null; do
     ((SECONDS < deadline)) || { podman logs "$HOST_CTR" 2>&1 | tail -n 20 >&2 || true; die "sshd on $HOST_IP never accepted the key"; }
     sleep 0.5
   done
@@ -139,7 +139,7 @@ save_host_state() {
   podman exec "$HOST_CTR" sh -c '
     echo "## processes"; ps -eo user,pid,ppid,etime,args
     echo "## iptables"; iptables -S; ip6tables -S
-    echo "## remotejump dirs"; find /home/rj/.cache/remotejump /tmp/remotejump-1000 /run/user/1000 -maxdepth 4 -ls 2>/dev/null
+    echo "## robin dirs"; find /home/robin/.cache/robin /tmp/robin-1000 /run/user/1000 -maxdepth 4 -ls 2>/dev/null
     for f in /tmp/session-logs/*.log /tmp/session-logs/*.err /tmp/probe.log; do
       [ -f "$f" ] && { echo "## $f"; tail -n 60 "$f"; }
     done
@@ -159,26 +159,26 @@ run_scenario() {
   else
     start_host
   fi
-  start_client "$dir" -v "$RJ_BIN:/usr/local/bin/remotejump:ro"
+  start_client "$dir" -v "$ROBIN_BIN:/usr/local/bin/robin:ro"
   wait_for_sshd
   if [[ $s = blocked ]]; then
     log "scenario $s: dropping non-loopback UDP on the host"
-    on_client ssh rjhost rj-block-udp
+    on_client ssh robinhost robin-block-udp
   fi
-  local cli_args=${RJ_CLI_ARGS:-}
+  local cli_args=${ROBIN_CLI_ARGS:-}
   if [[ $s = attach ]]; then
-    log "scenario $s: starting rj's own desktop"
-    on_client ssh rjhost rj-live start
+    log "scenario $s: starting robin's own desktop"
+    on_client ssh robinhost robin-live start
     cli_args="--attach auto $cli_args"
   fi
   if [[ $s = wayland ]]; then
-    log "scenario $s: starting rj's GNOME Wayland session"
-    on_client ssh rjhost rj-wayland start
+    log "scenario $s: starting robin's GNOME Wayland session"
+    on_client ssh robinhost robin-wayland start
     cli_args="--attach auto $cli_args"
   fi
   on_client env SCENARIO="$s" \
-    RJ_RESTART_TIMEOUT_MS="${RJ_RESTART_TIMEOUT_MS:-15000}" RJ_SIGINT_PID_ONLY="${RJ_SIGINT_PID_ONLY:-0}" \
-    RJ_CLI_ARGS="$cli_args" \
+    ROBIN_RESTART_TIMEOUT_MS="${ROBIN_RESTART_TIMEOUT_MS:-15000}" ROBIN_SIGINT_PID_ONLY="${ROBIN_SIGINT_PID_ONLY:-0}" \
+    ROBIN_CLI_ARGS="$cli_args" \
     npx playwright test "$spec" || status=$?
   save_host_state "$dir"
   remove_containers
@@ -223,12 +223,12 @@ expect_fail() {
   if "$@"; then echo "unexpectedly succeeded: $*"; return 1; fi
 }
 
-t_ssh_login() { expect_eq $'rj 1000' on_client ssh rjhost 'echo "$(id -un) $(id -u)"'; }
-t_no_root() { expect_fail on_client ssh -o User=root rjhost true; }
+t_ssh_login() { expect_eq $'robin 1000' on_client ssh robinhost 'echo "$(id -un) $(id -u)"'; }
+t_no_root() { expect_fail on_client ssh -o User=root robinhost true; }
 t_no_password() {
   # Only publickey may be offered; no password or keyboard-interactive prompt.
   local methods
-  methods=$(on_client ssh -v -o IdentityFile=/dev/null -o PreferredAuthentications=none rjhost true 2>&1 \
+  methods=$(on_client ssh -v -o IdentityFile=/dev/null -o PreferredAuthentications=none robinhost true 2>&1 \
     | tr -d '\r' | sed -n 's/.*Authentications that can continue: //p' | head -n1)
   [[ $methods = publickey ]] || { echo "server offers: ${methods:-nothing}"; return 1; }
 }
@@ -236,39 +236,39 @@ t_no_password() {
 t_sftp() {
   local token=sftp-$RANDOM$RANDOM
   on_client sh -c "printf $token >/tmp/sftp-up" &&
-    on_client sftp -q -b - rjhost <<<$'put /tmp/sftp-up sftp-up\nget sftp-up /tmp/sftp-back' >/dev/null &&
+    on_client sftp -q -b - robinhost <<<$'put /tmp/sftp-up sftp-up\nget sftp-up /tmp/sftp-back' >/dev/null &&
     expect_eq "$token" on_client cat /tmp/sftp-back &&
-    expect_eq "$token" on_client ssh rjhost cat sftp-up
+    expect_eq "$token" on_client ssh robinhost cat sftp-up
 }
 
-M=/tmp/rj-master.sock
+M=/tmp/robin-master.sock
 t_master() {
-  on_client ssh -M -S "$M" -o ControlPersist=no -fN rjhost &&
-    on_client ssh -S "$M" -O check rjhost 2>/dev/null &&
-    expect_eq mux on_client ssh -S "$M" rjhost echo mux
+  on_client ssh -M -S "$M" -o ControlPersist=no -fN robinhost &&
+    on_client ssh -S "$M" -O check robinhost 2>/dev/null &&
+    expect_eq mux on_client ssh -S "$M" robinhost echo mux
 }
 
 t_forward_unix_to_tcp() {
   on_host_as_rj sh -c 'printf tok-tcp | nc -N -l 127.0.0.1 9999 >/dev/null 2>&1 &' &&
     on_client rm -f /tmp/x.sock &&
-    on_client ssh -S "$M" -O forward -L /tmp/x.sock:127.0.0.1:9999 rjhost &&
+    on_client ssh -S "$M" -O forward -L /tmp/x.sock:127.0.0.1:9999 robinhost &&
     retry expect_eq tok-tcp on_client timeout 5 nc -N -U /tmp/x.sock </dev/null
 }
 
 t_forward_tcp_to_unix() {
-  on_host_as_rj sh -c 'rm -f /tmp/rj-e2e.sock; printf tok-unix | nc -N -lU /tmp/rj-e2e.sock >/dev/null 2>&1 &' &&
-    on_client ssh -S "$M" -O forward -L 127.0.0.1:19999:/tmp/rj-e2e.sock rjhost &&
+  on_host_as_rj sh -c 'rm -f /tmp/robin-e2e.sock; printf tok-unix | nc -N -lU /tmp/robin-e2e.sock >/dev/null 2>&1 &' &&
+    on_client ssh -S "$M" -O forward -L 127.0.0.1:19999:/tmp/robin-e2e.sock robinhost &&
     retry expect_eq tok-unix on_client timeout 5 nc -N 127.0.0.1 19999 </dev/null
 }
 
 # Chrome's active ICE-TCP candidate binds the interface address and connects to
 # the passive candidate on 127.0.0.1, so the forward must accept that source.
 t_forward_from_interface_addr() {
-  on_host_as_rj sh -c 'rm -f /tmp/rj-e2e.sock; printf tok-bound | nc -N -lU /tmp/rj-e2e.sock >/dev/null 2>&1 &' &&
+  on_host_as_rj sh -c 'rm -f /tmp/robin-e2e.sock; printf tok-bound | nc -N -lU /tmp/robin-e2e.sock >/dev/null 2>&1 &' &&
     retry expect_eq tok-bound on_client timeout 5 nc -N -s "$(client_ip)" 127.0.0.1 19999 </dev/null
 }
 
-t_master_exit() { on_client ssh -S "$M" -O exit rjhost 2>/dev/null; }
+t_master_exit() { on_client ssh -S "$M" -O exit robinhost 2>/dev/null; }
 
 # udp_delivered <listener: client|host> <ip to send to> <port>: whether one
 # datagram sent from the other container (or from the host itself when ip is
@@ -290,20 +290,20 @@ udp_delivered() {
 t_udp_open_in() { udp_delivered host "$HOST_IP" 5000 || { echo "no datagram reached the host"; return 1; }; }
 t_udp_open_out() { udp_delivered client "$(client_ip)" 5001 || { echo "no datagram reached the client"; return 1; }; }
 t_block_over_ssh() {
-  on_client ssh rjhost rj-block-udp || return 1
+  on_client ssh robinhost robin-block-udp || return 1
   local ipt rules
   for ipt in iptables ip6tables; do
-    rules=$(on_client ssh rjhost sudo -n $ipt -w -S) || return 1
+    rules=$(on_client ssh robinhost sudo -n $ipt -w -S) || return 1
     grep -qx -- '-A INPUT ! -i lo -p udp -j DROP' <<<"$rules" &&
       grep -qx -- '-A OUTPUT ! -o lo -p udp -j DROP' <<<"$rules" ||
       { echo "$ipt rules:"; echo "$rules"; return 1; }
   done
 }
-t_sudo_is_narrow() { expect_fail on_client ssh rjhost sudo -n true; }
+t_sudo_is_narrow() { expect_fail on_client ssh robinhost sudo -n true; }
 t_udp_blocked_in() { expect_fail udp_delivered host "$HOST_IP" 5002; }
 t_udp_blocked_out() { expect_fail udp_delivered client "$(client_ip)" 5003; }
 t_udp_loopback() { udp_delivered host 127.0.0.1 5004 || { echo "loopback UDP on the host is blocked"; return 1; }; }
-t_ssh_after_block() { expect_eq ok on_client ssh rjhost echo ok; }
+t_ssh_after_block() { expect_eq ok on_client ssh robinhost echo ok; }
 
 selftest() {
   local dir=$OUT/selftest status=0
@@ -315,7 +315,7 @@ selftest() {
   wait_for_sshd
 
   log "selftest: ssh, sftp, forwarding"
-  check "ssh: key login as rj (uid 1000)" t_ssh_login
+  check "ssh: key login as robin (uid 1000)" t_ssh_login
   check "ssh: root login refused" t_no_root
   check "ssh: only publickey offered" t_no_password
   check "sftp: put and get round-trip" t_sftp
@@ -328,8 +328,8 @@ selftest() {
   log "selftest: UDP blocking"
   check "udp client -> host delivered before blocking" t_udp_open_in
   check "udp host -> client delivered before blocking" t_udp_open_out
-  check "rj blocks UDP over ssh with sudo iptables" t_block_over_ssh
-  check "rj's sudo allows nothing but iptables" t_sudo_is_narrow
+  check "robin blocks UDP over ssh with sudo iptables" t_block_over_ssh
+  check "robin's sudo allows nothing but iptables" t_sudo_is_narrow
   check "udp client -> host dropped" t_udp_blocked_in
   check "udp host -> client dropped" t_udp_blocked_out
   check "udp on host loopback still works" t_udp_loopback
@@ -362,7 +362,7 @@ main() {
   done
   command -v podman >/dev/null || die "podman not found"
   if [[ " ${scenarios[*]} " != " selftest " ]]; then
-    [[ -x $RJ_BIN ]] || die "CLI binary $RJ_BIN not found (build it, or set RJ_BIN)"
+    [[ -x $ROBIN_BIN ]] || die "CLI binary $ROBIN_BIN not found (build it, or set ROBIN_BIN)"
   fi
 
   trap cleanup EXIT

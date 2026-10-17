@@ -5,7 +5,7 @@ package x11
 import (
 	"github.com/jezek/xgb/xproto"
 
-	"github.com/yasinmiran/remotejump/internal/agent/keysym"
+	"github.com/yasinmiran/robin/internal/agent/keysym"
 )
 
 const xkModeSwitch = 0xff7e

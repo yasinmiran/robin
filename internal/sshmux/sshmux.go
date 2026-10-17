@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yasinmiran/remotejump/internal/tail"
+	"github.com/yasinmiran/robin/internal/tail"
 )
 
 // Options configures every ssh invocation of a Master.
@@ -263,14 +263,14 @@ func controlDir() (string, error) {
 	if runtime.GOOS != "linux" {
 		limit = 104
 	}
-	const worst = len("/rj-4294967295/" + controlName + ".0123456789abcdef")
+	const worst = len("/robin-4294967295/" + controlName + ".0123456789abcdef")
 	var lastErr error
 	for _, base := range []string{os.TempDir(), "/tmp"} {
 		// ssh expands % tokens in the control path.
 		if len(base)+worst >= limit || strings.Contains(base, "%") {
 			continue
 		}
-		dir, err := os.MkdirTemp(base, "rj-")
+		dir, err := os.MkdirTemp(base, "robin-")
 		if err == nil {
 			return dir, nil
 		}

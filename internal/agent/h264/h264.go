@@ -145,7 +145,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/yasinmiran/remotejump/internal/agent/yuv"
+	"github.com/yasinmiran/robin/internal/agent/yuv"
 )
 
 // FrameType classifies an encoded frame.

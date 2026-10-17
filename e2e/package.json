@@ -1,5 +1,5 @@
 {
-  "name": "remotejump-e2e",
+  "name": "robin-e2e",
   "private": true,
   "scripts": {
     "test": "playwright test"

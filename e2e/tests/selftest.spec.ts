@@ -30,7 +30,7 @@ test('Chrome lists H.264 (Constrained Baseline, packetization-mode 1) for WebRTC
 });
 
 // Receives an H.264 track from a canvas in the same page, shaped like a
-// remotejump session: the receiving side offers recvonly with H.264 preferred.
+// robin session: the receiving side offers recvonly with H.264 preferred.
 async function startLoopback(page: Page) {
   await page.setContent(`<!doctype html>
     <body style="margin:0;background:#222">
@@ -53,8 +53,8 @@ async function startLoopback(page: Page) {
       ctx.fillRect((t * 11) % 600, 200, 40, 40);
     };
     // A timer, not requestAnimationFrame: headless pages may throttle rAF.
-    setInterval(() => g.animate && g.paint(`rj-e2e frame ${++t}`), 33);
-    g.paint('rj-e2e');
+    setInterval(() => g.animate && g.paint(`robin-e2e frame ${++t}`), 33);
+    g.paint('robin-e2e');
 
     const track = canvas.captureStream(30).getVideoTracks()[0];
     const sender = new RTCPeerConnection();
@@ -107,7 +107,7 @@ test('Chrome decodes an H.264 WebRTC loopback and the frame helpers measure it',
   await page.evaluate(() => {
     const g = window as any;
     g.animate = false;
-    g.paint('rj-e2e $');
+    g.paint('robin-e2e $');
   });
   expect(await waitForStillFrame(page, '#screen'), 'picture settles').toBe(true);
   await sampleFrame(page, '#screen', { save: 'still' });
@@ -117,7 +117,7 @@ test('Chrome decodes an H.264 WebRTC loopback and the frame helpers measure it',
   expect(noise).toBeLessThan(CHANGED_FLOOR / 3);
 
   // A short line of small text, about what typing one command adds to an xterm.
-  await page.evaluate(() => (window as any).paint('rj-e2e $ echo rj-e2e > /tmp/x'));
+  await page.evaluate(() => (window as any).paint('robin-e2e $ echo robin-e2e > /tmp/x'));
   const region = { x: 0, y: 20, width: 640, height: 30 };
   await expect
     .poll(async () => (await sampleFrame(page, '#screen', { compare: 'still', region })).changed, { message: 'typed-size text shows as change' })
@@ -138,10 +138,10 @@ test('clientPoint honours object-fit', () => {
   expect(clientPoint({ ...box, fit: 'none' }, 0, 0)).toEqual({ x: 260 + 0.5, y: 20 + 0.5 });
 });
 
-// Starts Xvfb, openbox and xterm as rj with a run dir laid out like the agent's.
+// Starts Xvfb, openbox and xterm as robin with a run dir laid out like the agent's.
 const FAKE_SESSION = String.raw`
 set -e
-d=$HOME/.cache/remotejump/run/selftest
+d=$HOME/.cache/robin/run/selftest
 mkdir -p "$d"
 touch "$d/Xauthority"
 xauth -q -f "$d/Xauthority" add :7 . "$(od -An -tx1 -N16 /dev/urandom | tr -d ' \n')"
@@ -158,7 +158,7 @@ setsid -f xterm </dev/null >"$d/xterm.log" 2>&1
 test('host helpers work against a display laid out like the agent leaves it', async () => {
   await host.ssh(`bash -c ${host.shellQuote(FAKE_SESSION)}`);
   const dir = await host.runDir();
-  expect(dir).toBe('/home/rj/.cache/remotejump/run/selftest');
+  expect(dir).toBe('/home/robin/.cache/robin/run/selftest');
   expect(await host.displayGeometry()).toEqual({ width: 1280, height: 720 });
   await expect.poll(host.terminal, { message: 'xterm mapped', timeout: 10_000 }).not.toBeNull();
   await host.retitleTerminal();
@@ -166,14 +166,14 @@ test('host helpers work against a display laid out like the agent leaves it', as
   await host.onDisplay('xdotool mousemove 100 200');
   expect(await host.mouseLocation()).toEqual({ x: 100, y: 200 });
 
-  await host.setClipboard("rj-clip 'quoted'");
-  expect(await host.clipboard()).toBe("rj-clip 'quoted'");
+  await host.setClipboard("robin-clip 'quoted'");
+  expect(await host.clipboard()).toBe("robin-clip 'quoted'");
 
   const procs = await host.leftovers();
   for (const name of ['Xvfb', 'openbox', 'xterm']) expect(procs).toContain(name);
 
-  await host.ssh(`pkill -u rj -x xterm; pkill -u rj -x openbox; pkill -u rj -x Xvfb; rm -rf ${dir}`);
+  await host.ssh(`pkill -u robin -x xterm; pkill -u robin -x openbox; pkill -u robin -x Xvfb; rm -rf ${dir}`);
   await expect.poll(host.leftovers, { message: 'leftovers after kill', timeout: 5_000 }).toBe('');
   expect(await host.exists(dir)).toBe(false);
-  expect((await host.sshRaw('rj-rundir')).code).toBe(1);
+  expect((await host.sshRaw('robin-rundir')).code).toBe(1);
 });
