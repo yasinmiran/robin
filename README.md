@@ -357,6 +357,9 @@ to print the comparison the ADR quotes.
   changes; that is not a stall.
 - Through the SSH tunnel video is TCP inside TCP, so a lossy link shows
   head-of-line stalls that direct UDP would not.
+- Chrome is the only browser the tests drive. Edge and Safari share its
+  WebRTC stack; Firefox, which offers no playout-delay extension, has not
+  been tried.
 - The macOS client builds but has not been run; neither has building the
   agents from a Mac.
 - One browser per session; a second tab is refused until the first closes.
