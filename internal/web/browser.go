@@ -17,7 +17,11 @@ const writeTimeout = 10 * time.Second
 
 // Browser is one authenticated page connected over the websocket.
 type Browser struct {
-	c       *websocket.Conn
+	c *websocket.Conn
+	// ctx is the websocket request's context, which derives from Serve's.
+	// The handler that made the Browser returns only after Done, so ctx
+	// lasts as long as the connection, or until Serve's ctx ends; reads and
+	// writes stop then.
 	ctx     context.Context
 	in      chan protocol.Message
 	done    chan struct{}
