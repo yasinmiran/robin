@@ -60,8 +60,9 @@ type Report struct {
 	SessionBus, PulseSocket, PipeWireSocket string
 	// FFmpegEncoders are the host ffmpeg's hardware H.264 encoders, such as
 	// h264_vaapi. GstPlugins are the GStreamer plugins found among pipewire,
-	// vaapi, va, nvcodec and x264.
-	FFmpegEncoders, GstPlugins []string
+	// vaapi, va, nvcodec, x264, videoconvertscale, videoconvert, y4m and
+	// y4menc, in the GstDirs that exist.
+	FFmpegEncoders, GstPlugins, GstDirs []string
 
 	// AgentDir is where the agent can be stored and executed, or "" when no
 	// candidate passed. AgentDirRejected says why each failed candidate did.
@@ -261,6 +262,8 @@ func (r *Report) set(key, val string) error {
 		r.FFmpegEncoders = appendNew(r.FFmpegEncoders, val)
 	case "gst_plugin":
 		r.GstPlugins = appendNew(r.GstPlugins, val)
+	case "gst_dir":
+		r.GstDirs = appendNew(r.GstDirs, val)
 
 	case "agentdir":
 		r.AgentDir = val

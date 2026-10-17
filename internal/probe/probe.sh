@@ -228,8 +228,9 @@ attachable() {
 }
 
 # encoders reports hardware H.264 encoders reachable through the host's
-# ffmpeg or GStreamer. Plugin files are checked rather than gst-inspect,
-# which can spend seconds building its registry.
+# ffmpeg or GStreamer, and the GStreamer plugins Wayland attach reads the
+# screen with. Plugin files are checked rather than gst-inspect, which can
+# spend seconds building its registry.
 encoders() {
 	if have ffmpeg; then
 		limit ffmpeg -hide_banner -encoders 2>/dev/null | while IFS= read -r line; do
@@ -239,7 +240,9 @@ encoders() {
 		done
 	fi
 	for d in /usr/lib/*/gstreamer-1.0 /usr/lib64/gstreamer-1.0 /usr/lib/gstreamer-1.0; do
-		for p in pipewire vaapi va nvcodec x264; do
+		[ -d "$d" ] || continue
+		kv gst_dir "$d"
+		for p in pipewire vaapi va nvcodec x264 videoconvertscale videoconvert y4m y4menc; do
 			[ -f "$d/libgst$p.so" ] && kv gst_plugin "$p"
 		done
 	done
