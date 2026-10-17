@@ -76,7 +76,7 @@ Bundling Xvfb was rejected: it is a dynamically linked server that also needs
 across distros. And a host that lacks Xvfb also lacks any desktop to run in
 it, so the user is installing packages either way; `xvfb` is one more name on
 the same line. The probe reports exactly what is missing and the CLI prints
-the install command. Attach mode (Phase 2) needs none of it.
+the install command. Attach mode needs none of it.
 
 The agent picks the lightest session it finds: Xfce, else a window manager
 with a terminal beside it, else a bare terminal. The terminal starts first
@@ -168,3 +168,66 @@ keysym, adjusts Shift and AltGr around the press, and binds a spare keycode
 when the remote keymap has no such keysym. Named keys (Enter, arrows, F-keys,
 modifiers) map from `key`/`code` to keysyms and are held until key-up. This
 keeps text right regardless of the client's layout.
+
+### Attach mode: the user's own X11 desktop, left as found
+
+`--attach :N` streams an X display that is already running for the user,
+usually the one they are logged in to at the machine. Nothing is spawned. The
+agent opens one X connection and needs nothing installed beyond the desktop
+itself, and the session ends when that connection does, from either side.
+
+The agent tries the cookie for that display in `$XAUTHORITY`, then
+`~/.Xauthority` (startx, LightDM), `/run/user/$UID/gdm/Xauthority`, mutter's
+`.mutter-Xwaylandauth.*` and SDDM's `xauth_*`, and after those a connection
+with no cookie it holds. xgb cannot send an empty authorization, so that last
+attempt presents a zero cookie; the server refuses it and falls back to
+host-based access, which is what an `xhost +si:localuser:$USER` grant opens.
+
+For `--attach auto` the CLI takes the display of the user's active local X11
+session from logind. Under GDM that field is empty, because GDM registers the
+session before its X server starts (the GNOME workstation used for the checks below
+reports exactly that), so the fallback is the one socket in `/tmp/.X11-unix`
+the user owns. A Wayland session would pass that test too, through Xwayland,
+whose root window shows none of the desktop; with an active Wayland session
+`auto` refuses to guess and lists what it found.
+
+The desktop's size belongs to its user. `Resize` returns `ErrFixedSize` and
+the page scales the video into its window. A desktop larger than the session
+maximum (a 4K monitor, or the 5120x2640 three-monitor desktop of that
+workstation) is shrunk in the stream, in the same pass as the BGRX to I420
+conversion, with each output pixel averaging the exact source area it covers.
+Sampling instead drops strokes of text at ratios like 4:3. 3840x2160 to
+1920x1080 takes about 6 ms on four threads (`BenchmarkScale4KTo1080p` in
+`internal/agent/yuv`). The page reports pointer positions in video pixels, and
+the stream maps each one to the desktop pixel under the centre of that video
+pixel, using the scale of the frames it is sending.
+
+Leaving the desktop as found took two changes to how input touches the
+server. Autorepeat used to go off when the agent connected; it now goes off at
+the first key, so a session that only watches changes nothing. And it goes off
+differently. A spawned display switches it off per key, which survives Xfce
+turning the global switch back on as it starts, but per-key changes set every
+key's explicit-repeat flag in the XKB keymap and putting the bits back does not
+clear them: after a session, `xkbcomp -xkb` printed `repeat= Yes` for every
+key. An attached display gets the global switch instead, turned off again at
+each key press in case the desktop has turned it on, and its keymap dump is
+byte-identical afterwards (`TestAttachLeavesTheDesktopAsFound`), spare keycodes
+bound for missing characters included. Clipboard text the agent still serves
+at close goes to the session's clipboard manager over the freedesktop.org
+`SAVE_TARGETS` handshake when something owns `CLIPBOARD_MANAGER`; without one
+the selection loses its owner, as it does when any X client exits.
+
+Capture skips idle ticks on the word of DAMAGE on the root window, and a
+compositing manager redirects every window offscreen, so drawing in a window
+reaches the root only when the compositor repaints. With xcompmgr and picom's
+xrender backend that repaint raises DAMAGE (`TestDamageUnderCompositor` runs
+both in the X test container). GNOME's mutter on X11 does the same: watched
+view-only for 130 s on a live, locked session (Intel graphics, 5120x2640),
+DAMAGE reported each minute's clock redraw and nothing else. GL compositors on
+drivers that render around the X server's drawing code may not, and a screen
+whose changes DAMAGE never sees would freeze in the browser. So a screen DAMAGE
+calls idle is grabbed anyway once a second and compared by hash with the last
+frame; the first difference switches Capture to comparing every frame, which
+still keeps an idle screen from being encoded. In the 130 s on mutter, 128 of
+those rechecks found nothing DAMAGE had missed. Each cost one MIT-SHM grab of
+2 to 4 ms and a hash of the 54 MB frame, about 13 ms.

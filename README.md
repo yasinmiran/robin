@@ -35,6 +35,7 @@ remotejump gui alice@build-box
 remotejump gui build-box -- -p 2222 -i ~/.ssh/other_key   # anything after -- goes to ssh
 remotejump gui --max-size 2560x1440 --fps 60 workstation
 remotejump gui --no-browser lab-node                     # print the URL instead of opening it
+remotejump gui --attach auto workstation                 # the desktop you are logged in to there
 ```
 
 Your `~/.ssh/config`, agent, `ProxyJump`, `ProxyCommand`, certificates and
@@ -42,6 +43,23 @@ password or 2FA prompts all work as they do for plain `ssh`, because it is
 plain `ssh`: one ControlMaster connection carries the probe, the agent upload,
 the agent itself and the tunnel. The browser tab can be reloaded; the remote
 session survives until you press Ctrl+C in the terminal.
+
+With `--attach`, nothing new is started: the agent streams an X11 desktop that
+is already running on the host, usually the one you are logged in to at the
+machine. `auto` picks the display of your active session, or the one X server
+you own when the session does not name one (GDM never does), and `:1` names a
+display outright. The cookie comes from wherever startx, LightDM, GDM, mutter
+or SDDM left it; failing that, the agent gets in the way an
+`xhost +si:localuser:$USER` grant allows.
+
+That desktop stays shared: whoever sits at the machine sees the pointer move.
+It keeps its own resolution, too. Your browser window scales the picture
+instead of resizing the screen, and a desktop larger than `--max-size` (a 4K
+monitor, several monitors side by side) is scaled down to fit, with the pointer
+mapped back onto the full-size screen. Ending the session closes the agent's X
+connection and nothing else; autorepeat and the keys it bound for characters
+missing from the keymap go back to how they were, and clipboard text pasted
+from the browser is handed to the desktop's clipboard manager if one runs.
 
 | Flag | Default | |
 |---|---|---|
@@ -51,6 +69,7 @@ session survives until you press Ctrl+C in the terminal.
 | `--hidpi` | off | size the remote display in the browser's device pixels: sharp text on Retina screens, about four times the pixels to encode. Raise `--max-size` to go fully native |
 | `--max-kbps` | `10000` | video bitrate ceiling; congestion control works below it |
 | `--session` | lightest found | command to run in the display, e.g. `startxfce4` |
+| `--attach` | | stream a desktop already running on the host: `auto`, or an X display such as `:1` |
 | `--stun` | Google's public server | STUN servers for NAT traversal, comma-separated, or `none` |
 | `--no-browser` | | print the page URL on stdout instead of opening a browser |
 | `--listen` | `127.0.0.1:0` | address for the local page; loopback only |
@@ -67,6 +86,8 @@ install line for that distro, for example:
 ```
 sudo apt install xvfb openbox xterm
 ```
+
+Attaching to a running desktop needs none of that, only the desktop.
 
 No GPU or monitor is needed; the session renders in software, and a light
 window manager keeps that cheap. Software H.264 at 1080p30 costs one to two
@@ -94,8 +115,9 @@ Firefox with its OpenH264 plugin. Chrome is what the end-to-end tests drive.
 4. The agent starts on an exec channel. Its stdin and stdout carry signaling
    as JSON lines, with a heartbeat both ways so a dead connection tears the
    session down instead of leaving a display running.
-5. It starts Xvfb, a session, captures with MIT-SHM and DAMAGE, encodes with
-   openh264, and sends over a Pion peer connection. Keyboard, pointer,
+5. It starts Xvfb and a session, or attaches to the X display already running,
+   captures with MIT-SHM and DAMAGE, encodes with openh264, and sends over a
+   Pion peer connection. Keyboard, pointer,
    clipboard and resize come back over a data channel and go in through XTest
    and RandR.
 6. The CLI serves the page on loopback and relays offer, answer and
@@ -132,19 +154,28 @@ make e2e      # the whole thing: podman host, Playwright and Chrome client
 make check    # all three
 ```
 
-`make e2e` runs three scenarios against a fresh host container each: direct
-UDP, UDP blocked on the host from the start, and UDP blocked mid-session. Each
+`make e2e` runs four scenarios against a fresh host container each: direct
+UDP, UDP blocked on the host from the start, UDP blocked mid-session, and
+`--attach auto` against a desktop the test user already has running. Each
 asserts that decoded frames are not black and change after typing, that typed
 text runs in the remote shell, pointer position, clipboard both ways, resize,
-which transport ICE picked, and that nothing survives the CLI. See
+which transport ICE picked, and that nothing survives the CLI; for the attached
+desktop that means a resize leaves its screen alone and it outlives the session
+with the same processes, autorepeat and keymaps. See
 [e2e/README.md](e2e/README.md). Rootless containers cannot shape bandwidth,
 so congestion control is tested separately over a shaped virtual link
 (`go test ./internal/agent/peer -run Congestion`).
 
 ## Known limits
 
-- Spawn mode only for now: it starts a new headless session rather than
-  attaching to a desktop already running on the host.
+- Attaching works with X11 desktops. On a Wayland session `--attach auto`
+  will not guess, because the X server you own there is Xwayland, whose
+  screen holds none of the desktop.
+- An attached desktop arrives as one picture of all its monitors, gaps
+  included, scaled to fit `--max-size`, so on a wide multi-monitor desktop
+  small text gets hard to read.
+- While attached, autorepeat is off for the whole display, keys held at the
+  machine itself included, until the session ends.
 - No audio, and the remote cursor shape is not shown; the browser keeps its
   own arrow.
 - Clipboard is plain text up to 255 KiB in each direction.
