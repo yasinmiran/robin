@@ -312,6 +312,11 @@ The agent tries the cookie for that display in `$XAUTHORITY`, then
 with no cookie it holds. xgb cannot send an empty authorization, so that last
 attempt presents a zero cookie; the server refuses it and falls back to
 host-based access, which is what an `xhost +si:localuser:$USER` grant opens.
+Before any of that the agent asks the kernel (`SO_PEERCRED`) who listens on
+the socket and goes no further unless it is the user or root. Any local user
+can create a socket in `/tmp/.X11-unix` for a display nobody runs, or claim
+the abstract name of one whose server has no socket file, and whatever
+answers there would get the cookie, the keystrokes and the clipboard.
 
 For `--attach auto` the CLI first looks for a Wayland session: when logind
 says the active one is Wayland (or there is no logind) and the probe sees a

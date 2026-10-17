@@ -313,19 +313,38 @@ func dial(display, xauthority string) (*xgb.Conn, error) {
 	return x, nil
 }
 
-// dialSocket connects to the unix socket of local display number num.
+// dialSocket connects to the unix socket of local display number num, if
+// this user or root runs the server behind it. Anyone can create a socket in
+// /tmp/.X11-unix or claim an abstract name nobody holds, and the server the
+// agent connects to gets the cookie, the keystrokes and the clipboard.
 func dialSocket(num string) (net.Conn, error) {
 	sock := "/tmp/.X11-unix/X" + num
-	nc, err := net.Dial("unix", sock)
-	if err != nil {
-		// Servers that cannot write /tmp/.X11-unix still listen on the
-		// abstract socket of the same name.
-		var aerr error
-		if nc, aerr = net.Dial("unix", "@"+sock); aerr != nil {
-			return nil, err
+	var dialErr, ownerErr error
+	// Servers that cannot write /tmp/.X11-unix still listen on the abstract
+	// socket of the same name.
+	for _, addr := range []string{sock, "@" + sock} {
+		nc, err := net.Dial("unix", addr)
+		if err != nil {
+			if dialErr == nil {
+				dialErr = err
+			}
+			continue
+		}
+		uid, err := serverUID(nc)
+		if err == nil && slices.Contains(trustedServerUIDs, uid) {
+			return nc, nil
+		}
+		nc.Close()
+		if err != nil {
+			ownerErr = fmt.Errorf("%s: cannot tell who runs it: %w", addr, err)
+		} else {
+			ownerErr = fmt.Errorf("%s is served by uid %d, not by this user or root", addr, uid)
 		}
 	}
-	return nc, nil
+	if ownerErr != nil {
+		return nil, ownerErr
+	}
+	return nil, dialErr
 }
 
 // displayNumber extracts "7" from ":7", ":7.0" or "unix:7".
