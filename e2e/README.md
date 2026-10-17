@@ -113,4 +113,4 @@ key mounts are owned by root inside the container, and sshd reads
 `authorized_keys` as the user, which is why the public key is mounted 0644
 under `/etc/ssh/authorized_keys.d/` instead of into `~rj/.ssh`. iptables works
 with `--cap-add NET_ADMIN`. CNI networks here have no DNS between containers,
-so the host gets a static IP (`RJ_E2E_SUBNET`, `RJ_E2E_HOST_IP` override it).
+so the host gets a static IP (`RJ_E2E_SUBNET`, `RJ_E2E_HOST_IP` override it). `RJ_E2E_ID` (default `rj-e2e`) names the network, containers and images, so two checkouts can run at once with distinct subnets.

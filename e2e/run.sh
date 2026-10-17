@@ -16,13 +16,15 @@ ROOT=$(dirname "$E2E")
 OUT=$E2E/out
 KEYS=$OUT/keys
 
-NET=rj-e2e
+# RJ_E2E_ID names the network, containers and images, so runs from several
+# checkouts can proceed at once given distinct subnets.
+NET=${RJ_E2E_ID:-rj-e2e}
 SUBNET=${RJ_E2E_SUBNET:-10.89.42.0/24}
 HOST_IP=${RJ_E2E_HOST_IP:-10.89.42.10}
-HOST_CTR=rj-e2e-host
-CLIENT_CTR=rj-e2e-client
-HOST_IMG=localhost/rj-e2e-host
-CLIENT_IMG=localhost/rj-e2e-client
+HOST_CTR=$NET-host
+CLIENT_CTR=$NET-client
+HOST_IMG=localhost/$NET-host
+CLIENT_IMG=localhost/$NET-client
 
 RJ_BIN=${RJ_BIN:-bin/remotejump-linux-amd64}
 [[ $RJ_BIN = /* ]] || RJ_BIN=$ROOT/$RJ_BIN
