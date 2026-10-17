@@ -13,6 +13,7 @@ package relay
 import (
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 
@@ -122,12 +123,18 @@ func (r *Relay) keep(candidate string) bool {
 	if candidate == "" {
 		return true
 	}
-	switch transportOf(candidate) {
-	case "udp":
-		return r.policy.Transport != Tunnel
-	default:
+	// The agent gathers loopback because its tunnel listener lives there. A
+	// loopback UDP candidate would point the browser at its own machine.
+	if transportOf(candidate) != "udp" || isLoopback(candidate) {
 		return false
 	}
+	return r.policy.Transport != Tunnel
+}
+
+func isLoopback(candidate string) bool {
+	f := strings.Fields(candidate)
+	ip := net.ParseIP(f[4])
+	return ip != nil && ip.IsLoopback()
 }
 
 func (r *Relay) filterSDP(sdp string) string {

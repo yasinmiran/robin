@@ -11,6 +11,8 @@ import (
 const (
 	udpHost  = "candidate:1 1 udp 2130706431 10.89.0.2 50000 typ host"
 	udpSrflx = "candidate:2 1 udp 1694498815 203.0.113.7 50000 typ srflx raddr 10.89.0.2 rport 50000"
+	udpLoop  = "candidate:5 1 udp 2130706431 127.0.0.1 50001 typ host"
+	udpLoop6 = "candidate:6 1 udp 2130706431 ::1 50002 typ host"
 	tcpHost  = "candidate:3 1 tcp 1671430143 10.89.0.2 41000 typ host tcptype passive"
 	tcpLoop  = "candidate:4 1 TCP 1671430143 127.0.0.1 41000 typ host tcptype passive"
 	fpA      = "sha-256 AB:CD:EF"
@@ -35,7 +37,7 @@ func cand(c string) protocol.Message {
 }
 
 func TestCandidateSelection(t *testing.T) {
-	all := []string{udpHost, udpSrflx, tcpHost, tcpLoop, ""}
+	all := []string{udpHost, udpSrflx, udpLoop, udpLoop6, tcpHost, tcpLoop, ""}
 	for _, tc := range []struct {
 		name string
 		p    Policy
