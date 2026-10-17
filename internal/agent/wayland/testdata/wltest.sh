@@ -1,26 +1,29 @@
 #!/bin/sh
 # Runs the tests of internal/agent/wayland, the agent session test that
-# attaches to Wayland and the capture of PipeWire's sound, against a headless
-# GNOME session (mutter, PipeWire, xdg-desktop-portal-gnome) in a rootless
-# podman container. Extra arguments go to every test binary:
+# attaches to Wayland and the capture of PipeWire's sound, against headless
+# Wayland desktops in rootless podman containers. Extra arguments go to every
+# test binary:
 #
 #   internal/agent/wayland/testdata/wltest.sh
 #   internal/agent/wayland/testdata/wltest.sh -test.run=Attach
+#   WLTEST_DESKTOPS=gnome49 internal/agent/wayland/testdata/wltest.sh
 #
+# WLTEST_DESKTOPS (default: all of them) picks the desktops:
+#   gnome46  mutter 46 and xdg-desktop-portal-gnome on Ubuntu 24.04 (Containerfile)
+#   gnome49  mutter 49 and xdg-desktop-portal-gnome on Fedora 43 (fedora.Containerfile)
 # WLTEST_GOFLAGS (default -race) goes to go test -c.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../../../.." && pwd)
-image=localhost/robin-wltest
-name=robin-wltest-$$
+desktops=${WLTEST_DESKTOPS:-gnome46 gnome49}
 out=$(mktemp -d)
+name=
 cleanup() {
-	podman rm -f "$name" >/dev/null 2>&1 || true
+	[ -z "$name" ] || podman rm -f "$name" >/dev/null 2>&1 || true
 	rm -rf "$out"
 }
 trap cleanup EXIT
 
-podman build -q -t "$image" -f "$here/Containerfile" "$here" >/dev/null
 cd "$root"
 go test ${WLTEST_GOFLAGS--race} -c -o "$out/wayland.test" ./internal/agent/wayland
 go test ${WLTEST_GOFLAGS--race} -c -o "$out/agent.test" ./internal/agent
@@ -36,25 +39,56 @@ cp "$here/probe.py" "$here/session.sh" "$out/"
 # The session runs as the image's unprivileged user, not the owner of $out.
 chmod -R a+rX "$out"
 
-podman run -d --name "$name" --init --shm-size=512m -v "$out:/t:ro" "$image" sleep infinity >/dev/null
-# There is no logind or systemd here: mutter falls back to its dummy login
-# manager once /run/systemd/seats is gone, and wants a system bus of some kind.
-podman exec -u root "$name" sh -c '
-	rm -rf /run/systemd/seats
-	mkdir -p /run/user/1000 /run/dbus
-	chown 1000:1000 /run/user/1000
-	chmod 700 /run/user/1000
-	dbus-daemon --config-file=/etc/robin-system-bus.conf --fork'
-podman exec "$name" /t/session.sh
+# run_desktop builds a desktop's image, boots its session and runs every
+# test binary against it.
+run_desktop() {
+	desktop=$1
+	case $desktop in
+	gnome46) file=Containerfile image=localhost/robin-wltest ;;
+	gnome49) file=fedora.Containerfile image=localhost/robin-wltest-gnome49 ;;
+	*)
+		echo "wltest.sh: no desktop $desktop" >&2
+		return 1
+		;;
+	esac
+	uid=1000
+	echo "==== $desktop"
+	# Run by ID: another checkout may retag the image between build and run.
+	id=$(podman build -q -t "$image" -f "$here/$file" "$here")
+	name=robin-wltest-$desktop-$$
+	podman run -d --name "$name" --init --shm-size=512m -v "$out:/t:ro" "$id" sleep infinity >/dev/null
+	# There is no logind or systemd here: mutter falls back to its dummy login
+	# manager once /run/systemd/seats is gone, and wants a system bus of some kind.
+	podman exec -u root "$name" sh -c "
+		rm -rf /run/systemd/seats
+		mkdir -p /run/user/$uid /run/dbus
+		chown $uid:$uid /run/user/$uid
+		chmod 700 /run/user/$uid
+		dbus-daemon --config-file=/etc/robin-system-bus.conf --fork"
+	podman exec "$name" /t/session.sh
+
+	ok=0
+	for t in "wayland.test" "agent.test -test.run=Wayland" "audio.test -test.run=PipeWire"; do
+		echo "== $desktop: $t"
+		# shellcheck disable=SC2086 # $t is a binary and its own arguments
+		podman exec -w /tmp -e XDG_RUNTIME_DIR=/run/user/$uid -e ROBIN_WAYLAND_PROBE=/t/probe.py -e ROBIN_PIPEWIRE_PULSE=1 \
+			"$name" /t/$t -test.v -test.timeout=5m "$@" || ok=1
+	done
+	if [ "$ok" != 0 ]; then
+		podman exec "$name" sh -c 'tail -n 20 /tmp/session-logs/*.log' >&2 || true
+	fi
+	podman rm -f "$name" >/dev/null 2>&1 || true
+	name=
+	return "$ok"
+}
 
 status=0
-for t in "wayland.test" "agent.test -test.run=Wayland" "audio.test -test.run=PipeWire"; do
-	echo "== $t"
-	# shellcheck disable=SC2086 # $t is a binary and its own arguments
-	podman exec -w /tmp -e XDG_RUNTIME_DIR=/run/user/1000 -e ROBIN_WAYLAND_PROBE=/t/probe.py -e ROBIN_PIPEWIRE_PULSE=1 \
-		"$name" /t/$t -test.v -test.timeout=5m "$@" || status=1
+failed=
+for desktop in $desktops; do
+	if ! run_desktop "$desktop" "$@"; then
+		status=1
+		failed="$failed $desktop"
+	fi
 done
-if [ "$status" != 0 ]; then
-	podman exec "$name" sh -c 'tail -n 20 /tmp/session-logs/*.log' >&2 || true
-fi
+[ -z "$failed" ] || echo "wltest.sh: failed on$failed" >&2
 exit "$status"

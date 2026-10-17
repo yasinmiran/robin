@@ -19,7 +19,9 @@ const (
 	btnLeft  = int32(0x110)
 )
 
-// Where xdg-desktop-portal-gnome 46 puts its controls on a 1280x720 monitor.
+// Where xdg-desktop-portal-gnome puts its controls on a 1280x720 monitor:
+// measured on 46, and still inside them on 49, whose dialog is a few pixels
+// narrower.
 const (
 	toggleX, toggleY = 896, 266 // "Allow Remote Interaction"
 	shareX, shareY   = 922, 132 // "Share"
