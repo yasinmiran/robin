@@ -125,6 +125,9 @@ func Run(ctx context.Context, o Options) error {
 	}
 	log.Info("agent ready", "mode", ready.Mode, "display", ready.Display, "session", ready.Session,
 		"size", fmt.Sprintf("%dx%d", ready.Width, ready.Height), "encoder", ready.Encoder, "audio", ready.Audio)
+	if o.Audio && !ready.Audio {
+		fmt.Fprintf(o.Stderr, "remotejump: no sound from %s: %s\n", o.Dest, ready.AudioError)
+	}
 
 	tunnelPort := 0
 	if ready.TunnelAddr != "" && o.Transport != relay.Direct {
