@@ -40,13 +40,25 @@ Pion does not encode. Options considered:
 | Option | Verdict |
 |---|---|
 | x264 via cgo | Best quality per CPU, but GPL-2.0 would make the agent binary GPL and constrain the project's licence. |
-| openh264 via cgo | BSD-2. Emits Constrained Baseline, which every browser decodes in WebRTC. Has a real-time screen-content mode and runtime bitrate and IDR control, which is exactly what congestion control needs. **Chosen.** |
+| openh264 via cgo | BSD-2. Emits Constrained Baseline, which every browser decodes in WebRTC. Runtime bitrate and IDR control, which is exactly what congestion control needs. **Chosen.** |
 | GStreamer on the host | Needs packages on the host. Rejected. |
 | ffmpeg subprocess | Needs ffmpeg on the host, or shipping a ~80 MB static build. Rejected. |
 
 The C/C++ toolchain is a pinned `zig cc` fetched by the build, targeting
 `x86_64-linux-musl` and `aarch64-linux-musl`. The agent is fully static and
 cross-compiles from Linux or macOS with no containers or root.
+
+The encoder runs in openh264's camera mode with scene-change detection off,
+frame skipping on, and QP allowed from 16 to 51. Screen-content mode looked
+like the obvious fit and lost on measurement (`internal/agent/h264`,
+`TestCompareModes`): it forces scene-change detection, so full-screen motion
+became an IDR on every frame at 18 to 32 Mbit/s whatever the target, and it
+encoded three to four times slower. With its default QP clamp of 26 to 35 it
+also could not follow a bitrate target at all. Frame skipping is what holds the
+target on incompressible content; the skips cluster right after a keyframe,
+while the link is still busy carrying it, so they cost nothing visible. A frame
+rate control drops is encoded again on the next tick, or an idle screen would
+freeze on a stale picture.
 
 Patent note: openh264 built from source is not covered by Cisco's binary
 licence. That is the same position as every other source build of an H.264
@@ -65,6 +77,14 @@ across distros. And a host that lacks Xvfb also lacks any desktop to run in
 it, so the user is installing packages either way; `xvfb` is one more name on
 the same line. The probe reports exactly what is missing and the CLI prints
 the install command. Attach mode (Phase 2) needs none of it.
+
+The agent picks the lightest session it finds: Xfce, else a window manager
+with a terminal beside it, else a bare terminal. The terminal starts first
+and the window manager adopts it. The other order looked natural and was
+broken: openbox sets `_NET_SUPPORTING_WM_CHECK` a few milliseconds after it
+starts but only handles map requests later, and a terminal mapped in that
+window stayed unmanaged and invisible for 12 to 19 seconds (measured in the
+e2e host image, with and without network, so not a DNS stall).
 
 ### X11 in pure Go
 
@@ -90,6 +110,46 @@ on every session alongside the direct UDP host and STUN candidates, and ICE
 priority picks UDP when UDP works. There is no detection step to get wrong.
 The CLI drops any other TCP candidate the agent emits, so TCP media can only
 take the SSH path.
+
+Details that testing settled. The synthesized candidate has priority
+16777215, type preference 0 as for relayed candidates; pair priority uses the
+lower of the two sides, so every tunnel pair ranks below every direct UDP pair
+whatever the browser assigns its own candidates. The agent must gather a
+loopback candidate for its TCP mux to accept the forwarded connection, which
+also gathers loopback UDP candidates; the CLI drops those, since they would
+point the browser at its own machine. The browser learns nothing it should
+not: its host candidates stay mDNS names and the agent sees it as
+peer-reflexive.
+
+Failover needed two more pieces. When UDP dies, Chrome nominates the
+lower-priority tunnel pair within about two seconds, and Pion, as the
+controlled agent, ignores any nomination of lower priority than its current
+pair, so it kept sending into the dead path until ICE failed half a minute
+later. The agent now follows a nomination once its own pair has gone
+disconnected (after 2 s of silence) and the nominated pair has answered a
+check; gating it that way keeps the ordinary startup churn of nominations from
+flipping pairs. And because a path can die in one direction only, which leaves
+the agent's pair looking healthy, the agent sends a heartbeat over the control
+channel every second and the page restarts ICE after 3.5 s without one.
+Measured in the e2e `restart` scenario, media is back over the tunnel about
+three seconds after UDP is dropped.
+
+### Congestion control: GCC with no pacer and a bounded NACK responder
+
+The browser sends transport-wide congestion control feedback; Pion's GCC turns
+it into a target bitrate that the encoder follows. Two Pion defaults had to go,
+both found by streaming through a shaped virtual link (`internal/agent/peer`,
+`TestCongestionControlAdaptsToLink`). The default leaky-bucket pacer queues
+without bound, so whatever was sent while the target fell drained for seconds
+and the delay that added pinned the target at its floor. And the default NACK
+responder resends anything in a 1024-packet buffer as often as it is asked:
+after a startup overshoot the lost packets were resent, lost again and NACKed
+again until retransmissions filled the link, and the loss estimator reported
+93% loss with nothing being lost. The agent sends unpaced (the encoder holds
+the rate) and answers NACKs only for packets younger than a second, at most
+twice each, within a quarter of the target bitrate. A 4x overshooting start
+and a link that drops mid-session now both settle within about 10% of the
+link rate.
 
 ### Trust: the DTLS fingerprint arrives over SSH
 
