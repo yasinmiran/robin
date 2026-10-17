@@ -25,12 +25,12 @@ type contender struct {
 }
 
 // TestCompare prints openh264 and every working VA-API route side by side
-// at 30 fps: at 1080p and 2160p, time per Encode call, CPU per encoded frame
-// in the agent and in the tool, and bitrate against a 2 Mbit/s target; at
-// 1080p, how a 500, 4000, 500 kbit/s target sequence is followed and how long
-// a requested keyframe takes. It is a measuring aid: set RJ_HWENC_COMPARE=1
-// and build with the openh264 tag, as the Makefile builds the agent, to run
-// it.
+// at 30 fps: time per Encode call and CPU per encoded frame, in the agent and
+// in the tool, at 1080p and 2160p; the bitrate each sends against a 2 Mbit/s
+// target; how a 500, 4000, 500 kbit/s target sequence is followed; and how
+// long a requested keyframe takes. It is a measuring aid: set
+// RJ_HWENC_COMPARE=1 and build with the openh264 tag, as the Makefile builds
+// the agent, to run it.
 func TestCompare(t *testing.T) {
 	if os.Getenv("RJ_HWENC_COMPARE") == "" {
 		t.Skip("set RJ_HWENC_COMPARE=1")
@@ -52,13 +52,17 @@ func TestCompare(t *testing.T) {
 		contenders = append(contenders, contender{r.name, func(w, h, fps, bps int) encoder { return newEncoder(&r, w, h, fps, bps) }})
 	}
 
-	for _, size := range [][2]int{{w, h}, {3840, 2160}} {
+	// Cost at a target high enough that nothing is skipped, then the
+	// bitrate each holds against a tight one.
+	for _, run := range []struct {
+		w, h, bps int
+	}{{w, h, 20_000_000}, {3840, 2160, 40_000_000}, {w, h, 2_000_000}} {
 		for _, pat := range patterns {
-			frames := render(pat, size[0], size[1], 30)
+			frames := render(pat, run.w, run.h, 30)
 			for _, c := range contenders {
-				r := measure(t, c.open(size[0], size[1], fps, 2_000_000), frames, 150, fps, nil)
-				t.Logf("%dp %-16s %-44s %5.2f ms/call (p95 %5.2f)  cpu/frame %5.2f ms agent + %5.2f ms tool  %5.0f kbit/s  skipped %3d  idr %d",
-					size[1], pat.name, c.name, r.meanMs, r.p95Ms, r.selfMs, r.toolMs, r.kbps, r.skipped, r.idrs)
+				r := measure(t, c.open(run.w, run.h, fps, run.bps), frames, 150, fps, nil)
+				t.Logf("%dp %2d Mbit/s %-16s %-44s %5.2f ms/call (p95 %5.2f)  cpu/frame %5.2f ms agent + %5.2f ms tool  %5.0f kbit/s  skipped %3d  idr %d",
+					run.h, run.bps/1_000_000, pat.name, c.name, r.meanMs, r.p95Ms, r.selfMs, r.toolMs, r.kbps, r.skipped, r.idrs)
 			}
 		}
 	}
