@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yasinmiran/remotejump/internal/probe"
 	"github.com/yasinmiran/remotejump/internal/protocol"
@@ -71,6 +72,18 @@ func TestAwaitReadyShowsTheAgentError(t *testing.T) {
 	want := "agent: expected start, got \"offer\"\nagent log:\nlevel=ERROR msg=\"session ended\""
 	if err == nil || err.Error() != want {
 		t.Errorf("error %q, want %q", err, want)
+	}
+}
+
+func TestAwaitReadyStopsWithItsContext(t *testing.T) {
+	_, cliW := io.Pipe()
+	cliR, _ := io.Pipe()
+	a := &agentProc{conn: protocol.NewConn(cliR, cliW, 0, 0), log: &tail.Buffer{Max: 1024}}
+	defer a.conn.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	if _, err := a.awaitReady(ctx, "box", io.Discard); err != context.Canceled {
+		t.Errorf("error %v, want context.Canceled", err)
 	}
 }
 

@@ -33,7 +33,7 @@ func TestSessionReportsBrokenEncoder(t *testing.T) {
 		outW.Close()
 	}()
 	cli.Send(protocol.Message{Type: protocol.TypeStart, Start: &protocol.Start{Version: protocol.Version, Encoder: protocol.EncoderVAAPI}})
-	m, err := cli.Recv()
+	m, err := cli.Recv(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

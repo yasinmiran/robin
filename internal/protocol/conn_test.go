@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"context"
 	"errors"
 	"io"
 	"strings"
@@ -35,7 +36,7 @@ func TestConnRoundTrip(t *testing.T) {
 			t.Errorf("send: %v", err)
 		}
 	}()
-	got, err := b.Recv()
+	got, err := b.Recv(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +54,7 @@ func TestConnSkipsPingsAndKeepsAlive(t *testing.T) {
 	// several timeouts; drain a's side so its writes to b never block.
 	go func() {
 		for {
-			if _, err := a.Recv(); err != nil {
+			if _, err := a.Recv(context.Background()); err != nil {
 				return
 			}
 		}
@@ -63,9 +64,28 @@ func TestConnSkipsPingsAndKeepsAlive(t *testing.T) {
 		t.Fatalf("conn died despite pings: %v", err)
 	}
 	go a.Send(Message{Type: TypeBye})
-	got, err := b.Recv()
+	got, err := b.Recv(context.Background())
 	if err != nil || got.Type != TypeBye {
 		t.Fatalf("got %+v, %v; pings must not surface from Recv", got, err)
+	}
+}
+
+func TestConnRecvStopsWithItsContext(t *testing.T) {
+	a, b, cleanup := pipePair(0, 0)
+	defer cleanup()
+
+	late := errors.New("waited long enough")
+	ctx, cancel := context.WithTimeoutCause(context.Background(), 50*time.Millisecond, late)
+	defer cancel()
+	if _, err := b.Recv(ctx); !errors.Is(err, late) {
+		t.Fatalf("Recv = %v, want the context's cause", err)
+	}
+	if err := b.Err(); err != nil {
+		t.Fatalf("an ended context closed the conn: %v", err)
+	}
+	go a.Send(Message{Type: TypeBye})
+	if m, err := b.Recv(context.Background()); err != nil || m.Type != TypeBye {
+		t.Fatalf("next Recv = %+v, %v; want the bye", m, err)
 	}
 }
 
@@ -74,7 +94,7 @@ func TestConnIdleTimeout(t *testing.T) {
 	defer w.Close()
 	c := NewConn(r, io.Discard, 0, 80*time.Millisecond)
 	start := time.Now()
-	_, err := c.Recv()
+	_, err := c.Recv(context.Background())
 	if !errors.Is(err, ErrIdle) {
 		t.Fatalf("want ErrIdle, got %v", err)
 	}
@@ -85,10 +105,10 @@ func TestConnIdleTimeout(t *testing.T) {
 
 func TestConnEOF(t *testing.T) {
 	c := NewConn(strings.NewReader(`{"type":"bye"}`+"\n"), io.Discard, 0, 0)
-	if m, err := c.Recv(); err != nil || m.Type != TypeBye {
+	if m, err := c.Recv(context.Background()); err != nil || m.Type != TypeBye {
 		t.Fatalf("got %+v, %v", m, err)
 	}
-	if _, err := c.Recv(); !errors.Is(err, io.EOF) {
+	if _, err := c.Recv(context.Background()); !errors.Is(err, io.EOF) {
 		t.Fatalf("want EOF, got %v", err)
 	}
 }
@@ -101,7 +121,7 @@ func TestConnRejectsStrayOutput(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := NewConn(strings.NewReader(in), io.Discard, 0, 0)
-			_, err := c.Recv()
+			_, err := c.Recv(context.Background())
 			if err == nil || errors.Is(err, io.EOF) {
 				t.Fatalf("want framing error, got %v", err)
 			}
@@ -112,7 +132,7 @@ func TestConnRejectsStrayOutput(t *testing.T) {
 func TestConnRejectsOversizedLine(t *testing.T) {
 	line := `{"type":"offer","sdp":"` + strings.Repeat("a", MaxLineBytes) + `"}` + "\n"
 	c := NewConn(strings.NewReader(line), io.Discard, 0, 0)
-	_, err := c.Recv()
+	_, err := c.Recv(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "longer") {
 		t.Fatalf("want size error, got %v", err)
 	}

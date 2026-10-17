@@ -279,46 +279,31 @@ func startAgent(ctx context.Context, m *sshmux.Master, path string, verbose bool
 // that come first. A notice that asks the user to act extends the wait by
 // as long as the agent will wait for them.
 func (a *agentProc) awaitReady(ctx context.Context, host string, stderr io.Writer) (*protocol.Ready, error) {
-	type result struct {
-		m   protocol.Message
-		err error
-	}
-	got := make(chan result, 1)
-	recv := func() {
-		m, err := a.conn.Recv()
-		got <- result{m, err}
-	}
-	go recv()
-	deadline := time.NewTimer(readyTimeout)
-	defer deadline.Stop()
+	wait := readyTimeout
 	for {
-		var r result
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-deadline.C:
-			return nil, a.explain(errors.New("agent did not become ready"))
-		case r = <-got:
-		}
-		if r.err == nil && r.m.Type == protocol.TypeNotice && r.m.Notice != nil {
-			if text := noticeText(*r.m.Notice, host); text != "" {
+		waitCtx, cancel := context.WithTimeoutCause(ctx, wait, errors.New("agent did not become ready"))
+		m, err := a.conn.Recv(waitCtx)
+		cancel()
+		if err == nil && m.Type == protocol.TypeNotice && m.Notice != nil {
+			if text := noticeText(*m.Notice, host); text != "" {
 				fmt.Fprintln(stderr, text)
 			}
-			deadline.Reset(time.Duration(r.m.Notice.Wait)*time.Second + readyTimeout)
-			go recv()
+			wait = time.Duration(m.Notice.Wait)*time.Second + readyTimeout
 			continue
 		}
 		switch {
-		case r.err != nil:
-			return nil, a.explain(r.err)
-		case r.m.Type == protocol.TypeError:
-			return nil, a.explain(fmt.Errorf("agent: %s", r.m.Error))
-		case r.m.Type != protocol.TypeReady || r.m.Ready == nil:
-			return nil, a.explain(fmt.Errorf("agent sent %q before ready", r.m.Type))
-		case r.m.Ready.Version != protocol.Version:
-			return nil, fmt.Errorf("agent speaks protocol %d, this CLI speaks %d", r.m.Ready.Version, protocol.Version)
+		case ctx.Err() != nil:
+			return nil, ctx.Err()
+		case err != nil:
+			return nil, a.explain(err)
+		case m.Type == protocol.TypeError:
+			return nil, a.explain(fmt.Errorf("agent: %s", m.Error))
+		case m.Type != protocol.TypeReady || m.Ready == nil:
+			return nil, a.explain(fmt.Errorf("agent sent %q before ready", m.Type))
+		case m.Ready.Version != protocol.Version:
+			return nil, fmt.Errorf("agent speaks protocol %d, this CLI speaks %d", m.Ready.Version, protocol.Version)
 		}
-		return r.m.Ready, nil
+		return m.Ready, nil
 	}
 }
 

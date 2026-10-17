@@ -19,7 +19,7 @@ import (
 // signaling is what the bridge needs from the agent's stdio connection.
 type signaling interface {
 	Send(protocol.Message) error
-	Recv() (protocol.Message, error)
+	Recv(context.Context) (protocol.Message, error)
 }
 
 // browsers yields authenticated page connections, one at a time.
@@ -47,7 +47,7 @@ func (b *bridge) run(ctx context.Context, srv browsers, sshDone <-chan struct{},
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	agentErr := make(chan error, 1)
-	go func() { agentErr <- b.fromAgent() }()
+	go func() { agentErr <- b.fromAgent(ctx) }()
 
 	accepted := make(chan *web.Browser)
 	go func() {
@@ -102,9 +102,9 @@ func (b *bridge) run(ctx context.Context, srv browsers, sshDone <-chan struct{},
 	}
 }
 
-func (b *bridge) fromAgent() error {
+func (b *bridge) fromAgent(ctx context.Context) error {
 	for {
-		m, err := b.agent.Recv()
+		m, err := b.agent.Recv(ctx)
 		if err != nil {
 			return err
 		}

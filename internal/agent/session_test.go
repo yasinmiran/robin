@@ -99,7 +99,7 @@ func startAgent(t *testing.T, configure ...func(*Options)) *harness {
 func (h *harness) route() {
 	defer close(h.msgs)
 	for {
-		m, err := h.cli.Recv()
+		m, err := h.cli.Recv(context.Background())
 		if err != nil {
 			return
 		}

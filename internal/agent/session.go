@@ -199,10 +199,10 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 
 	msgs := make(chan protocol.Message)
 	go func() {
+		defer close(msgs)
 		for {
-			m, err := conn.Recv()
+			m, err := conn.Recv(ctx)
 			if err != nil {
-				close(msgs)
 				return
 			}
 			select {
@@ -508,32 +508,18 @@ func (s *session) forwardAudio(ctx context.Context, src AudioSource) {
 }
 
 func awaitStart(ctx context.Context, conn *protocol.Conn) (protocol.Start, error) {
-	got := make(chan protocol.Message, 1)
-	errc := make(chan error, 1)
-	go func() {
-		m, err := conn.Recv()
-		if err != nil {
-			errc <- err
-			return
-		}
-		got <- m
-	}()
-	select {
-	case <-ctx.Done():
-		return protocol.Start{}, ctx.Err()
-	case err := <-errc:
+	ctx, cancel := context.WithTimeoutCause(ctx, startTimeout, errors.New("no start message from the CLI"))
+	defer cancel()
+	m, err := conn.Recv(ctx)
+	switch {
+	case err != nil:
 		return protocol.Start{}, err
-	case <-time.After(startTimeout):
-		return protocol.Start{}, errors.New("no start message from the CLI")
-	case m := <-got:
-		if m.Type != protocol.TypeStart || m.Start == nil {
-			return protocol.Start{}, fail(conn, fmt.Errorf("expected start, got %q", m.Type))
-		}
-		if m.Start.Version != protocol.Version {
-			return protocol.Start{}, fail(conn, fmt.Errorf("the CLI speaks protocol %d, this agent %d", m.Start.Version, protocol.Version))
-		}
-		return normalize(*m.Start), nil
+	case m.Type != protocol.TypeStart || m.Start == nil:
+		return protocol.Start{}, fail(conn, fmt.Errorf("expected start, got %q", m.Type))
+	case m.Start.Version != protocol.Version:
+		return protocol.Start{}, fail(conn, fmt.Errorf("the CLI speaks protocol %d, this agent %d", m.Start.Version, protocol.Version))
 	}
+	return normalize(*m.Start), nil
 }
 
 // normalize clamps the CLI's request to what the agent will do.

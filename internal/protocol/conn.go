@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -75,12 +76,16 @@ func (c *Conn) Send(m Message) error {
 
 // Recv returns the next non-ping message. After the stream ends or fails it
 // returns the cause: io.EOF for a clean end, ErrIdle, or a framing error.
-func (c *Conn) Recv() (Message, error) {
+// When ctx ends first it returns context.Cause(ctx), and the next message
+// waits for a later Recv.
+func (c *Conn) Recv(ctx context.Context) (Message, error) {
 	select {
 	case m := <-c.in:
 		return m, nil
 	case <-c.done:
 		return Message{}, c.Err()
+	case <-ctx.Done():
+		return Message{}, context.Cause(ctx)
 	}
 }
 
