@@ -569,3 +569,22 @@ key themselves at the rate the compositor announces, so passing the
 browser's repeats on as presses would double them. Wheel input goes as
 discrete steps, one per 100 browser pixels as on X11: smooth scroll's sign
 differs between GNOME and KDE, discrete steps do not.
+
+## Verification parked
+
+Two checks are parked by decision (2026-10-18), not forgotten. Both need
+hardware the test workstation cannot offer without changes the owner chose to
+leave for later.
+
+- NVENC on NVIDIA hardware. The workstation has an NVIDIA GPU and the 535
+  driver's userspace, but no kernel module for its running kernel, and
+  installing one needs root on a Puppet-managed machine. NVENC is tested
+  against stand-in tools only, and `--encoder auto` prefers VA-API over it
+  for that reason. To close it: install `linux-modules-nvidia-535-$(uname -r)`,
+  load `nvidia`, run `ROBIN_HWENC_REQUIRE=nvenc make test` and one 4K session
+  with `--encoder nvenc`.
+- The macOS client and Safari. Every CLI package, tests included, compiles
+  and passes `go vet` for darwin/arm64, but none of it has run on a Mac, and
+  Safari's picture is unverified because Playwright's Linux WebKit renders no
+  remote WebRTC video. To close it: run `dist/robin-darwin-arm64 gui` from a
+  Mac against a Linux host and open the page in Safari and Chrome.
