@@ -9,6 +9,7 @@ import (
 
 	"github.com/jezek/xgb/xproto"
 
+	"github.com/yasinmiran/robin/internal/agent/display"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
@@ -137,6 +138,36 @@ func TestViewportInput(t *testing.T) {
 		if x, y := pointer(); x != tc.wantX || y != tc.wantY {
 			t.Errorf("%s: move to %d,%d put the pointer at %d,%d, want %d,%d", tc.name, tc.x, tc.y, x, y, tc.wantX, tc.wantY)
 		}
+	}
+}
+
+// BenchmarkCaptureThreeMonitors grabs and hashes, as Capture does each tick
+// once DAMAGE proved unreliable, the 5120x2640 root of a desktop with two
+// 2560x1440 screens and a laptop panel, and then just one of the screens.
+func BenchmarkCaptureThreeMonitors(b *testing.B) {
+	for _, tc := range []struct {
+		name string
+		view Rect
+	}{
+		{"root 5120x2640", Rect{}},
+		{"monitor 2560x1440", Rect{W: 2560, H: 1440}},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			tx := startXWith(b, display.Options{Session: "sleep 1000", MaxWidth: 5120, MaxHeight: 2640})
+			if w, h := tx.c.Size(); w != 5120 || h != 2640 {
+				b.Fatalf("display is %dx%d", w, h)
+			}
+			tx.c.SetViewport(tc.view)
+			w, h := tx.c.ViewSize()
+			b.SetBytes(int64(w * h * 4))
+			for b.Loop() {
+				f, _, err := tx.c.Capture(true)
+				if err != nil {
+					b.Fatal(err)
+				}
+				pixelHash(f.Pix[:f.Stride*f.Height])
+			}
+		})
 	}
 }
 

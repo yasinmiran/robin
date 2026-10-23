@@ -39,7 +39,10 @@ func startXWith(t testing.TB, o display.Options) *testX {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	o.RunDir, o.MaxWidth, o.MaxHeight = t.TempDir(), maxW, maxH
+	o.RunDir = t.TempDir()
+	if o.MaxWidth == 0 || o.MaxHeight == 0 {
+		o.MaxWidth, o.MaxHeight = maxW, maxH
+	}
 	d, err := display.Spawn(ctx, o)
 	if err != nil {
 		t.Fatal(err)
