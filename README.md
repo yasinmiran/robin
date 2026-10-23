@@ -63,8 +63,16 @@ or SDDM left it; failing that, the agent gets in the way an
 That desktop stays shared: whoever sits at the machine sees the pointer move.
 It keeps its own resolution, too. Your browser window scales the picture
 instead of resizing the screen, and a desktop larger than `--max-size` (a 4K
-monitor, several monitors side by side) is scaled down to fit, with the pointer
-mapped back onto the full-size screen. Ending the session closes the agent's X
+monitor) is scaled down to fit, with the pointer mapped back onto the
+full-size screen.
+
+A desktop of several monitors shows one of them at a time, starting with the
+primary one; `--monitor` picks another by name (`--monitor DP-2`) or by its
+number in `xrandr --listmonitors` order (`--monitor 2`), and `--monitor all`
+shows every monitor as one picture. While connected, the status tab at the
+top of the page lists the monitors, with their sizes, and switches between
+them. Three monitors side by side in one picture would be shrunk until text
+is unreadable, which is why one monitor is the default. Ending the session closes the agent's X
 connection and nothing else; autorepeat and the keys it bound for characters
 missing from the keymap go back to how they were, and clipboard text pasted
 from the browser is handed to the desktop's clipboard manager if one runs.
@@ -83,6 +91,7 @@ host cannot provide sound the session runs without it, and the CLI says why.
 | `--encoder` | `auto` | `auto` encodes on the host's GPU where it pays and in software elsewhere; `software`, `vaapi` or `nvenc` insist on one; see [Hardware encoding](#hardware-encoding) |
 | `--session` | lightest found | command to run in the display, e.g. `startxfce4` |
 | `--attach` | | stream a desktop already running on the host: `auto`, `wayland` for your Wayland session, or an X display such as `:1` |
+| `--monitor` | `primary` | the monitor of an attached X11 desktop to show first: a name such as `DP-2`, its number, or `all`; the page switches between them. Wayland shows the monitor picked in its sharing dialog |
 | `--audio` | `true` | stream the desktop's sound; `--audio=false` leaves it out |
 | `--stun` | Google's public server | STUN servers for NAT traversal, comma-separated, or `none` |
 | `--no-browser` | | print the page URL on stdout instead of opening a browser |
@@ -309,7 +318,9 @@ node, and is skipped, with a line saying so, on a machine without one.
 
 `make e2e` runs four scenarios against a fresh host container each: direct
 UDP, UDP blocked on the host from the start, UDP blocked mid-session, and
-`--attach auto` against a desktop the test user already has running. Each
+`--attach auto` against a two-monitor desktop the test user already has
+running, where the page has to start on the primary monitor and switch to
+the other and to both. Each
 asserts that decoded frames are not black and change after typing, that
 keystrokes after a 20 s pause reach the screen within 400 ms, that typed
 text runs in the remote shell, pointer position, clipboard both ways, resize,
@@ -371,9 +382,11 @@ to print the comparison the ADR quotes.
 - KDE Plasma shares its screen only while KWin composites with OpenGL. With
   KWin's QPainter fallback, used where it finds no GPU to render with, the
   portal refuses to start and the session ends with "Start failed".
-- An attached X11 desktop arrives as one picture of all its monitors, gaps
-  included, scaled to fit `--max-size`, so on a wide multi-monitor desktop
-  small text gets hard to read.
+- An attached X11 desktop shows one monitor at a time in one browser tab;
+  there is no window per monitor. With `all`, every monitor arrives as one
+  picture, gaps included, scaled to fit `--max-size`, so small text gets
+  hard to read. Monitors come from RandR 1.5; an X server older than that
+  shows the whole desktop.
 - Attached to X11, autorepeat is off for the whole display, keys held at the
   machine itself included, until the session ends.
 - Text pasted from the browser into an attached desktop outlives the session

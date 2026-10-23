@@ -49,7 +49,7 @@ cannot leak into the next one. The tests run in order against one session.
 | `direct` | open | the session comes up on UDP |
 | `blocked` | UDP dropped (except loopback) before the CLI starts | ICE-TCP through the SSH forward carries the whole session; the selected remote candidate is `127.0.0.1` |
 | `restart` | open, then UDP dropped mid-session | the page notices, restarts ICE and recovers onto TCP within 15 s (`ROBIN_RESTART_TIMEOUT_MS`; typically about 3 s), and input still works afterwards |
-| `attach` | open | `--attach auto` finds and streams the desktop the `robin` user already has running (`robin-live`: Xvfb on `:5` at 1280x800 with its cookie in `~/.Xauthority`, an xterm and openbox, started over ssh before the CLI) and leaves it as it was |
+| `attach` | open | `--attach auto` finds and streams the desktop the `robin` user already has running (`robin-live`: Xvfb on `:5` at 2304x800 split into two monitors with `xrandr --setmonitor`, its cookie in `~/.Xauthority`, an xterm and openbox, started over ssh before the CLI) and leaves it as it was |
 | `wayland` | open, Wayland host image | `--attach auto` finds the `robin` user's GNOME Wayland session (`robin-wayland start`: mutter with a 1280x720 virtual monitor, PipeWire with pipewire-pulse, the GNOME portal and a fullscreen probe window, started over ssh before the CLI), the portal's consent dialog is answered once, and a second run restores without it; see below |
 | `firefox` | open | the direct scenario in Playwright's Firefox with the OpenH264 plugin: every check passes |
 | `webkit` | open | the direct scenario in Playwright's WebKit (Safari's WebRTC stack): H.264 negotiates and decodes, keyboard, clipboard, resize, sound, UDP and teardown work; see below for what it cannot show |
@@ -74,8 +74,8 @@ The four X11 scenarios also check, in this order:
    and a host `xclip -i` shows up in `robin.lastRemoteClipboard`.
 7. **Resize**: a 1000x700 viewport turns into a 1000x700 video and a 1000x700
    display (`xdotool getdisplaygeometry`) within 10 s. In `attach` the desktop
-   keeps its size instead: video and display stay 1280x800 and only the video
-   element shrinks.
+   keeps its size instead: the video stays at the primary monitor's 1280x800,
+   the display at 2304x800, and only the video element shrinks.
 8. **Sound**: the CLI reported no missing sound, the page shows the speaker
    toggle muted and receives audio packets, and once the toggle is clicked,
    noise played on the host with `paplay` through the session's sound server
@@ -86,10 +86,17 @@ The four X11 scenarios also check, in this order:
    `xterm` or `pulseaudio` runs as `robin` and the agent's run dir is gone. Stdout must have held
    nothing but the URL. Set `ROBIN_SIGINT_PID_ONLY=1` to signal only the CLI.
    In `attach` the agent and its run dir go while the `robin` user's desktop stays:
-   `robin-live state` (the same Xvfb, openbox and xterm, display size, autorepeat
-   and a hash of each keymap) must match what `robin-live start` saved before the
-   CLI ran. A test just before types a character the US keymap lacks (ж) and
-   sees autorepeat off, so the session did change both before putting them back.
+   `robin-live state` (the same Xvfb, openbox and xterm, display size,
+   monitors, autorepeat and a hash of each keymap) must match what
+   `robin-live start` saved before the CLI ran. A test just before types a
+   character the US keymap lacks (ж) and sees autorepeat off, so the session
+   did change both before putting them back.
+
+In `attach` one more check runs before teardown. **Monitors**: the page is
+told about LEFT (1280x800, primary) and RIGHT (1024x768) and starts on LEFT;
+choosing RIGHT and then all from the status tab's menu turns the video into
+1024x768 and then the whole 2304x800 screen scaled to fit, and the pointer
+lands within 2 px of the matching pixel of the monitor shown.
 
 The `wayland` scenario runs `tests/wayland.spec.ts` instead, since its host
 has no X server for xdotool to ask. The probe window logs the input it gets

@@ -361,6 +361,29 @@ Sampling instead drops strokes of text at ratios like 4:3. 3840x2160 to
 the stream maps each one to the desktop pixel under the centre of that video
 pixel, using the scale of the frames it is sending.
 
+Shrinking a whole multi-monitor desktop did not survive its first real use.
+Attached from a laptop to that workstation, the 5120x2640 root (two 2560x1440
+screens with a 1920x1200 panel below them) went out at 1920x990, 2.7 times
+smaller than on the screens, and text could not be read. So an attached
+desktop shows one RandR 1.5 monitor at a time: the primary by default, any
+other by `--monitor` or from the page, or `all` for the old single picture.
+The X11 connection keeps a viewport rectangle; capture copies only that part
+of the root with MIT-SHM, pointer positions count from its corner, and the
+picture still shrinks when one monitor exceeds the session maximum. DAMAGE
+now reports bounding boxes, so drawing on a monitor that is not shown costs
+no capture; an event outside the viewport resets the box, so the next
+drawing anywhere is reported again rather than hidden inside a box that
+already covers it. The viewport also cuts the cost of the hash the agent
+takes when DAMAGE proves unreliable, which that workstation's mutter did:
+grabbing and hashing the 5120x2640 root takes 11.7 ms, one 2560x1440 monitor
+3.2 ms (`BenchmarkCaptureThreeMonitors`), about a third of a core at 30 fps
+against a tenth. Monitors made with `xrandr --setmonitor` change without any
+RandR event, so the agent lists them again every second as well as on each
+CRTC, output or screen change; when the monitor shown goes away, it shows the
+default one and tells the page. One browser tab shows one monitor; a window
+per monitor, as some remote desktop clients open, would take a video track
+per monitor and is not built.
+
 Leaving the desktop as found took two changes to how input touches the
 server. Autorepeat used to go off when the agent connected; it now goes off at
 the first key, so a session that only watches changes nothing. And it goes off
