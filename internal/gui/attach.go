@@ -89,3 +89,20 @@ func found(r *probe.Report) string {
 	}
 	return fmt.Sprintf("found sessions: %s; X displays: %s", none(sessions), none(displays))
 }
+
+// monitorNote says which monitor of an attached desktop the page shows, for
+// a desktop with more than one.
+func monitorNote(r *protocol.Ready) string {
+	if len(r.Monitors) < 2 {
+		return ""
+	}
+	if r.Monitor == protocol.MonitorAll {
+		return fmt.Sprintf(", showing all %d monitors as one picture (switch in the page)", len(r.Monitors))
+	}
+	for _, m := range r.Monitors {
+		if m.Name == r.Monitor {
+			return fmt.Sprintf(", showing monitor %s (%dx%d), one of %d (switch in the page)", m.Name, m.W, m.H, len(r.Monitors))
+		}
+	}
+	return ""
+}

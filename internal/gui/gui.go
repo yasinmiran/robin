@@ -38,7 +38,10 @@ type Options struct {
 	Session             string
 	// Attach streams a running desktop instead of spawning one: an X11
 	// display, "auto", or protocol.AttachWayland.
-	Attach  string
+	Attach string
+	// Monitor is the monitor of an attached X11 desktop to show first; see
+	// protocol.Start.Monitor.
+	Monitor string
 	Audio   bool
 	Encoder string
 	// HiDPI sizes the remote display in the browser's device pixels.
@@ -145,7 +148,8 @@ func Run(ctx context.Context, o Options) (err error) {
 		return err
 	}
 	log.Info("agent ready", "mode", ready.Mode, "display", ready.Display, "session", ready.Session,
-		"size", fmt.Sprintf("%dx%d", ready.Width, ready.Height), "encoder", ready.Encoder, "audio", ready.Audio)
+		"size", fmt.Sprintf("%dx%d", ready.Width, ready.Height), "monitor", ready.Monitor,
+		"encoder", ready.Encoder, "audio", ready.Audio)
 	if ready.EncoderError != "" {
 		log.Info("encoder fell back to software", "why", ready.EncoderError)
 	}
@@ -185,7 +189,7 @@ func Run(ctx context.Context, o Options) (err error) {
 	if ready.Mode == protocol.ModeAttach {
 		desktop = "attached to " + ready.Display
 	}
-	fmt.Fprintf(o.Stderr, "robin: %s on %s; press Ctrl+C to end the session\n", desktop, o.Dest)
+	fmt.Fprintf(o.Stderr, "robin: %s on %s%s; press Ctrl+C to end the session\n", desktop, o.Dest, monitorNote(ready))
 
 	b := &bridge{
 		agent: ag.conn, relay: relay.New(relay.Policy{Transport: o.Transport, TunnelPort: tunnelPort}),
@@ -225,7 +229,7 @@ func startMessage(o Options, r *probe.Report) (protocol.Start, string) {
 	s := protocol.Start{
 		Version: protocol.Version, MaxWidth: o.MaxWidth, MaxHeight: o.MaxHeight,
 		FPS: o.FPS, MaxKbps: o.MaxKbps, Session: o.Session, STUN: o.STUN,
-		Attach: o.Attach, Audio: o.Audio, Encoder: o.Encoder,
+		Attach: o.Attach, Monitor: o.Monitor, Audio: o.Audio, Encoder: o.Encoder,
 	}
 	small := r.CPUs > 0 && r.CPUs <= protocol.SmallHostCPUs
 	if s.MaxWidth <= 0 || s.MaxHeight <= 0 {
