@@ -129,8 +129,8 @@ func (c *Conn) Input(m protocol.Control) error {
 	case protocol.ControlKey:
 		return k.key(m)
 	case protocol.ControlMove:
-		w, h := c.Size()
-		x, y := min(max(m.X, 0), w-1), min(max(m.Y, 0), h-1)
+		v := c.viewport()
+		x, y := v.X+min(max(m.X, 0), v.W-1), v.Y+min(max(m.Y, 0), v.H-1)
 		xtest.FakeInput(k.x, xproto.MotionNotify, 0, 0, k.root, int16(x), int16(y), 0)
 		return nil
 	case protocol.ControlButton:

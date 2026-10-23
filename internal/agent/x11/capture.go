@@ -112,14 +112,14 @@ func (c *Conn) recheck() (*Frame, bool, error) {
 
 func (c *Conn) grabScreen() error {
 	cp := &c.cap
-	w, h := c.Size()
+	r := c.viewport()
 	// Subtract before copying: anything drawn during the copy then raises a
 	// fresh DAMAGE event and the next Capture picks it up.
 	damage.Subtract(c.x, c.damage, 0, 0)
-	if err := cp.grab(w, h); err != nil {
+	if err := cp.grab(r); err != nil {
 		c.dirty.Store(true)
 		c.sizeStale.Store(true) // the usual cause is a resize we have not seen yet
-		return fmt.Errorf("x11: capture %dx%d: %w", w, h, err)
+		return fmt.Errorf("x11: capture %dx%d+%d+%d: %w", r.W, r.H, r.X, r.Y, err)
 	}
 	cp.grabbed, cp.summed = time.Now(), false
 	return nil
@@ -132,7 +132,9 @@ func (cp *capturer) hash() {
 	}
 }
 
-func (cp *capturer) grab(w, h int) error {
+// grab copies rectangle r of the root into the frame.
+func (cp *capturer) grab(r Rect) error {
+	w, h := r.W, r.H
 	size := w * h * 4
 	if !cp.noSHM {
 		if err := cp.ensureSegment(size); err != nil {
@@ -140,15 +142,15 @@ func (cp *capturer) grab(w, h int) error {
 		}
 	}
 	if cp.noSHM {
-		r, err := xproto.GetImage(cp.x, xproto.ImageFormatZPixmap, xproto.Drawable(cp.root),
-			0, 0, uint16(w), uint16(h), ^uint32(0)).Reply()
+		img, err := xproto.GetImage(cp.x, xproto.ImageFormatZPixmap, xproto.Drawable(cp.root),
+			int16(r.X), int16(r.Y), uint16(w), uint16(h), ^uint32(0)).Reply()
 		if err != nil {
 			return err
 		}
-		cp.frame = Frame{Width: w, Height: h, Stride: w * 4, Pix: r.Data}
+		cp.frame = Frame{Width: w, Height: h, Stride: w * 4, Pix: img.Data}
 		return nil
 	}
-	_, err := shm.GetImage(cp.x, xproto.Drawable(cp.root), 0, 0, uint16(w), uint16(h),
+	_, err := shm.GetImage(cp.x, xproto.Drawable(cp.root), int16(r.X), int16(r.Y), uint16(w), uint16(h),
 		^uint32(0), xproto.ImageFormatZPixmap, cp.seg.id, 0).Reply()
 	if err != nil {
 		return err

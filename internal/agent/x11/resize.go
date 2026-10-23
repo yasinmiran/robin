@@ -24,7 +24,9 @@ func (s *screenRes) init(x *xgb.Conn, root xproto.Window) error {
 	}
 	s.minW, s.minH = int(rng.MinWidth), int(rng.MinHeight)
 	s.maxW, s.maxH = int(rng.MaxWidth), int(rng.MaxHeight)
-	return randr.SelectInputChecked(x, root, randr.NotifyMaskScreenChange).Check()
+	// CRTC and output changes move or remove monitors.
+	return randr.SelectInputChecked(x, root,
+		randr.NotifyMaskScreenChange|randr.NotifyMaskCrtcChange|randr.NotifyMaskOutputChange).Check()
 }
 
 // Resize switches the screen to w x h, clamped to the range the server

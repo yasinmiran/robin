@@ -44,8 +44,18 @@ type Conn struct {
 	dirty  atomic.Bool
 	cap    capturer
 
+	// view is the part of the root that is captured and that pointer
+	// positions refer to; the zero Rect is all of it.
+	viewMu sync.Mutex
+	view   Rect
+
 	resizeMu sync.Mutex
 	scr      screenRes
+
+	randr15      bool          // the server lists monitors (RandR 1.5)
+	randrChanged chan struct{} // see MonitorsChanged
+	atomMu       sync.Mutex
+	atomNames    map[xproto.Atom]string
 
 	kb     keyboard
 	clip   clipboard
@@ -111,7 +121,7 @@ func Attach(display string, xauthorities []string) (*Conn, string, error) {
 }
 
 func newConn(x *xgb.Conn, display string) (*Conn, error) {
-	c := &Conn{x: x, loopDone: make(chan struct{})}
+	c := &Conn{x: x, loopDone: make(chan struct{}), randrChanged: make(chan struct{}, 1)}
 	if err := c.init(); err != nil {
 		x.Close()
 		return nil, fmt.Errorf("x11: %s: %w", display, err)
@@ -128,15 +138,17 @@ func (c *Conn) init() error {
 	if err := checkPixmapFormat(setup, screen); err != nil {
 		return err
 	}
-	if err := initExtensions(c.x); err != nil {
+	var err error
+	if c.randr15, err = initExtensions(c.x); err != nil {
 		return err
 	}
 
-	var err error
 	if c.damage, err = damage.NewDamageId(c.x); err != nil {
 		return fmt.Errorf("DAMAGE: %w", err)
 	}
-	if err := damage.CreateChecked(c.x, c.damage, xproto.Drawable(c.root), damage.ReportLevelNonEmpty).Check(); err != nil {
+	// Bounding-box reports carry where the screen was drawn on, so drawing
+	// outside the viewport need not cost a capture.
+	if err := damage.CreateChecked(c.x, c.damage, xproto.Drawable(c.root), damage.ReportLevelBoundingBox).Check(); err != nil {
 		return fmt.Errorf("DAMAGE: %w", err)
 	}
 	c.dirty.Store(true)
@@ -161,32 +173,35 @@ func (c *Conn) init() error {
 	return nil
 }
 
-func initExtensions(x *xgb.Conn) error {
+// initExtensions sets up every extension the Conn needs and reports whether
+// RandR is new enough (1.5) to list monitors.
+func initExtensions(x *xgb.Conn) (randr15 bool, err error) {
 	if err := xfixes.Init(x); err != nil {
-		return fmt.Errorf("XFIXES: %w", err)
+		return false, fmt.Errorf("XFIXES: %w", err)
 	}
 	if _, err := xfixes.QueryVersion(x, 5, 0).Reply(); err != nil {
-		return fmt.Errorf("XFIXES: %w", err)
+		return false, fmt.Errorf("XFIXES: %w", err)
 	}
 	if err := damage.Init(x); err != nil {
-		return fmt.Errorf("DAMAGE: %w", err)
+		return false, fmt.Errorf("DAMAGE: %w", err)
 	}
 	if _, err := damage.QueryVersion(x, 1, 1).Reply(); err != nil {
-		return fmt.Errorf("DAMAGE: %w", err)
+		return false, fmt.Errorf("DAMAGE: %w", err)
 	}
 	if err := xtest.Init(x); err != nil {
-		return fmt.Errorf("XTEST: %w", err)
+		return false, fmt.Errorf("XTEST: %w", err)
 	}
 	if _, err := xtest.GetVersion(x, 2, 2).Reply(); err != nil {
-		return fmt.Errorf("XTEST: %w", err)
+		return false, fmt.Errorf("XTEST: %w", err)
 	}
 	if err := randr.Init(x); err != nil {
-		return fmt.Errorf("RandR: %w", err)
+		return false, fmt.Errorf("RandR: %w", err)
 	}
-	if _, err := randr.QueryVersion(x, 1, 3).Reply(); err != nil {
-		return fmt.Errorf("RandR: %w", err)
+	v, err := randr.QueryVersion(x, 1, 5).Reply()
+	if err != nil {
+		return false, fmt.Errorf("RandR: %w", err)
 	}
-	return nil
+	return v.MajorVersion > 1 || v.MinorVersion >= 5, nil
 }
 
 // checkPixmapFormat makes sure captures come back as 32-bit little-endian
@@ -263,10 +278,20 @@ func (c *Conn) loop() {
 		}
 		switch e := ev.(type) {
 		case damage.NotifyEvent:
-			c.dirty.Store(true)
+			if c.inView(e.Area) {
+				c.dirty.Store(true)
+			} else {
+				// Drawn outside the viewport. Starting a new bounding box
+				// keeps the next drawing anywhere reported, instead of
+				// hidden inside a box that already covers it.
+				damage.Subtract(c.x, c.damage, 0, 0)
+			}
 		case randr.ScreenChangeNotifyEvent:
 			c.sizeStale.Store(true)
 			c.dirty.Store(true)
+			c.signalRandR()
+		case randr.NotifyEvent:
+			c.signalRandR()
 		case xproto.MappingNotifyEvent:
 			if e.Request != xproto.MappingPointer {
 				c.kb.stale.Store(true)
