@@ -3,8 +3,8 @@
 # running before robin comes along.
 #
 #   robin-live start   start Xvfb on :5 with its cookie in ~/.Xauthority, as
-#                   startx does, then xterm, openbox and the user's
-#                   pulseaudio; save its state
+#                   startx does, split into two monitors, then xterm,
+#                   openbox and the user's pulseaudio; save its state
 #   robin-live state   print what an attached session must leave as it found it
 #   robin-live before  print the state saved at start
 set -euo pipefail
@@ -16,6 +16,7 @@ state() {
   export DISPLAY=:$num XAUTHORITY=$HOME/.Xauthority
   echo "Xvfb $(pgrep -u robin -x Xvfb) openbox $(pgrep -u robin -x openbox) xterm $(pgrep -u robin -x xterm) pulseaudio $(pgrep -u robin -x pulseaudio)"
   echo "geometry $(xdotool getdisplaygeometry)"
+  echo "monitors $(xrandr --listmonitors | tail -n +2 | tr -s ' ' | tr '\n' ';')"
   xset q | sed -n '/auto repeat:/p;/auto repeating keys:/,/bell percent/p' | sed 's/ *bell percent.*//;s/ *key click.*//'
   echo "core keymap $(xmodmap -pke | sha256sum | cut -c1-16)"
   echo "xkb keymap $(xkbcomp -xkb "$DISPLAY" - 2>/dev/null | sha256sum | cut -c1-16)"
@@ -27,11 +28,16 @@ start() {
   xauth -q -f "$HOME/.Xauthority" add ":$num" . "$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
   export DISPLAY=:$num XAUTHORITY=$HOME/.Xauthority
   # setsid -f and no inherited descriptors, or the ssh that runs this never returns.
-  setsid -f Xvfb ":$num" -screen 0 1280x800x24 -auth "$XAUTHORITY" -nolisten tcp </dev/null >"$dir/Xvfb.log" 2>&1
+  # A wide screen for two monitors: LEFT 1280x800, the primary, and RIGHT
+  # 1024x768 beside it, the way a laptop with an external screen looks.
+  # -noreset keeps them when the last client of the moment disconnects.
+  setsid -f Xvfb ":$num" -screen 0 2304x800x24 -noreset -auth "$XAUTHORITY" -nolisten tcp </dev/null >"$dir/Xvfb.log" 2>&1
   for _ in $(seq 100); do
     xdpyinfo >/dev/null 2>&1 && break
     sleep 0.1
   done
+  xrandr --setmonitor '*LEFT' 1280/339x800/212+0+0 screen
+  xrandr --setmonitor RIGHT 1024/271x768/203+1280+0 none
   # The terminal first: openbox adopts it (see the ADR on spawn order).
   setsid -f xterm -geometry 80x24+60+60 </dev/null >"$dir/xterm.log" 2>&1
   xdotool search --sync --onlyvisible --class xterm >/dev/null

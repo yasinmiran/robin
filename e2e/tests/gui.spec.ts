@@ -423,8 +423,9 @@ if (SCENARIO === 'attach') {
       return { w: e.videoWidth, h: e.videoHeight, box: e.getBoundingClientRect().width };
     });
     const g = await host.displayGeometry();
+    // The video shows the primary monitor of robin-live's two.
     expect(`video ${v.w}x${v.h}, display ${g.width}x${g.height}`).toBe(
-      `video ${desk.width}x${desk.height}, display ${desk.width}x${desk.height}`,
+      `video 1280x800, display ${desk.width}x${desk.height}`,
     );
     expect(v.box, 'the video element shrank with the viewport').toBeLessThanOrEqual(1000);
   });
@@ -445,6 +446,53 @@ if (SCENARIO === 'attach') {
       .not.toBe('0');
     expect(await host.onDisplay(`sh -c 'xset q | grep -o "auto repeat: *[a-z]*"'`)).toMatch(/off$/);
     await page.keyboard.press('Backspace');
+  });
+
+  // robin-live runs two monitors: LEFT 1280x800 (primary) and RIGHT 1024x768
+  // beside it on a 2304x800 screen.
+  test('attach: the page shows the primary monitor, switches to the other and to all, and points on the one shown', async () => {
+    const monitors = () => page.evaluate(() => (window as any).robin.monitors);
+    const videoSize = () => page.$eval(SCREEN, (el) => `${(el as HTMLVideoElement).videoWidth}x${(el as HTMLVideoElement).videoHeight}`);
+    await expect.poll(async () => (await monitors())?.current, { message: 'the page was told the monitors' }).toBe('LEFT');
+    const listed = (await monitors()).list
+      .map((m: any) => `${m.name} ${m.w}x${m.h}+${m.x}+${m.y}${m.primary ? ' primary' : ''}`)
+      .sort();
+    expect(listed).toEqual(['LEFT 1280x800+0+0 primary', 'RIGHT 1024x768+1280+0']);
+
+    const pick = async (name: string) => {
+      await page.mouse.move(300, 4); // near the top edge, where the status tab comes out
+      const button = page.locator('#monitor');
+      await expect(button).toBeVisible();
+      await button.click();
+      await expect(page.locator('#monitor-menu [role="menuitemradio"]')).toHaveCount(3);
+      await page.locator(`#monitor-menu [data-name="${name}"]`).click();
+      await expect(page.locator('#monitor-menu')).toBeHidden();
+    };
+    const pointerLands = async (vx: number, vy: number, want: { x: number; y: number }) => {
+      const p = await pagePoint(page, SCREEN, vx, vy);
+      await page.mouse.move(p.x, p.y);
+      await expect
+        .poll(async () => {
+          const m = await host.mouseLocation();
+          return Math.abs(m.x - want.x) <= 2 && Math.abs(m.y - want.y) <= 2 ? 'there' : `${m.x},${m.y}`;
+        }, { message: `pointer near ${want.x},${want.y}` })
+        .toBe('there');
+    };
+
+    await expect(page.locator('#monitor .label')).toHaveText('LEFT');
+    await pick('RIGHT');
+    await expect.poll(videoSize, { message: 'the video takes RIGHT\'s size' }).toBe('1024x768');
+    await expect.poll(async () => (await monitors())?.current).toBe('RIGHT');
+    await pointerLands(100, 100, { x: 1380, y: 100 });
+
+    await pick('all');
+    // 2304x800 shrinks to fit the session's 1920x1080 at most.
+    await expect.poll(videoSize, { message: 'the video shows the whole screen, scaled' }).toMatch(/^19(18|20)x666$/);
+    await expect(page.locator('#monitor .label')).toHaveText('All monitors');
+
+    await pick('LEFT');
+    await expect.poll(videoSize).toBe('1280x800');
+    await pointerLands(100, 100, { x: 100, y: 100 });
   });
 
   test('teardown: SIGINT ends the CLI and leaves the attached desktop as it found it', async ({}, testInfo) => {
