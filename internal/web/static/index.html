@@ -26,6 +26,14 @@
       <span class="stat" id="fps"></span>
       <span class="stat" id="bitrate"></span>
     </span>
+    <span class="monitors" hidden>
+      <button id="monitor" type="button" data-keys="local" aria-haspopup="menu" aria-expanded="false" aria-controls="monitor-menu" title="Choose the monitor to show">
+        <svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="9" rx="1.5"/><path d="M5.5 14h5M8 11.5V14"/></svg>
+        <span class="label"></span>
+        <svg class="caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg>
+      </button>
+      <span id="monitor-menu" class="menu" role="menu" aria-label="Monitors" hidden></span>
+    </span>
     <span class="controls">
       <button id="sound" type="button" aria-label="Sound" aria-pressed="false" title="Turn sound on" hidden>
         <svg class="off" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6h2.5L8 3v10l-3.5-3H2z"/><path d="M10.5 5.75l4.5 4.5M15 5.75l-4.5 4.5"/></svg>

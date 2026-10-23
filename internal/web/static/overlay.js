@@ -43,6 +43,10 @@ export class Overlay {
   #scrim = document.getElementById('scrim');
   #fullscreen = document.getElementById('fullscreen');
   #sound = document.getElementById('sound');
+  #monitors = this.#hud.querySelector('.monitors');
+  #monitorButton = document.getElementById('monitor');
+  #monitorMenu = document.getElementById('monitor-menu');
+  #pickMonitor = null;
   #tuckTimer = 0;
   #hovered = false;
 
@@ -67,6 +71,86 @@ export class Overlay {
       this.#fullscreen.setAttribute('aria-label', on ? 'Exit full screen' : 'Enter full screen');
       if (!on) navigator.keyboard?.unlock();
     });
+    this.#monitorButton.addEventListener('click', () => this.#toggleMonitorMenu());
+    this.#monitorMenu.addEventListener('keydown', (e) => this.#onMenuKey(e));
+    this.#monitorButton.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        this.#toggleMonitorMenu(true);
+      }
+    });
+    document.addEventListener('pointerdown', (e) => {
+      if (!this.#monitors.contains(e.target)) this.#closeMonitorMenu(false);
+    });
+  }
+
+  // setMonitors shows the switcher for a desktop of several monitors: the one
+  // shown, and a menu of every monitor plus all of them as one picture. pick
+  // is called with the name of the one chosen.
+  setMonitors(ms, pick) {
+    this.#pickMonitor = pick;
+    const list = ms?.list ?? [];
+    if (list.length < 2 || this.#hud.dataset.state === 'ended') {
+      this.#closeMonitorMenu(false);
+      this.#monitors.hidden = true;
+      return;
+    }
+    const all = boundsOf(list);
+    const current = list.find((m) => m.name === ms.current);
+    this.#monitorButton.querySelector('.label').textContent = current ? current.name : 'All monitors';
+    this.#monitorButton.title = current
+      ? `Showing ${current.name}, ${current.w} × ${current.h}. Choose another monitor`
+      : `Showing all monitors, ${all.w} × ${all.h}. Choose one monitor`;
+    const items = list.map((m) => menuItem(m.name, m.name, `${m.w} × ${m.h}`, m.primary ? 'primary' : '', m.name === ms.current));
+    items.push(menuItem('all', 'All monitors', `${all.w} × ${all.h}`, '', !current));
+    for (const item of items) {
+      item.addEventListener('click', () => {
+        this.#closeMonitorMenu(true);
+        if (item.getAttribute('aria-checked') !== 'true') this.#pickMonitor?.(item.dataset.name);
+      });
+    }
+    this.#monitorMenu.replaceChildren(...items);
+    this.#monitors.hidden = false;
+    this.#reveal();
+  }
+
+  #toggleMonitorMenu(focusFirst = false) {
+    if (!this.#monitorMenu.hidden) {
+      this.#closeMonitorMenu(true);
+      return;
+    }
+    this.#monitorMenu.hidden = false;
+    this.#monitorButton.setAttribute('aria-expanded', 'true');
+    this.#reveal();
+    const items = [...this.#monitorMenu.children];
+    const target = focusFirst ? items[0] : items.find((i) => i.getAttribute('aria-checked') === 'true');
+    target?.focus();
+  }
+
+  // closeMonitorMenu hides the menu. With release set, focus leaves the
+  // switcher too, so the remote gets the keyboard again.
+  #closeMonitorMenu(release) {
+    if (this.#monitorMenu.hidden) return;
+    this.#monitorMenu.hidden = true;
+    this.#monitorButton.setAttribute('aria-expanded', 'false');
+    if (release && this.#monitors.contains(document.activeElement)) document.activeElement.blur();
+    this.#scheduleTuck();
+  }
+
+  #onMenuKey(e) {
+    const items = [...this.#monitorMenu.children];
+    const at = items.indexOf(document.activeElement);
+    if (e.key === 'Escape' || e.key === 'Tab') {
+      e.preventDefault();
+      this.#closeMonitorMenu(true);
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const step = e.key === 'ArrowDown' ? 1 : -1;
+      items[(at + step + items.length) % items.length]?.focus();
+    } else if (e.key === 'Home' || e.key === 'End') {
+      e.preventDefault();
+      items[e.key === 'Home' ? 0 : items.length - 1]?.focus();
+    }
   }
 
   setState(state) {
@@ -80,7 +164,8 @@ export class Overlay {
     this.#label.textContent = title;
     this.#notice.textContent = body;
     this.#notice.hidden = false;
-    for (const el of [this.#transport, this.#picture, this.#fullscreen, this.#sound]) el.hidden = true;
+    this.#closeMonitorMenu(false);
+    for (const el of [this.#transport, this.#picture, this.#fullscreen, this.#sound, this.#monitors]) el.hidden = true;
     this.#scrim.hidden = false;
     this.#reveal();
   }
@@ -124,9 +209,46 @@ export class Overlay {
 
   #scheduleTuck() {
     clearTimeout(this.#tuckTimer);
-    if (this.#hovered || this.#hud.dataset.state !== 'connected') return;
+    if (this.#hovered || !this.#monitorMenu.hidden || this.#hud.dataset.state !== 'connected') return;
     this.#tuckTimer = setTimeout(() => this.#hud.classList.add('tucked'), TUCK_AFTER_MS);
   }
+}
+
+// menuItem is one choice in the monitor menu.
+function menuItem(name, label, size, tag, checked) {
+  const item = document.createElement('button');
+  item.type = 'button';
+  item.setAttribute('role', 'menuitemradio');
+  item.setAttribute('aria-checked', String(checked));
+  item.dataset.name = name;
+  item.dataset.keys = 'local';
+  const check = document.createElement('span');
+  check.className = 'check';
+  check.setAttribute('aria-hidden', 'true');
+  check.textContent = '✓';
+  const title = document.createElement('span');
+  title.textContent = label;
+  if (tag) {
+    const t = document.createElement('span');
+    t.className = 'tag';
+    t.textContent = tag;
+    title.append(t);
+  }
+  const dims = document.createElement('span');
+  dims.className = 'size';
+  dims.textContent = size;
+  item.append(check, title, dims);
+  return item;
+}
+
+// boundsOf is the size of the picture all monitors make together.
+function boundsOf(list) {
+  const x0 = Math.min(...list.map((m) => m.x));
+  const y0 = Math.min(...list.map((m) => m.y));
+  return {
+    w: Math.max(...list.map((m) => m.x + m.w)) - x0,
+    h: Math.max(...list.map((m) => m.y + m.h)) - y0,
+  };
 }
 
 // setMeasure writes alternating value and unit parts, units dimmed.

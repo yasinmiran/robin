@@ -30,6 +30,7 @@ let lastControlAt = 0;
 let statsTimer = 0;
 let signals = Promise.resolve();
 let earlyCandidates = [];
+let monitors = null;
 
 window.robin = {
   get pc() { return pc; },
@@ -39,6 +40,8 @@ window.robin = {
   sendClipboard: (text) => input.sendClipboard(text),
   get lastRemoteClipboard() { return lastRemoteClipboard; },
   get muted() { return video.muted; },
+  get monitors() { return monitors; },
+  showMonitor: (name) => showMonitor(name),
 };
 
 input.attach();
@@ -209,11 +212,22 @@ function onControl(c) {
     if (c.cursor) cursor.apply(c.cursor);
     return;
   }
+  if (c.t === 'monitors') {
+    monitors = c.monitors ?? null;
+    overlay.setMonitors(monitors, showMonitor);
+    return;
+  }
   if (c.t !== 'clipboard') return;
   lastRemoteClipboard = c.text ?? '';
   navigator.clipboard?.writeText(lastRemoteClipboard).catch(() => {
     // Needs focus and permission; the text is kept either way.
   });
+}
+
+// showMonitor asks the agent to show another monitor of the desktop, or
+// all of them for 'all'. The video changes size when the frames do.
+function showMonitor(name) {
+  sendControl({ t: 'monitor', monitor: String(name) });
 }
 
 function setState(s) {

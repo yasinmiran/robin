@@ -140,6 +140,10 @@ export class Input {
 
   #onKey(e, down) {
     if (!this.#active() || e.isComposing) return;
+    // A page control that takes keys, such as the monitor menu, keeps them;
+    // only the release of a key the remote saw pressed still goes out.
+    const local = e.target instanceof Element && e.target.closest('[data-keys="local"]');
+    if (local && (down || !this.#held.has(e.code))) return;
     let { key, code } = e;
     const wasMeta = key === 'Meta' || code === 'MetaLeft' || code === 'MetaRight';
     if (isMac && wasMeta) {

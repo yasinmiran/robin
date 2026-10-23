@@ -190,6 +190,71 @@ body:has(#hud[data-state="reconnecting"]) #wire { opacity: 1; }
 #sound[aria-pressed="true"] .off,
 #sound[aria-pressed="false"] .on { display: none; }
 
+/* The monitor switcher: the monitor shown, and a menu of the others. */
+.monitors { position: relative; display: inline-flex; }
+#monitor {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  margin: 0 -6px;
+  padding: 0 6px;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  border-radius: 7px;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+#monitor:hover,
+#monitor[aria-expanded="true"] { background: var(--veil-edge); }
+#monitor:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+#monitor .caret {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: var(--ink-soft);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: -8px;
+  z-index: 1;
+  display: grid;
+  min-width: 240px;
+  padding: 4px;
+  background: var(--veil);
+  border: 1px solid var(--veil-edge);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(16px) saturate(1.3);
+}
+.menu button {
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  border-radius: 7px;
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.menu button:hover,
+.menu button:focus-visible { background: var(--veil-edge); outline: none; }
+.menu .check { visibility: hidden; color: var(--ok); }
+.menu [aria-checked="true"] .check { visibility: visible; }
+.menu .size { color: var(--ink-soft); }
+.menu .tag { margin-left: 6px; color: var(--ink-soft); font-weight: 400; }
+
 .notice {
   max-width: 42ch;
   margin: 6px 0 4px;
