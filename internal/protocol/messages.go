@@ -78,6 +78,10 @@ type Start struct {
 	// EncoderFallback lets the agent use software when Encoder fails, since
 	// the CLI picked it on its own rather than the user asking for it.
 	EncoderFallback bool `json:"encoderFallback,omitempty"`
+	// Monitor picks what an attached X11 desktop shows first: a monitor's
+	// name, its 1-based number in RandR order, MonitorPrimary or MonitorAll.
+	// Empty means MonitorPrimary. Other desktops have one picture and ignore it.
+	Monitor string `json:"monitor,omitempty"`
 }
 
 // Start limits the CLI fills in when the user names none, and the agent
@@ -121,6 +125,11 @@ type Ready struct {
 	// EncoderError says why the agent fell back to software from the encoder
 	// Start picked.
 	EncoderError string `json:"encoderError,omitempty"`
+	// Monitors lists an attached X11 desktop's monitors, and Monitor names
+	// the one shown (or MonitorAll). Both are empty for a desktop with one
+	// picture.
+	Monitors []Monitor `json:"monitors,omitempty"`
+	Monitor  string    `json:"monitor,omitempty"`
 }
 
 // Notice is something the user has to do or know before the desktop is ready.
@@ -183,6 +192,11 @@ const (
 	// ControlCursor goes from agent to browser when the remote pointer image
 	// changes.
 	ControlCursor ControlType = "cursor"
+	// ControlMonitors goes from agent to browser when the control channel
+	// opens and whenever the desktop's monitors or the one shown change.
+	ControlMonitors ControlType = "monitors"
+	// ControlMonitor goes from browser to agent to show another monitor.
+	ControlMonitor ControlType = "monitor"
 )
 
 // Control is one message on the control data channel. Coordinates are in
@@ -216,6 +230,11 @@ type Control struct {
 
 	// Cursor.
 	Cursor *Cursor `json:"cursor,omitempty"`
+
+	// Monitors, from the agent. Monitor, from the browser: the name of the
+	// monitor to show, or MonitorAll.
+	Monitors *Monitors `json:"monitors,omitempty"`
+	Monitor  string    `json:"monitor,omitempty"`
 }
 
 // Values for Start.Attach, Ready.Mode and Start.Encoder.
@@ -244,3 +263,27 @@ type Cursor struct {
 	// Hidden means the remote pointer is invisible.
 	Hidden bool `json:"hidden,omitempty"`
 }
+
+// Monitor is one monitor of a desktop: a rectangle of it, in pixels.
+type Monitor struct {
+	Name    string `json:"name"`
+	X       int    `json:"x"`
+	Y       int    `json:"y"`
+	W       int    `json:"w"`
+	H       int    `json:"h"`
+	Primary bool   `json:"primary,omitempty"`
+}
+
+// Monitors is a desktop's monitors in RandR order and the one shown.
+type Monitors struct {
+	List []Monitor `json:"list"`
+	// Current is the name of the monitor shown, or MonitorAll.
+	Current string `json:"current"`
+}
+
+// Values for Start.Monitor, Monitors.Current and Control.Monitor besides a
+// monitor's name.
+const (
+	MonitorPrimary = "primary"
+	MonitorAll     = "all"
+)

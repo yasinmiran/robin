@@ -160,11 +160,16 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 	defer s.closePeer()
 
 	width, height := d.desk.Size()
-	if err := conn.Send(protocol.Message{Type: protocol.TypeReady, Ready: &protocol.Ready{
+	ready := &protocol.Ready{
 		Version: protocol.Version, AgentBuild: o.Build, Display: d.name, Session: d.session,
 		Width: width, Height: height, TunnelAddr: ln.Addr().String(),
 		Mode: d.mode, Audio: audio != nil, AudioError: audioErr, Encoder: encoderName, EncoderError: encoderErr,
-	}}); err != nil {
+	}
+	if mm, ok := d.desk.(desktop.MultiMonitor); ok {
+		ms := mm.MonitorState()
+		ready.Monitors, ready.Monitor = ms.List, ms.Current
+	}
+	if err := conn.Send(protocol.Message{Type: protocol.TypeReady, Ready: ready}); err != nil {
 		return err
 	}
 
@@ -181,6 +186,7 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 	run(s.stream.run)
 	run(s.forwardClipboard)
 	run(s.forwardCursor)
+	run(s.forwardMonitors)
 	run(s.heartbeat)
 	if audio != nil {
 		run(func(ctx context.Context) { s.forwardAudio(ctx, audio) })
@@ -319,10 +325,13 @@ func (s *session) currentPeer() (*peer.Peer, error) {
 				s.log.Warn("send candidate", "err", err)
 			}
 		},
-		Control:     s.control,
-		ControlOpen: s.sendCurrentCursor,
-		Keyframe:    s.stream.requestKeyframe,
-		Bitrate:     s.stream.setBitrate,
+		Control: s.control,
+		ControlOpen: func() {
+			s.sendCurrentCursor()
+			s.sendMonitors()
+		},
+		Keyframe: s.stream.requestKeyframe,
+		Bitrate:  s.stream.setBitrate,
 		State: func(st webrtc.PeerConnectionState) {
 			if st == webrtc.PeerConnectionStateConnected {
 				s.desk.Input(protocol.Control{T: protocol.ControlRelease})
@@ -374,6 +383,16 @@ func (s *session) control(m protocol.Control) {
 		}
 		s.log.Info("resized", "w", gw, "h", gh)
 		s.stream.requestKeyframe()
+	case protocol.ControlMonitor:
+		mm, ok := s.desk.(desktop.MultiMonitor)
+		if !ok {
+			return
+		}
+		if err := mm.ShowMonitor(m.Monitor); err != nil {
+			s.log.Warn("show monitor", "err", err)
+			return
+		}
+		s.log.Info("showing monitor", "monitor", m.Monitor)
 	case protocol.ControlClipboard:
 		if len(m.Text) > clipboardSize {
 			s.log.Warn("clipboard from browser too large", "bytes", len(m.Text))
@@ -447,6 +466,43 @@ func (s *session) forwardCursor(ctx context.Context) {
 			s.mu.Unlock()
 			s.sendCurrentCursor()
 		}
+	}
+}
+
+// forwardMonitors tells the page whenever the monitors, or the one shown,
+// change.
+func (s *session) forwardMonitors(ctx context.Context) {
+	mm, ok := s.desk.(desktop.MultiMonitor)
+	if !ok {
+		return
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case _, ok := <-mm.MonitorUpdates():
+			if !ok {
+				return
+			}
+			s.sendMonitors()
+		}
+	}
+}
+
+// sendMonitors shows the page the desktop's monitors and the one shown, for
+// a desktop that has them.
+func (s *session) sendMonitors() {
+	mm, ok := s.desk.(desktop.MultiMonitor)
+	if !ok {
+		return
+	}
+	p := s.currentOrNil()
+	if p == nil {
+		return
+	}
+	ms := mm.MonitorState()
+	if err := p.SendControl(protocol.Control{T: protocol.ControlMonitors, Monitors: &ms}); err != nil && !errors.Is(err, peer.ErrNoControl) {
+		s.log.Debug("send monitors", "err", err)
 	}
 }
 

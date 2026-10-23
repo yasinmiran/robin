@@ -52,3 +52,16 @@ type Desktop interface {
 	Cursor() <-chan protocol.Cursor
 	Close() error
 }
+
+// MultiMonitor is a desktop that spans several monitors and shows one of
+// them, or all of them as one picture, at a time.
+type MultiMonitor interface {
+	// MonitorState returns the monitors and the one shown.
+	MonitorState() protocol.Monitors
+	// MonitorUpdates is signalled whenever MonitorState changes, and closed
+	// when the desktop goes away.
+	MonitorUpdates() <-chan struct{}
+	// ShowMonitor shows the named monitor, or the whole desktop for
+	// protocol.MonitorAll.
+	ShowMonitor(name string) error
+}
