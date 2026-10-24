@@ -83,6 +83,10 @@ type Start struct {
 	// name, its 1-based number in RandR order, MonitorPrimary or MonitorAll.
 	// Empty means MonitorPrimary. Other desktops have one picture and ignore it.
 	Monitor string `json:"monitor,omitempty"`
+	// Curtain and Silent start an attached desktop's private session with
+	// that switch on; see Private. The session fails if it cannot.
+	Curtain bool `json:"curtain,omitempty"`
+	Silent  bool `json:"silent,omitempty"`
 }
 
 // Start limits the CLI fills in when the user names none, and the agent
@@ -131,6 +135,9 @@ type Ready struct {
 	// picture.
 	Monitors []Monitor `json:"monitors,omitempty"`
 	Monitor  string    `json:"monitor,omitempty"`
+	// Private is the private session of an attached desktop; nil for a
+	// spawned one, which nobody sits in front of.
+	Private *Private `json:"private,omitempty"`
 }
 
 // Notice is something the user has to do or know before the desktop is ready.
@@ -236,6 +243,11 @@ type Control struct {
 	// monitor to show, or MonitorAll.
 	Monitors *Monitors `json:"monitors,omitempty"`
 	Monitor  string    `json:"monitor,omitempty"`
+
+	// On, from the browser, for ControlCurtain and ControlSilent. Private,
+	// from the agent.
+	On      bool     `json:"on,omitempty"`
+	Private *Private `json:"private,omitempty"`
 }
 
 // Values for Start.Attach, Ready.Mode and Start.Encoder.
