@@ -410,9 +410,10 @@ body[data-dropping]::after {
 }
 
 /* The microphone and camera switches. Off they sit back like the other
-   icons; on they say so in ink with a red dot, the sign of a live device. */
+   icons; on they say so in ink with a red dot, the sign of a live device.
+   Scoped to their section, so they win over the plain section buttons. */
 .devices { display: flex; gap: 6px; margin-left: -6px; }
-.device {
+.devices .device {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -425,9 +426,9 @@ body[data-dropping]::after {
   font: inherit;
   cursor: pointer;
 }
-.device:hover { color: var(--ink); background: var(--veil-edge); }
-.device:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
-.device svg {
+.devices .device:hover { color: var(--ink); background: var(--veil-edge); box-shadow: none; }
+.devices .device:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.devices .device svg {
   width: 16px;
   height: 16px;
   fill: none;
@@ -436,11 +437,11 @@ body[data-dropping]::after {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.device .live { display: none; width: 6px; height: 6px; border-radius: 50%; background: var(--down); }
-.device[data-state="on"] { color: var(--ink); }
-.device[data-state="on"] .live { display: block; }
-.device[data-state="starting"] { color: var(--wait); }
-.device[data-state="blocked"] { color: var(--down); }
+.devices .device .live { display: none; width: 6px; height: 6px; border-radius: 50%; background: var(--down); }
+.devices .device[data-state="on"] { color: var(--ink); }
+.devices .device[data-state="on"] .live { display: block; }
+.devices .device[data-state="starting"] { color: var(--wait); }
+.devices .device[data-state="blocked"] { color: var(--down); }
 
 .notice {
   max-width: 42ch;
