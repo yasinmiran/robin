@@ -16,6 +16,7 @@ const (
 
 // staticDir is a page with two scripts, a test directory and a non-script.
 func staticDir(t *testing.T) string {
+	t.Helper()
 	dir := t.TempDir()
 	for name, text := range map[string]string{
 		"app.js":             appJS,
@@ -23,12 +24,12 @@ func staticDir(t *testing.T) string {
 		"style.css":          "body {}\n",
 		"test/tools.test.js": "import './tools.js';\n",
 	} {
-		writeFile(t, filepath.Join(dir, name), text)
+		mustWriteFile(t, filepath.Join(dir, name), text)
 	}
 	return dir
 }
 
-func writeFile(t *testing.T, path, text string) string {
+func mustWriteFile(t *testing.T, path, text string) string {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
@@ -45,7 +46,7 @@ func writeCoverage(t *testing.T, path string, scripts ...map[string]any) string 
 	if err != nil {
 		t.Fatal(err)
 	}
-	return writeFile(t, path, string(b))
+	return mustWriteFile(t, path, string(b))
 }
 
 func script(url string, source *string, ranges ...v8Range) map[string]any {
@@ -74,8 +75,9 @@ func TestRunMergesChromeAndNode(t *testing.T) {
 	cov := t.TempDir()
 	// Chrome served app.js and ran all but the if block; it also ran a
 	// script of another page and one from a subdirectory, both ignored.
+	never := strings.Index(appJS, "  never")
 	writeCoverage(t, filepath.Join(cov, "e2e", "direct", "page", "gui.json"),
-		script("http://127.0.0.1:4321/app.js", ptr(appJS), v8Range{0, len(appJS), 1}, v8Range{22, 37, 0}),
+		script("http://127.0.0.1:4321/app.js", ptr(appJS), v8Range{0, len(appJS), 1}, v8Range{never, len(appJS), 0}),
 		script("http://127.0.0.1:4321/other.js", ptr("x();\n"), v8Range{0, 5, 1}),
 		script("http://127.0.0.1:4321/test/tools.test.js", nil, v8Range{0, 21, 1}),
 	)
@@ -86,7 +88,7 @@ func TestRunMergesChromeAndNode(t *testing.T) {
 		script("node:internal/main", nil, v8Range{0, 1, 1}),
 		script("%%bad url", nil),
 	)
-	writeFile(t, filepath.Join(cov, "unit", "notes.txt"), "not coverage\n")
+	mustWriteFile(t, filepath.Join(cov, "unit", "notes.txt"), "not coverage\n")
 
 	code, stdout, stderr := runPagecover(t, "-static", static, cov)
 	if code != 0 {
@@ -135,10 +137,10 @@ func TestRunStaleSource(t *testing.T) {
 func TestRunErrors(t *testing.T) {
 	static := staticDir(t)
 	good := writeCoverage(t, filepath.Join(t.TempDir(), "good.json"))
-	bad := writeFile(t, filepath.Join(t.TempDir(), "bad.json"), "{not json")
+	bad := mustWriteFile(t, filepath.Join(t.TempDir(), "bad.json"), "{not json")
 	empty := t.TempDir()
 	noScripts := t.TempDir()
-	writeFile(t, filepath.Join(noScripts, "index.html"), "<p>\n")
+	mustWriteFile(t, filepath.Join(noScripts, "index.html"), "<p>\n")
 	for name, c := range map[string]struct {
 		args []string
 		want string
@@ -157,6 +159,42 @@ func TestRunErrors(t *testing.T) {
 				t.Errorf("exit %d, stderr %q; want 2 and %q", code, stderr, c.want)
 			}
 		})
+	}
+}
+
+func TestRunHelp(t *testing.T) {
+	code, stdout, stderr := runPagecover(t, "-h")
+	if code != 0 || stdout != "" {
+		t.Fatalf("exit %d, stdout %q; want 0 and nothing", code, stdout)
+	}
+	for _, want := range []string{"usage: pagecover", "-static"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, stderr)
+		}
+	}
+}
+
+func TestRunUsageListsFlags(t *testing.T) {
+	code, _, stderr := runPagecover(t)
+	if code != 2 || !strings.Contains(stderr, "usage: pagecover") || !strings.Contains(stderr, "-static") {
+		t.Fatalf("exit %d, stderr %q; want 2, the synopsis and the flags", code, stderr)
+	}
+}
+
+func TestRunUnreadableCoverageDirectory(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root reads any directory")
+	}
+	static := staticDir(t)
+	cov := t.TempDir()
+	locked := filepath.Join(cov, "locked")
+	writeCoverage(t, filepath.Join(locked, "gui.json"))
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+	if code, _, stderr := runPagecover(t, "-static", static, cov); code != 2 || !strings.Contains(stderr, "permission denied") {
+		t.Fatalf("exit %d, stderr %q; want 2 and permission denied", code, stderr)
 	}
 }
 

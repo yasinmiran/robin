@@ -33,12 +33,19 @@ func main() {
 func run(args []string, stdout, stderr io.Writer) int {
 	fl := flag.NewFlagSet("pagecover", flag.ContinueOnError)
 	fl.SetOutput(stderr)
+	fl.Usage = func() {
+		fmt.Fprintln(fl.Output(), "usage: pagecover [-static dir] coverage.json|dir...")
+		fl.PrintDefaults()
+	}
 	static := fl.String("static", "internal/web/static", "directory of the page's scripts")
-	if err := fl.Parse(args); err != nil {
+	switch err := fl.Parse(args); {
+	case errors.Is(err, flag.ErrHelp):
+		return 0
+	case err != nil:
 		return 2
 	}
 	if fl.NArg() == 0 {
-		fmt.Fprintln(stderr, "usage: pagecover [-static dir] coverage.json|dir...")
+		fl.Usage()
 		return 2
 	}
 	if err := report(*static, fl.Args(), stdout); err != nil {
@@ -57,12 +64,12 @@ func report(static string, inputs []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	abs, err := filepath.Abs(static)
+	absStatic, err := filepath.Abs(static)
 	if err != nil {
 		return err
 	}
 	for _, f := range files {
-		if err := addFile(pages, abs, f); err != nil {
+		if err := addFile(pages, absStatic, f); err != nil {
 			return err
 		}
 	}
@@ -91,7 +98,7 @@ type v8Range struct {
 	Count int `json:"count"`
 }
 
-func addFile(pages map[string]*page, static, name string) error {
+func addFile(pages map[string]*page, absStatic, name string) error {
 	b, err := os.ReadFile(name)
 	if err != nil {
 		return err
@@ -101,7 +108,7 @@ func addFile(pages map[string]*page, static, name string) error {
 		return fmt.Errorf("%s: %w", name, err)
 	}
 	for _, s := range c.Result {
-		p := pages[scriptName(s.URL, static)]
+		p := pages[scriptName(s.URL, absStatic)]
 		if p == nil {
 			continue
 		}
@@ -118,8 +125,9 @@ func addFile(pages map[string]*page, static, name string) error {
 }
 
 // scriptName returns the file name a script URL loads from the static
-// directory, or "" for any other script.
-func scriptName(raw, static string) string {
+// directory, or "" for any other script. absStatic must be absolute and
+// clean, as a file:// URL's directory is.
+func scriptName(raw, absStatic string) string {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return ""
@@ -130,7 +138,7 @@ func scriptName(raw, static string) string {
 		name = strings.TrimPrefix(u.Path, "/")
 	case "file":
 		dir, file := filepath.Split(filepath.FromSlash(u.Path))
-		if filepath.Clean(dir) != static {
+		if filepath.Clean(dir) != absStatic {
 			return ""
 		}
 		name = file
@@ -169,15 +177,19 @@ func loadPages(static string) (map[string]*page, error) {
 func jsonFiles(inputs []string) ([]string, error) {
 	var files []string
 	for _, in := range inputs {
-		err := filepath.WalkDir(in, func(p string, d fs.DirEntry, err error) error {
-			switch {
-			case err != nil:
+		fi, err := os.Stat(in)
+		if err != nil {
+			return nil, err
+		}
+		if !fi.IsDir() {
+			files = append(files, in)
+			continue
+		}
+		err = filepath.WalkDir(in, func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || filepath.Ext(p) != ".json" {
 				return err
-			case p == in && !d.IsDir():
-				files = append(files, p)
-			case !d.IsDir() && filepath.Ext(p) == ".json":
-				files = append(files, p)
 			}
+			files = append(files, p)
 			return nil
 		})
 		if err != nil {
