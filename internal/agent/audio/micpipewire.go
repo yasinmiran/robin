@@ -47,7 +47,6 @@ type pipewireMic struct{ s *gstsink.Sink }
 
 func (p pipewireMic) write(pcm []byte) error { return p.s.Write(pcm) }
 func (p pipewireMic) close() error           { return p.s.Close() }
-func (pipewireMic) idleSilence()             {}
 
 // startPipeWireMic starts the child and waits for its node to appear as a
 // source on c, the user's pipewire-pulse, feeding it silence meanwhile: the

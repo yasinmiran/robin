@@ -164,8 +164,8 @@ func TestSpawnedMicIsTheDefaultSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.Close()
-	if m.Where != "the private pulseaudio" {
-		t.Errorf("Where = %q", m.Where)
+	if m.Where() != "the private pulseaudio" {
+		t.Errorf("Where = %q", m.Where())
 	}
 	if info := pactl(t, env, "info"); !strings.Contains(info, "Default Source: robin-mic\n") || !strings.Contains(info, "Default Sink: robin\n") {
 		t.Errorf("pactl info:\n%s", info)
@@ -243,8 +243,8 @@ func TestAttachedPulseAudioMic(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.Close()
-	if m.Where != "PulseAudio" {
-		t.Errorf("Where = %q", m.Where)
+	if m.Where() != "PulseAudio" {
+		t.Errorf("Where = %q", m.Where())
 	}
 	name := micSourcePrefix + strconv.Itoa(os.Getpid())
 	if sources := pactl(t, nil, "list", "sources"); !strings.Contains(sources, "Name: "+name+"\n") ||
@@ -369,8 +369,8 @@ func TestPipeWireMic(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.Close()
-	if m.Where != "PipeWire" {
-		t.Errorf("Where = %q", m.Where)
+	if m.Where() != "PipeWire" {
+		t.Errorf("Where = %q", m.Where())
 	}
 	name := micSourcePrefix + strconv.Itoa(os.Getpid())
 	if sources := pactl(t, nil, "list", "sources"); !strings.Contains(sources, "Name: "+name+"\n") ||
@@ -392,7 +392,7 @@ func TestPipeWireMic(t *testing.T) {
 }
 
 func TestMicPlayEndsWithTheTrack(t *testing.T) {
-	m := newMic(&fakeSink{}, "test", quiet())
+	m := newMic(&fakeSink{}, "test", nil, quiet())
 	defer m.Close()
 	if err := m.Play(&trackReader{err: io.EOF}); err != nil {
 		t.Errorf("Play of an ended track = %v", err)
@@ -407,7 +407,7 @@ func TestMicPlayEndsWithTheTrack(t *testing.T) {
 // mono each, a lost one filled in.
 func TestMicDecodesWhatArrives(t *testing.T) {
 	sink := &fakeSink{}
-	m := newMic(sink, "test", quiet())
+	m := newMic(sink, "test", nil, quiet())
 	tr := newToneTrack(t, 440, 0.2)
 	var ps []*rtp.Packet
 	for i, p := range tr.packets {

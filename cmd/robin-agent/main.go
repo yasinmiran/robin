@@ -135,7 +135,6 @@ func newMic(ctx context.Context, o agent.MicOptions) (agent.Mic, error) {
 type mic struct{ *audio.Mic }
 
 func (m mic) Play(r agent.RTPReader) error { return m.Mic.Play(r) }
-func (m mic) Where() string                { return m.Mic.Where }
 
 func newCamera(_ context.Context, o agent.CameraOptions) (agent.Camera, error) {
 	c, err := camera.Start(camera.Options{Device: o.Device, Log: o.Log})

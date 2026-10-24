@@ -56,9 +56,7 @@ type micSink interface {
 // server. It is there, silent, from StartMic until Close; Play fills it
 // while the browser sends.
 type Mic struct {
-	// Where says which server carries it, for the log.
-	Where string
-
+	where   string
 	log     *slog.Logger
 	sink    micSink
 	queue   chan []byte
@@ -86,11 +84,11 @@ func StartMic(ctx context.Context, o MicOptions) (*Mic, error) {
 		if err != nil {
 			return nil, err
 		}
-		p, err := openPulseMic(src.srv.socket, cookie, false, log)
+		p, err := openPulseMic(src.srv.socket, cookie, spawnMicFeed, log)
 		if err != nil {
 			return nil, fmt.Errorf("play into the private pulseaudio: %w", err)
 		}
-		return newMic(p, "the private pulseaudio", log), nil
+		return newMic(p, "the private pulseaudio", nil, log), nil
 	}
 
 	socket, cookie := userSocket(), userCookie()
@@ -111,43 +109,43 @@ func StartMic(ctx context.Context, o MicOptions) (*Mic, error) {
 		if err != nil {
 			return nil, err
 		}
-		return newMic(p, "PipeWire", log), nil
+		// A PipeWire node that a stream provides negotiates its format, and
+		// so appears, only once fed, and a program recording it would wait
+		// on it: it gets silence while the browser sends none.
+		return newMic(p, "PipeWire", time.Tick(micFrameTime), log), nil
 	}
-	p, err := openPulseMic(socket, cookie, true, log)
+	p, err := loadPulseMic(socket, cookie, log)
 	if err != nil {
 		return nil, fmt.Errorf("add the microphone to PulseAudio: %w", err)
 	}
-	return newMic(p, "PulseAudio", log), nil
+	return newMic(p, "PulseAudio", nil, log), nil
 }
 
-func newMic(sink micSink, where string, log *slog.Logger) *Mic {
-	m := &Mic{Where: where, log: log, sink: sink, queue: make(chan []byte, micQueue), drained: make(chan struct{})}
-	go m.write()
+// newMic starts feeding sink. ticks, every micFrameTime, pace the silence a
+// sink that needs feeding gets while the browser sends none; nil leaves
+// silence to a sink that makes its own.
+func newMic(sink micSink, where string, ticks <-chan time.Time, log *slog.Logger) *Mic {
+	m := &Mic{where: where, log: log, sink: sink, queue: make(chan []byte, micQueue), drained: make(chan struct{})}
+	go m.write(ticks)
 	log.Info("microphone up", "on", where, "name", MicName)
 	return m
 }
 
-// idleSink is a sink that needs silence while the browser sends nothing. A
-// PipeWire node that a stream provides negotiates its format, and so
-// appears, only once fed, and a program recording it would wait on it.
-type idleSink interface{ idleSilence() }
+// Where names what carries the microphone on the host, for Ready: the
+// private pulseaudio, PulseAudio or PipeWire.
+func (m *Mic) Where() string { return m.where }
 
-// micIdle is how long the sound may stop before an idleSink gets silence:
-// three packets, past the jitter of a live track.
-const micIdle = 60 * time.Millisecond
+// micIdleTicks is how many ticks the browser's sound may stop for before
+// silence fills in: three packets, past the jitter of a live track.
+const micIdleTicks = 3
 
 // write hands the queue to the sink, on a goroutine of its own so a slow
-// server stalls nothing but this.
-func (m *Mic) write() {
+// server stalls nothing but this, and silence on each of ticks once the
+// browser's sound has stopped for more than micIdleTicks of them.
+func (m *Mic) write(ticks <-chan time.Time) {
 	defer close(m.drained)
-	var tick <-chan time.Time
-	if _, ok := m.sink.(idleSink); ok {
-		t := time.NewTicker(opus.FrameSamples * time.Second / opus.SampleRate)
-		defer t.Stop()
-		tick = t.C
-	}
 	silence := make([]byte, micFrameBytes)
-	var last time.Time
+	quiet := micIdleTicks // ticks since the browser's sound, which has yet to start
 	failed := 0
 	put := func(b []byte) {
 		if err := m.sink.write(b); err != nil {
@@ -163,9 +161,9 @@ func (m *Mic) write() {
 				return
 			}
 			put(b)
-			last = time.Now()
-		case <-tick:
-			if time.Since(last) >= micIdle {
+			quiet = 0
+		case <-ticks:
+			if quiet++; quiet > micIdleTicks {
 				put(silence)
 			}
 		}

@@ -3,8 +3,10 @@
 package audio
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -58,7 +60,7 @@ func (s *fakeSink) count() int {
 
 func TestMicQueueDropsWhenTheServerIsBehind(t *testing.T) {
 	sink := &fakeSink{hold: make(chan struct{}), holding: make(chan struct{}, 1)}
-	m := newMic(sink, "test", quiet())
+	m := newMic(sink, "test", nil, quiet())
 	m.enqueue([]int16{0, -1})
 	<-sink.holding
 	for i := 1; i < micQueue+5; i++ {
@@ -88,47 +90,73 @@ func TestMicQueueDropsWhenTheServerIsBehind(t *testing.T) {
 	}
 }
 
-// idleFakeSink is a fakeSink that wants silence while nothing plays, as a
-// PipeWire node does.
-type idleFakeSink struct{ fakeSink }
-
-func (*idleFakeSink) idleSilence() {}
-
-// TestMicFillsSilenceForPipeWire: a node that needs feeding gets 20 ms of
-// silence at a time while the browser sends nothing, and the browser's
-// sound once it does.
-func TestMicFillsSilenceForPipeWire(t *testing.T) {
-	sink := &idleFakeSink{}
-	m := newMic(sink, "test", quiet())
-	for deadline := time.Now().Add(2 * time.Second); sink.count() < 3; time.Sleep(5 * time.Millisecond) {
-		if time.Now().After(deadline) {
-			t.Fatal("no silence while the browser sent nothing")
+// TestMicFillsSilenceBetweenTheBrowsersSound: a sink that needs feeding
+// gets 20 ms of silence on each tick while the browser sends nothing, the
+// browser's sound as it comes, and silence again only once that has
+// stopped for more than micIdleTicks.
+func TestMicFillsSilenceBetweenTheBrowsersSound(t *testing.T) {
+	sink := &fakeSink{}
+	ticks := make(chan time.Time)
+	m := newMic(sink, "test", ticks, quiet())
+	// A send returns once the writer has taken the tick, so each is dealt
+	// with before the test goes on.
+	tick := func(n int) {
+		for range n {
+			ticks <- time.Time{}
 		}
 	}
-	m.enqueue(make([]int16, micFrameBytes/2))
+	tick(2)
+	m.enqueue(slices.Repeat([]int16{0x1234}, micFrameBytes/2))
+	waitWrites(t, sink, 3)
+	tick(micIdleTicks)
+	tick(1)
 	m.Close()
-	sink.mu.Lock()
-	defer sink.mu.Unlock()
-	for i, b := range sink.writes {
-		if len(b) != micFrameBytes || slices.ContainsFunc(b, func(v byte) bool { return v != 0 }) {
-			t.Errorf("write %d is %d bytes of %v, want 20 ms of silence", i, len(b), b[:4])
+
+	silence := make([]byte, micFrameBytes)
+	sound := bytes.Repeat([]byte{0x34, 0x12}, micFrameBytes/2)
+	want := [][]byte{silence, silence, sound, silence}
+	if !slices.EqualFunc(sink.writes, want, bytes.Equal) {
+		t.Errorf("the sink got %s, want silence, silence, the sound, silence", describe(sink.writes))
+	}
+}
+
+// TestMicWithoutTicksAddsNoSilence: a sink that makes its own silence, as
+// PulseAudio does, gets the browser's sound and nothing else.
+func TestMicWithoutTicksAddsNoSilence(t *testing.T) {
+	sink := &fakeSink{}
+	m := newMic(sink, "test", nil, quiet())
+	m.enqueue([]int16{0x1234})
+	m.Close()
+	if !slices.EqualFunc(sink.writes, [][]byte{{0x34, 0x12}}, bytes.Equal) {
+		t.Errorf("the sink got %s, want the one piece of sound", describe(sink.writes))
+	}
+}
+
+func waitWrites(t *testing.T, sink *fakeSink, n int) {
+	t.Helper()
+	for deadline := time.Now().Add(2 * time.Second); sink.count() < n; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the sink got %d writes, want %d", sink.count(), n)
 		}
 	}
 }
 
-func TestMicLeavesSilenceToPulseAudio(t *testing.T) {
-	sink := &fakeSink{}
-	m := newMic(sink, "test", quiet())
-	time.Sleep(150 * time.Millisecond)
-	m.Close()
-	if n := sink.count(); n != 0 {
-		t.Errorf("%d writes to a sink that makes its own silence", n)
+// describe says of each write whether it is silence, and how long it is.
+func describe(writes [][]byte) string {
+	var s []string
+	for _, b := range writes {
+		kind := "sound"
+		if !slices.ContainsFunc(b, func(v byte) bool { return v != 0 }) {
+			kind = "silence"
+		}
+		s = append(s, fmt.Sprintf("%d bytes of %s", len(b), kind))
 	}
+	return "[" + strings.Join(s, ", ") + "]"
 }
 
 func TestMicCarriesOnWhenTheServerRefuses(t *testing.T) {
 	sink := &fakeSink{fail: errors.New("stream gone")}
-	m := newMic(sink, "test", quiet())
+	m := newMic(sink, "test", nil, quiet())
 	for range 3 {
 		m.enqueue([]int16{1})
 	}
@@ -283,6 +311,6 @@ func runMicHelper() {
 		os.Stdout.WriteString("error: " + err.Error() + "\n")
 		os.Exit(1)
 	}
-	os.Stdout.WriteString("ready " + m.Where + "\n")
+	os.Stdout.WriteString("ready " + m.Where() + "\n")
 	select {}
 }

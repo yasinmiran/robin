@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/jfreymuth/pulse/proto"
 
@@ -31,8 +32,9 @@ const (
 	// agent unloads those whose agent died without doing so.
 	micFeedPrefix   = "robin-mic-feed-"
 	micSourcePrefix = "robin-mic-"
-	// micFrameBytes is 20 ms of the microphone: 16-bit mono.
+	// micFrameBytes is 20 ms of the microphone, micFrameTime: 16-bit mono.
 	micFrameBytes = opus.FrameSamples * 2
+	micFrameTime  = opus.FrameSamples * time.Second / opus.SampleRate
 )
 
 // paModule is a module to load and its arguments.
@@ -69,37 +71,63 @@ type pulseMic struct {
 	log     *slog.Logger
 }
 
-// openPulseMic connects to the server at socket and starts playing into the
-// microphone's feed. On the user's own server (load set) it first unloads
-// microphones that dead agents left and loads this agent's.
-func openPulseMic(socket string, cookie []byte, load bool, log *slog.Logger) (_ *pulseMic, err error) {
+// dialPulseMic connects to the server at socket for a microphone.
+func dialPulseMic(socket string, cookie []byte, log *slog.Logger) (*pulseMic, error) {
 	p := &pulseMic{log: log}
 	c, conn, err := connect(socket, cookie, p.notice)
 	if err != nil {
 		return nil, err
 	}
 	p.c, p.conn = c, conn
+	return p, nil
+}
+
+// openPulseMic plays into feed, a microphone's sink already on the server
+// at socket.
+func openPulseMic(socket string, cookie []byte, feed string, log *slog.Logger) (*pulseMic, error) {
+	p, err := dialPulseMic(socket, cookie, log)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.play(feed); err != nil {
+		p.close()
+		return nil, err
+	}
+	return p, nil
+}
+
+// loadPulseMic adds this agent's microphone to the user's own server at
+// socket and plays into it, after unloading those that dead agents left.
+// The modules it loads go when the microphone closes.
+func loadPulseMic(socket string, cookie []byte, log *slog.Logger) (_ *pulseMic, err error) {
+	p, err := dialPulseMic(socket, cookie, log)
+	if err != nil {
+		return nil, err
+	}
 	defer func() {
 		if err != nil {
 			p.close()
 		}
 	}()
-
-	feed := spawnMicFeed
-	if load {
-		p.sweep()
-		pid := strconv.Itoa(os.Getpid())
-		feed = micFeedPrefix + pid
-		for _, m := range micModules(feed, micSourcePrefix+pid) {
-			var reply proto.LoadModuleReply
-			if err := c.Request(&proto.LoadModule{Name: m.name, Args: m.args}, &reply); err != nil {
-				return nil, fmt.Errorf("load %s: %w", m.name, err)
-			}
-			p.modules = append(p.modules, reply.ModuleIndex)
+	p.sweep()
+	pid := strconv.Itoa(os.Getpid())
+	for _, m := range micModules(micFeedPrefix+pid, micSourcePrefix+pid) {
+		var reply proto.LoadModuleReply
+		if err := p.c.Request(&proto.LoadModule{Name: m.name, Args: m.args}, &reply); err != nil {
+			return nil, fmt.Errorf("load %s: %w", m.name, err)
 		}
+		p.modules = append(p.modules, reply.ModuleIndex)
 	}
+	if err := p.play(micFeedPrefix + pid); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// play starts the stream into feed.
+func (p *pulseMic) play(feed string) error {
 	var reply proto.CreatePlaybackStreamReply
-	if err := c.Request(&proto.CreatePlaybackStream{
+	if err := p.c.Request(&proto.CreatePlaybackStream{
 		SampleSpec:            proto.SampleSpec{Format: proto.FormatInt16LE, Channels: 1, Rate: opus.SampleRate},
 		ChannelMap:            proto.ChannelMap{proto.ChannelMono},
 		SinkIndex:             proto.Undefined,
@@ -113,10 +141,10 @@ func openPulseMic(socket string, cookie []byte, load bool, log *slog.Logger) (_ 
 		NoMove:                true,
 		Properties:            proto.PropList{"media.name": proto.PropListString(MicName)},
 	}, &reply); err != nil {
-		return nil, fmt.Errorf("play into %s: %w", feed, err)
+		return fmt.Errorf("play into %s: %w", feed, err)
 	}
 	p.stream = reply.StreamIndex
-	return p, nil
+	return nil
 }
 
 // notice runs on the client's read goroutine for what the server says
@@ -133,7 +161,7 @@ func (p *pulseMic) notice(msg any) {
 
 func (p *pulseMic) write(pcm []byte) error { return p.c.Send(p.stream, pcm) }
 
-// close unloads what openPulseMic loaded, the source before the sink it
+// close unloads what loadPulseMic loaded, the source before the sink it
 // reads, and drops the connection with the stream on it.
 func (p *pulseMic) close() error {
 	for i := len(p.modules) - 1; i >= 0; i-- {
