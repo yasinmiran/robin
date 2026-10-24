@@ -28,6 +28,8 @@ import (
 	"github.com/jezek/xgb/xfixes"
 	"github.com/jezek/xgb/xproto"
 	"github.com/jezek/xgb/xtest"
+
+	"github.com/yasinmiran/robin/internal/agent/peercred"
 )
 
 // Conn is a connection to one X display.
@@ -355,15 +357,15 @@ func dialSocket(num string) (net.Conn, error) {
 			}
 			continue
 		}
-		uid, err := serverUID(nc)
-		if err == nil && slices.Contains(trustedServerUIDs, uid) {
+		cred, err := peercred.Of(nc)
+		if err == nil && slices.Contains(trustedServerUIDs, cred.Uid) {
 			return nc, nil
 		}
 		nc.Close()
 		if err != nil {
 			ownerErr = fmt.Errorf("%s: cannot tell who runs it: %w", addr, err)
 		} else {
-			ownerErr = fmt.Errorf("%s is served by uid %d, not by this user or root", addr, uid)
+			ownerErr = fmt.Errorf("%s is served by uid %d, not by this user or root", addr, cred.Uid)
 		}
 	}
 	if ownerErr != nil {

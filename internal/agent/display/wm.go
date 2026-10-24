@@ -7,17 +7,18 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
-	"syscall"
 	"time"
 
 	"github.com/jezek/xgb"
 	"github.com/jezek/xgb/xproto"
+
+	"github.com/yasinmiran/robin/internal/agent/peercred"
 )
 
-// waitForWindow returns once some top-level window on display num, served
-// by process server, is viewable, or when ctx ends.
-func waitForWindow(ctx context.Context, num string, cookie []byte, server int) error {
-	nc, err := dialServer(num, server)
+// waitForWindow returns once some top-level window on display num is
+// viewable, if the Xvfb with pid xvfbPID serves it, or when ctx ends.
+func waitForWindow(ctx context.Context, num string, cookie []byte, xvfbPID int) error {
+	nc, err := dialServer(num, xvfbPID)
 	if err != nil {
 		return err
 	}
@@ -50,10 +51,10 @@ func waitForWindow(ctx context.Context, num string, cookie []byte, server int) e
 }
 
 // dialServer connects to the unix socket of display num, the filesystem one
-// or else the abstract one, if process server listens there. Another user
-// can put a socket at either name before Xvfb binds it or after, and
-// whoever answers gets the display's cookie.
-func dialServer(num string, server int) (net.Conn, error) {
+// or else the abstract one, if the Xvfb with pid xvfbPID listens there.
+// Another user can put a socket at either name before Xvfb binds it or
+// after, and whoever answers gets the display's cookie.
+func dialServer(num string, xvfbPID int) (net.Conn, error) {
 	sock := "/tmp/.X11-unix/X" + num
 	var dialErr, ownerErr error
 	for _, addr := range []string{sock, "@" + sock} {
@@ -64,15 +65,15 @@ func dialServer(num string, server int) (net.Conn, error) {
 			}
 			continue
 		}
-		pid, err := peerPID(nc)
-		if err == nil && pid == server {
+		cred, err := peercred.Of(nc)
+		if err == nil && int(cred.Pid) == xvfbPID {
 			return nc, nil
 		}
 		nc.Close()
 		if err != nil {
 			ownerErr = fmt.Errorf("display: %s: cannot tell who serves it: %w", addr, err)
 		} else {
-			ownerErr = fmt.Errorf("display: %s is served by pid %d, not by Xvfb (pid %d)", addr, pid, server)
+			ownerErr = &notServerError{addr: addr, pid: int(cred.Pid), xvfbPID: xvfbPID}
 		}
 	}
 	if ownerErr != nil {
@@ -81,25 +82,13 @@ func dialServer(num string, server int) (net.Conn, error) {
 	return nil, dialErr
 }
 
-// peerPID is the pid of the process that listens at the other end of nc.
-func peerPID(nc net.Conn) (int, error) {
-	uc, ok := nc.(*net.UnixConn)
-	if !ok {
-		return 0, fmt.Errorf("not a unix socket: %T", nc)
-	}
-	raw, err := uc.SyscallConn()
-	if err != nil {
-		return 0, err
-	}
-	var cred *syscall.Ucred
-	var credErr error
-	if err := raw.Control(func(fd uintptr) {
-		cred, credErr = syscall.GetsockoptUcred(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
-	}); err != nil {
-		return 0, err
-	}
-	if credErr != nil {
-		return 0, credErr
-	}
-	return int(cred.Pid), nil
+// notServerError means a process other than the spawned Xvfb listens at
+// one of its display's socket names.
+type notServerError struct {
+	addr         string
+	pid, xvfbPID int
+}
+
+func (e *notServerError) Error() string {
+	return fmt.Sprintf("display: %s is served by pid %d, not by Xvfb (pid %d)", e.addr, e.pid, e.xvfbPID)
 }

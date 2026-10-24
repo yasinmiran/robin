@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/yasinmiran/robin/internal/agent/peercred"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
@@ -162,17 +163,7 @@ func (l *Listener) read(c *net.UnixConn) (*Request, error) {
 }
 
 func (l *Listener) checkPeer(c *net.UnixConn) error {
-	raw, err := c.SyscallConn()
-	if err != nil {
-		return err
-	}
-	var cred *unix.Ucred
-	cerr := raw.Control(func(fd uintptr) {
-		cred, err = unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED)
-	})
-	if cerr != nil {
-		return cerr
-	}
+	cred, err := peercred.Of(c)
 	if err != nil {
 		return err
 	}

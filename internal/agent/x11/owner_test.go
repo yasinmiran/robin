@@ -59,23 +59,6 @@ func TestAttachRefusesAnotherUsersServer(t *testing.T) {
 	}
 }
 
-func TestServerUIDIsTheListener(t *testing.T) {
-	ln, err := net.Listen("unix", filepath.Join(t.TempDir(), "sock"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-	nc, err := net.Dial("unix", ln.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer nc.Close()
-	uid, err := serverUID(nc)
-	if err != nil || uid != uint32(os.Getuid()) {
-		t.Errorf("serverUID = %d, %v; want %d", uid, err, os.Getuid())
-	}
-}
-
 // listenAbstract listens on the abstract X socket of a display number that
 // has no filesystem socket, so dialSocket falls through to it.
 func listenAbstract(t *testing.T) (string, net.Listener) {

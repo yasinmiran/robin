@@ -5,6 +5,7 @@ package display
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"math/rand/v2"
 	"net"
@@ -40,7 +41,8 @@ func TestWaitForWindowRefusesAStrangersSocket(t *testing.T) {
 
 	// The listener is this process; say the server is another.
 	err := waitForWindow(ctx, num, cookie, os.Getpid()+1)
-	if err == nil || !strings.Contains(err.Error(), "pid "+strconv.Itoa(os.Getpid())) {
+	var stranger *notServerError
+	if !errors.As(err, &stranger) || stranger.pid != os.Getpid() || !strings.Contains(stranger.Error(), "X"+num) {
 		t.Errorf("waitForWindow on a stranger's socket: %v, want a refusal naming its pid", err)
 	}
 	select {

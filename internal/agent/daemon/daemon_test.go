@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/yasinmiran/robin/internal/agent"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
@@ -212,10 +214,10 @@ func TestCheckPeerWantsAUnixConnection(t *testing.T) {
 }
 
 func TestCheckUID(t *testing.T) {
-	if err := checkUID(&syscall.Ucred{Uid: 1000}, 1000); err != nil {
+	if err := checkUID(&unix.Ucred{Uid: 1000}, 1000); err != nil {
 		t.Error(err)
 	}
-	if err := checkUID(&syscall.Ucred{Uid: 1001}, 1000); err == nil || !strings.Contains(err.Error(), "uid 1001") {
+	if err := checkUID(&unix.Ucred{Uid: 1001}, 1000); err == nil || !strings.Contains(err.Error(), "uid 1001") {
 		t.Errorf("other uid: %v", err)
 	}
 }
