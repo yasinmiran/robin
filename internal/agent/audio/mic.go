@@ -18,10 +18,8 @@ import (
 
 	"github.com/yasinmiran/robin/internal/agent/opus"
 	"github.com/yasinmiran/robin/internal/agent/track"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
-
-// MicName is what the desktop's programs see the browser's microphone as.
-const MicName = "Robin microphone"
 
 // micQueue bounds the sound waiting for the server, about 200 ms in 20 ms
 // pieces. A server that falls further behind loses the newest piece rather
@@ -120,7 +118,7 @@ func StartMic(ctx context.Context, o MicOptions) (*Mic, error) {
 func newMic(sink micSink, where string, ticks <-chan time.Time, log *slog.Logger) *Mic {
 	m := &Mic{where: where, log: log, sink: sink, queue: make(chan []byte, micQueue), drained: make(chan struct{})}
 	go m.write(ticks)
-	log.Info("microphone up", "on", where, "name", MicName)
+	log.Info("microphone up", "on", where, "name", protocol.MicName)
 	return m
 }
 

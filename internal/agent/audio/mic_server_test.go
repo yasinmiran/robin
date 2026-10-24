@@ -24,6 +24,7 @@ import (
 	"github.com/pion/rtp"
 
 	"github.com/yasinmiran/robin/internal/agent/opus"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // toneTrack is the browser's microphone playing a tone: Opus packets of
@@ -204,8 +205,8 @@ func TestSpawnedMicIsTheDefaultSource(t *testing.T) {
 	if info := pactl(t, env, "info"); !strings.Contains(info, "Default Source: robin-mic\n") || !strings.Contains(info, "Default Sink: robin\n") {
 		t.Errorf("pactl info:\n%s", info)
 	}
-	if sources := pactl(t, env, "list", "sources"); !strings.Contains(sources, "Description: "+MicName+"\n") {
-		t.Errorf("no source described as %s:\n%s", MicName, sources)
+	if sources := pactl(t, env, "list", "sources"); !strings.Contains(sources, "Description: "+protocol.MicName+"\n") {
+		t.Errorf("no source described as %s:\n%s", protocol.MicName, sources)
 	}
 
 	playTrack(t, m, newToneTrack(t, 440, 8))
@@ -281,8 +282,8 @@ func TestAttachedPulseAudioMic(t *testing.T) {
 	}
 	name := micSourcePrefix + strconv.Itoa(os.Getpid())
 	if sources := pactl(t, nil, "list", "sources"); !strings.Contains(sources, "Name: "+name+"\n") ||
-		!strings.Contains(sources, "Description: "+MicName+"\n") {
-		t.Errorf("no source %s described as %s:\n%s", name, MicName, sources)
+		!strings.Contains(sources, "Description: "+protocol.MicName+"\n") {
+		t.Errorf("no source %s described as %s:\n%s", name, protocol.MicName, sources)
 	}
 	if info := pactl(t, nil, "info"); !strings.Contains(info, "Default Source: speakers.monitor\n") {
 		t.Errorf("the user's default source changed:\n%s", info)
@@ -406,8 +407,8 @@ func TestPipeWireMic(t *testing.T) {
 	}
 	name := micSourcePrefix + strconv.Itoa(os.Getpid())
 	if sources := pactl(t, nil, "list", "sources"); !strings.Contains(sources, "Name: "+name+"\n") ||
-		!strings.Contains(sources, "Description: "+MicName+"\n") {
-		t.Errorf("no source %s described as %s:\n%s", name, MicName, sources)
+		!strings.Contains(sources, "Description: "+protocol.MicName+"\n") {
+		t.Errorf("no source %s described as %s:\n%s", name, protocol.MicName, sources)
 	}
 
 	playTrack(t, m, newToneTrack(t, 550, 8))

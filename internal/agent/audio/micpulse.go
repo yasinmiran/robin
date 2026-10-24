@@ -16,6 +16,7 @@ import (
 	"github.com/jfreymuth/pulse/proto"
 
 	"github.com/yasinmiran/robin/internal/agent/opus"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // On PulseAudio the microphone is a null sink the agent plays into, and a
@@ -45,9 +46,9 @@ type paModule struct{ name, args string }
 func micModules(feed, source string) []paModule {
 	return []paModule{
 		{"module-null-sink", "sink_name=" + feed + " rate=48000 channels=1 channel_map=mono norewinds=1 " +
-			`sink_properties='device.description="` + MicName + ` feed"'`},
+			`sink_properties='device.description="` + protocol.MicName + ` feed"'`},
 		{"module-remap-source", "master=" + feed + ".monitor source_name=" + source + " channels=1 channel_map=mono " +
-			`source_properties='device.description="` + MicName + `"'`},
+			`source_properties='device.description="` + protocol.MicName + `"'`},
 	}
 }
 
@@ -139,7 +140,7 @@ func (p *pulseMic) play(feed string) error {
 		SyncID:                proto.Undefined,
 		ChannelVolumes:        proto.ChannelVolumes{proto.VolumeNorm},
 		NoMove:                true,
-		Properties:            proto.PropList{"media.name": proto.PropListString(MicName)},
+		Properties:            proto.PropList{"media.name": proto.PropListString(protocol.MicName)},
 	}, &reply); err != nil {
 		return fmt.Errorf("play into %s: %w", feed, err)
 	}

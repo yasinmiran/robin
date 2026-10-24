@@ -25,6 +25,7 @@ import (
 	"github.com/yasinmiran/robin/internal/agent/h264"
 	"github.com/yasinmiran/robin/internal/agent/track"
 	"github.com/yasinmiran/robin/internal/agent/xdg"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // The picture the host's programs see. The page asks the browser for this
@@ -32,8 +33,6 @@ import (
 const (
 	Width, Height = 1280, 720
 	FPS           = 30
-	// Name is what the host's programs see the camera as on PipeWire.
-	Name = "Robin camera"
 )
 
 // Timings, variables so tests can shorten them.
@@ -101,7 +100,7 @@ func pipeline(device, node string) []string {
 	if device != "" {
 		return append(args, "!", "v4l2sink", "device="+device, "sync=false")
 	}
-	props := "props,media.class=Video/Source,media.role=Camera,node.name=" + node + ",node.description=" + gstsink.Quote(Name)
+	props := "props,media.class=Video/Source,media.role=Camera,node.name=" + node + ",node.description=" + gstsink.Quote(protocol.CameraName)
 	return append(args, "!", "pipewiresink", "mode=provide", "sync=false", "stream-properties="+gstsink.Quote(props))
 }
 

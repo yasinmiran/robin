@@ -8,15 +8,15 @@ import (
 )
 
 // deviceNotes tells the user, once, where the microphone and camera they
-// asked for went on host, or why they could not.
+// asked for went on the host, or why they could not.
 func deviceNotes(host string, ready *protocol.Ready) []string {
 	var notes []string
 	for _, d := range []struct {
 		name, label string
 		ready       *protocol.Device
 	}{
-		{"microphone", "Robin microphone", ready.Mic},
-		{"camera", "Robin camera", ready.Camera},
+		{"microphone", protocol.MicName, ready.Mic},
+		{"camera", protocol.CameraName, ready.Camera},
 	} {
 		switch {
 		case d.ready == nil:
@@ -31,7 +31,7 @@ func deviceNotes(host string, ready *protocol.Ready) []string {
 	return notes
 }
 
-// offeredDevices says which devices the page may offer: those host took.
+// offeredDevices says which devices the page may offer: those the host took.
 func offeredDevices(ready *protocol.Ready) (mic, camera bool) {
 	return ready.Mic != nil && ready.Mic.Available, ready.Camera != nil && ready.Camera.Available
 }

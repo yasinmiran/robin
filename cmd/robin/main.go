@@ -65,7 +65,7 @@ func runGUI(args []string) int {
 	attach := fs.String("attach", "", `stream a desktop already running on the host instead of starting one: an X11 display such as ":0", "auto" for your active session, or "wayland"`)
 	monitor := fs.String("monitor", protocol.MonitorPrimary, `X11 desktops attached to with --attach: the monitor to show first, by name (such as DP-1) or number (1, 2, ...), "primary", or "all" for every monitor as one picture; the page switches between them. Wayland shows the monitor picked in its sharing dialog`)
 	audio := fs.Bool("audio", true, "stream the desktop's sound as well")
-	mic := fs.Bool("mic", false, `offer your microphone to the host's programs as "Robin microphone"; it stays off until you switch it on in the page`)
+	mic := fs.Bool("mic", false, fmt.Sprintf("offer your microphone to the host's programs as %q; it stays off until you switch it on in the page", protocol.MicName))
 	camera := fs.Bool("camera", false, `offer your camera to the host's programs, through PipeWire or a v4l2loopback device; it stays off until you switch it on in the page`)
 	hidpi := fs.Bool("hidpi", false, "size the remote display in device pixels: sharper on HiDPI screens, more to encode (raise --max-size to go native)")
 	encoder := fs.String("encoder", protocol.EncoderAuto, "video encoder on the host: auto (the GPU where the host has one and it pays, else software), software, vaapi or nvenc")

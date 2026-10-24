@@ -14,6 +14,7 @@ import (
 
 	"github.com/yasinmiran/robin/internal/agent/gstsink"
 	"github.com/yasinmiran/robin/internal/agent/opus"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // micNodeTimeout bounds the wait for the microphone's PipeWire node to show
@@ -30,7 +31,7 @@ const micNodeTimeout = 5 * time.Second
 // drops sound nobody records instead of letting it back up into the agent.
 func pipewireMicPipeline(node string) []string {
 	props := "props,media.class=Audio/Source,node.name=" + node +
-		",node.description=" + gstsink.Quote(MicName) + ",node.group=pipewire.dummy"
+		",node.description=" + gstsink.Quote(protocol.MicName) + ",node.group=pipewire.dummy"
 	return []string{
 		"-q",
 		"fdsrc", "fd=0", "do-timestamp=true",
