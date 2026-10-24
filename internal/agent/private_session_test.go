@@ -217,8 +217,7 @@ func (g *gammaPeer) lighten() {
 	}
 }
 
-// lit reports whether every CRTC's ramp reaches full brightness, dark
-// whether every one is zero.
+// top is the brightest red value of each driven CRTC's ramp.
 func (g *gammaPeer) top() []uint16 {
 	g.t.Helper()
 	var tops []uint16
@@ -232,6 +231,8 @@ func (g *gammaPeer) top() []uint16 {
 	return tops
 }
 
+// lit reports whether every CRTC's ramp reaches full brightness, dark
+// whether every one is zero.
 func (g *gammaPeer) lit() bool  { return slices.Max(g.top()) == 65535 && slices.Min(g.top()) == 65535 }
 func (g *gammaPeer) dark() bool { return slices.Max(g.top()) == 0 }
 
@@ -369,8 +370,8 @@ func TestCurtainWithHostBasedAccess(t *testing.T) {
 	}
 }
 
-// TestSessionPrivateWithoutAKeeper: a session asked for a curtain it cannot
-// undo ends before Ready, saying why.
+// TestSessionPrivateWithoutAKeeper checks that a session asked for a curtain
+// it cannot undo ends before Ready, saying why.
 func TestSessionPrivateWithoutAKeeper(t *testing.T) {
 	live := liveDisplay(t, 1280, 800)
 	h := startAgent(t)

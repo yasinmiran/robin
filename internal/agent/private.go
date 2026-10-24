@@ -3,6 +3,7 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -14,12 +15,6 @@ import (
 	"github.com/yasinmiran/robin/internal/agent/peer"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
-
-// A private session hides an attached desktop from the room it sits in: the
-// curtain blacks out its screens and the silent room keeps its speakers
-// quiet, while the stream still shows and plays both. Every change goes
-// through a keeper first, so an agent that is killed still gives the room
-// its screens and speakers back.
 
 // Hold hands a keeper what undoes a change, for the undo of kind, before
 // the change is made; an error means the change must not be made.
@@ -47,8 +42,8 @@ type curtain interface {
 type Room interface {
 	// Monitor is the source the session records while the room is silent.
 	Monitor() string
-	// Gone is closed when the room is no longer silent, on its own; Err
-	// then says why.
+	// Gone is closed when the room is no longer silent, on its own; Err,
+	// which is not nil once Gone is closed, then says why.
 	Gone() <-chan struct{}
 	Err() error
 	Close() error
@@ -74,6 +69,11 @@ const (
 // roomTimeout bounds making the room silent.
 const roomTimeout = 10 * time.Second
 
+// private is an attached desktop's private session, which hides the desktop
+// from the room it sits in: the curtain blacks out its screens and the
+// silent room keeps its speakers quiet, while the stream still shows and
+// plays both. Every change goes through a keeper first, so an agent that is
+// killed still gives the room its screens and speakers back.
 type private struct {
 	log     *slog.Logger
 	keeper  *keeper.Client
@@ -82,10 +82,10 @@ type private struct {
 	capture follower // nil when the session records no sound
 	send    func()   // tells the page the state
 
-	mu    sync.Mutex
-	state protocol.Private
-	want  protocol.Private // the switches the page asked for last; only On counts
-	room  Room
+	mu                      sync.Mutex
+	state                   protocol.Private
+	wantCurtain, wantSilent bool // as the page asked last
+	room                    Room
 
 	kick chan struct{}
 	stop chan struct{}
@@ -104,12 +104,12 @@ func openPrivate(d *openedDesktop, start protocol.Start, o Options, audio AudioS
 		kick: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{}),
 	}
 	p.capture, _ = audio.(follower)
-	switch {
-	case len(o.Keeper) == 0:
+	if len(o.Keeper) == 0 {
 		why := "this agent has no keeper to undo the change if it dies"
 		p.state.Curtain.Unsupported, p.state.Silent.Unsupported = why, why
-	default:
+	} else {
 		p.keeper = keeper.New(o.Keeper, nil)
+		p.keeper.Lost = p.keeperLost
 		if d.openCurtain == nil {
 			p.state.Curtain.Unsupported = "this desktop cannot be darkened"
 		} else if c, err := d.openCurtain(p.hold(curtainStep)); err != nil {
@@ -122,8 +122,7 @@ func openPrivate(d *openedDesktop, start protocol.Start, o Options, audio AudioS
 			p.state.Silent.Unsupported = "this agent was built without sound"
 		}
 	}
-	p.want = p.state
-	p.want.Curtain.On, p.want.Silent.On = start.Curtain, start.Silent
+	p.wantCurtain, p.wantSilent = start.Curtain, start.Silent
 	p.settle()
 	go p.run()
 	for _, s := range []struct {
@@ -133,17 +132,10 @@ func openPrivate(d *openedDesktop, start protocol.Start, o Options, audio AudioS
 	}{{"--curtain", start.Curtain, p.state.Curtain}, {"--silent", start.Silent, p.state.Silent}} {
 		if s.on && !s.sw.On {
 			p.close()
-			return nil, fmt.Errorf("%s: %s", s.flag, firstOf(s.sw.Unsupported, s.sw.Error))
+			return nil, fmt.Errorf("%s: %s", s.flag, cmp.Or(s.sw.Unsupported, s.sw.Error))
 		}
 	}
 	return p, nil
-}
-
-func firstOf(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
 }
 
 // hold is the Hold for the change id.
@@ -172,11 +164,15 @@ func (p *private) set(t protocol.ControlType, on bool) {
 	p.mu.Lock()
 	switch t {
 	case protocol.ControlCurtain:
-		p.want.Curtain.On = on
+		p.wantCurtain = on
 	case protocol.ControlSilent:
-		p.want.Silent.On = on
+		p.wantSilent = on
 	}
 	p.mu.Unlock()
+	p.wake()
+}
+
+func (p *private) wake() {
 	select {
 	case p.kick <- struct{}{}:
 	default:
@@ -216,13 +212,13 @@ func (p *private) run() {
 // settle turns each switch the way the page last asked, as far as it can.
 func (p *private) settle() {
 	p.mu.Lock()
-	want, st := p.want, p.state
+	wantCurtain, wantSilent, st := p.wantCurtain, p.wantSilent, p.state
 	p.mu.Unlock()
-	if want.Curtain.On != st.Curtain.On && st.Curtain.Unsupported == "" {
-		p.switchCurtain(want.Curtain.On)
+	if wantCurtain != st.Curtain.On && st.Curtain.Unsupported == "" {
+		p.switchCurtain(wantCurtain)
 	}
-	if want.Silent.On != st.Silent.On && st.Silent.Unsupported == "" {
-		p.switchSilent(want.Silent.On)
+	if wantSilent != st.Silent.On && st.Silent.Unsupported == "" {
+		p.switchSilent(wantSilent)
 	}
 }
 
@@ -238,6 +234,21 @@ func (p *private) leaked(sw *protocol.PrivateSwitch, l leaker) {
 	if err != nil {
 		sw.Error = err.Error()
 	}
+}
+
+// keeperLost tells the page that nothing would undo what is switched on,
+// should the agent die, until the switch is turned again.
+func (p *private) keeperLost(err error) {
+	p.log.Warn("keeper lost", "err", err)
+	why := "nothing would give the room this back if the agent died: " + err.Error()
+	p.mu.Lock()
+	for _, sw := range []*protocol.PrivateSwitch{&p.state.Curtain, &p.state.Silent} {
+		if sw.On {
+			sw.Error = why
+		}
+	}
+	p.mu.Unlock()
+	p.wake()
 }
 
 func (p *private) switchCurtain(on bool) {
@@ -332,8 +343,11 @@ func (p *private) roomGone() {
 	err := p.closeRoom()
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.state.Silent.On, p.want.Silent.On = false, false
-	p.state.Silent.Error = errors.Join(why, err).Error()
+	p.state.Silent.On, p.wantSilent = false, false
+	p.state.Silent.Error = "the room is no longer silent"
+	if e := errors.Join(why, err); e != nil {
+		p.state.Silent.Error = e.Error()
+	}
 }
 
 // close gives the room back its screens and speakers and ends the keeper,

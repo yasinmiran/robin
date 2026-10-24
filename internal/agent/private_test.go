@@ -280,43 +280,49 @@ func TestPrivateIsForAttachedDesktops(t *testing.T) {
 }
 
 func TestPrivateSaysWhatCannotBe(t *testing.T) {
-	r, err := newPrivate(t, protocol.Start{}, func(_ *openedDesktop, o *Options) { o.Keeper = nil })
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st := r.p.snapshot(); !strings.Contains(st.Curtain.Unsupported, "no keeper") || !strings.Contains(st.Silent.Unsupported, "no keeper") {
-		t.Errorf("without a keeper: %+v", st)
-	}
-	if _, err := newPrivate(t, protocol.Start{Curtain: true}, func(_ *openedDesktop, o *Options) { o.Keeper = nil }); err == nil || !strings.HasPrefix(err.Error(), "--curtain: ") {
-		t.Errorf("--curtain without a keeper: %v", err)
-	}
-
-	r, err = newPrivate(t, protocol.Start{}, func(d *openedDesktop, o *Options) {
-		d.openCurtain = func(Hold) (curtain, error) { return nil, x11.ErrNoGamma }
-		o.Silence = nil
+	t.Run("no keeper", func(t *testing.T) {
+		r, err := newPrivate(t, protocol.Start{}, func(_ *openedDesktop, o *Options) { o.Keeper = nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st := r.p.snapshot(); !strings.Contains(st.Curtain.Unsupported, "no keeper") || !strings.Contains(st.Silent.Unsupported, "no keeper") {
+			t.Errorf("without a keeper: %+v", st)
+		}
+		if _, err := newPrivate(t, protocol.Start{Curtain: true}, func(_ *openedDesktop, o *Options) { o.Keeper = nil }); err == nil || !strings.HasPrefix(err.Error(), "--curtain: ") {
+			t.Errorf("--curtain without a keeper: %v", err)
+		}
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	st := r.p.snapshot()
-	if st.Curtain.Unsupported != x11.ErrNoGamma.Error() || !strings.Contains(st.Silent.Unsupported, "without sound") {
-		t.Errorf("with no gamma and no sound: %+v", st)
-	}
-	r.set(protocol.ControlCurtain, true)
-	if st := r.set(protocol.ControlSilent, true); st.Curtain.On || st.Silent.On {
-		t.Errorf("switched on what cannot be: %+v", st)
-	}
-
-	r, err = newPrivate(t, protocol.Start{}, func(d *openedDesktop, _ *Options) { d.openCurtain = nil })
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st := r.p.snapshot(); st.Curtain.Unsupported == "" {
-		t.Errorf("a desktop without a curtain: %+v", st)
-	}
-	if _, err := newPrivate(t, protocol.Start{Silent: true}, func(_ *openedDesktop, o *Options) { o.Silence = nil }); err == nil || !strings.HasPrefix(err.Error(), "--silent: ") {
-		t.Errorf("--silent without sound: %v", err)
-	}
+	t.Run("no gamma and no sound", func(t *testing.T) {
+		r, err := newPrivate(t, protocol.Start{}, func(d *openedDesktop, o *Options) {
+			d.openCurtain = func(Hold) (curtain, error) { return nil, x11.ErrNoGamma }
+			o.Silence = nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		st := r.p.snapshot()
+		if st.Curtain.Unsupported != x11.ErrNoGamma.Error() || !strings.Contains(st.Silent.Unsupported, "without sound") {
+			t.Errorf("with no gamma and no sound: %+v", st)
+		}
+		r.set(protocol.ControlCurtain, true)
+		if st := r.set(protocol.ControlSilent, true); st.Curtain.On || st.Silent.On {
+			t.Errorf("switched on what cannot be: %+v", st)
+		}
+	})
+	t.Run("no curtain", func(t *testing.T) {
+		r, err := newPrivate(t, protocol.Start{}, func(d *openedDesktop, _ *Options) { d.openCurtain = nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st := r.p.snapshot(); st.Curtain.Unsupported == "" {
+			t.Errorf("a desktop without a curtain: %+v", st)
+		}
+	})
+	t.Run("--silent without sound", func(t *testing.T) {
+		if _, err := newPrivate(t, protocol.Start{Silent: true}, func(_ *openedDesktop, o *Options) { o.Silence = nil }); err == nil || !strings.HasPrefix(err.Error(), "--silent: ") {
+			t.Errorf("--silent without sound: %v", err)
+		}
+	})
 }
 
 func TestPrivateStartsWithWhatStartAsks(t *testing.T) {
@@ -404,6 +410,23 @@ func TestPrivateRoomGoneUnderneath(t *testing.T) {
 	}
 }
 
+// A room that ends without saying why still ends, and says so.
+func TestPrivateRoomGoneWithoutAReason(t *testing.T) {
+	r, err := newPrivate(t, protocol.Start{Silent: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	close(r.rooms.last(t).gone)
+	select {
+	case st := <-r.sent:
+		if st.Silent.On || st.Silent.Error == "" {
+			t.Fatalf("after the room went: %+v", st)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the page heard nothing of the room going")
+	}
+}
+
 // What a switch that is on fails to hide reaches the page as its error,
 // and goes once the switch hides it again.
 func TestPrivateTellsThePageWhatLeaks(t *testing.T) {
@@ -438,6 +461,27 @@ func TestPrivateTellsThePageWhatLeaks(t *testing.T) {
 	r.curtain.leaks(errors.New("too late"))
 	if st := next("a lifted curtain's leak"); st.Curtain.Error != "" {
 		t.Fatalf("a lifted curtain reports %+v", st)
+	}
+}
+
+// A keeper that cannot be started again leaves what is on unguarded, and
+// the page says so on each switch that is on.
+func TestPrivateSaysWhenTheKeeperIsLost(t *testing.T) {
+	r, err := newPrivate(t, protocol.Start{Curtain: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.p.keeperLost(errors.New("fork: out of memory"))
+	select {
+	case st := <-r.sent:
+		if !strings.Contains(st.Curtain.Error, "out of memory") || st.Silent.Error != "" {
+			t.Fatalf("with the keeper lost: %+v", st)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the page heard nothing of the keeper")
+	}
+	if st := r.set(protocol.ControlCurtain, false); st.Curtain.On || st.Curtain.Error != "" {
+		t.Fatalf("the curtain lifted after the keeper was lost: %+v", st)
 	}
 }
 
