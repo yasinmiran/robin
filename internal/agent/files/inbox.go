@@ -26,8 +26,8 @@ const (
 	// maxUploads bounds the uploads in progress at once, and with the queue
 	// the memory they hold.
 	maxUploads = 4
-	// diskTimeout bounds how long Commit waits on the disk, since it holds
-	// the transfer's read loop meanwhile.
+	// diskTimeout bounds how long Accept and Commit wait on the disk, since
+	// they hold the transfer's read loop meanwhile.
 	diskTimeout = 5 * time.Second
 	// closeTimeout bounds how long Close waits for writers stuck on a disk.
 	closeTimeout = 5 * time.Second
@@ -78,9 +78,10 @@ func NewInbox(dir string, log *slog.Logger) *Inbox {
 func (in *Inbox) Dir() string { return in.dir }
 
 // Accept starts an upload of size bytes to be called name, or says why it
-// cannot: a bad name, too little space, or too many uploads at once. A name
-// CheckName refuses is bad, and so is one that starts with a dot: it would
-// be hidden, and in a home directory could be a startup file. The bytes go
+// cannot: a bad name, too little space, too many uploads at once, or a
+// disk that does not answer within the inbox's timeout. A name CheckName
+// refuses is bad, and so is one that starts with a dot: it would be
+// hidden, and in a home directory could be a startup file. The bytes go
 // to a file of a temporary name, opened so that it can be neither an
 // existing file nor a symlink, and the file gets its name only once the
 // whole upload is in.
@@ -91,46 +92,102 @@ func (in *Inbox) Accept(name string, size int64) (*Upload, error) {
 	if strings.HasPrefix(name, ".") {
 		return nil, fmt.Errorf("%w: %q would be a hidden file", ErrName, name)
 	}
-	in.mu.Lock()
-	defer in.mu.Unlock()
-	switch {
-	case in.closed:
-		return nil, ErrClosed
-	case len(in.uploads) >= maxUploads:
-		return nil, fmt.Errorf("%w: %d in progress", ErrBusy, len(in.uploads))
-	}
-	if err := os.MkdirAll(in.dir, 0o700); err != nil {
-		return nil, fmt.Errorf("files: %w", err)
-	}
-	dir, err := unix.Open(in.dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
-	if err != nil {
-		return nil, fmt.Errorf("files: open %s: %w", in.dir, err)
-	}
-	var st unix.Statfs_t
-	if err := in.statfs(dir, &st); err != nil {
-		unix.Close(dir)
-		return nil, fmt.Errorf("files: free space in %s: %w", in.dir, err)
-	}
-	if free := int64(st.Bavail)*int64(st.Bsize) - in.reserved; size > free-in.margin {
-		unix.Close(dir)
-		return nil, fmt.Errorf("%w in %s for %s: %s free, of which %s stays free",
-			ErrNoSpace, in.dir, humanSize(size), humanSize(max(free, 0)), humanSize(in.margin))
-	}
-	tmp := tempPrefix + rand.Text()[:16]
-	f, err := in.create(dir, tmp)
-	if err != nil {
-		unix.Close(dir)
-		return nil, fmt.Errorf("files: create in %s: %w", in.dir, err)
-	}
 	u := &Upload{
-		in: in, name: name, size: size, dir: dir, tmp: tmp, f: f,
+		in: in, name: name, size: size, tmp: tempPrefix + rand.Text()[:16],
 		queue: make(chan []byte, queueChunks), cancel: make(chan struct{}), done: make(chan struct{}),
+	}
+	// The slot and the bytes are the upload's from here, while the disk is
+	// asked outside the lock, so that Close is never held up behind it.
+	in.mu.Lock()
+	switch n := len(in.uploads); {
+	case in.closed:
+		in.mu.Unlock()
+		return nil, ErrClosed
+	case n >= maxUploads:
+		in.mu.Unlock()
+		return nil, fmt.Errorf("%w: %d in progress", ErrBusy, n)
 	}
 	in.uploads[u] = struct{}{}
 	in.reserved += size
 	in.wg.Add(1)
+	in.mu.Unlock()
+
+	// The caller is the read loop, and the disk may be a mount that stopped
+	// answering. One that answers late finds the upload abandoned and
+	// clears up after it; until then it holds its slot.
+	opened, abandoned := make(chan error), make(chan struct{})
+	go func() {
+		err := u.open()
+		select {
+		case opened <- err:
+		case <-abandoned:
+			if err == nil {
+				u.discard()
+			}
+			in.forget(u)
+		}
+	}()
+	var err error
+	select {
+	case err = <-opened:
+	case <-time.After(in.timeout):
+		close(abandoned)
+		return nil, fmt.Errorf("%w: %s took over %v to start the upload", ErrSlowDisk, in.dir, in.timeout)
+	}
+	if err == nil {
+		select {
+		case <-u.cancel: // closed meanwhile
+			u.discard()
+			err = ErrClosed
+		default:
+		}
+	}
+	if err != nil {
+		in.forget(u)
+		return nil, err
+	}
 	go u.run()
 	return u, nil
+}
+
+// open creates the directory when it is missing, checks that the upload
+// fits, and creates its temporary file.
+func (u *Upload) open() error {
+	in := u.in
+	if err := os.MkdirAll(in.dir, 0o700); err != nil {
+		return fmt.Errorf("files: %w", err)
+	}
+	dir, err := unix.Open(in.dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("files: open %s: %w", in.dir, err)
+	}
+	var st unix.Statfs_t
+	if err := in.statfs(dir, &st); err != nil {
+		unix.Close(dir)
+		return fmt.Errorf("files: free space in %s: %w", in.dir, err)
+	}
+	in.mu.Lock()
+	others := in.reserved - u.size
+	in.mu.Unlock()
+	if free := int64(st.Bavail)*int64(st.Bsize) - others; u.size > free-in.margin {
+		unix.Close(dir)
+		return fmt.Errorf("%w in %s for %s: %s free, of which %s stays free",
+			ErrNoSpace, in.dir, humanSize(u.size), humanSize(max(free, 0)), humanSize(in.margin))
+	}
+	f, err := in.create(dir, u.tmp)
+	if err != nil {
+		unix.Close(dir)
+		return fmt.Errorf("files: create in %s: %w", in.dir, err)
+	}
+	u.dir, u.f = dir, f
+	return nil
+}
+
+// discard undoes what open did, for an upload that never started.
+func (u *Upload) discard() {
+	u.f.Close()
+	unix.Unlinkat(u.dir, u.tmp, 0)
+	unix.Close(u.dir)
 }
 
 // Close cancels every upload in progress and waits, for a while, until

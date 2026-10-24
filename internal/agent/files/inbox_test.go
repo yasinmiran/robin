@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -400,6 +401,68 @@ func TestUploadCommitGivesUp(t *testing.T) {
 	waitEmpty(t, in)
 	if names := listing(t, in.Dir()); len(names) != 0 {
 		t.Errorf("after Commit gave up the directory holds %v", names)
+	}
+}
+
+// A download dir on a mount that stopped answering must not hold the read
+// loop, nor the session's teardown behind it: Accept gives up, Close is
+// not kept waiting on Accept, and a call that answers late leaves nothing.
+func TestAcceptFailsRatherThanStall(t *testing.T) {
+	for _, stuck := range []string{"statfs", "create"} {
+		t.Run(stuck, func(t *testing.T) {
+			in := testInbox(t)
+			in.timeout = 200 * time.Millisecond
+			entered, release := make(chan struct{}), make(chan struct{})
+			var enter, let sync.Once
+			letGo := func() { let.Do(func() { close(release) }) }
+			t.Cleanup(letGo) // before in.Close, which would wait for it
+			hang := func() {
+				enter.Do(func() { close(entered) })
+				<-release
+			}
+			if stuck == "statfs" {
+				in.statfs = func(fd int, st *unix.Statfs_t) error { hang(); return unix.Fstatfs(fd, st) }
+			} else {
+				in.create = func(dir int, name string) (*os.File, error) { hang(); return createTemp(dir, name) }
+			}
+
+			start := time.Now()
+			accepted := make(chan error, 1)
+			go func() {
+				u, err := in.Accept("late.bin", 1)
+				if u != nil {
+					u.Abort(nil)
+				}
+				accepted <- err
+			}()
+			select {
+			case <-entered:
+			case <-time.After(5 * time.Second):
+				t.Fatalf("Accept never called %s", stuck)
+			}
+			closed := make(chan struct{})
+			go func() { in.Close(); close(closed) }()
+			select {
+			case err := <-accepted:
+				if !errors.Is(err, ErrSlowDisk) {
+					t.Errorf("Accept with %s stuck: %v, want ErrSlowDisk", stuck, err)
+				}
+				if took := time.Since(start); took > in.timeout+time.Second {
+					t.Errorf("Accept gave up after %v, want %v", took, in.timeout)
+				}
+			case <-time.After(in.timeout + 2*time.Second):
+				t.Fatalf("Accept is still waiting on %s", stuck)
+			}
+			letGo()
+			select {
+			case <-closed:
+			case <-time.After(closeTimeout + time.Second):
+				t.Fatal("Close is still waiting")
+			}
+			if names := listing(t, in.Dir()); len(names) != 0 {
+				t.Errorf("the late %s left %v", stuck, names)
+			}
+		})
 	}
 }
 

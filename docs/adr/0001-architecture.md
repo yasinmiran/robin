@@ -851,7 +851,11 @@ Chrome, so the queue fills only when the disk stops answering, and then the
 upload fails instead of the session freezing. At most four uploads run at
 once, which bounds the queues to 64 MiB. Commit has to wait, since the
 verdict is what it returns: it waits for the drain and the rename, which
-took 3 to 7 ms from 16 MiB to 1 GiB, and gives up after 5 s. Cancel,
+took 3 to 7 ms from 16 MiB to 1 GiB, and gives up after 5 s. Accept has
+to ask the disk too, to make the folder, read the free space and create the
+file, and does it off the inbox's lock with the same 5 s bound, so a
+download folder on an NFS or FUSE mount that stopped answering fails the
+upload rather than freeze the session and its teardown. Cancel,
 failure and the end of the session remove the partial file; only a SIGKILL
 leaves one, and the agent does not sweep the user's download folder for
 names that look like its own.
