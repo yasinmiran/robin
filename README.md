@@ -172,7 +172,9 @@ robin-send report.pdf build/*.log                # in a terminal of the desktop 
 ```
 
 The page lists each offer by name and size, and nothing downloads until you
-click Save; Dismiss turns it down. `robin-send` stays until every file it
+click Save; Dismiss turns it down. Save takes the file as it is by then, but
+never more than the size shown: a file that grew since its offer is refused,
+and both the page and `robin-send` say so. `robin-send` stays until every file it
 offered has been saved or declined, prints which, and exits non-zero unless
 all were saved. Ctrl+C there withdraws whatever is still on offer. Programs in
 a spawned desktop have `robin-send` on their `PATH` and `ROBIN_FILES_SOCK`
@@ -554,7 +556,7 @@ copy and keeps it in its history.
   on the host and the session reads nothing its sender could not. Offers end
   when `robin-send` exits.
 - **The clipboard**, as text, HTML or a PNG image, up to 16 MiB, held in
-  memory, two transfers at a time.
+  memory, two transfers at a time each way.
 
 File names from the host appear in the page as text, never as markup. Words
 from the page that reach a terminal on the host, a refusal's reason printed by
@@ -562,6 +564,15 @@ from the page that reach a terminal on the host, a refusal's reason printed by
 prints that holds any, or a mark that reorders text, is printed quoted with
 escapes, as `ls` does. Bulk transfers of any kind the agent has not registered
 are refused.
+
+The page holds the host to bounds of its own. A host may have two clipboard
+transfers open to the page at once and one of any other kind, downloads
+aside, which each need a click on Save; what arrives is kept as it comes,
+never reserved ahead for the size a header claims. A download may be no
+larger than the offer you clicked, and the host can withdraw only the files
+it offered, never your uploads. The page keeps at most 128 pointer images
+of at most 256 KiB each, and puts nothing from the host into the pointer's
+CSS but base64 and whole-pixel hot spots.
 
 A kept session is reached through a unix socket in its 0700 run directory,
 and the daemon accepts a connection only from a process of its own uid
@@ -964,6 +975,13 @@ verified against a Linux build.
 - A file is at most 4 GiB either way. The page holds a download in memory
   until the last byte is in, then hands it to the browser's downloads, so
   the browser has to have room for it; uploads stream from disk.
+- A file that grows after `robin-send` offered it, a log being written say,
+  is refused when you click Save, as larger than the offer, and stays on
+  offer as it was; offer it again to get what it holds now. One that shrank
+  comes as it is.
+- The page does not bound the data channels a host opens and never sends a
+  transfer's header on. Each costs the browser a channel and the page a
+  listener or two, never a buffer.
 - An upload is not flushed to disk (no fsync) before it gets its name, so a
   power cut in the seconds after one can leave it short.
 - An agent killed with SIGKILL during an upload leaves the partial file in
