@@ -572,7 +572,7 @@ test('files: a file that grew after its offer is not saved, and both ends say wh
   // The offer stands until it is dismissed.
   await row.locator('.dismiss').click();
   const printed = await sending;
-  expect(printed).toContain(`${name}: transfer failed, still on offer: peer: bulk transfer refused: ${why}`);
+  expect(printed).toContain(`${name}: transfer failed, still on offer: the browser refused it: ${why}`);
   expect(printed).toContain(`${name}: declined in the browser`);
   expect(downloads).toBe(0);
 });

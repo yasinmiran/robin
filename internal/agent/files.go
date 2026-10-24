@@ -303,9 +303,19 @@ func (s *session) fetchOffer(m protocol.Control) {
 			fs.settle(o, files.Saved, "")
 		default:
 			s.log.Info("file transfer failed", "name", o.info.Name, "err", err)
-			o.from.req.Tell(o.i, files.Failed, err.Error())
+			o.from.req.Tell(o.i, files.Failed, failure(err))
 		}
 	}()
+}
+
+// failure is what robin-send prints for a transfer that failed: the
+// browser's own reason when it refused one.
+func failure(err error) string {
+	var refused *peer.BulkRefusedError
+	if errors.As(err, &refused) {
+		return "the browser refused it: " + refused.Reason
+	}
+	return err.Error()
 }
 
 // sendFile sends what the file holds now, which may differ from its size
