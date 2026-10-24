@@ -37,7 +37,7 @@ function writeTone() {
   header.writeUInt16LE(16, 34);
   header.write('data', 36);
   header.writeUInt32LE(data.length, 40);
-  fs.writeFileSync(AUDIO, Buffer.concat([header, data]));
+  writeWhole(AUDIO, Buffer.concat([header, data]));
 }
 
 function writeCamera() {
@@ -51,15 +51,24 @@ function writeCamera() {
     for (let row = 0; row < h / 5; row++) y.fill(235, row * w + x0, row * w + Math.min(w, x0 + 40));
     parts.push(Buffer.from('FRAME\n'), y, Buffer.alloc((w * h) / 4, COLOUR.u), Buffer.alloc((w * h) / 4, COLOUR.v));
   }
-  fs.writeFileSync(VIDEO, Buffer.concat(parts));
+  writeWhole(VIDEO, Buffer.concat(parts));
 }
 
-// fakeMediaArgs writes the files, once per machine, and returns the flags
-// that make Chrome play them as its microphone and camera and grant both
-// without asking.
+// writeWhole puts data at path by rename, so a Chrome opening the file
+// never reads it half written, whoever else is writing it.
+function writeWhole(path: string, data: Buffer) {
+  const tmp = `${path}.${process.pid}`;
+  fs.writeFileSync(tmp, data);
+  fs.renameSync(tmp, path);
+}
+
+// fakeMediaArgs writes the files afresh, so they always hold what the
+// constants above say, and returns the flags that make Chrome play them as
+// its microphone and camera and grant both without asking. Both take
+// milliseconds to make.
 export function fakeMediaArgs(): string[] {
-  if (!fs.existsSync(AUDIO)) writeTone();
-  if (!fs.existsSync(VIDEO)) writeCamera();
+  writeTone();
+  writeCamera();
   return [
     '--use-fake-ui-for-media-stream',
     '--use-fake-device-for-media-stream',
