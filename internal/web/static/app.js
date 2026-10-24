@@ -2,6 +2,9 @@ import { Input } from './input.js';
 import { Overlay } from './overlay.js';
 import { StatsSampler } from './stats.js';
 import { RemoteCursor } from './cursor.js';
+import { dispatchControl, onControl } from './control.js';
+import { acceptBulk, onBulk, sendBulk } from './bulk.js';
+import { BULK_CHANNEL, registerKind } from './bulkframe.js';
 
 const CONTROL_CHANNEL = 'control';
 const ICE_GRACE_MS = 2000;
@@ -42,7 +45,27 @@ window.robin = {
   get muted() { return video.muted; },
   get monitors() { return monitors; },
   showMonitor: (name) => showMonitor(name),
+  addSection: (name) => overlay.addSection(name),
+  bulk: {
+    registerKind,
+    onBulk,
+    send: (header, blob, options) => sendBulk(pc, header, blob, options),
+  },
 };
+
+onControl('cursor', (c) => {
+  if (c.cursor) cursor.apply(c.cursor);
+});
+onControl('monitors', (c) => {
+  monitors = c.monitors ?? null;
+  overlay.setMonitors(monitors, showMonitor);
+});
+onControl('clipboard', (c) => {
+  lastRemoteClipboard = c.text ?? '';
+  navigator.clipboard?.writeText(lastRemoteClipboard).catch(() => {
+    // Needs focus and permission; the text is kept either way.
+  });
+});
 
 input.attach();
 connect(takeToken());
@@ -144,7 +167,12 @@ function createPeer(config) {
     lastControlAt = Date.now();
     // A heartbeat-triggered restart may never change iceConnectionState.
     if (state === 'reconnecting' && ['connected', 'completed'].includes(pc.iceConnectionState)) setState('connected');
-    onControl(JSON.parse(e.data));
+    dispatchControl(JSON.parse(e.data));
+  };
+  // The agent opens a channel of its own for each bulk transfer it sends.
+  pc.ondatachannel = (e) => {
+    if (e.channel.label === BULK_CHANNEL) acceptBulk(e.channel);
+    else e.channel.close();
   };
   heartbeatTimer = setInterval(checkHeartbeat, 500);
 
@@ -205,23 +233,6 @@ function checkHeartbeat() {
   lastControlAt = Date.now();
   setState('reconnecting');
   restartIce();
-}
-
-function onControl(c) {
-  if (c.t === 'cursor') {
-    if (c.cursor) cursor.apply(c.cursor);
-    return;
-  }
-  if (c.t === 'monitors') {
-    monitors = c.monitors ?? null;
-    overlay.setMonitors(monitors, showMonitor);
-    return;
-  }
-  if (c.t !== 'clipboard') return;
-  lastRemoteClipboard = c.text ?? '';
-  navigator.clipboard?.writeText(lastRemoteClipboard).catch(() => {
-    // Needs focus and permission; the text is kept either way.
-  });
 }
 
 // showMonitor asks the agent to show another monitor of the desktop, or

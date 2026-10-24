@@ -255,6 +255,10 @@ body:has(#hud[data-state="reconnecting"]) #wire { opacity: 1; }
 .menu .size { color: var(--ink-soft); }
 .menu .tag { margin-left: 6px; color: var(--ink-soft); font-weight: 400; }
 
+/* Parts of the tab that features add, one below the other. */
+.section { margin-top: 6px; }
+.section:empty { display: none; }
+
 .notice {
   max-width: 42ch;
   margin: 6px 0 4px;

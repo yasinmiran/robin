@@ -46,6 +46,7 @@ export class Overlay {
   #monitors = this.#hud.querySelector('.monitors');
   #monitorButton = document.getElementById('monitor');
   #monitorMenu = document.getElementById('monitor-menu');
+  #sections = null;
   #pickMonitor = null;
   #tuckTimer = 0;
   #hovered = false;
@@ -153,6 +154,27 @@ export class Overlay {
     }
   }
 
+  // addSection gives a feature its own part of the tab, below the row of
+  // stats, and returns the element for it to fill. Sections stack in the
+  // order they were added, take no room while empty, and go with the rest
+  // of the tab when the session ends.
+  addSection(name) {
+    if (!this.#sections) {
+      this.#sections = document.createElement('div');
+      this.#sections.className = 'sections';
+      this.#sections.hidden = this.#hud.dataset.state === 'ended';
+      this.#notice.before(this.#sections);
+    }
+    if ([...this.#sections.children].some((s) => s.dataset.section === name)) {
+      throw new Error(`overlay: section ${JSON.stringify(name)} added twice`);
+    }
+    const section = document.createElement('section');
+    section.className = 'section';
+    section.dataset.section = name;
+    this.#sections.append(section);
+    return section;
+  }
+
   setState(state) {
     this.#hud.dataset.state = state;
     this.#label.textContent = STATE_LABELS[state];
@@ -165,7 +187,9 @@ export class Overlay {
     this.#notice.textContent = body;
     this.#notice.hidden = false;
     this.#closeMonitorMenu(false);
-    for (const el of [this.#transport, this.#picture, this.#fullscreen, this.#sound, this.#monitors]) el.hidden = true;
+    for (const el of [this.#transport, this.#picture, this.#fullscreen, this.#sound, this.#monitors, this.#sections]) {
+      if (el) el.hidden = true;
+    }
     this.#scrim.hidden = false;
     this.#reveal();
   }

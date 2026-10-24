@@ -120,6 +120,7 @@ async function rejected(name, target, title) {
   await page.waitForFunction(() => window.robin?.state === 'ended');
   check(!opened, `${name}: no signaling reaches the page`);
   check((await page.textContent('#state-label')) === title, `${name}: shows "${title}"`);
+  check(await page.evaluate(() => window.robin.addSection('late').parentElement.hidden), `${name}: sections stay hidden once ended`);
   await page.screenshot({ path: join(shots, `ended-${name.replace(' ', '-')}.png`) });
   await page.close();
 }
@@ -161,6 +162,7 @@ async function connects(scheme) {
     `${scheme}: stats report decoded video (${video.frameWidth}x${video.frameHeight}, ${video.fps} fps, ${video.kbps} kb/s)`);
 
   if (scheme === 'dark') await exerciseControls(page);
+  await sections(page, scheme);
 
   await page.mouse.move(640, 10);
   await page.waitForTimeout(400);
@@ -198,6 +200,31 @@ async function sound(page, scheme) {
     && !(await page.evaluate(() => window.robin.video.paused)),
     `${scheme}: a click turns sound on and the video keeps playing`);
   check(await page.evaluate(() => document.activeElement?.id !== 'sound'), `${scheme}: the toggle gives focus back`);
+}
+
+// sections checks a feature can add its own part of the status tab, below
+// the row of stats, and that an empty one takes no room.
+async function sections(page, scheme) {
+  const got = await page.evaluate(() => {
+    const s = window.robin.addSection('smoke');
+    s.textContent = 'A section of its own';
+    const empty = window.robin.addSection('empty');
+    let twice = 'no error';
+    try {
+      window.robin.addSection('smoke');
+    } catch (e) {
+      twice = e.message;
+    }
+    return {
+      inHud: document.getElementById('hud').contains(s),
+      belowRow: s.parentElement.previousElementSibling?.classList.contains('row'),
+      shown: s.offsetHeight > 0,
+      emptyHeight: empty.offsetHeight,
+      twice,
+    };
+  });
+  check(got.inHud && got.belowRow && got.shown && got.emptyHeight === 0 && /added twice/.test(got.twice),
+    `${scheme}: a feature adds its own section to the status tab (${JSON.stringify(got)})`);
 }
 
 // exerciseControls sends what TestBrowserSmoke expects on the data channel.
