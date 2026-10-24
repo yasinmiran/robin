@@ -67,6 +67,18 @@ func TestWaitForWindowRefusesAStrangersSocket(t *testing.T) {
 	ln.Close()
 }
 
+// TestWaitForWindowTrustsTheSpawnedXvfb checks the other side: the Xvfb
+// Spawn started passes the check, on whichever socket it listens.
+func TestWaitForWindowTrustsTheSpawnedXvfb(t *testing.T) {
+	d, _ := spawn(t, "xterm")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cookie := readEntries(t, d.XAuthority)[0].data
+	if err := waitForWindow(ctx, strings.TrimPrefix(d.Name, ":"), cookie, d.xvfb.cmd.Process.Pid); err != nil {
+		t.Fatalf("waitForWindow on the spawned display: %v", err)
+	}
+}
+
 // listenAbstract listens on the abstract X socket of a display number that
 // has no filesystem socket, so a dial falls through to it.
 func listenAbstract(t *testing.T) (string, net.Listener) {
