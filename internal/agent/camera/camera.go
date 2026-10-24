@@ -13,6 +13,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -117,6 +118,11 @@ func Start(o Options) (*Camera, error) {
 	log := o.Log
 	if log == nil {
 		log = slog.Default()
+	}
+	if o.Device == "" {
+		if err := havePipeWire(); err != nil {
+			return nil, err
+		}
 	}
 	dec, err := h264.NewDecoder()
 	if err != nil {
@@ -266,6 +272,19 @@ func (c *Camera) Close() error {
 		err = c.sink.Close()
 	})
 	return err
+}
+
+// havePipeWire checks for the user's PipeWire before a pipeline needs it:
+// pipewiresink without one fails in words that never say so.
+func havePipeWire() error {
+	if os.Getenv("PIPEWIRE_REMOTE") != "" {
+		return nil
+	}
+	socket := filepath.Join(runtimeDir(), "pipewire-0")
+	if _, err := os.Stat(socket); err != nil {
+		return fmt.Errorf("no PipeWire for this user at %s, and no v4l2loopback device this user can write", socket)
+	}
+	return nil
 }
 
 // runtimeDir is the logged-in user's runtime directory, where PipeWire

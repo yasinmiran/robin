@@ -242,3 +242,13 @@ func TestADeviceThatRefusesIsLoggedNotFatal(t *testing.T) {
 	waitFor(t, "a few attempts", func() bool { return len(dev.written()) >= 3 })
 	c.Close()
 }
+
+func TestStartWithoutPipeWireSaysSo(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", dir)
+	t.Setenv("PIPEWIRE_REMOTE", "")
+	_, err := Start(Options{Log: quiet()})
+	if err == nil || !strings.Contains(err.Error(), "no PipeWire for this user at "+dir+"/pipewire-0") {
+		t.Fatalf("Start = %v, want no PipeWire", err)
+	}
+}
