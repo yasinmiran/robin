@@ -162,26 +162,31 @@ func (s *Store) apply(all []protocol.Macro, c *protocol.MacroChange) ([]protocol
 	return next, nil
 }
 
+// read reads the file through one open, so what it checks is what it
+// reads: a regular file of the user's own that only they can write, since
+// what it holds is typed on a host.
 func (s *Store) read() ([]protocol.Macro, error) {
 	if s.path == "" {
 		return nil, errNoPath
 	}
-	// A FIFO would hold the open up; only a regular file is read.
-	st, err := os.Stat(s.path)
+	f, err := openFile(s.path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, s.unreadable(err)
 	}
-	if !st.Mode().IsRegular() {
-		return nil, s.unreadable(errors.New("not a regular file"))
-	}
-	f, err := os.Open(s.path)
+	defer f.Close()
+	st, err := f.Stat()
 	if err != nil {
 		return nil, s.unreadable(err)
 	}
-	defer f.Close()
+	if !st.Mode().IsRegular() {
+		return nil, s.unreadable(errors.New("not a regular file"))
+	}
+	if err := ownedAlone(st); err != nil {
+		return nil, s.unreadable(err)
+	}
 	b, err := io.ReadAll(io.LimitReader(f, protocol.MaxMacrosBytes+1))
 	if err != nil {
 		return nil, s.unreadable(err)
@@ -260,7 +265,7 @@ func (s *Store) write(all []protocol.Macro) (err error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	if err := os.Chmod(dir, 0o700); err != nil {
+	if err := privateDir(dir); err != nil {
 		return err
 	}
 	// CreateTemp makes the file 0600, and a name of its own that no other
