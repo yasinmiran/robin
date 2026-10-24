@@ -155,12 +155,16 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 		if !cfg.Unpaced {
 			p = newPacer(cfg.StartBitrate)
 		}
-		return newEstimator(cfg, p, log, time.Now)
+		e, err := newEstimator(cfg, p, log, time.Now)
+		if err != nil {
+			return nil, err
+		}
+		bweReady <- e
+		return e, nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	ccf.OnNewPeerConnection(func(_ string, e cc.BandwidthEstimator) { bweReady <- e.(*estimator) })
 	reg.Add(ccf)
 	if err := webrtc.ConfigureTWCCHeaderExtensionSender(m, reg); err != nil {
 		return nil, err
