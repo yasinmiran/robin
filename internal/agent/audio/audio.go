@@ -103,6 +103,10 @@ func Start(ctx context.Context, o Options) (_ *Source, env []string, err error) 
 // Packets delivers Opus packets until the capture ends or Close is called.
 func (s *Source) Packets() <-chan []byte { return s.packets }
 
+// Follow records source from now on, such as a silent room's monitor, or
+// for "" the monitor the capture started on.
+func (s *Source) Follow(source string) error { return s.rec.follow(source) }
+
 // Close stops the capture and any sound server Start began. It is safe to
 // call more than once.
 func (s *Source) Close() error {

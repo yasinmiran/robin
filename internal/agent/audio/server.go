@@ -46,8 +46,9 @@ type server struct {
 }
 
 // startServer starts pulseaudio under runDir/pulse and returns once its
-// socket accepts connections. ctx bounds startup only.
-func startServer(ctx context.Context, runDir string) (_ *server, err error) {
+// socket accepts connections. ctx bounds startup only. extra goes on the
+// daemon's command line after the agent's own options, which it overrides.
+func startServer(ctx context.Context, runDir string, extra ...string) (_ *server, err error) {
 	bin, err := exec.LookPath("pulseaudio")
 	if err != nil {
 		return nil, errNoServer
@@ -75,13 +76,13 @@ func startServer(ctx context.Context, runDir string) (_ *server, err error) {
 		return nil, fmt.Errorf("pulseaudio: %w", err)
 	}
 
-	s.cmd = exec.Command(bin,
-		"-n", "--file="+script,
+	s.cmd = exec.Command(bin, append([]string{
+		"-n", "--file=" + script,
 		"--daemonize=no", "--system=no", "--fail=yes",
 		"--exit-idle-time=-1", "--disallow-exit=yes", "--disallow-module-loading=yes",
 		"--use-pid-file=no", "--realtime=no", "--high-priority=no",
 		"--log-target=stderr",
-	)
+	}, extra...)...)
 	s.cmd.Dir = dir
 	s.cmd.Env = serverEnv(dir)
 	s.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
