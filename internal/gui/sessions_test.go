@@ -222,49 +222,62 @@ func TestReconnectEndsTheSessionWhenItsContextEnds(t *testing.T) {
 	}
 }
 
-// TestInterruptedReconnectLeavesASessionAnotherCLIHolds: while every
-// redial is told the session is busy, another controller has it, so Ctrl+C
-// in this CLI must not end the desktop under it. It says so and how to end
-// it instead.
+// TestInterruptedReconnectLeavesASessionAnotherCLIHolds: once a redial is
+// told the session is busy, another controller may have it, so Ctrl+C in
+// this CLI must not end the desktop under it, even when the tries after
+// that reach no agent. It says so and how to end it instead.
 func TestInterruptedReconnectLeavesASessionAnotherCLIHolds(t *testing.T) {
 	o, _, _ := localhost(t)
 	o, log := o.fill()
-	h := &host{o: o, log: log}
-	defer h.close()
-	dir := t.TempDir()
-	calls := filepath.Join(dir, "calls")
-	path := filepath.Join(dir, "robin-agent")
 	busy := `{"type":"error","error":"another CLI is connected","code":"` + string(protocol.CodeBusy) + `"}`
-	script := "#!/bin/sh\necho \"$1\" >> " + calls + "\nif [ \"$1\" = serve ]; then\n\tread line\n\tprintf '%s\\n' '" + busy + "'\n\tcat >/dev/null\nfi\n"
-	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	type result struct {
-		ag  *agentProc
-		err error
-	}
-	done := make(chan result, 1)
-	go func() {
-		ag, _, err := h.reconnect(ctx, path, "ab12", time.Now().Add(time.Hour), &tunnel{log: log})
-		done <- result{ag, err}
-	}()
-	// The second try means the first one's busy has been taken in.
-	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(20 * time.Millisecond) {
-		if b, _ := os.ReadFile(calls); strings.Count(string(b), "serve") >= 2 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("reconnect did not try twice")
-		}
-	}
-	cancel()
-	r := <-done
-	if r.ag != nil || r.err == nil || !strings.Contains(r.err.Error(), "another robin gui") || !strings.Contains(r.err.Error(), "robin end "+o.Dest+" ab12") {
-		t.Fatalf("Ctrl+C with the session busy: %v, %v; want it left, with how to end it", r.ag, r.err)
-	}
-	if b, _ := os.ReadFile(calls); strings.Contains(string(b), "end") {
-		t.Fatalf("the host ran %q: the end command ran on a session another CLI holds", b)
+	for _, tc := range []struct {
+		name string
+		// rest is what the agent does from the second try on.
+		rest string
+	}{
+		{"busy every time", "read line\n\tprintf '%s\\n' '" + busy + "'\n\tcat >/dev/null"},
+		{"busy, then gone", "exit 1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &host{o: o, log: log}
+			defer h.close()
+			dir := t.TempDir()
+			calls := filepath.Join(dir, "calls")
+			path := filepath.Join(dir, "robin-agent")
+			script := "#!/bin/sh\necho \"$1\" >> " + calls + "\n[ \"$1\" = serve ] || exit 0\n" +
+				"if [ \"$(grep -c serve " + calls + ")\" -gt 1 ]; then\n\t" + tc.rest + "\n\texit\nfi\n" +
+				"read line\nprintf '%s\\n' '" + busy + "'\ncat >/dev/null\n"
+			if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			type result struct {
+				ag  *agentProc
+				err error
+			}
+			done := make(chan result, 1)
+			go func() {
+				ag, _, err := h.reconnect(ctx, path, "ab12", time.Now().Add(time.Hour), &tunnel{log: log})
+				done <- result{ag, err}
+			}()
+			// The third try means the second one's answer has been taken in.
+			for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+				if b, _ := os.ReadFile(calls); strings.Count(string(b), "serve") >= 3 {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("reconnect did not try three times")
+				}
+			}
+			cancel()
+			r := <-done
+			if r.ag != nil || r.err == nil || !strings.Contains(r.err.Error(), "another robin gui") || !strings.Contains(r.err.Error(), "robin end "+o.Dest+" ab12") {
+				t.Fatalf("Ctrl+C with the session busy: %v, %v; want it left, with how to end it", r.ag, r.err)
+			}
+			if b, _ := os.ReadFile(calls); strings.Contains(string(b), "end") {
+				t.Fatalf("the host ran %q: the end command ran on a session another CLI holds", b)
+			}
+		})
 	}
 }
