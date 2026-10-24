@@ -19,9 +19,9 @@ func TestDecodeHTML(t *testing.T) {
 		"utf-16be bom":     {[]byte{0xfe, 0xff, 0, '<', 0, 'i', 0, '>'}, "<i>"},
 		"surrogate pair":   {[]byte{0xff, 0xfe, 0x3d, 0xd8, 0x00, 0xde}, "😀"},
 		"odd trailing":     {[]byte{0xff, 0xfe, 'a', 0, 'b'}, "a"},
-		"invalid utf-8":    {[]byte("a\xffb"), "a�b"},
+		"invalid utf-8":    {[]byte("a\xffb"), "a\uFFFDb"},
 		"just a bom":       {[]byte{0xff, 0xfe}, ""},
-		"one byte, no bom": {[]byte{0xff}, "�"},
+		"one byte, no bom": {[]byte{0xff}, "\uFFFD"},
 	} {
 		if got := decodeHTML(tc.in); got != tc.want {
 			t.Errorf("%s: decodeHTML = %q, want %q", name, got, tc.want)
@@ -33,7 +33,7 @@ func TestDecodeText(t *testing.T) {
 	if got := decodeText(xproto.AtomString, []byte{'c', 'a', 'f', 0xe9}); got != "café" {
 		t.Errorf("STRING as Latin-1: %q", got)
 	}
-	if got := decodeText(0, []byte("ok \xff")); got != "ok �" {
+	if got := decodeText(0, []byte("ok \xff")); got != "ok \uFFFD" {
 		t.Errorf("UTF8_STRING with a bad byte: %q", got)
 	}
 }

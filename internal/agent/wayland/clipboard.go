@@ -195,8 +195,8 @@ func (c *clipboard) readAll(offered []string) protocol.Clip {
 		left -= len(b)
 		return b
 	}
-	content.Text = strings.ToValidUTF8(string(read(pickText(offered))), "�")
-	content.HTML = strings.ToValidUTF8(string(read(protocol.MIMEHTML)), "�")
+	content.Text = strings.ToValidUTF8(string(read(pickText(offered))), "\uFFFD")
+	content.HTML = strings.ToValidUTF8(string(read(protocol.MIMEHTML)), "\uFFFD")
 	content.PNG = read(protocol.MIMEPNG)
 	return content
 }

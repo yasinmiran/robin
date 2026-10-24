@@ -140,7 +140,7 @@ func TestSendOffersFilesAndFollowsThem(t *testing.T) {
 	}
 	want := "a.txt: offered; click Save in the browser to download it, or press Ctrl+C here to withdraw it\n" +
 		"b.bin: offered; click Save in the browser to download it, or press Ctrl+C here to withdraw it\n" +
-		"b.bin: transfer failed, still on offer: the browser went away�[2J\n" +
+		"b.bin: transfer failed, still on offer: the browser went away\uFFFD[2J\n" +
 		"a.txt: saved by the browser\n" +
 		"b.bin: saved by the browser\n"
 	if got.out != want {

@@ -569,7 +569,7 @@ func latin1(text string) []byte {
 
 func decodeText(typ xproto.Atom, data []byte) string {
 	if typ != xproto.AtomString {
-		return strings.ToValidUTF8(string(data), "�")
+		return strings.ToValidUTF8(string(data), "\uFFFD")
 	}
 	r := make([]rune, len(data))
 	for i, b := range data {
@@ -593,5 +593,5 @@ func decodeHTML(data []byte) string {
 		}
 		return string(utf16.Decode(units))
 	}
-	return strings.ToValidUTF8(string(data), "�")
+	return strings.ToValidUTF8(string(data), "\uFFFD")
 }
