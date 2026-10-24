@@ -30,7 +30,6 @@ var modes = []string{"set", "count", "atomic"}
 // -test.coverprofile or go tool covdata textfmt writes it, into p.
 func (p profile) add(r io.Reader, name string) error {
 	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	moded := false
 	for n := 1; sc.Scan(); n++ {
 		line := strings.TrimSpace(sc.Text())

@@ -63,7 +63,7 @@ func compare(base map[string]float64, packages map[string]total, tolerance float
 		t, ok := packages[pkg]
 		switch {
 		case !ok:
-			drops = append(drops, fmt.Sprintf("%s: in the baseline at %.1f%% but in no profile; if the package is gone, make cover-baseline", pkg, want))
+			drops = append(drops, fmt.Sprintf("%s: in the baseline at %.1f%% but in no profile; once the package is gone on main, rerun make cover-baseline there", pkg, want))
 		// The baseline holds one decimal; the slack keeps a run that
 		// matches it exactly from failing on float rounding.
 		case t.percent() < want-tolerance-1e-9:

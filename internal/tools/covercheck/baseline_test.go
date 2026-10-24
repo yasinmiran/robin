@@ -110,7 +110,7 @@ func TestCompare(t *testing.T) {
 	drops, added := compare(base, packages, 0.5)
 	wantDrops := []string{
 		"dropped: 49.4%, 0.6 points below the baseline's 50.0%",
-		"gone: in the baseline at 10.0% but in no profile; if the package is gone, make cover-baseline",
+		"gone: in the baseline at 10.0% but in no profile; once the package is gone on main, rerun make cover-baseline there",
 	}
 	if !reflect.DeepEqual(drops, wantDrops) {
 		t.Errorf("drops:\n%q\nwant:\n%q", drops, wantDrops)

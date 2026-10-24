@@ -29,22 +29,36 @@ func main() {
 // errDrop marks a run that worked but found packages below the baseline.
 var errDrop = errors.New("coverage fell below the baseline")
 
+type options struct {
+	out, module, baseline string
+	write                 bool
+	tolerance             float64
+}
+
 func run(args []string, stdout, stderr io.Writer) int {
+	var o options
 	fl := flag.NewFlagSet("covercheck", flag.ContinueOnError)
 	fl.SetOutput(stderr)
-	out := fl.String("o", "", "write the merged profile, in set mode, to this file")
-	module := fl.String("module", "", "module path to strip from file and package names")
-	baseline := fl.String("baseline", "", "per-package baseline to compare with")
-	write := fl.Bool("write", false, "rewrite the -baseline file from this run instead of comparing")
-	tolerance := fl.Float64("tolerance", 0.5, "points a package may fall below its baseline")
-	if err := fl.Parse(args); err != nil {
+	fl.Usage = func() {
+		fmt.Fprintln(fl.Output(), "usage: covercheck [-o merged.out] [-module path] [-baseline file [-write] [-tolerance points]] profile|dir...")
+		fl.PrintDefaults()
+	}
+	fl.StringVar(&o.out, "o", "", "write the merged profile, in set mode, to this file")
+	fl.StringVar(&o.module, "module", "", "module path to strip from file and package names")
+	fl.StringVar(&o.baseline, "baseline", "", "per-package baseline to compare with")
+	fl.BoolVar(&o.write, "write", false, "rewrite the -baseline file from this run instead of comparing")
+	fl.Float64Var(&o.tolerance, "tolerance", 0.5, "points a package may fall below its baseline")
+	switch err := fl.Parse(args); {
+	case errors.Is(err, flag.ErrHelp):
+		return 0
+	case err != nil:
 		return 2
 	}
-	if fl.NArg() == 0 || (*write && *baseline == "") {
-		fmt.Fprintln(stderr, "usage: covercheck [-o merged.out] [-module path] [-baseline file [-write] [-tolerance points]] profile|dir...")
+	if fl.NArg() == 0 || (o.write && o.baseline == "") {
+		fl.Usage()
 		return 2
 	}
-	err := check(fl.Args(), *out, *module, *baseline, *write, *tolerance, stdout)
+	err := check(fl.Args(), o, stdout)
 	switch {
 	case errors.Is(err, errDrop):
 		fmt.Fprintln(stderr, "covercheck:", err)
@@ -56,8 +70,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func check(inputs []string, out, module, baseline string, write bool, tolerance float64, stdout io.Writer) error {
-	files, err := profileFiles(inputs, out)
+func check(inputs []string, o options, stdout io.Writer) error {
+	files, err := profileFiles(inputs, o.out)
 	if err != nil {
 		return err
 	}
@@ -67,43 +81,52 @@ func check(inputs []string, out, module, baseline string, write bool, tolerance 
 			return err
 		}
 	}
-	if out != "" {
-		if err := writeFile(out, p.write); err != nil {
+	if o.out != "" {
+		if err := writeFile(o.out, p.write); err != nil {
 			return err
 		}
 	}
-	s := summarize(p, module)
+	s := summarize(p, o.module)
 	if err := s.print(stdout); err != nil {
 		return err
 	}
 	switch {
-	case baseline == "":
+	case o.baseline == "":
 		return nil
-	case write:
-		if err := writeFile(baseline, func(w io.Writer) error { return writeBaseline(w, s.packages) }); err != nil {
-			return err
-		}
-		fmt.Fprintf(stdout, "\nwrote %d packages to %s\n", len(s.packages), baseline)
-		return nil
+	case o.write:
+		return writeBaselineFile(o.baseline, s, stdout)
+	default:
+		return compareBaseline(o.baseline, o.tolerance, s, stdout)
 	}
-	f, err := os.Open(baseline)
+}
+
+func writeBaselineFile(name string, s summary, stdout io.Writer) error {
+	if err := writeFile(name, func(w io.Writer) error { return writeBaseline(w, s.packages) }); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "\nwrote %d packages to %s\n", len(s.packages), name)
+	return nil
+}
+
+func compareBaseline(name string, tolerance float64, s summary, stdout io.Writer) error {
+	f, err := os.Open(name)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	base, err := readBaseline(f, baseline)
+	base, err := readBaseline(f, name)
 	if err != nil {
 		return err
 	}
 	drops, added := compare(base, s.packages, tolerance)
 	if len(added) > 0 {
-		fmt.Fprintf(stdout, "\nnot in %s yet:\n  %s\n", baseline, strings.Join(added, "\n  "))
+		fmt.Fprintf(stdout, "\nnot in %s yet:\n  %s\n", name, strings.Join(added, "\n  "))
 	}
 	if len(drops) > 0 {
-		fmt.Fprintf(stdout, "\nbelow %s:\n  %s\n", baseline, strings.Join(drops, "\n  "))
-		return fmt.Errorf("%w in %s (%d of its packages)", errDrop, baseline, len(drops))
+		fmt.Fprintf(stdout, "\nbelow %s:\n  %s\n", name, strings.Join(drops, "\n  "))
+		return fmt.Errorf("%w in %s (%d of its packages)", errDrop, name, len(drops))
 	}
-	fmt.Fprintf(stdout, "\nno package below %s\n", baseline)
+	fmt.Fprintf(stdout, "\nno package below %s\n", name)
 	return nil
 }
 
@@ -112,7 +135,10 @@ func check(inputs []string, out, module, baseline string, write bool, tolerance 
 func profileFiles(inputs []string, out string) ([]string, error) {
 	skip := ""
 	if out != "" {
-		skip, _ = filepath.Abs(out)
+		var err error
+		if skip, err = filepath.Abs(out); err != nil {
+			return nil, err
+		}
 	}
 	var files []string
 	for _, in := range inputs {
@@ -128,10 +154,11 @@ func profileFiles(inputs []string, out string) ([]string, error) {
 			if err != nil || d.IsDir() || filepath.Ext(p) != ".out" {
 				return err
 			}
-			if abs, _ := filepath.Abs(p); abs != skip {
+			abs, err := filepath.Abs(p)
+			if err == nil && abs != skip {
 				files = append(files, p)
 			}
-			return nil
+			return err
 		})
 		if err != nil {
 			return nil, err
