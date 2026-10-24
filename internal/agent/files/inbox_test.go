@@ -247,9 +247,30 @@ func TestInboxCloseRemovesUploadsInProgress(t *testing.T) {
 
 func fakeFree(free int64) func(int, *unix.Statfs_t) error {
 	return func(_ int, st *unix.Statfs_t) error {
-		st.Bsize = 4096
+		st.Bsize, st.Frsize = 4096, 4096
 		st.Bavail = uint64(free / 4096)
 		return nil
+	}
+}
+
+// TestUploadFreeSpaceIsInFragmentUnits counts free space the way statfs(2)
+// reports it, in f_frsize units: a filesystem (FUSE, say) may report an
+// f_bsize far larger, and counting in that would take a full disk for one
+// with room to spare.
+func TestUploadFreeSpaceIsInFragmentUnits(t *testing.T) {
+	in := testInbox(t)
+	in.statfs = func(_ int, st *unix.Statfs_t) error {
+		st.Bsize, st.Frsize = 1<<20, 4096
+		st.Bavail = uint64((SpaceMargin + 1<<20) / 4096)
+		return nil
+	}
+	if _, err := in.Accept("x", 2<<20); !errors.Is(err, ErrNoSpace) {
+		t.Fatalf("2 MiB into 1 MiB above the margin: %v, want ErrNoSpace", err)
+	}
+	if u, err := in.Accept("y", 512<<10); err != nil {
+		t.Errorf("512 KiB into 1 MiB above the margin: %v", err)
+	} else {
+		u.Abort(nil)
 	}
 }
 

@@ -314,7 +314,7 @@ func freeSpace(t *testing.T, dir string) int64 {
 	if err := unix.Statfs(dir, &st); err != nil {
 		t.Fatal(err)
 	}
-	return int64(st.Bavail) * int64(st.Bsize)
+	return int64(st.Bavail) * int64(st.Frsize)
 }
 
 func TestSessionOffersFiles(t *testing.T) {
