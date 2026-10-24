@@ -403,8 +403,9 @@ func TestBridgeHangsUpWhenThePageLeaves(t *testing.T) {
 
 // TestBridgeDropsAnOfferTooLongForTheAgent: a page frame within the
 // websocket's limit can grow sixfold when the bridge encodes it again, every
-// '<' becoming <, past the line the agent reads. The bridge drops it
-// rather than write a line that would end the agent's connection.
+// '<' becoming `\u003c`, six bytes for one, past the line the agent reads.
+// The bridge drops it rather than write a line that would end the agent's
+// connection.
 func TestBridgeDropsAnOfferTooLongForTheAgent(t *testing.T) {
 	s, ctx := testServer(t)
 	toAgentR, toAgentW := io.Pipe()

@@ -291,9 +291,8 @@ func (b *bridge) close() {
 
 // maxLogLine is the most of one line prefixWriter holds back waiting for its
 // newline; beyond it the line is shown in pieces, so a host that writes
-// without newlines cannot fill the client's memory. It is the size of the
-// tail kept of the agent's log for errors, and a real log line is a few
-// hundred bytes.
+// without newlines cannot fill the client's memory. A real log line is a
+// few hundred bytes.
 const maxLogLine = 8 << 10
 
 // prefixWriter prefixes each line written to w.

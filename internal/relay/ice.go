@@ -57,6 +57,9 @@ const (
 // is a connectivity check for the agent: a Binding request whose USERNAME
 // starts with the agent's ufrag and a colon, and whose MESSAGE-INTEGRITY
 // verifies with the agent's password. Zero Credentials admit nothing.
+//
+// It walks the message itself rather than through pion/stun, which would
+// link Pion's DTLS and transport packages into the CLI for one HMAC.
 func (c Credentials) Admits(msg []byte) bool {
 	if c.Ufrag == "" || c.Pwd == "" || len(msg) < stunHeader ||
 		binary.BigEndian.Uint16(msg[0:2]) != stunBindingReq ||

@@ -60,8 +60,9 @@ func NewConn(r io.Reader, w io.Writer, interval, timeout time.Duration) *Conn {
 	return c
 }
 
-// Send writes one message. It is safe for concurrent use. A message too
-// long for the peer's line is not written, and the connection stays up.
+// Send writes one message. It is safe for concurrent use. Send returns
+// ErrLineTooLong, writing nothing, for a message whose line would be over
+// MaxLineBytes; the connection stays up.
 func (c *Conn) Send(m Message) error {
 	b, err := json.Marshal(m)
 	if err != nil {
