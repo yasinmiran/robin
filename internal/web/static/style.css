@@ -443,13 +443,14 @@ body[data-dropping]::after {
 .devices .device[data-state="starting"] { color: var(--wait); }
 .devices .device[data-state="blocked"] { color: var(--down); }
 
-/* The private session's switches: a small track that fills when on. */
+/* The private session's switches: a small track that fills when on.
+   Scoped to their row, so they win over the plain section buttons. */
 .switches {
   display: flex;
   flex-wrap: wrap;
   gap: 2px 14px;
 }
-.switch {
+.switches .switch {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -464,10 +465,10 @@ body[data-dropping]::after {
   white-space: nowrap;
   cursor: pointer;
 }
-.switch:hover { background: var(--veil-edge); }
-.switch:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
-.switch[aria-busy="true"] { cursor: progress; }
-.switch .track {
+.switches .switch:hover { background: var(--veil-edge); box-shadow: none; }
+.switches .switch:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.switches .switch[aria-busy="true"] { cursor: progress; }
+.switches .switch .track {
   position: relative;
   width: 24px;
   height: 14px;
@@ -476,7 +477,7 @@ body[data-dropping]::after {
   box-shadow: inset 0 0 0 1px var(--ink-soft);
   transition: background 160ms;
 }
-.switch .track::after {
+.switches .switch .track::after {
   content: "";
   position: absolute;
   top: 3px;
@@ -487,9 +488,9 @@ body[data-dropping]::after {
   background: var(--ink-soft);
   transition: translate 160ms;
 }
-.switch[aria-checked="true"] .track { background: var(--ok); box-shadow: none; }
-.switch[aria-checked="true"] .track::after { translate: 10px 0; background: var(--veil); }
-.switch[aria-busy="true"] .track { opacity: 0.55; }
+.switches .switch[aria-checked="true"] .track { background: var(--ok); box-shadow: none; }
+.switches .switch[aria-checked="true"] .track::after { translate: 10px 0; background: var(--veil); }
+.switches .switch[aria-busy="true"] .track { opacity: 0.55; }
 .switch-error {
   max-width: 42ch;
   margin: 2px 0 0;
@@ -508,8 +509,8 @@ body[data-dropping]::after {
 
 @media (prefers-reduced-motion: reduce) {
   #hud,
-  .switch .track,
-  .switch .track::after { transition: none; }
+  .switches .switch .track,
+  .switches .switch .track::after { transition: none; }
   #wire::after {
     animation: none;
     width: 100%;
