@@ -68,7 +68,7 @@ type reading struct {
 	target xproto.Atom   // asked for now
 	queue  []xproto.Atom // still to ask for
 	got    protocol.Clip
-	size   int  // bytes kept so far
+	size   int   // bytes kept so far
 	incr   *incr // the current target, while it arrives by INCR
 }
 
