@@ -114,23 +114,34 @@ func TestSweepRunRootRemovesADeadDaemonsDirectory(t *testing.T) {
 }
 
 // TestSweepRunRootRemovesADirectoryWhosePidIsAnotherUsers: once a daemon
-// is gone its pid may go to another user's process, which this user
-// cannot signal and so cannot be its daemon.
+// is gone its pid may go to another user's process, which cannot be its
+// daemon, and the pid a stdio session named its directory after may too.
 func TestSweepRunRootRemovesADirectoryWhosePidIsAnotherUsers(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("root can signal every process")
-	}
 	root := t.TempDir()
-	dir := filepath.Join(root, "ab12")
-	if err := os.Mkdir(dir, 0o700); err != nil {
+	byFile := filepath.Join(root, "ab12")
+	if err := os.Mkdir(byFile, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	// Pid 1 is init, root's.
-	if err := WriteSession(dir, protocol.Session{ID: "ab12", PID: 1}); err != nil {
+	// Pid 1 never runs a session's daemon, whoever owns it.
+	if err := WriteSession(byFile, protocol.Session{ID: "ab12", PID: 1}); err != nil {
 		t.Fatal(err)
 	}
 	sweepRunRoot(root, "")
-	if _, err := os.Lstat(dir); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("a directory whose pid is another user's survived the sweep: %v", err)
+	if _, err := os.Lstat(byFile); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a directory whose session.json names another user's pid survived the sweep: %v", err)
+	}
+
+	// Pid 1 is another user's unless this is root, or a pid namespace
+	// whose init runs as this user.
+	if uid, err := processUID(1); err != nil || uid == uint32(os.Getuid()) || os.Getuid() == 0 {
+		t.Skip("pid 1 is not another user's here")
+	}
+	byName := filepath.Join(root, "1")
+	if err := os.Mkdir(byName, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sweepRunRoot(root, "")
+	if _, err := os.Lstat(byName); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a directory named after another user's pid survived the sweep: %v", err)
 	}
 }

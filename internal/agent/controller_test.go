@@ -118,7 +118,10 @@ func TestSweepRunRootRemovesOnlyTheDead(t *testing.T) {
 	deadByFile := mk("ab12")
 	WriteSession(deadByFile, protocol.Session{ID: "ab12", PID: dead})
 	liveByFile := mk("cd34")
-	WriteSession(liveByFile, protocol.Session{ID: "cd34", PID: os.Getppid()})
+	WriteSession(liveByFile, protocol.Session{ID: "cd34", PID: fakeDaemon(t, "cd34")})
+	// A live process of this user's, but not the session's daemon.
+	notTheDaemon := mk("cd35")
+	WriteSession(notTheDaemon, protocol.Session{ID: "cd35", PID: os.Getppid()})
 	unknown := mk("ef56") // no pid anywhere: a daemon still starting
 	keep := mk("0011")
 	WriteSession(keep, protocol.Session{ID: "0011", PID: dead})
@@ -126,7 +129,7 @@ func TestSweepRunRootRemovesOnlyTheDead(t *testing.T) {
 
 	sweepRunRoot(root, keep)
 
-	for _, gone := range []string{deadByName, deadByFile} {
+	for _, gone := range []string{deadByName, deadByFile, notTheDaemon} {
 		if _, err := os.Lstat(gone); !errors.Is(err, os.ErrNotExist) {
 			t.Errorf("%s survived the sweep", filepath.Base(gone))
 		}
@@ -215,7 +218,7 @@ func TestSweepRunRootTrustsSessionJSONOverTheName(t *testing.T) {
 	// An all-digit id names a live daemon in its session.json; the name is
 	// no pid.
 	live := mk("12345678")
-	WriteSession(live, protocol.Session{ID: "12345678", PID: os.Getppid()})
+	WriteSession(live, protocol.Session{ID: "12345678", PID: fakeDaemon(t, "12345678")})
 	// A daemon still starting has a socket and no session.json yet.
 	starting := mk("23456789")
 	ln, err := net.Listen("unix", filepath.Join(starting, SocketFile))
