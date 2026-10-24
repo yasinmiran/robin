@@ -306,15 +306,22 @@ func TestLingerGivesTheResumeWhatItAsks(t *testing.T) {
 	resumed, resumedCLI := pair(t)
 	f.conns <- refused
 	f.conns <- resumed
+	type lingered struct {
+		conn *protocol.Conn
+		err  error
+	}
+	got := make(chan lingered, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	got := make(chan *protocol.Conn, 1)
+	lingering := make(chan struct{})
+	// A failure below returns before linger does; it ends before the rig.
+	t.Cleanup(func() {
+		cancel()
+		<-lingering
+	})
 	go func() {
+		defer close(lingering)
 		c, err := s.linger(ctx, f, ready, nil, time.Now().Add(time.Minute))
-		if err != nil {
-			t.Errorf("linger: %v", err)
-		}
-		got <- c
+		got <- lingered{c, err}
 	}()
 
 	go refusedCLI.Send(protocol.Message{Type: protocol.TypeResume, Resume: &protocol.Resume{Version: protocol.Version, ID: "ab12", Mic: true}})
@@ -329,7 +336,7 @@ func TestLingerGivesTheResumeWhatItAsks(t *testing.T) {
 	if !rig.curtain.isDrawn() {
 		t.Error("Ready says the curtain is on, and it is not drawn")
 	}
-	if c := <-got; c != resumed {
-		t.Errorf("linger resumed %p, want the second controller %p", c, resumed)
+	if l := <-got; l.err != nil || l.conn != resumed {
+		t.Errorf("linger resumed %p, %v; want the second controller %p", l.conn, l.err, resumed)
 	}
 }
