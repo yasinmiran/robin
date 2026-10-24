@@ -44,6 +44,10 @@ These are the current limits of the shipped tool. Some of them have planned work
 - The clipboard is plain text, up to 255 KiB in each direction.
 - Keys map by character, so text arrives right whatever the client layout, but IME composition (CJK input) is not forwarded.
 
+## Files
+
+- A file that grows after `robin-send` offered it, a log being written say, is refused when you click Save, as larger than the offer, and stays on offer as it was. Offer it again to get what it holds now.
+
 ## Network
 
 - Through the SSH tunnel, video is TCP inside TCP, so a lossy link shows head-of-line stalls that direct UDP would not.
