@@ -3,6 +3,26 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 
+// sshProcesses lists the command lines of the ssh processes the CLI started
+// on this machine: a ControlMaster, and the sessions and forwards, which all
+// run with -e none. The tests' own ssh to the host runs with neither.
+export function sshProcesses(): string[] {
+  const found: string[] = [];
+  for (const pid of fs.readdirSync('/proc')) {
+    if (!/^\d+$/.test(pid)) continue;
+    let argv: string[];
+    try {
+      argv = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean);
+    } catch {
+      continue; // gone meanwhile
+    }
+    if (path.basename(argv[0] ?? '') !== 'ssh') continue;
+    const mine = argv.includes('ControlMaster=yes') || argv.some((a, i) => a === '-e' && argv[i + 1] === 'none');
+    if (mine) found.push(argv.join(' '));
+  }
+  return found;
+}
+
 export type Exit = { code: number | null; signal: NodeJS.Signals | null };
 export type Stop = Exit & { afterMs: number; killed: boolean };
 
