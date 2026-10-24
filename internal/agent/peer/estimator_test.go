@@ -83,8 +83,8 @@ func TestEstimatorWithholdsFeedbackOfAStillScreen(t *testing.T) {
 	if !e.GetStats()["applicationLimited"].(bool) {
 		t.Fatal("stats do not say the sender is limited")
 	}
-	if passed, offered := feed(t, e, f, &now, 2_000_000, 2*time.Second, 500*time.Millisecond); passed != offered {
-		t.Fatalf("filling the target again: %d of %d feedback reached GCC after 0.5 s", passed, offered)
+	if passed, offered := feed(t, e, f, &now, 2_000_000, 2*time.Second, 800*time.Millisecond); passed != offered {
+		t.Fatalf("filling the target again: %d of %d feedback reached GCC after 0.8 s", passed, offered)
 	}
 	if e.GetStats()["applicationLimited"].(bool) {
 		t.Fatal("stats say the sender is still limited")
@@ -102,7 +102,7 @@ func TestEstimatorFollowsTheTarget(t *testing.T) {
 	}
 	// 1 Mbit/s fills a 1 Mbit/s target, which it would not at 10.
 	feed(t, e, f, &now, 0, 5*time.Second, 0)
-	if passed, offered := feed(t, e, f, &now, 1_000_000, 2*time.Second, 500*time.Millisecond); passed != offered {
+	if passed, offered := feed(t, e, f, &now, 1_000_000, 2*time.Second, 800*time.Millisecond); passed != offered {
 		t.Fatalf("filling the lowered target: %d of %d feedback reached GCC", passed, offered)
 	}
 }

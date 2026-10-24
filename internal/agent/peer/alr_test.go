@@ -37,8 +37,8 @@ func TestALRStartsOnceTheSenderGoesQuiet(t *testing.T) {
 		t.Fatalf("limited %v into sending at the target", limited)
 	}
 	limited, _ := alrRun(&d, &now, 0, 3*time.Second)
-	if limited < 850*time.Millisecond || limited > 950*time.Millisecond {
-		t.Fatalf("limited %v after the sender went quiet, want about 0.9 s", limited)
+	if limited < 380*time.Millisecond || limited > 420*time.Millisecond {
+		t.Fatalf("limited %v after the sender went quiet, want about 0.4 s", limited)
 	}
 }
 
@@ -50,8 +50,33 @@ func TestALREndsSoonAfterTheSenderFillsTheTarget(t *testing.T) {
 		t.Fatal("a minute of silence is not limited")
 	}
 	_, unlimited := alrRun(&d, &now, 2_000_000, 2*time.Second)
-	if unlimited < 400*time.Millisecond || unlimited > 500*time.Millisecond {
-		t.Fatalf("limited until %v into filling the target, want about 0.46 s", unlimited)
+	if unlimited < 720*time.Millisecond || unlimited > 800*time.Millisecond {
+		t.Fatalf("limited until %v into filling the target, want about 0.76 s", unlimited)
+	}
+}
+
+// A refresh of the still picture can empty the budget at a low target,
+// and the spell goes on through it; sending such refreshes back to back
+// ends it.
+func TestALRLastsThroughABurst(t *testing.T) {
+	now := time.Unix(0, 0)
+	var d alrDetector
+	d.setTarget(300_000)
+	alrRun(&d, &now, 0, 5*time.Second)
+	for range 20 {
+		if !d.sent(now, 30_000) {
+			t.Fatal("a 30 KB refresh ended the spell")
+		}
+		if limited, _ := alrRun(&d, &now, 0, 500*time.Millisecond); limited != 10*time.Millisecond {
+			t.Fatal("the spell ended between refreshes")
+		}
+	}
+	for range 40 {
+		now = now.Add(10 * time.Millisecond)
+		d.sent(now, 30_000)
+	}
+	if d.at(now) {
+		t.Fatal("refreshes back to back for 0.4 s are still limited")
 	}
 }
 
@@ -89,7 +114,7 @@ func TestALRBudgetFollowsTheTarget(t *testing.T) {
 	if d.budget > d.size() {
 		t.Fatalf("budget %.0f past its size %.0f", d.budget, d.size())
 	}
-	if _, unlimited := alrRun(&d, &now, 1_000_000, 2*time.Second); unlimited < 0 || unlimited > 500*time.Millisecond {
+	if _, unlimited := alrRun(&d, &now, 1_000_000, 2*time.Second); unlimited < 0 || unlimited > 800*time.Millisecond {
 		t.Fatalf("filling the lowered target: limited until %v", unlimited)
 	}
 }
