@@ -42,11 +42,13 @@ type BulkRefused struct{ Reason string }
 func (e *BulkRefused) Error() string { return "peer: bulk transfer refused: " + e.Reason }
 
 // BulkSink takes the payload of one transfer from the browser. Write gets
-// the chunks in order; it may block, which holds the browser back. Exactly
-// one of Commit and Abort follows: Commit once every byte has arrived and
-// the SHA-256 matched, its error refusing the transfer after all, or Abort
-// with the reason the transfer failed or was cancelled. A Write error fails
-// the transfer, and Abort follows it.
+// the chunks in order. A Write that blocks holds the browser back, and on
+// every channel at once, control included, since SCTP has one receive
+// window for them all: a sink that can stall for long must buffer or fail
+// instead. Exactly one of Commit and Abort follows: Commit once every byte
+// has arrived and the SHA-256 matched, its error refusing the transfer
+// after all, or Abort with the reason the transfer failed or was cancelled.
+// A Write error fails the transfer, and Abort follows it.
 type BulkSink interface {
 	io.Writer
 	Commit() error
