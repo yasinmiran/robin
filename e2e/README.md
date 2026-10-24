@@ -91,8 +91,26 @@ The six X11 scenarios also check, in this order:
    toggle muted and receives audio packets, and once the toggle is clicked,
    noise played on the host with `paplay` through the session's sound server
    raises Chrome's `totalAudioEnergy`. Nothing wrote to `~/.config/pulse`.
-9. **Transport**: per the table above, from `robin.stats()`.
-10. **Teardown**: SIGINT to the CLI's process group (what Ctrl-C does) makes it
+9. **Files**, in `direct` and `attach`: a file set on the status tab's
+   input lands in `~/Downloads` with its SHA-256 intact, the same name again
+   lands as `robin-e2e-upload (1).bin` and the tab says so, and a file
+   dropped on the page arrives too, with nothing else left in the folder.
+   Then the host offers a file named `<b>robin<b> & co.bin`: `robin-send`
+   typed into the spawned session's xterm, or in `attach`
+   `~/.cache/robin/robin-agent-* send` over ssh, which finds the one
+   session by itself. The tab shows the name as text (no elements inside
+   it) and the size, stays out while the offer waits, and nothing downloads
+   until Save is clicked; the download then matches the host's SHA-256, and
+   the sender prints that it was saved and exits 0. A second offer is
+   dismissed, and the sender says declined and exits 1.
+10. **Rich clipboard**, in `direct` and `attach`: an `image/png` and HTML
+   pasted into the page come out of `xclip -t image/png` and `-t text/html`
+   on the host, and an image `xclip` copies there arrives as
+   `robin.lastRemoteClip.png`. Chrome gets the paste as a `ClipboardEvent`;
+   Firefox builds such an event's `clipboardData` afresh, keeping nothing a
+   script put in it, so there the `DataTransfer` goes to `robin.paste`.
+11. **Transport**: per the table above, from `robin.stats()`.
+12. **Teardown**: SIGINT to the CLI's process group (what Ctrl-C does) makes it
    exit 0 within 10 s, after which no `Xvfb`, `robin-agent`, `openbox`,
    `xterm` or `pulseaudio` runs as `robin` and the agent's run dir is gone. Stdout must have held
    nothing but the URL. Set `ROBIN_SIGINT_PID_ONLY=1` to signal only the CLI.
@@ -147,8 +165,9 @@ track into a `<video>` element: in a blank page, a VP8 loopback between two
 peer connections stays at `readyState` 0 with `videoWidth` 0, where Chrome
 and Firefox show it, and a local canvas stream does render. So in `webkit`
 the checks that read the picture or map the pointer onto it (frames,
-keyboard through a click, latency, pointer, cursor) are skipped, and in
-their place:
+keyboard through a click, latency, pointer, cursor, and files and the rich
+clipboard, which type into the xterm through the picture) are skipped, and
+in their place:
 
 - **Frames**: from `getStats`, the negotiated codec is H.264 with
   `profile-level-id=42e01f` and `packetization-mode=1`, keyframes decoded,
