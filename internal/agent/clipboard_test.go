@@ -104,6 +104,49 @@ func TestClipboardBulkFromTheBrowser(t *testing.T) {
 	}
 }
 
+// richTypist types text and has a rich clipboard, and records both among
+// its input, in the order they reach it.
+type richTypist struct{ fakeTypist }
+
+func (r *richTypist) SetClipboardContent(c protocol.Clip) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.inputs = append(r.inputs, protocol.Control{T: protocol.ControlClipboard, Text: c.Text})
+	return nil
+}
+
+func (r *richTypist) ClipboardContent() <-chan protocol.Clip { return nil }
+
+// A rich clipboard from the browser waits behind text being typed, as the
+// paste key after it does, so that key finds it set.
+func TestClipboardBulkWaitsBehindText(t *testing.T) {
+	desk := &richTypist{fakeTypist{gate: make(chan struct{}), started: make(chan string, 1)}}
+	s := testSession(desk)
+	s.control(protocol.Control{T: protocol.ControlText, Text: "日本"})
+	<-desk.started
+
+	payload, _ := protocol.EncodeClip(protocol.Clip{Text: "pasted", PNG: []byte{0x89, 'P', 'N', 'G'}})
+	sink, err := s.bulk(protocol.Bulk{T: protocol.BulkHeader, Kind: protocol.BulkClipboard, Size: int64(len(payload))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink.Write(payload)
+	if err := sink.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	paste := protocol.Control{T: protocol.ControlKey, Key: "v", Code: "KeyV", Down: true}
+	s.control(paste)
+	if got := desk.got(); len(got) != 0 {
+		t.Fatalf("the clipboard or the paste key overtook the text being typed: %+v", got)
+	}
+	desk.gate <- struct{}{}
+	waitIdle(t, &s.typing)
+	want := []protocol.Control{{T: protocol.ControlText, Text: "日本"}, {T: protocol.ControlClipboard, Text: "pasted"}, paste}
+	if got := desk.got(); !slices.Equal(got, want) {
+		t.Errorf("desktop got %+v, want %+v", got, want)
+	}
+}
+
 func TestClipboardOfATextOnlyDesktop(t *testing.T) {
 	desk := &fakeDesktop{}
 	s := testSession(desk)

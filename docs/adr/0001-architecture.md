@@ -1104,8 +1104,8 @@ has no keys to send, and the agent can type any character on X11 already.
 Typing text can wait on the desktop (below), and control handlers run on
 Pion's read loop, where waiting stalls every data channel. So text goes to
 a goroutine of the session's, and input that arrives while it types (keys,
-pointer, wheel, release and clipboard) queues behind it, or Enter after a
-commit would land first. With nothing to type, input still applies at once
+pointer, wheel, release and clipboard, a rich one sent as a bulk transfer
+included) queues behind it, or Enter after a commit would land first. With nothing to type, input still applies at once
 on the read loop, as before. The queue holds 256 messages. Past that, runs
 of pointer moves merge into their last, then input is dropped, and a
 release of every key and button, which the queue never refuses, follows

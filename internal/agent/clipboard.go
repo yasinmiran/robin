@@ -76,7 +76,32 @@ func (c *clipSink) Commit() error {
 	if err != nil {
 		return err
 	}
-	return c.s.setClip(clip)
+	return c.s.setClipAsInput(clip)
+}
+
+// setClipAsInput sets c as the clipboard control message is set: at once
+// while no text is being typed, and otherwise behind that text. The paste
+// key that follows c waits behind the text too, and has to find c on the
+// clipboard rather than what typing the text left there. An error comes
+// back only from a set made at once; one made later is logged.
+func (s *session) setClipAsInput(c protocol.Clip) error {
+	done := make(chan error, 1)
+	queued := s.typing.run(protocol.ControlClipboard, func(context.Context) {
+		err := s.setClip(c)
+		if err != nil {
+			s.log.Warn("set clipboard", "err", err)
+		}
+		done <- err
+	})
+	if !queued {
+		return errors.New("typing has fallen behind")
+	}
+	select {
+	case err := <-done:
+		return err
+	default:
+		return nil
+	}
 }
 
 func (c *clipSink) Abort(error) { c.s.clipsIn.Add(-1) }
