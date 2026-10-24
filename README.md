@@ -265,7 +265,9 @@ tests prove for each:
    PulseAudio or PipeWire sink, read over the PulseAudio protocol in Go, and
    goes out as Opus from libopus. Keyboard, pointer, clipboard and resize
    come back over a data channel and go in through XTest and RandR, or the
-   portal on Wayland.
+   portal on Wayland. Payloads too big for that channel have a transfer
+   layer of their own, a data channel each and a SHA-256 checked at the far
+   end, which no feature uses yet.
 6. The CLI serves the page on loopback and relays offer, answer and
    candidates between it and the agent, adding one passive TCP candidate that
    leads into an SSH forward to the agent.
@@ -285,7 +287,9 @@ connections carrying the session's credentials; the X display is protected by
 a fresh cookie in a 0600 file; the session's sound server listens only on a
 socket inside the run directory; the agent and its run directory are 0700.
 Input from the page is limited to what a keyboard, a pointer and a clipboard
-can do in that session.
+can do in that session. The agent also listens for bulk transfers from the
+page, but takes only kinds a feature has registered, and no feature has yet,
+so it refuses every one.
 
 One exposure is on the client side: to open your browser the CLI hands the
 page URL, token included, to `open` or `xdg-open`, so for that moment another
@@ -360,6 +364,17 @@ See [e2e/README.md](e2e/README.md). Rootless containers cannot shape bandwidth,
 so congestion control is tested separately over a shaped virtual link
 (`go test ./internal/agent/peer -run Congestion`).
 
+Bulk transfers run between two Pion peers in one process, both ways, along
+with the ones that must fail: oversized, corrupt, truncated, refused and
+cancelled, including a cancel while the sender waits for its queue to drain
+(`go test ./internal/agent/peer -run Bulk`). One goes through the shaped
+link while video streams, to measure how the two share it. `go test
+./internal/web` runs the page's DOM-free modules under `node --test`, from
+`internal/web/static/test`, and, with the browser smoke test's dependencies
+installed, sends bulk transfers both ways between Chrome and the agent's own
+peer, which is where the page's SHA-256 and flow control meet the real
+thing.
+
 The hardware encoders are tested against stand-in tools everywhere, and
 against the real GPU wherever `make test` runs on a host that has one along
 with a tool to drive it (a GPU with neither ffmpeg nor a GStreamer encoder
@@ -422,6 +437,12 @@ to print the comparison the ADR quotes.
 - Attached, the sound is the monitor of whatever output was the default when
   the session started, and the host's own speakers keep playing it.
 - Clipboard is plain text up to 255 KiB in each direction.
+- Bulk transfers, the layer file and rich clipboard transfers are to use,
+  are not paced against the video. On a 3 Mbit/s link a 2 MiB transfer
+  takes about 9 s, the picture drops to about 1 Mbit/s meanwhile and
+  needs another 7 to 9 s to get its rate back. On the agent, a transfer
+  whose receiver stops reading holds up keyboard and pointer input with
+  it, since every data channel shares one SCTP receive window.
 - Keys map by character, so text arrives right whatever the client layout,
   but IME composition (CJK input) is not forwarded.
 - The status tab reads 0 fps on an idle screen. Nothing is sent when nothing

@@ -649,6 +649,69 @@ binaries link. `x11` goes from 7.8% to 85.9% and `wayland` from 13.6% to
 Chrome the page's as well. Of the page's 569 code lines, Node's unit tests
 of two modules cover 9.8% and the merged run 87.2%.
 
+### Bulk transfers: a data channel each, checked end to end
+
+Clipboard images, files and lossless tiles do not fit in a 256 KiB control
+message, so a transfer layer went in under them before any of them existed.
+Each transfer opens a data channel of its own, labelled `bulk`, from
+whichever side sends. SCTP streams are cheap, and with one transfer per
+channel, cancelling is closing it. The sender writes a JSON header (kind,
+id, name, MIME type, size), the payload in binary chunks of 64 KiB and an
+end frame carrying its SHA-256; the receiver answers with one verdict, done
+or error, and closes. Without that verdict the sender could not tell a kept
+transfer from one that failed its hash, or hit a full disk after the last
+byte had already gone out. 64 KiB sits well inside the 256 KiB message
+limit both the agent and Chrome set.
+
+A feature registers each kind it owns with a size limit
+(`protocol.RegisterBulkKind`, and `registerKind` in the page). The sender
+checks the limit before it opens a channel, the receiver before it shows
+the header to the feature, which may still refuse for reasons of its own.
+Kinds nobody registered are refused, as are data before the header, chunks
+over 64 KiB, bytes past the declared size, an end that comes early and a
+hash that does not match; the sink being written to hears why.
+
+Flow control is the WebRTC kind on both sides. A sender stops queuing at
+1 MiB of `bufferedAmount` and goes on at 256 KiB, on `bufferedamountlow`,
+and it wakes on a close or a cancel as well: Pion drops the low-water
+callback once a channel is closing, so a sender that waited for that alone
+would hang (`TestBulkCancelWhileBlocked` closes the far end mid-wait). The page hashes as it goes with its own
+SHA-256, because Web Crypto digests a whole buffer at once and a file can be
+bigger than the page can hold. That code is checked against `node:crypto`
+at every length across the padding boundaries and in random pieces, and
+against Go by the Chrome test, where a transfer only passes if the agent's
+hash agrees.
+
+In-process over loopback, without the race detector, 8 MiB crosses between
+two Pion peers in 115 to 150 ms either way, and 5 MiB goes from Chrome to
+the agent's peer in 170 to 360 ms, both bound by the CPU. On a slow link the
+picture pays. Bulk is not paced: SCTP's loss-based congestion control fills
+the bottleneck queue and GCC reads the delay as congestion. Over the shaped
+link of `TestBulkSharesTheLinkWithVideo`, 3 Mbit/s with a 100 ms queue and
+video settled at 2.9 Mbit/s, a 2 MiB transfer took 9.0 to 9.6 s at about
+1.8 Mbit/s while the video got about 1 Mbit/s and its target fell to 0.75
+Mbit/s. Nothing disconnected, and the target was back to 80% 7 to 9 s after
+the transfer ended. A feature that sends steadily, such as sharp-text tiles,
+has to pace itself under the target. A probe found one more coupling worth
+knowing: Pion gives an association one receive window for all its channels,
+so a sink on the agent that stopped reading held a control message back for
+as long as the probe waited, 3 s, and a sink has to keep up or fail the
+transfer rather than stall it.
+
+### Features register what they handle
+
+Several features are built in parallel (docs/plan-horizon-parity.md), and
+each needs control messages, bulk kinds or a place in the status tab. So
+nothing switches on message types any more. On the agent, each control type
+and bulk kind maps to a handler its feature registers from `init` in its
+own file (`handleControl`, `handleBulk`); the page has `onControl` in
+`control.js` and `onBulk` in `bulk.js`, and `Overlay.addSection` gives a
+feature its own part of the status tab without touching `index.html`. The
+peer routes data channels by label, closing any it does not know, and hands
+remote media tracks to `Handlers.Track`, unset until the microphone and
+camera arrive. Protocol version 2 marks the change, so a CLI and an agent
+from either side of it refuse each other.
+
 ## Verification parked
 
 Two checks were parked by decision on 2026-10-18. Both needed hardware the

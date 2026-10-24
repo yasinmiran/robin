@@ -17,7 +17,9 @@ const receivers = new Map();
 // message reaches the agent. A sink has write(chunk), commit() and
 // abort(err), each of which may return a promise: writes come in order,
 // then commit once every byte arrived intact, its throw refusing the
-// transfer after all, or abort with the reason it failed.
+// transfer after all, or abort with the reason it failed. Frames wait in
+// memory while a sink is slow, since a page cannot stop a data channel
+// reading.
 export function onBulk(kind, accept) {
   if (receivers.has(kind)) throw new Error(`bulk: kind ${JSON.stringify(kind)} taken twice`);
   receivers.set(kind, accept);
