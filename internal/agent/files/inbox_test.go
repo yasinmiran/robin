@@ -300,11 +300,15 @@ func TestUploadDiskFullMidway(t *testing.T) {
 		t.Fatal(err)
 	}
 	chunk := make([]byte, 64<<10)
-	var werr error
-	for i := 0; i < 16 && werr == nil; i++ {
-		_, werr = u.Write(chunk)
-		time.Sleep(time.Millisecond)
+	if _, err := u.Write(chunk); err != nil {
+		t.Fatal(err)
 	}
+	select {
+	case <-u.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the writer never hit the full disk")
+	}
+	_, werr := u.Write(chunk)
 	if !errors.Is(werr, unix.ENOSPC) {
 		t.Fatalf("Write after the disk filled: %v, want ENOSPC", werr)
 	}
@@ -328,7 +332,7 @@ func TestUploadDiskFullMidway(t *testing.T) {
 	}
 }
 
-// stuckFile stands in for a disk that stops answering: its writes block
+// stuckCreate stands in for a disk that stops answering: its writes block
 // until released.
 func stuckCreate(release <-chan struct{}) func(int, string) (*os.File, error) {
 	return func(dir int, name string) (*os.File, error) {
