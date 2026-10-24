@@ -269,13 +269,28 @@ test('latency: after 20 s of a still screen, keystrokes show within 400 ms', asy
   testInfo.annotations.push({ type: 'still screen', description: JSON.stringify(still) });
   expect.soft(still.pliCount, `keyframes Chrome asked for during 19 s of a still screen: ${JSON.stringify(still)}`).toBe(0);
 
+  const { keys, lag, held } = await typeAndTime(page);
+  testInfo.annotations.push({ type: 'latency', description: JSON.stringify({ lag, held }) });
+  expect(keys, 'keystrokes seen by the page').toBe(4);
+  expect(Math.max(...lag), `ms from each keystroke to the next frame on screen: ${lag}`).toBeLessThan(400);
+});
+
+// typeAndTime types x four times, 250 ms apart, into the focused xterm,
+// clears the line, and returns how many keystrokes the page saw and, for
+// each, how long until the next frame showed: the one with its echo, on a
+// screen where nothing else moves. held is how long each frame waited in
+// the browser between arriving and showing.
+async function typeAndTime(page: Page): Promise<{ keys: number; lag: number[]; held: number[] }> {
   await page.evaluate((selector) => {
     const w = window as any;
     const video = document.querySelector(selector) as HTMLVideoElement;
     w.robinKeys = [];
     w.robinFrames = [];
-    window.addEventListener('keydown', (e) => e.key === 'x' && w.robinKeys.push(performance.now()), { capture: true });
+    w.robinTiming?.abort();
+    w.robinTiming = new AbortController();
+    window.addEventListener('keydown', (e) => e.key === 'x' && w.robinKeys.push(performance.now()), { capture: true, signal: w.robinTiming.signal });
     const onFrame = (_: number, m: VideoFrameCallbackMetadata) => {
+      if (w.robinTiming.signal.aborted) return;
       w.robinFrames.push({ presented: m.presentationTime, received: m.receiveTime ?? m.presentationTime });
       video.requestVideoFrameCallback(onFrame);
     };
@@ -294,12 +309,12 @@ test('latency: after 20 s of a still screen, keystrokes show within 400 ms', asy
     keys: (window as any).robinKeys as number[],
     frames: (window as any).robinFrames as Shown[],
   }));
-  const lag = keys.map((k) => Math.round((frames.find((f) => f.presented > k)?.presented ?? Infinity) - k));
-  const held = frames.map((f) => Math.round(f.presented - f.received));
-  testInfo.annotations.push({ type: 'latency', description: JSON.stringify({ lag, held }) });
-  expect(keys, 'keystrokes seen by the page').toHaveLength(4);
-  expect(Math.max(...lag), `ms from each keystroke to the next frame on screen: ${lag}`).toBeLessThan(400);
-});
+  return {
+    keys: keys.length,
+    lag: keys.map((k) => Math.round((frames.find((f) => f.presented > k)?.presented ?? Infinity) - k)),
+    held: frames.map((f) => Math.round(f.presented - f.received)),
+  };
+}
 
 test('pointer: the remote cursor lands where the page points, within 2 px', async () => {
   test.skip(!PICTURE, NO_PICTURE);
@@ -509,6 +524,39 @@ test('files: uploads land in the download folder and never replace a file', asyn
   expect((await host.ssh('ls -A ~/Downloads')).split('\n').sort()).toEqual(
     ['robin-e2e-drop.txt', 'robin-e2e-upload (1).bin', 'robin-e2e-upload.bin'],
   );
+});
+
+// A transfer has a credit window of its own, so the one SCTP association
+// it shares with the keyboard never fills behind it.
+test('files: keys typed while a 256 MiB upload moves show within 400 ms', async ({}, testInfo) => {
+  test.skip(!FILES, NO_FILES);
+  testInfo.setTimeout(180_000);
+  await host.ssh('rm -rf ~/Downloads');
+  let term: host.Rect | null = null;
+  await expect.poll(async () => (term = await host.terminal()), { message: 'an xterm is mapped', timeout: 15_000 }).not.toBeNull();
+  const t = term!;
+  const centre = await pagePoint(page, SCREEN, t.x + t.width / 2, t.y + t.height / 2);
+  await page.mouse.click(centre.x, centre.y);
+  await page.waitForTimeout(1_000);
+
+  const size = 256 << 20;
+  await page.evaluate((n) => {
+    const dt = new DataTransfer();
+    dt.items.add(new File([new Uint8Array(n)], 'robin-e2e-big.bin', { type: 'application/octet-stream' }));
+    window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, cancelable: true }));
+  }, size);
+  const row = page.locator('.transfer[data-dir="up"]').filter({ hasText: 'robin-e2e-big.bin' });
+  await expect(row).toHaveAttribute('data-state', 'sending', { timeout: 15_000 });
+  const { keys, lag, held } = await typeAndTime(page);
+  const status = await row.locator('.status').textContent();
+  testInfo.annotations.push({ type: 'latency during the upload', description: JSON.stringify({ lag, held, status }) });
+  expect(await row.getAttribute('data-state'), `the upload was still moving after the keys, at ${status}`).toBe('sending');
+  expect(keys, 'keystrokes seen by the page').toBe(4);
+  expect(Math.max(...lag), `ms from each keystroke to the next frame on screen: ${lag}`).toBeLessThan(400);
+
+  await expect(row).toHaveAttribute('data-state', 'kept', { timeout: 150_000 });
+  expect(await host.ssh('stat -c %s ~/Downloads/robin-e2e-big.bin')).toBe(String(size));
+  await host.ssh('rm -rf ~/Downloads');
 });
 
 test('files: the host offers a file, shown as text, saved only on a click', async () => {
