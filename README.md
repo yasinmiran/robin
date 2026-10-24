@@ -391,7 +391,9 @@ which leaves the desktop for `--keep`), and move files, within these bounds:
 
 File names from the host appear in the page as text, never as markup. Words
 from the page that reach a terminal on the host, a refusal's reason printed
-by `robin-send`, have their control characters replaced first. Bulk transfers
+by `robin-send`, have their control characters replaced first, and a file
+name it prints that holds any, or a mark that reorders text, is printed
+quoted with escapes, as `ls` does. Bulk transfers
 of any kind the agent has not registered are refused.
 
 A kept session is reached through a unix socket in its 0700 run directory,

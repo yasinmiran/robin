@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"golang.org/x/sys/unix"
 
@@ -192,6 +193,47 @@ func TestSendRefusesWhatItCannotOffer(t *testing.T) {
 	}
 	if err := Send(filepath.Join(dir, "no.sock"), []string{writeFile(t, "a", "1")}, io.Discard); err == nil {
 		t.Error("Send to no session succeeded")
+	}
+}
+
+// terminalSafe fails t when s holds anything that would act on a terminal
+// rather than show: control characters other than newlines, and the
+// invisible marks that reorder text.
+func terminalSafe(t *testing.T, what, s string) {
+	t.Helper()
+	for _, r := range s {
+		if r != '\n' && (unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r)) {
+			t.Errorf("%s holds %U: %q", what, r, s)
+			return
+		}
+	}
+}
+
+// A name that holds escapes is refused by the session, and robin-send
+// says so without sending the escapes to the terminal it runs in.
+func TestSendPrintsNamesSafely(t *testing.T) {
+	_, sock, reqs := serve(t)
+	evil := "a\x1b]0;owned\x07b\u202e.txt"
+	res := sendAsync(sock, writeFile(t, evil, "x"))
+	r := next(t, reqs)
+	r.Tell(0, Refused, "bad name\x1b[2J")
+	got := result(t, res)
+	if !errors.Is(got.err, ErrNotSaved) {
+		t.Errorf("Send = %v, want ErrNotSaved", got.err)
+	}
+	terminalSafe(t, "the report", got.out)
+	if !strings.Contains(got.out, `a\x1b]0;owned\ab\u202e.txt`) {
+		t.Errorf("the report %q does not show the name escaped", got.out)
+	}
+
+	dir := filepath.Join(t.TempDir(), evil)
+	os.Mkdir(dir, 0o700)
+	for what, path := range map[string]string{"a directory": dir, "a missing file": dir + "-missing"} {
+		err := Send(sock, []string{path}, io.Discard)
+		if err == nil {
+			t.Fatalf("Send of %s succeeded", what)
+		}
+		terminalSafe(t, "the error for "+what, err.Error())
 	}
 }
 

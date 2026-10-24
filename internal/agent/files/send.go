@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -63,13 +65,13 @@ func Send(sock string, paths []string, out io.Writer) error {
 	for i, p := range paths {
 		f, err := os.Open(p)
 		if err != nil {
-			return err
+			return pathError(p, err)
 		}
 		defer f.Close()
 		if st, err := f.Stat(); err != nil {
-			return err
+			return pathError(p, err)
 		} else if !st.Mode().IsRegular() {
-			return fmt.Errorf("%s is not a regular file", p)
+			return fmt.Errorf("%s is not a regular file", shown(p))
 		}
 		req.Names[i], fds[i] = filepath.Base(p), int(f.Fd())
 	}
@@ -103,7 +105,7 @@ func follow(c *net.UnixConn, names []string, out io.Writer) error {
 			return fmt.Errorf("malformed report from the session: %w", err)
 		}
 		if rep.I == -1 {
-			return fmt.Errorf("the session refused the offer: %s", rep.Detail)
+			return fmt.Errorf("the session refused the offer: %s", printable(rep.Detail))
 		}
 		if rep.I < 0 || rep.I >= len(names) || settled[rep.I].Final() {
 			continue
@@ -148,7 +150,7 @@ func Main(args []string, runRoot string, getenv func(string) string, stdout, std
 }
 
 func describe(name string, rep report) string {
-	rep.Detail = printable(rep.Detail)
+	name, rep.Detail = shown(name), printable(rep.Detail)
 	switch rep.Status {
 	case Offered:
 		return name + ": offered; click Save in the browser to download it, or press Ctrl+C here to withdraw it"
@@ -162,6 +164,26 @@ func describe(name string, rep report) string {
 		return name + ": not offered: " + rep.Detail
 	}
 	return fmt.Sprintf("%s: %s %s", name, printable(string(rep.Status)), rep.Detail)
+}
+
+// shown is a file name as robin-send prints it: as it is when every
+// character of it shows, else quoted with escapes. A name that holds a
+// terminal escape or a mark that reorders text, which is why the session
+// refuses it, then neither acts on the terminal nor hides what it is.
+func shown(name string) string {
+	if !utf8.ValidString(name) || strings.ContainsFunc(name, func(r rune) bool { return !strconv.IsGraphic(r) }) {
+		return strconv.QuoteToGraphic(name)
+	}
+	return name
+}
+
+// pathError is err about the file at p, with p shown.
+func pathError(p string, err error) error {
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		return fmt.Errorf("%s %s: %w", pe.Op, shown(p), pe.Err)
+	}
+	return fmt.Errorf("%s: %w", shown(p), err)
 }
 
 // printable replaces control characters, since a failure's detail can carry
