@@ -1,6 +1,8 @@
 #!/bin/sh
 # Builds static libopenh264.a and its headers for a target into
-# .cache/toolchain/<target>/{lib,include/wels} and prints that directory.
+# .cache/toolchain/<target>/openh264-<key>/{lib,include/wels} and prints
+# that directory. The key names every input of the build, so the directory
+# is only ever reused for the same bytes.
 set -eu
 . "$(dirname "$0")/lib.sh"
 
@@ -11,12 +13,13 @@ case $target in
 	*) die "usage: $0 x86_64-linux-musl|aarch64-linux-musl" ;;
 esac
 
-out=$CACHE/$target
 cflags="-O3 $FIXED_CFLAGS"
-want="openh264 $OPENH264_VERSION $cflags"
-cflags="$cflags $(prefix_maps)"
-stamp=$out/lib/libopenh264.a.built
-if ! built "$stamp" "$want"; then
+set --
+if [ "$arch" = x86_64 ]; then
+	set -- nasm "$NASM_VERSION"
+fi
+out=$CACHE/$target/openh264-$(library_key openh264 "$OPENH264_VERSION" "$OPENH264_SHA256" "$cflags" "$@")
+if [ ! -d "$out" ]; then
 	zig=$("$TOOLCHAIN_DIR/zig.sh")
 	set --
 	if [ "$arch" = x86_64 ]; then
@@ -24,7 +27,7 @@ if ! built "$stamp" "$want"; then
 	fi
 	src=$(fetch "https://github.com/cisco/openh264/archive/refs/tags/v$OPENH264_VERSION.tar.gz" \
 		"$OPENH264_SHA256" "openh264-$OPENH264_VERSION.tar.gz")
-	build=$CACHE/build/openh264-$OPENH264_VERSION-$target
+	build=$(build_dir "openh264-$OPENH264_VERSION-$target")
 	unpack "$src" "$build"
 	# zig reads -march=armv8-a as cpu "armv8" minus feature "a" and rejects it.
 	# armv8-a is already the aarch64 baseline, so drop the flag.
@@ -39,9 +42,10 @@ if ! built "$stamp" "$want"; then
 	# so it carries the reproducibility flags; setting CFLAGS itself would
 	# drop every flag the Makefile adds.
 	GIT_CEILING_DIRECTORIES=$CACHE/build make -C "$build" -j"$(ncpu)" \
-		OS=linux ARCH="$arch" PREFIX="$out" CFLAGS_OPT="$cflags" \
+		OS=linux ARCH="$arch" PREFIX="$out.tmp.$$" CFLAGS_OPT="$cflags $(prefix_maps "$build")" \
 		CC="$zig cc -target $target" CXX="$zig c++ -target $target" AR="$zig ar" \
 		"$@" install-static-lib >&2
-	printf '%s\n' "$want" >"$stamp"
+	rm -rf "$build"
+	install_prefix "$out.tmp.$$" "$out"
 fi
 printf '%s\n' "$out"

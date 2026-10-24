@@ -2,8 +2,9 @@ module github.com/yasinmiran/robin
 
 go 1.25.0
 
-// The release binaries embed the compiler's version and change with it, so
-// every builder gets this exact one.
+// The release binaries embed the compiler's version and change with it. The
+// Makefile exports this line as GOTOOLCHAIN, so every builder gets exactly
+// this one.
 toolchain go1.27.3
 
 require (

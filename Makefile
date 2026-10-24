@@ -6,7 +6,9 @@
 # no containers and no root.
 
 GO       ?= go
-VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+# Only release tags name a version, at a fixed abbreviation, so two clones
+# of one commit describe it alike whatever else they have tagged.
+VERSION  ?= $(shell git describe --tags --match 'v[0-9]*' --abbrev=12 --always --dirty 2>/dev/null || echo dev)
 ARCHES   ?= amd64 arm64
 HOST_OS  := $(shell $(GO) env GOOS)
 HOST_ARCH:= $(shell $(GO) env GOARCH)
@@ -25,11 +27,26 @@ CGO_TESTS := ./internal/agent/h264/ ./internal/agent/opus/ ./internal/agent/audi
 # the linker writes no build ID, which would hash the absolute cgo flags.
 # make repro proves it.
 GOBUILD  := $(GO) build -trimpath -buildvcs=false
-LDFLAGS  := -s -w -buildid= -X main.version=$(VERSION)
+# Not LDFLAGS: make would hand a variable of that name on to the library
+# builds in place of the environment's.
+GO_LDFLAGS := -s -w -buildid= -X main.version=$(VERSION)
 # zig cc compiles a file it gets no -O for as a debug build with UBSan on,
 # which puts a sanitizer runtime and the absolute source path of every cgo
-# file into the agent.
-CGO_CFLAGS := -O2 -fno-sanitize=undefined
+# file into the agent. -Og keeps zig's stack protector, which every -O
+# above it drops.
+AGENT_CGO_CFLAGS := -Og -fno-sanitize=undefined
+
+# The compiler is an input to the bytes. go.mod names the one release;
+# exporting it here makes go switch to it whatever the builder has
+# installed or saved with go env -w, and go-version checks that it did.
+# GOENV=off keeps the builder's saved go env out, and the rest pin what
+# would otherwise be read from the environment.
+export GOTOOLCHAIN := $(shell sed -n 's/^toolchain //p' go.mod)
+export GOENV := off
+export GOFLAGS := -mod=readonly
+export GOEXPERIMENT :=
+export GOAMD64 := v1
+export GOARM64 := v8.0
 
 target_amd64 := x86_64-linux-musl
 target_arm64 := aarch64-linux-musl
@@ -39,9 +56,10 @@ export ZIG_GLOBAL_CACHE_DIR := $(CACHE)/zig
 # zig_env starts a recipe line whose command runs in the agent's cgo
 # toolchain for linux/$(1): zig as the C compiler, openh264 and libopus.
 define zig_env
-t=$(target_$(1)); zig=$$(toolchain/zig.sh); prefix=$$(toolchain/openh264.sh $$t); toolchain/opus.sh $$t >/dev/null; \
+t=$(target_$(1)); zig=$$(toolchain/zig.sh); h264=$$(toolchain/openh264.sh $$t); opus=$$(toolchain/opus.sh $$t); \
 CGO_ENABLED=1 CC="$$zig cc -target $$t" CXX="$$zig c++ -target $$t" \
-CGO_CFLAGS="$(CGO_CFLAGS) -I$$prefix/include" CGO_LDFLAGS="-L$$prefix/lib"
+CGO_CFLAGS="$(AGENT_CGO_CFLAGS) -I$$h264/include -I$$opus/include" CGO_CPPFLAGS= CGO_CXXFLAGS= \
+CGO_LDFLAGS="-L$$h264/lib -L$$opus/lib"
 endef
 
 # agent_build builds the agent for linux/$(1) into $@, with the extra go
@@ -50,11 +68,11 @@ define agent_build
 @set -e; echo "build agent linux/$(1) ($(target_$(1)))"; \
 $(call zig_env,$(1)) GOOS=linux GOARCH=$(1) \
 $(GOBUILD) $(2) -tags openh264,opus,netgo,osusergo \
-	-ldflags "$(LDFLAGS) -linkmode external -extldflags -static" \
+	-ldflags "$(GO_LDFLAGS) -linkmode external -extldflags -static" \
 	-o $@ ./cmd/robin-agent
 endef
 
-.PHONY: all agents cli dist repro test test-js test-short test-x test-wayland check e2e clean
+.PHONY: all agents cli dist repro go-version test test-agents test-js test-short test-x test-wayland check e2e clean
 .PHONY: cover cover-unit cover-x cover-wayland cover-e2e cover-report cover-baseline
 .PRECIOUS: bin/robin-agent-linux-% bin/cover/robin-agent-linux-%
 
@@ -64,10 +82,15 @@ cli: bin/robin
 
 agents: $(foreach a,$(ARCHES),$(AGENTS)/robin-agent-linux-$(a).gz)
 
-bin/robin: agents $(GOSRC) go.mod go.sum Makefile
-	CGO_ENABLED=0 $(GOBUILD) -ldflags "$(LDFLAGS)" -o $@ ./cmd/robin
+# Every shipped binary is built by the Go that go.mod names, or not at all.
+go-version:
+	@v=$$($(GO) env GOVERSION); [ "$$v" = "$(GOTOOLCHAIN)" ] || \
+		{ echo "make: go is $$v, go.mod wants $(GOTOOLCHAIN); unset GOTOOLCHAIN" >&2; exit 1; }
 
-bin/robin-agent-linux-%: $(GOSRC) go.mod go.sum toolchain/*.sh Makefile
+bin/robin: agents $(GOSRC) go.mod go.sum Makefile | go-version
+	CGO_ENABLED=0 $(GOBUILD) -ldflags "$(GO_LDFLAGS)" -o $@ ./cmd/robin
+
+bin/robin-agent-linux-%: $(GOSRC) go.mod go.sum toolchain/*.sh Makefile | go-version
 	$(call agent_build,$*)
 
 # Go's gzip rather than the host's: implementations compress differently,
@@ -75,34 +98,47 @@ bin/robin-agent-linux-%: $(GOSRC) go.mod go.sum toolchain/*.sh Makefile
 $(AGENTS)/robin-agent-linux-%.gz: bin/robin-agent-linux-%
 	$(GO) run ./internal/tools/gz $< $@
 
-# Release CLIs for every client platform, each embedding every agent.
-dist: agents
-	@set -e; for p in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do \
+# Release CLIs for every client platform, each embedding every agent. A
+# release is a tagged commit, or whatever VERSION the caller names.
+dist: agents | go-version
+	@case "$(origin VERSION)" in command*|environment*) ;; *) \
+		git describe --tags --match 'v[0-9]*' --exact-match >/dev/null 2>&1 || \
+		{ echo "make dist: HEAD is not a release tag; pass VERSION=" >&2; exit 1; }; esac
+	@set -e; echo "dist VERSION=$(VERSION)"; \
+	for p in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do \
 		os=$${p%/*}; arch=$${p#*/}; \
 		echo "build dist/robin-$$os-$$arch"; \
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GOBUILD) \
-			-ldflags "$(LDFLAGS)" -o dist/robin-$$os-$$arch ./cmd/robin; \
+			-ldflags "$(GO_LDFLAGS)" -o dist/robin-$$os-$$arch ./cmd/robin; \
 	done
 
 # Builds the agents, the CLI and dist from this tree and again from a copy
-# at another path with an empty Go build cache, and fails if any artifact
-# differs. REPRO_TOOLCHAIN=1 also rebuilds openh264 and libopus for the
-# copy instead of sharing .cache with it.
+# outside any repository, with its own home, temp directory, zig and Go
+# build cache, and fails if any artifact differs. REPRO_TOOLCHAIN=1 also
+# rebuilds openh264 and libopus for the copy instead of sharing them with
+# it. REPRO_SELFTEST=1 builds the copy with another VERSION and passes only
+# when the comparison notices.
 repro:
 	toolchain/repro.sh
 
 # The linux/amd64 CLI the e2e client container runs.
-bin/robin-linux-amd64: agents $(GOSRC) go.mod go.sum Makefile
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GOBUILD) -ldflags "$(LDFLAGS)" -o $@ ./cmd/robin
+bin/robin-linux-amd64: agents $(GOSRC) go.mod go.sum Makefile | go-version
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GOBUILD) -ldflags "$(GO_LDFLAGS)" -o $@ ./cmd/robin
 
 # Unit and integration tests. The encoder packages are tested against the real
 # openh264 and libopus on linux/amd64 hosts; everywhere else they build as stubs.
-test:
+test: test-agents
 	$(GO) test ./...
 ifeq ($(HOST_OS)/$(HOST_ARCH),linux/amd64)
 	@set -e; $(call zig_env,amd64) \
 	$(GO) test -tags openh264,opus $(CGO_TESTS)
 endif
+
+# The agents this tree builds, scanned for anything of the builder: paths,
+# an unpinned Go, a build setting the recipes do not set. Without agents
+# the test skips; here they are required.
+test-agents: agents
+	ROBIN_REQUIRE_AGENTS=1 $(GO) test ./internal/agentbin
 
 # The page's pure modules, under Node's own test runner. make test runs them
 # too, through TestPageModules in internal/web; this target is for make cover.
@@ -193,7 +229,7 @@ bin/cover/agents/robin-agent-linux-%.gz: bin/cover/robin-agent-linux-%
 bin/cover/robin-linux-amd64: bin/cover/agents/robin-agent-linux-amd64.gz $(GOSRC) go.mod go.sum
 	printf '{"Replace":{"%s":"%s"}}\n' $(CURDIR)/$(AGENTS)/robin-agent-linux-amd64.gz $(CURDIR)/$< >bin/cover/overlay.json
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GOBUILD) -cover -overlay bin/cover/overlay.json \
-		-ldflags "$(LDFLAGS)" -o $@ ./cmd/robin
+		-ldflags "$(GO_LDFLAGS)" -o $@ ./cmd/robin
 
 clean:
 	rm -rf bin dist .repro $(AGENTS)/*.gz
