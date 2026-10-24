@@ -48,13 +48,10 @@ func NewStranger(t testing.TB) *Stranger {
 		}
 		t.Skipf("needs root and the %s account; run via internal/agent/x11/testdata/xtest.sh", strangerName)
 	}
-	uid, err := strconv.ParseUint(u.Uid, 10, 32)
-	if err != nil {
-		t.Fatalf("%s's uid: %v", strangerName, err)
-	}
-	gid, err := strconv.ParseUint(u.Gid, 10, 32)
-	if err != nil {
-		t.Fatalf("%s's gid: %v", strangerName, err)
+	uid, uidErr := strconv.ParseUint(u.Uid, 10, 32)
+	gid, gidErr := strconv.ParseUint(u.Gid, 10, 32)
+	if err := errors.Join(uidErr, gidErr); err != nil {
+		t.Fatalf("%s's ids: %v", strangerName, err)
 	}
 	s := &Stranger{UID: uint32(uid), GID: uint32(gid), Exe: filepath.Join(OpenDir(t), filepath.Base(os.Args[0]))}
 	b, err := os.ReadFile("/proc/self/exe")
