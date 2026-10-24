@@ -6,6 +6,8 @@ import { dispatchControl, onControl } from './control.js';
 import { acceptBulk, onBulk, sendBulk } from './bulk.js';
 import { BULK_CHANNEL, registerKind } from './bulkframe.js';
 import { Session } from './session.js';
+import { Files } from './files.js';
+import { Clipboard } from './clipboard.js';
 
 const CONTROL_CHANNEL = 'control';
 const ICE_GRACE_MS = 2000;
@@ -23,12 +25,15 @@ const input = new Input(video, sendControl, () => channel?.readyState === 'open'
 const cursor = new RemoteCursor(video);
 const session = new Session();
 const sessionControls = sessionSection(overlay.addSection('session'));
+const toAgent = (header, blob, options) => sendBulk(pc, header, blob, options);
+const files = new Files({ overlay, send: sendControl, bulk: toAgent });
+const clipboard = new Clipboard({ send: sendControl, bulk: toAgent, upload: (list) => files.upload(list) });
+input.paste = (data) => clipboard.paste(data);
 
 let ws = null;
 let pc = null;
 let channel = null;
 let state = 'connecting';
-let lastRemoteClipboard = null;
 let wsOpened = false;
 let iceGraceTimer = 0;
 let heartbeatTimer = 0;
@@ -44,7 +49,12 @@ window.robin = {
   video,
   stats: () => sampler.sample(pc),
   sendClipboard: (text) => input.sendClipboard(text),
-  get lastRemoteClipboard() { return lastRemoteClipboard; },
+  get lastRemoteClipboard() { return clipboard.last?.text ?? null; },
+  get lastRemoteClip() { return clipboard.last; },
+  files: {
+    list: () => files.list(),
+    upload: (list) => files.upload(list),
+  },
   get muted() { return video.muted; },
   get monitors() { return monitors; },
   showMonitor: (name) => showMonitor(name),
@@ -54,7 +64,7 @@ window.robin = {
   bulk: {
     registerKind,
     onBulk,
-    send: (header, blob, options) => sendBulk(pc, header, blob, options),
+    send: toAgent,
   },
 };
 
@@ -64,12 +74,6 @@ onControl('cursor', (c) => {
 onControl('monitors', (c) => {
   monitors = c.monitors ?? null;
   overlay.setMonitors(monitors, showMonitor);
-});
-onControl('clipboard', (c) => {
-  lastRemoteClipboard = c.text ?? '';
-  navigator.clipboard?.writeText(lastRemoteClipboard).catch(() => {
-    // Needs focus and permission; the text is kept either way.
-  });
 });
 
 input.attach();

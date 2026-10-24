@@ -279,6 +279,82 @@ body:has(#hud[data-state="reconnecting"]) #wire { opacity: 1; }
 .section[data-section="session"] button:disabled { color: var(--ink-soft); opacity: 0.5; cursor: default; }
 #hud:not([data-state="connected"]) .section[data-section="session"] { display: none; }
 
+/* Files: the upload button, then a row per transfer. */
+.files-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.files-head .hint { color: var(--ink-soft); font-weight: 400; }
+.section button {
+  height: 24px;
+  padding: 0 9px;
+  color: var(--ink);
+  background: var(--veil-edge);
+  border: 0;
+  border-radius: 6px;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.section button:hover { box-shadow: inset 0 0 0 1px var(--ink-soft); }
+.section button:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.section button.save { color: #fff; background: var(--ok); }
+.transfers {
+  display: grid;
+  gap: 6px;
+  max-height: 40vh;
+  margin: 8px 0 2px;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.transfers:empty { display: none; }
+.transfer {
+  display: grid;
+  grid-template-columns: minmax(0, 28ch) auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 12px;
+}
+.transfer .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.transfer .size,
+.transfer .status {
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.transfer[data-state="failed"] .status { color: var(--down); }
+.transfer[data-state="kept"] .status,
+.transfer[data-state="saved"] .status { color: var(--ok); }
+.transfer .actions { display: inline-flex; gap: 4px; justify-self: end; }
+.transfer progress {
+  grid-column: 1 / -1;
+  width: 100%;
+  height: 4px;
+  accent-color: var(--ok);
+}
+
+/* A drag of files over the page: where they go when dropped. */
+body[data-dropping]::after {
+  content: "Drop to upload to the host’s download folder";
+  position: fixed;
+  inset: 12px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: rgb(0 0 0 / 0.4);
+  border: 2px dashed var(--ok);
+  border-radius: 16px;
+  font: 600 15px/20px var(--ui);
+  pointer-events: none;
+}
+
 .notice {
   max-width: 42ch;
   margin: 6px 0 4px;

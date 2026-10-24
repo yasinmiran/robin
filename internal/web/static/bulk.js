@@ -27,8 +27,9 @@ export function onBulk(kind, accept) {
 
 // sendBulk sends blob, a Blob or File, as one transfer described by header
 // on a channel of its own from pc, and resolves once the agent kept it.
-// Aborting signal cancels the transfer.
-export async function sendBulk(pc, header, blob, { signal } = {}) {
+// Aborting signal cancels the transfer; progress, when given, hears how
+// many bytes have gone out after each chunk.
+export async function sendBulk(pc, header, blob, { signal, progress } = {}) {
   const h = { ...header, t: 'header', size: blob.size };
   checkHeader(h);
   signal?.throwIfAborted();
@@ -46,6 +47,7 @@ export async function sendBulk(pc, header, blob, { signal } = {}) {
       while (channel.bufferedAmount > HIGH_WATER) await out.until('bufferedamountlow');
       out.throwIfStopped();
       channel.send(chunk);
+      progress?.(at + chunk.length);
     }
     channel.send(JSON.stringify(sum.end()));
     await out.finished();

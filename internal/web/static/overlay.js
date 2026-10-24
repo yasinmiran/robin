@@ -238,6 +238,13 @@ export class Overlay {
     setMeasure(this.#bitrate, value, unit);
   }
 
+  // reveal brings the tab out for a feature with news. It tucks away again
+  // later, unless a section holds it out with a data-pinned attribute; a
+  // feature that drops its pin calls reveal again.
+  reveal() {
+    this.#reveal();
+  }
+
   #reveal() {
     this.#hud.classList.remove('tucked');
     this.#scheduleTuck();
@@ -246,6 +253,7 @@ export class Overlay {
   #scheduleTuck() {
     clearTimeout(this.#tuckTimer);
     if (this.#hovered || !this.#monitorMenu.hidden || this.#hud.dataset.state !== 'connected') return;
+    if (this.#sections?.querySelector(':scope > [data-pinned]')) return;
     this.#tuckTimer = setTimeout(() => this.#hud.classList.add('tucked'), TUCK_AFTER_MS);
   }
 }

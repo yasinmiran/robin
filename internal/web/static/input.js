@@ -3,6 +3,7 @@
 
 const LINE_PX = 40;
 const PASTE_WAIT_MS = 100;
+const PASTE_HOLD_MS = 3000;
 const RESIZE_DEBOUNCE_MS = 250;
 const MODIFIERS = new Set(['Shift', 'Control', 'Alt', 'AltGraph', 'Meta', 'OS']);
 
@@ -182,12 +183,26 @@ export class Input {
     else this.#send(msg);
   }
 
+  // paste hands what a paste event carries to the remote clipboard. It may
+  // return a promise, which the paste key waits on for up to PASTE_HOLD_MS
+  // so that it finds the clipboard set.
+  paste = (data) => {
+    const text = data?.getData('text/plain');
+    if (text) this.sendClipboard(text);
+  };
+
   #onPaste(e) {
     if (!this.#active()) return;
     e.preventDefault();
-    const text = e.clipboardData?.getData('text/plain');
-    if (text) this.sendClipboard(text);
-    this.#flushPaste();
+    clearTimeout(this.#pasteTimer);
+    let held;
+    const hold = new Promise((resolve) => { held = setTimeout(resolve, PASTE_HOLD_MS); });
+    Promise.race([Promise.resolve(this.paste(e.clipboardData)), hold])
+      .catch((err) => console.warn('robin: paste', err))
+      .finally(() => {
+        clearTimeout(held);
+        this.#flushPaste();
+      });
   }
 
   #flushPaste() {

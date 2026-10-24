@@ -61,6 +61,13 @@ test('a transfer arrives whole on the far side, flow control and all', async () 
   assert.notEqual(pc.channels[0].readyState, 'open');
 });
 
+test('progress hears the bytes sent after each chunk', async () => {
+  const pc = new FakePeer(acceptBulk);
+  const heard = [];
+  await sendBulk(pc, { kind: 'test' }, new Blob([new Uint8Array(2 * CHUNK_SIZE + 5)]), { progress: (n) => heard.push(n) });
+  assert.deepEqual(heard, [CHUNK_SIZE, 2 * CHUNK_SIZE, 2 * CHUNK_SIZE + 5]);
+});
+
 test('an empty transfer is a header and an end', async () => {
   const pc = new FakePeer(acceptBulk);
   await sendBulk(pc, { kind: 'test' }, new Blob([]));
