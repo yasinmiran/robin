@@ -448,10 +448,11 @@ test('camera: a spawned desktop without v4l2loopback says why, and the page offe
   await expect(page.locator('button.device[data-device="camera"]')).toHaveCount(0);
 });
 
-// Files and the rich clipboard run where the picture can be clicked: in
-// direct with a spawned desktop, whose xterm has robin-send on its PATH,
-// and in attach, where robin-agent send finds the one session by itself.
-const FILES = ['direct', 'attach'].includes(SCENARIO) && PICTURE;
+// Files, the rich clipboard and sharp text run where the xterm can be
+// clicked through the picture: in direct with a spawned desktop, whose
+// xterm has robin-send on its PATH, and in attach, where robin-agent send
+// finds the one session by itself.
+const XTERM_CLICKABLE = ['direct', 'attach'].includes(SCENARIO) && PICTURE;
 const NO_FILES = 'files run in direct and attach, where the xterm can be clicked';
 const sha256 = (data: Buffer | Uint8Array) => crypto.createHash('sha256').update(data).digest('hex');
 // A 4x3 PNG, small enough to type, real enough for any image reader.
@@ -487,7 +488,7 @@ async function offerFromHost(file: string): Promise<string> {
 }
 
 test('files: uploads land in the download folder and never replace a file', async () => {
-  test.skip(!FILES, NO_FILES);
+  test.skip(!XTERM_CLICKABLE, NO_FILES);
   await host.ssh('rm -rf ~/Downloads');
   const content = crypto.randomBytes(300_000);
   const file = { name: 'robin-e2e-upload.bin', mimeType: 'application/octet-stream', buffer: content };
@@ -514,7 +515,7 @@ test('files: uploads land in the download folder and never replace a file', asyn
 });
 
 test('files: the host offers a file, shown as text, saved only on a click', async () => {
-  test.skip(!FILES, NO_FILES);
+  test.skip(!XTERM_CLICKABLE, NO_FILES);
   // Markup in the name must show as the name, not as markup.
   const name = '<b>robin<b> & co.bin';
   const path = `/tmp/${name}`;
@@ -556,7 +557,7 @@ test('files: the host offers a file, shown as text, saved only on a click', asyn
 });
 
 test('clipboard: an image and HTML pasted in the page reach the host, an image copied there reaches the page', async () => {
-  test.skip(!FILES, NO_FILES);
+  test.skip(!XTERM_CLICKABLE, NO_FILES);
   const png = Buffer.from(PNG_B64, 'base64');
   const html = `<b>robin-e2e</b> ${Date.now()}`;
   // Firefox builds a ClipboardEvent's clipboardData afresh and keeps none of
@@ -594,9 +595,7 @@ test('clipboard: an image and HTML pasted in the page reach the host, an image c
     .toBe(sha256(other));
 });
 
-// Sharp text runs where the xterm can be clicked and the picture read, in
-// any browser that says which frame it shows.
-const SHARP = FILES;
+const NO_SHARP = 'sharp text runs in direct and attach, where the xterm can be clicked and the picture read';
 const sharpState = () => page.evaluate(() => (window as any).robin.sharp.state);
 const tileCount = (g: { w: number; h: number }) => Math.ceil(g.w / 64) * Math.ceil(g.h / 64);
 const allSharp = async () => {
@@ -618,6 +617,18 @@ const typeInTerminal = async (line: string) => {
   await page.keyboard.type(line, { delay: 20 });
   await page.keyboard.press('Enter');
 };
+// videoFrames resolves once the video has shown n more frames.
+const videoFrames = (n: number) =>
+  page.evaluate(
+    (n) =>
+      new Promise<void>((resolve) => {
+        const v = document.getElementById('screen') as HTMLVideoElement;
+        let left = n;
+        const step = () => (--left > 0 ? v.requestVideoFrameCallback(step) : resolve());
+        v.requestVideoFrameCallback(step);
+      }),
+    n,
+  );
 // traceWhile records what the page shows of tiles while run runs and for
 // settleMs after.
 const traceWhile = async (run: () => Promise<void>, settleMs: number) => {
@@ -628,7 +639,7 @@ const traceWhile = async (run: () => Promise<void>, settleMs: number) => {
 };
 
 test('sharp text: a still screen is exact where the video alone is not, and no tile outlives a change', async ({}, testInfo) => {
-  test.skip(!SHARP, NO_FILES);
+  test.skip(!XTERM_CLICKABLE, NO_SHARP);
   testInfo.setTimeout(120_000);
   await expect.poll(async () => (await sharpState()).want, { message: 'sharp text is on by default' }).toBe(true);
   const first = await sharpState();
@@ -697,11 +708,13 @@ test('sharp text: a still screen is exact where the video alone is not, and no t
   await sw.click();
   await expect(sw).toHaveAttribute('aria-checked', 'false');
   await expect.poll(async () => { const t = await sharpState(); return [t.on, t.drawn, t.visible]; }).toEqual([false, 0, false]);
+  // The agent answers off after its last manifest: frames go on with none.
+  await expect.poll(async () => (await sharpState()).answered, { message: 'the agent answered off' }).toBe(true);
   const manifests = () => page.evaluate(() => (window as any).__robinManifests as number);
-  await page.waitForTimeout(500);
   const before = await manifests();
+  const shown = videoFrames(5);
   await typeInTerminal('echo robin-sharp-off');
-  await page.waitForTimeout(1_000);
+  await shown;
   expect(await manifests(), 'manifests after sharp text went off').toBe(before);
   // Switched on again, the whole still screen comes at once: what one costs.
   const off = await sharpState();
@@ -1013,25 +1026,29 @@ if (SCENARIO === 'attach') {
     await pointerLands(100, 100, { x: 100, y: 100 });
   });
 
-  test('actual size: one desktop pixel to one device pixel, panned at the window edge, the pointer still lands', async () => {
-    // 1280x800 of LEFT in the 1000x700 window the attach resize test left.
-    const box = () => page.$eval(SCREEN, (el) => {
-      const r = el.getBoundingClientRect();
-      const t = document.getElementById('tiles')!.getBoundingClientRect();
-      return { x: r.left, y: r.top, w: r.width, h: r.height, tiles: [t.left, t.top, t.width, t.height] };
-    });
+  // The picture's box and the tile canvas's, in CSS pixels.
+  const pictureBox = () => page.$eval(SCREEN, (el) => {
+    const r = el.getBoundingClientRect();
+    const t = document.getElementById('tiles')!.getBoundingClientRect();
+    return { x: r.left, y: r.top, w: r.width, h: r.height, tiles: [t.left, t.top, t.width, t.height] };
+  });
+  // actualScale is the CSS pixels a desktop pixel takes in actual size: as
+  // many device pixels as fit whole in a CSS pixel, at least one.
+  const actualScale = async () => {
     const dpr = await page.evaluate(() => window.devicePixelRatio);
-    expect((await box()).w, 'fit view shrinks the picture').toBeLessThan(1280 / dpr);
+    return Math.max(1, Math.floor(dpr)) / dpr;
+  };
+
+  test('actual size: each desktop pixel whole device pixels, panned at the window edge, the pointer still lands', async () => {
+    // 1280x800 of LEFT in the 1000x700 window the attach resize test left.
+    const k = await actualScale();
+    expect((await pictureBox()).w, 'fit view shrinks the picture').toBeLessThan(1280 * k);
     await page.mouse.move(300, 4);
     await page.locator('[data-switch="actual"]').click();
-    await expect.poll(async () => { const b = await box(); return [b.x, b.y, b.w, b.h]; }).toEqual([0, 0, 1280 / dpr, 800 / dpr]);
-    if ((await sharpState()).visible) {
-      const b = await box();
-      expect(b.tiles, 'the tiles lie on the picture').toEqual([b.x, b.y, b.w, b.h]);
-    }
+    await expect.poll(async () => { const b = await pictureBox(); return [b.x, b.y, b.w, b.h]; }).toEqual([0, 0, 1280 * k, 800 * k]);
     // The pointer at the right edge pans as far as the picture goes.
     await page.mouse.move(999, 350, { steps: 4 });
-    await expect.poll(async () => (await box()).x, { message: 'panned to the right edge', timeout: 5_000 }).toBe(1000 - 1280 / dpr);
+    await expect.poll(async () => (await pictureBox()).x, { message: 'panned to the right edge', timeout: 5_000 }).toBe(1000 - 1280 * k);
     await page.mouse.move(500, 350, { steps: 4 });
     const p = await pagePoint(page, SCREEN, 1200, 400);
     expect(p.x, 'a pixel off the fit view is now on the page').toBeLessThan(1000);
@@ -1044,7 +1061,20 @@ if (SCENARIO === 'attach') {
       .toBeLessThanOrEqual(2);
     await page.mouse.move(300, 4);
     await page.locator('[data-switch="actual"]').click();
-    await expect.poll(async () => (await box()).w).toBeLessThan(1280 / dpr);
+    await expect.poll(async () => (await pictureBox()).w).toBeLessThan(1280 * k);
+  });
+
+  test('actual size: the tiles lie on the picture', async () => {
+    const { unsupported } = await sharpState();
+    test.skip(Boolean(unsupported), unsupported);
+    await page.mouse.move(300, 4);
+    await page.locator('[data-switch="actual"]').click();
+    await expect.poll(allSharp, { message: 'every tile drawn and shown', timeout: 20_000 }).toBe(true);
+    const b = await pictureBox();
+    expect(b.tiles, 'the tiles lie on the picture').toEqual([b.x, b.y, b.w, b.h]);
+    expect(b.w, 'at the desktop size').toBe(1280 * (await actualScale()));
+    await page.mouse.move(300, 4);
+    await page.locator('[data-switch="actual"]').click();
   });
 
   test("sharp text: over the whole screen scaled down to fit, tiles keep the desktop's own pixels", async ({}, testInfo) => {

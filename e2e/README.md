@@ -131,8 +131,8 @@ The X11 scenarios of `tests/gui.spec.ts` also check, in this order:
    again within 5 s. The same holds with every control message held
    300 ms behind the video (`helpers/sharp.ts` wraps the page's control
    channel before it loads), when the tiles must hide instead. The switch
-   in the status tab turns them off, after which no manifest arrives, and
-   on again.
+   in the status tab turns them off: once the agent has answered, no
+   manifest arrives over the next frames. Then on again.
 12. **Transport**: per the table above, from `robin.stats()`.
 13. **Input method** (Chrome only; in `restart` it runs before the transport
    check): with the xterm clicked, `echo `, then what
@@ -158,11 +158,13 @@ choosing RIGHT and then all from the status tab's menu turns the video into
 1024x768 and then the whole 2304x800 screen scaled to fit, and the pointer
 lands within 2 px of the matching pixel of the monitor shown. **Actual
 size**: in the 1000x700 window, the status tab's switch lays LEFT out at
-1280x800 CSS pixels with the tiles on it, the pointer at the right edge
-pans it as far as it goes, and the pointer then lands within 2 px of a
-pixel the fit view had off the page. **Sharp text, scaled**: with all
-monitors shown, the video scaled down to 1918x666, the tiles cover the
-2304x800 screen at its own size and match the host's in every pixel.
+1280x800 desktop pixels, each a whole number of device pixels, the pointer
+at the right edge pans it as far as it goes, and the pointer then lands
+within 2 px of a pixel the fit view had off the page; once every tile is
+drawn, the tile canvas lies exactly on the picture. **Sharp text,
+scaled**: with all monitors shown, the video scaled down to 1918x666, the
+tiles cover the 2304x800 screen at its own size and match the host's in
+every pixel.
 
 The `touch` scenario runs `tests/touch.spec.ts` against the X11 host, with
 a 1024x640 touch screen. In order:
