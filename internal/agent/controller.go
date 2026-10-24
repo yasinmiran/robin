@@ -284,8 +284,9 @@ func prepareRunDir(o Options) (string, error) {
 // sweepRunRoot removes every session directory under root but keep whose
 // owner is gone. A directory with session.json belongs to the daemon the
 // file names; one with a socket but no session.json belongs to a daemon
-// still starting, and stays; one with neither was named by its pid, as a
-// stdio session names its own.
+// still starting, as long as that daemon runs; one with neither was named
+// by its pid, as a stdio session names its own. A pid this user cannot
+// signal is another user's, so no session's.
 func sweepRunRoot(root, keep string) {
 	entries, _ := os.ReadDir(root)
 	for _, e := range entries {
@@ -296,6 +297,9 @@ func sweepRunRoot(root, keep string) {
 		pid := sessionPID(dir)
 		if pid == 0 {
 			if hasSocket(dir) {
+				if FindDaemon(e.Name()) == 0 {
+					os.RemoveAll(dir)
+				}
 				continue
 			}
 			pid, _ = strconv.Atoi(e.Name())
@@ -303,7 +307,7 @@ func sweepRunRoot(root, keep string) {
 		if pid == 0 || pid == os.Getpid() {
 			continue
 		}
-		if syscall.Kill(pid, 0) == syscall.ESRCH {
+		if err := syscall.Kill(pid, 0); err == syscall.ESRCH || err == syscall.EPERM {
 			os.RemoveAll(dir)
 		}
 	}

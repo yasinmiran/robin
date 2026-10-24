@@ -223,6 +223,7 @@ func TestSweepRunRootTrustsSessionJSONOverTheName(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
+	fakeDaemon(t, "23456789")
 	// A dead daemon's session.json wins over a name that is a live pid.
 	dead := mk(strconv.Itoa(os.Getpid()))
 	WriteSession(dead, protocol.Session{ID: "x", PID: deadPID(t)})

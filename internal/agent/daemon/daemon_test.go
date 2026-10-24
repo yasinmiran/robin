@@ -282,7 +282,7 @@ func TestStartProxyAndEnd(t *testing.T) {
 	if !strings.Contains(logOut.String(), "fake daemon listening") || !strings.Contains(logOut.String(), "type=start") {
 		t.Errorf("the daemon's log did not reach the proxy's stderr:\n%s", logOut.String())
 	}
-	if !isDaemon(st.PID, id) {
+	if !agent.IsDaemon(st.PID, id) {
 		t.Fatal("the daemon died with its controller")
 	}
 
@@ -465,24 +465,6 @@ func TestCommandLines(t *testing.T) {
 	}
 }
 
-func TestCommandIsDaemon(t *testing.T) {
-	split := func(s string) [][]byte { return bytes.Split([]byte(s), []byte{0}) }
-	if !commandIsDaemon(split("/x/robin-agent\x00daemon\x00-id\x00ab12\x00-dir\x00/d\x00"), "ab12") {
-		t.Error("the daemon's own command line was not recognised")
-	}
-	for _, c := range []string{"/x/robin-agent\x00daemon\x00-id\x00other\x00", "/x/robin-agent\x00serve\x00-resume\x00ab12\x00", "daemon\x00-id\x00ab12\x00", ""} {
-		if commandIsDaemon(split(c), "ab12") {
-			t.Errorf("%q taken for the daemon of ab12", c)
-		}
-	}
-	if isDaemon(os.Getpid(), "ab12") || isDaemon(0, "ab12") || isDaemon(1<<30, "ab12") {
-		t.Error("isDaemon found a daemon where there is none")
-	}
-	if findDaemon("no-such-session-anywhere") != 0 {
-		t.Error("findDaemon found a daemon where there is none")
-	}
-}
-
 func TestEndFindsADaemonWithoutSessionJSON(t *testing.T) {
 	sp, root := fakeSpawn(t, "1")
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -494,8 +476,8 @@ func TestEndFindsADaemonWithoutSessionJSON(t *testing.T) {
 	st, _ := agent.ReadSession(dir)
 	killLater(t, st.PID)
 	os.Remove(filepath.Join(dir, agent.SessionFile))
-	if got := findDaemon(id); got != st.PID {
-		t.Fatalf("findDaemon = %d, want %d", got, st.PID)
+	if got := agent.FindDaemon(id); got != st.PID {
+		t.Fatalf("FindDaemon = %d, want %d", got, st.PID)
 	}
 	if err := End(ctx, root, id); err != nil {
 		t.Fatal(err)
