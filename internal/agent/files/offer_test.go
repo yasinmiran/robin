@@ -20,6 +20,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/yasinmiran/robin/internal/protocol"
+	"github.com/yasinmiran/robin/internal/runes"
 )
 
 // serve listens in a fresh directory and hands each request to the
@@ -217,12 +218,12 @@ func TestSendRefusesWhatItCannotOffer(t *testing.T) {
 }
 
 // terminalSafe fails t when s holds anything that would act on a terminal
-// rather than show: control characters other than newlines, and the
-// invisible marks that reorder text.
+// rather than show: control characters other than newlines, and what
+// runes.ReordersText reports.
 func terminalSafe(t *testing.T, what, s string) {
 	t.Helper()
 	for _, r := range s {
-		if r != '\n' && (unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r)) {
+		if r != '\n' && (unicode.IsControl(r) || runes.ReordersText(r)) {
 			t.Errorf("%s holds %U: %q", what, r, s)
 			return
 		}
@@ -236,7 +237,7 @@ func TestSendPrintsNamesSafely(t *testing.T) {
 	evil := "a\x1b]0;owned\x07b\u202e.txt"
 	res := sendAsync(t.Context(), sock, writeFile(t, evil, "x"))
 	r := next(t, reqs)
-	r.Tell(0, Refused, "bad name\x1b[2J")
+	r.Tell(0, Refused, "bad name\x1b[2J\u2028")
 	got := result(t, res)
 	if !errors.Is(got.err, ErrNotSaved) {
 		t.Errorf("Send = %v, want ErrNotSaved", got.err)

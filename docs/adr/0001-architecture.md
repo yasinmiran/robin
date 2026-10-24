@@ -1739,8 +1739,8 @@ loopback port. Two of the CLI's surfaces failed that reading.
   spec at colons and expands `${VAR}` in it from the client's environment
   (OpenSSH 8.9's `ssh -G -L '/tmp/a:/tmp/x${USER}y'` shows the user's name
   in the target), and host text the CLI prints has bidi
-  controls and line separators escaped, the set the agent refuses in a file
-  name.
+  controls and line separators escaped, the set `runes.ReordersText` names
+  and the agent refuses in a file name.
 - Ctrl+C during a reconnect that the daemon keeps answering busy no longer
   runs the agent's end command: another `robin gui` holds the session, or
   this CLI's own lost connection does until the daemon's 20 s idle timeout,
