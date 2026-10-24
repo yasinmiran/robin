@@ -67,11 +67,12 @@ html, body {
   pointer-events: none;
 }
 
-/* What an input method is composing, until it commits. */
+/* What an input method is composing, until it commits. It sits under the
+   status tab: a soft keyboard covers the bottom of the screen. */
 #preedit {
   position: fixed;
   left: 50%;
-  bottom: 24px;
+  top: 64px;
   translate: -50% 0;
   max-width: calc(100vw - 32px);
   padding: 6px 12px;
