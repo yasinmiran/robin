@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the robin e2e suite in rootless podman.
 #
-#   ./run.sh                    every scenario: direct blocked restart resume rejoin attach wayland webkit firefox nomux touch
+#   ./run.sh                    every scenario: direct blocked restart resume rejoin attach wayland webkit firefox nomux touch systemd
 #   ./run.sh direct restart     just those
 #   ./run.sh selftest           prove the harness itself, no CLI needed
 #
@@ -31,13 +31,14 @@ CLIENT_CTR=$NET-client
 HOST_IMG=localhost/$NET-host
 CLIENT_IMG=localhost/$NET-client
 WLHOST_IMG=localhost/$NET-wlhost
+SDHOST_IMG=localhost/$NET-sdhost
 
 ROBIN_BIN=${ROBIN_BIN:-bin/robin-linux-amd64}
 [[ $ROBIN_BIN = /* ]] || ROBIN_BIN=$ROOT/$ROBIN_BIN
 COVER=${ROBIN_E2E_COVER:-}
 [[ -z $COVER || $COVER = /* ]] || COVER=$PWD/$COVER
 
-ALL_SCENARIOS=(direct blocked restart resume rejoin attach wayland webkit firefox nomux touch)
+ALL_SCENARIOS=(direct blocked restart resume rejoin attach wayland webkit firefox nomux touch systemd)
 
 log() { printf '\033[1m[e2e]\033[0m %s\n' "$*" >&2; }
 die() { log "error: $*"; exit 2; }
@@ -72,6 +73,13 @@ build_wayland_image() {
   podman build -q --build-arg BASE="$base" -t "$WLHOST_IMG" -f "$E2E/wlhost.Containerfile" "$ctx" >/dev/null
 }
 
+# build_systemd_image layers systemd, logind and a lingering robin over the
+# X11 host image.
+build_systemd_image() {
+  log "building $SDHOST_IMG"
+  podman build -q --build-arg BASE="$HOST_IMG" -t "$SDHOST_IMG" -f "$E2E/sdhost.Containerfile" "$E2E/sdhost" >/dev/null
+}
+
 create_network() {
   podman network rm "$NET" >/dev/null 2>&1 || true
   podman network create --subnet "$SUBNET" "$NET" >/dev/null
@@ -103,14 +111,15 @@ EOF
 
 # start_host [image [extra podman run args...]]: the X11 host unless another
 # image is named. PipeWire and mutter share frames through /dev/shm, so the
-# Wayland host gets more.
+# Wayland host gets more. The systemd host's init is systemd itself.
 start_host() {
-  local image=${1:-$HOST_IMG} shm=256m
+  local image=${1:-$HOST_IMG} shm=256m init=--init
   (($# == 0)) || shift
   [[ $image = "$WLHOST_IMG" ]] && shm=512m
+  [[ $image = "$SDHOST_IMG" ]] && init=--systemd=always
   podman run -d --name "$HOST_CTR" --hostname robinhost \
     --network "$NET" --ip "$HOST_IP" \
-    --init --cap-add NET_ADMIN --shm-size "$shm" --stop-timeout 2 \
+    "$init" --cap-add NET_ADMIN --shm-size "$shm" --stop-timeout 2 \
     -v "$KEYS/ssh_host_ed25519_key:/etc/ssh/robin/ssh_host_ed25519_key:ro" \
     -v "$KEYS/client.pub:/etc/ssh/authorized_keys.d/robin:ro" \
     "$@" "$image" >/dev/null
@@ -152,6 +161,11 @@ save_host_state() {
     for f in /tmp/session-logs/*.log /tmp/session-logs/*.err /tmp/probe.log; do
       [ -f "$f" ] && { echo "## $f"; tail -n 60 "$f"; }
     done
+    if [ -d /run/systemd/system ]; then
+      echo "## logind sessions"; loginctl list-sessions --no-legend
+      echo "## robin units"; runuser -u robin -- env XDG_RUNTIME_DIR=/run/user/1000 systemctl --user --no-pager list-units --all "robin-*"
+      echo "## journal"; journalctl -b --no-pager | tail -n 200
+    fi
   ' >"$dir/host-state.txt" 2>&1 || true
 }
 
@@ -173,6 +187,10 @@ run_scenario() {
     spec=tests/wayland.spec.ts
   fi
   [[ $s != touch ]] || spec=tests/touch.spec.ts
+  if [[ $s = systemd ]]; then
+    image=$SDHOST_IMG
+    spec=tests/systemd.spec.ts
+  fi
   # sshd sets GOCOVERDIR=/cover in every session on the host, so a cover
   # agent writes there.
   local host_cover=() client_cover=() env_cover=()
@@ -392,8 +410,8 @@ main() {
   local s
   for s in "${scenarios[@]}"; do
     case $s in
-      selftest | direct | blocked | restart | resume | rejoin | attach | wayland | webkit | firefox | nomux | touch) ;;
-      *) die "unknown scenario '$s' (want selftest, direct, blocked, restart, resume, rejoin, attach, wayland, webkit, firefox, nomux or touch)" ;;
+      selftest | direct | blocked | restart | resume | rejoin | attach | wayland | webkit | firefox | nomux | touch | systemd) ;;
+      *) die "unknown scenario '$s' (want selftest, direct, blocked, restart, resume, rejoin, attach, wayland, webkit, firefox, nomux, touch or systemd)" ;;
     esac
   done
   command -v podman >/dev/null || die "podman not found"
@@ -406,6 +424,7 @@ main() {
   mkdir -p "$OUT"
   build_images
   [[ " ${scenarios[*]} " != *" wayland "* ]] || build_wayland_image
+  [[ " ${scenarios[*]} " != *" systemd "* ]] || build_systemd_image
   create_network
   generate_keys
 
