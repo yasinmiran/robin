@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -327,8 +328,49 @@ func TestSessionPrivateOnAnAttachedDesktop(t *testing.T) {
 	}
 }
 
-// TestSessionPrivateFailsWhatItCannotDo: a session asked for a curtain on a
-// display without one ends before Ready, saying why.
+// A desktop reached by host-based access, with no cookie, gets its curtain
+// over the same way in.
+func TestCurtainWithHostBasedAccess(t *testing.T) {
+	live := liveDisplay(t, 1280, 800)
+	x, root := xconn(t, live)
+	g := newGammaPeer(t, x, root)
+	g.lighten()
+	if _, err := exec.LookPath("xhost"); err != nil {
+		t.Skip("no xhost")
+	}
+	me, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant := exec.Command("xhost", "+si:localuser:"+me.Username)
+	grant.Env = append(os.Environ(), "DISPLAY="+live.Name)
+	if out, err := grant.CombinedOutput(); err != nil {
+		t.Fatalf("xhost: %v: %s", err, out)
+	}
+	t.Setenv("XAUTHORITY", "")
+	t.Setenv("HOME", t.TempDir())
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	d, err := openDesktop(context.Background(), protocol.Start{Attach: live.Name}, t.TempDir(), "", nil, nil, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.close()
+	argv, _ := testKeeper(t)
+	p, err := openPrivate(d, protocol.Start{Curtain: true}, Options{Keeper: argv}, nil, func() {}, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !g.dark() {
+		t.Fatalf("gamma tops %v with the curtain drawn", g.top())
+	}
+	p.close()
+	if !g.lit() {
+		t.Fatalf("gamma tops %v after the curtain", g.top())
+	}
+}
+
+// TestSessionPrivateWithoutAKeeper: a session asked for a curtain it cannot
+// undo ends before Ready, saying why.
 func TestSessionPrivateWithoutAKeeper(t *testing.T) {
 	live := liveDisplay(t, 1280, 800)
 	h := startAgent(t)
