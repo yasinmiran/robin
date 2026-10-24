@@ -546,24 +546,32 @@ sha256sum dist/*
 ```
 
 Compare the sums with the published ones. The build downloads the pinned
-zig, openh264 and libopus by hash; `go.mod` names the Go toolchain, which
-`go` fetches on its own unless `GOTOOLCHAIN=local` is set. Pass `VERSION`
-when the clone might describe the commit differently from the release
-build (a shallow clone without the tag, say); the string is linked into
-every binary, so a tree with local changes, which `git describe` marks
-`-dirty`, cannot match. Nothing of the builder's environment is meant to
-reach a binary, but `GOFLAGS`, `GOAMD64` and the like are inputs to the
-compiler as much as the source is, so leave them at their defaults.
+zig, openh264 and libopus by hash, and the Makefile exports the Go
+toolchain `go.mod` names as `GOTOOLCHAIN`, so `go` fetches and uses that
+release whatever is installed; a build by any other Go fails. `make dist`
+takes a `VERSION`, or a commit at a release tag: the string is linked into
+every binary, so a clone that would describe the commit differently (a
+shallow one without the tag, say), or a tree with local changes, which
+`git describe` marks `-dirty`, cannot match. The builder's Go environment
+is pinned too (`GOENV=off`, `GOFLAGS`, `GOEXPERIMENT`, `GOAMD64`,
+`GOARM64`), and the library builds drop `CFLAGS`, `LDFLAGS` and the rest
+of the environment's compiler flags, so what is saved with `go env -w` or
+exported in a shell does not reach a binary.
 
 `make repro` is the check that keeps this true. It builds the agents, the
-CLI and `dist/` from the checkout, then again from a copy of the tree at
-another path with an empty Go build cache, and fails on the first byte that
-differs, with the `strings` of both for a start on finding the cause.
-`REPRO_TOOLCHAIN=1 make repro` also rebuilds openh264 and libopus for the
-copy, sharing only the downloads, which checks the C side from source and
-takes a few minutes longer. `go test ./internal/agentbin` scans whatever
-agents are embedded for the checkout path, the home directory and git
-build info, so a leak also fails `make test`.
+CLI and `dist/` from the checkout, then again from a copy of the tree in a
+temp directory outside any repository, with its own home, temp directory,
+Go build cache and zig, and fails on the first byte that differs, with the
+`strings` of both for a start on finding the cause. `REPRO_TOOLCHAIN=1
+make repro` also rebuilds openh264 and libopus for the copy, sharing only
+the downloads, which checks the C side from source and takes a few minutes
+longer; that is the mode a release is verified with. `REPRO_SELFTEST=1
+make repro` builds the copy with another `VERSION` and passes only when the
+comparison notices, so the check is known not to be vacuous. `make
+test-agents`, which `make test` and `make repro` run, scans the agents
+this tree builds for the checkout, the toolchain cache, the home
+directory, Go's own directories, a Go other than the pinned one and any
+build setting the Makefile does not set, so a leak fails `make test` too.
 
 macOS as a build host is expected to produce the same bytes, since zig
 carries its own libc and the Go side is pure, but that has not yet been

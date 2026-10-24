@@ -961,10 +961,16 @@ sanitizer into every agent along with UBSan's source locations, which
 carry the absolute path of each cgo file (clang does not run those through
 `-ffile-prefix-map`, so Go's own `-ffile-prefix-map=<checkout>=/_/<module>`
 never touched them) and the type descriptors that name
-`cgo-gcc-prolog`. `CGO_CFLAGS` now starts with `-O2 -fno-sanitize=undefined`.
-The glue is optimized the way Go's default `-O2 -g` would have had it, and
-the release agent runs no sanitizer, which is a behaviour change as much
-as a byte one.
+`cgo-gcc-prolog`. `CGO_CFLAGS` now starts with `-Og -fno-sanitize=undefined`.
+The release agent runs no sanitizer, which is a behaviour change as much
+as a byte one. `-Og` rather than `-O2`: zig keeps its stack protector only
+in a debug build, and at `-O1` and above no `-fstack-protector` flag
+brings the canaries back (measured with zig 0.17 on a C function with a
+64-byte buffer). Trap-only UBSan (`-fsanitize=undefined
+-fsanitize-trap=undefined`) also keeps them, with no runtime and no paths,
+but turns any undefined behaviour in the glue or in `runtime/cgo` into a
+crash, and is not adopted until `make check` has run with it. The glue is
+a few calls per frame, so its optimization level is not measurable.
 
 The Go build ID differed next. The linker derives it from the action
 hashes of every input, and the cgo package's hash takes in `CC`, `CGO_CFLAGS`
@@ -996,11 +1002,19 @@ string left in either. The first `REPRO_TOOLCHAIN=1` run then failed on
 the agents by 32 bytes, because the checkout's cache still held libraries
 from before the flag change while the copy had built fresh ones, and a
 cache that outlives its flags is a quiet way for one builder to differ
-from the rest. Each library now sits beside a `.built` stamp with its
-version and flags, and the scripts rebuild when the stamp does not say
-what the current script would build. The prefix maps stay out of the
-stamp: they spell the cache's path, which every checkout sharing a cache
-through a link spells differently, and the output does not depend on them.
+from the rest. Each library now lives in a directory named by a key over
+every input of its build: the source tarball's hash, the flags, the zig
+and nasm versions, and the text of `lib.sh` and of the script itself. A
+changed input is a new directory, so no checkout links a cache that
+outlived its flags, worktrees sharing `.cache` with different scripts
+stop rebuilding over each other, and a library is installed by renaming a
+finished build into place, so a concurrent `go build` never links one
+half written. The prefix maps stay out of the key: they spell the cache's
+path, which every checkout sharing a cache through a link spells
+differently, and the output does not depend on them. The builder's
+`CFLAGS`, `LDFLAGS`, `MAKEFLAGS` and the like are unset before a library
+is configured: openh264's Makefile appends to `CFLAGS`, opus's configure
+reads `CPPFLAGS` and `LDFLAGS`, and neither showed in the key.
 
 The gzip of each agent moved from the host's `gzip -9 -n` to
 `internal/tools/gz`, Go's `compress/gzip` with a fixed header. `-n`
@@ -1010,16 +1024,35 @@ the `.gz` byte for byte. `go.mod` now names the exact Go toolchain for the
 same reason: the compiler's version is in the binary and its output
 changes between patch releases.
 
-What stays an input, and is documented rather than removed: `VERSION`
-(pass it to `make dist` when the clone would describe the commit
-differently), the Go environment (`GOFLAGS`, `GOAMD64`), and the build
-host's architecture, since each host runs its own zig binary. Linux x86_64
-to Linux x86_64 is what `make repro` has shown; macOS to Linux is expected
-to agree and has not been tried. `REPRO_TOOLCHAIN=1` extends the check to
-the C libraries from source, and `go test ./internal/agentbin` scans the
-embedded agents for the checkout, the home directory and `vcs` build info
-on every `make test`, so a leak that comes back is caught without the
-double build.
+The Go side is pinned rather than documented. `go.mod`'s `toolchain` line
+is a floor under the default `GOTOOLCHAIN=auto`: a builder with a newer Go
+builds with it, and a scratch module declaring `go1.27.1` built by a local
+go1.27.3 produced a binary stamped go1.27.3. The Makefile therefore
+exports the line as `GOTOOLCHAIN`, which beats both `go.mod` and the
+user's saved env, and `go-version` fails the build if `go env GOVERSION`
+still disagrees. `GOENV=off`, `GOFLAGS=-mod=readonly`, an empty
+`GOEXPERIMENT`, `GOAMD64=v1` and `GOARM64=v8.0` go with it, since
+`-race`, `-tags`, an experiment or a microarchitecture level would
+otherwise reach the binary from the builder's shell or `go env -w`.
+`VERSION` comes from `git describe --match 'v[0-9]*' --abbrev=12`, so a
+fork's own tags and the repository's object count no longer change it,
+and `make dist` builds only a tagged commit or an explicit `VERSION`.
+
+What stays an input is the build host's architecture, since each host
+runs its own zig binary. Linux x86_64 to Linux x86_64 is what `make repro`
+has shown; macOS to Linux is expected to agree and has not been tried.
+`make repro` builds the copy in a temp directory outside any repository,
+with its own home, temp directory, Go build cache and zig, so a leak
+through `HOME`, `TMPDIR`, the git state or zig's install path shows as a
+difference; the first version of the check shared all of those with the
+copy and could not have seen one. `REPRO_TOOLCHAIN=1` extends it to the C
+libraries from source, `REPRO_SELFTEST=1` proves the comparison notices a
+difference at all, and `make test-agents` (part of `make test` and `make
+repro`) checks the agents this tree builds for the checkout, the
+toolchain cache, the home directory, Go's directories, the pinned Go
+version and the exact set of build settings, so a leak that comes back is
+caught without the double build. Nothing checks it on every merge yet:
+the repository has no CI.
 
 ## Verification parked
 
