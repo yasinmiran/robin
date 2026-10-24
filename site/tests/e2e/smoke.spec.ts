@@ -1,4 +1,4 @@
-import { type Page, expect, test } from "@playwright/test";
+import { type Locator, type Page, expect, test } from "@playwright/test";
 
 /** failOnErrors fails the test on any uncaught error or console error. */
 function failOnErrors(page: Page) {
@@ -8,6 +8,15 @@ function failOnErrors(page: Page) {
     if (message.type() === "error") errors.push(message.text());
   });
   return () => expect(errors).toEqual([]);
+}
+
+/**
+ * hydrated waits until the island holding the control has hydrated: Astro
+ * drops the ssr attribute then. Before that the control is inert HTML.
+ */
+async function hydrated(page: Page, control: Locator) {
+  const island = page.locator("astro-island").filter({ has: control });
+  await expect(island.first()).not.toHaveAttribute("ssr");
 }
 
 async function horizontalOverflow(page: Page) {
@@ -78,6 +87,7 @@ test("the theme follows the system until one is picked", async ({ page }) => {
 
 test("search finds a page and opens it", async ({ page }) => {
   await page.goto("/install");
+  await hydrated(page, page.getByRole("button", { name: "Search the docs" }));
   await page.locator("body").press("Control+k");
   const dialog = page.getByRole("dialog", { name: "Search the docs" });
   await dialog.getByRole("combobox").fill("restore token");
@@ -92,7 +102,9 @@ test.describe("at phone width", () => {
     await page.goto("/install");
     await expect(page.getByRole("complementary").getByRole("navigation", { name: "Docs" })).toBeHidden();
 
-    await page.getByRole("button", { name: "Open navigation" }).click();
+    const menu = page.getByRole("button", { name: "Open navigation" });
+    await hydrated(page, menu);
+    await menu.click();
     const sheet = page.getByRole("dialog", { name: "Navigation" });
     await expect(sheet).toBeVisible();
     await sheet.getByRole("link", { name: "Sound" }).click();
