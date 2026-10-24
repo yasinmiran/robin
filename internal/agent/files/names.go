@@ -1,3 +1,5 @@
+//go:build linux
+
 // Package files moves whole files between the browser and the host:
 // uploads into the user's download directory, and the files a program on
 // the host offers through robin-agent send.

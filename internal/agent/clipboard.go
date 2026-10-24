@@ -47,9 +47,10 @@ func (s *session) setClip(c protocol.Clip) error {
 }
 
 // acceptClip takes clipboard content the browser sends as a bulk
-// transfer. It is at most protocol.ClipBulkLimit bytes, kept in memory.
-func (s *session) acceptClip(h protocol.Bulk) (peer.BulkSink, error) {
-	return &clipSink{s: s, buf: bytes.NewBuffer(make([]byte, 0, h.Size))}, nil
+// transfer. It is at most protocol.ClipBulkLimit bytes, kept in memory as
+// it arrives rather than reserved for what the header promises.
+func (s *session) acceptClip(protocol.Bulk) (peer.BulkSink, error) {
+	return &clipSink{s: s, buf: new(bytes.Buffer)}, nil
 }
 
 type clipSink struct {
