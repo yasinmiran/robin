@@ -30,6 +30,10 @@ GOBUILD  := $(GO) build -trimpath -buildvcs=false
 # Not LDFLAGS: make would hand a variable of that name on to the library
 # builds in place of the environment's.
 GO_LDFLAGS := -s -w -buildid= -X main.version=$(VERSION)
+# VERSION is linked into every binary, so a changed one has to rebuild
+# them: the file holds the last one built and is rewritten when it moves.
+VERSION_FILE := bin/.version
+$(shell mkdir -p bin; [ "$$(cat $(VERSION_FILE) 2>/dev/null)" = "$(VERSION)" ] || printf '%s\n' "$(VERSION)" >$(VERSION_FILE))
 # zig cc compiles a file it gets no -O for as a debug build with UBSan on,
 # which puts a sanitizer runtime and the absolute source path of every cgo
 # file into the agent. -Og keeps zig's stack protector, which every -O
@@ -87,10 +91,10 @@ go-version:
 	@v=$$($(GO) env GOVERSION); [ "$$v" = "$(GOTOOLCHAIN)" ] || \
 		{ echo "make: go is $$v, go.mod wants $(GOTOOLCHAIN); unset GOTOOLCHAIN" >&2; exit 1; }
 
-bin/robin: agents $(GOSRC) go.mod go.sum Makefile | go-version
+bin/robin: agents $(GOSRC) go.mod go.sum Makefile $(VERSION_FILE) | go-version
 	CGO_ENABLED=0 $(GOBUILD) -ldflags "$(GO_LDFLAGS)" -o $@ ./cmd/robin
 
-bin/robin-agent-linux-%: $(GOSRC) go.mod go.sum toolchain/*.sh Makefile | go-version
+bin/robin-agent-linux-%: $(GOSRC) go.mod go.sum toolchain/*.sh Makefile $(VERSION_FILE) | go-version
 	$(call agent_build,$*)
 
 # Go's gzip rather than the host's: implementations compress differently,
@@ -122,7 +126,7 @@ repro:
 	toolchain/repro.sh
 
 # The linux/amd64 CLI the e2e client container runs.
-bin/robin-linux-amd64: agents $(GOSRC) go.mod go.sum Makefile | go-version
+bin/robin-linux-amd64: agents $(GOSRC) go.mod go.sum Makefile $(VERSION_FILE) | go-version
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GOBUILD) -ldflags "$(GO_LDFLAGS)" -o $@ ./cmd/robin
 
 # Unit and integration tests. The encoder packages are tested against the real
@@ -219,14 +223,14 @@ cover-baseline:
 # make cover's e2e builds: the agent with -cover, and a CLI with -cover that
 # embeds it. The overlay swaps the embedded agent without touching
 # $(AGENTS), so no normal build ever ships a cover agent.
-bin/cover/robin-agent-linux-%: $(GOSRC) go.mod go.sum toolchain/*.sh Makefile
+bin/cover/robin-agent-linux-%: $(GOSRC) go.mod go.sum toolchain/*.sh Makefile $(VERSION_FILE)
 	$(call agent_build,$*,-cover)
 
 bin/cover/agents/robin-agent-linux-%.gz: bin/cover/robin-agent-linux-%
 	@mkdir -p $(@D)
 	$(GO) run ./internal/tools/gz $< $@
 
-bin/cover/robin-linux-amd64: bin/cover/agents/robin-agent-linux-amd64.gz $(GOSRC) go.mod go.sum
+bin/cover/robin-linux-amd64: bin/cover/agents/robin-agent-linux-amd64.gz $(GOSRC) go.mod go.sum $(VERSION_FILE)
 	printf '{"Replace":{"%s":"%s"}}\n' $(CURDIR)/$(AGENTS)/robin-agent-linux-amd64.gz $(CURDIR)/$< >bin/cover/overlay.json
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GOBUILD) -cover -overlay bin/cover/overlay.json \
 		-ldflags "$(GO_LDFLAGS)" -o $@ ./cmd/robin
