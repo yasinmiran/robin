@@ -46,10 +46,8 @@ const (
 // agent its frames already in 4:2:0, the very loss tiles undo.
 const errNoTiles = "sharp text needs an X11 desktop: Wayland frames reach Robin already at 4:2:0"
 
-// tileSender is where tiles and manifests go: the peer, or a test's
-// stand-in.
+// tileSender is where tiles go: the peer, or a test's stand-in.
 type tileSender interface {
-	SendControl(protocol.Control) error
 	SendBulk(ctx context.Context, h protocol.Bulk, r io.Reader) error
 }
 
@@ -59,7 +57,6 @@ type tileSender interface {
 // they report back on done.
 type tiles struct {
 	log    *slog.Logger
-	still  time.Duration
 	budget cpuBudget
 
 	// gen names the grid; any change of desktop size, peer or switch starts
@@ -109,13 +106,12 @@ type tileBatch struct {
 type tileResult struct {
 	batch  *tileBatch
 	encode time.Duration
-	bytes  int
 	err    error
 }
 
 func newTiles(log *slog.Logger) *tiles {
 	return &tiles{
-		log: log, still: tileStill,
+		log:     log,
 		budget:  cpuBudget{share: tileShare, burst: tileBurst},
 		batches: map[*tileBatch]struct{}{},
 		done:    make(chan tileResult, tileBatches),
@@ -246,7 +242,7 @@ func (t *tiles) cut(to tileSender, now time.Time) {
 	var pick []int
 	for i := range t.slots {
 		s := &t.slots[i]
-		if s.sent || s.batch != nil || s.changedSeq > t.written || now.Sub(s.changedAt) < t.still<<s.flaps {
+		if s.sent || s.batch != nil || s.changedSeq > t.written || now.Sub(s.changedAt) < tileStill<<s.flaps {
 			continue
 		}
 		if pick = append(pick, i); len(pick) == protocol.MaxTileBatch {
@@ -274,7 +270,6 @@ func (t *tiles) cut(to tileSender, now time.Time) {
 		}
 		if r.err == nil {
 			payload := batch.Marshal()
-			r.bytes = len(payload)
 			r.err = to.SendBulk(ctx, protocol.Bulk{Kind: protocol.BulkTile, Size: int64(len(payload))}, bytes.NewReader(payload))
 		}
 		cancel()

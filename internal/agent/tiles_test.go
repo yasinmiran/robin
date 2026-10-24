@@ -47,7 +47,6 @@ func paint(f *desktop.Frame, x0, y0, w, h int, c byte) {
 // until it is closed or the transfer cancelled.
 type tileSink struct {
 	mu        sync.Mutex
-	controls  []protocol.Control
 	batches   []protocol.TileBatch
 	cancelled int
 	hold      chan struct{}
@@ -68,13 +67,6 @@ func (s *tileSink) waitStarted(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("no transfer reached the sink")
 	}
-}
-
-func (s *tileSink) SendControl(c protocol.Control) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.controls = append(s.controls, c)
-	return nil
 }
 
 func (s *tileSink) SendBulk(ctx context.Context, h protocol.Bulk, r io.Reader) error {
