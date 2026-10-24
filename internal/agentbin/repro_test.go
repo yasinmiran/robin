@@ -14,9 +14,13 @@ import (
 
 // The agents make keeps here must be reproducible: nothing of the machine
 // that built them may be inside. make repro proves it by building twice;
-// this is the cheap check that make test-agents runs on every build, and
-// it skips without agents unless ROBIN_REQUIRE_AGENTS=1.
+// this is the cheap check that make test-agents runs on every build. It
+// runs only there, with ROBIN_REQUIRE_AGENTS=1: agents an older Makefile
+// left on disk are not the ones this tree builds.
 func TestEmbeddedAgentsCarryNothingOfTheBuilder(t *testing.T) {
+	if os.Getenv("ROBIN_REQUIRE_AGENTS") != "1" {
+		t.Skip("checks the agents make test-agents builds")
+	}
 	entries, err := fs.ReadDir(bundled(), ".")
 	if err != nil {
 		t.Fatal(err)
@@ -72,10 +76,7 @@ func TestEmbeddedAgentsCarryNothingOfTheBuilder(t *testing.T) {
 		checkSettings(t, e.Name(), arch, info)
 	}
 	if tested == 0 {
-		if os.Getenv("ROBIN_REQUIRE_AGENTS") == "1" {
-			t.Fatal("no agents embedded")
-		}
-		t.Skip("no agents embedded; run make first")
+		t.Fatal("no agents embedded")
 	}
 }
 
