@@ -29,6 +29,14 @@ export const onDisplay = (command: string) => ssh(`robin-x ${command}`);
 
 export const runDir = () => ssh('robin-rundir');
 
+// fileSha256 is the SHA-256 of a file on the host, or '' while there is
+// none. path may start with ~ and is otherwise quoted.
+export async function fileSha256(path: string): Promise<string> {
+  const p = path.startsWith('~/') ? `~/${shellQuote(path.slice(2))}` : shellQuote(path);
+  const r = await sshRaw(`sha256sum ${p}`);
+  return r.code === 0 ? r.stdout.split(' ')[0] : '';
+}
+
 export async function exists(path: string): Promise<boolean> {
   return (await sshRaw(`test -e ${shellQuote(path)}`)).code === 0;
 }

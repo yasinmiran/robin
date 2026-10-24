@@ -1,4 +1,5 @@
 import { test, expect, type BrowserContext, type Page, type TestInfo } from '@playwright/test';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Cli, robin } from './helpers/cli';
@@ -372,6 +373,148 @@ test('sound: the desktop is heard once the speaker is turned on', async ({}, tes
   if (SCENARIO !== 'attach') {
     expect(await host.exists('/home/robin/.config/pulse'), '~/.config/pulse on the host').toBe(false);
   }
+});
+
+// Files and the rich clipboard run where the picture can be clicked: in
+// direct with a spawned desktop, whose xterm has robin-send on its PATH,
+// and in attach, where robin-agent send finds the one session by itself.
+const FILES = ['direct', 'attach'].includes(SCENARIO) && PICTURE;
+const NO_FILES = 'files run in direct and attach, where the xterm can be clicked';
+const sha256 = (data: Buffer | Uint8Array) => crypto.createHash('sha256').update(data).digest('hex');
+// A 4x3 PNG, small enough to type, real enough for any image reader.
+const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAYAAAC09K7GAAAAFUlEQVR4nGP4z8DwHwwZ/oMBA0EBAM2BHeM8fgyIAAAAAElFTkSuQmCC';
+
+// typeCommand clicks the xterm through the picture and runs command there.
+async function typeCommand(command: string) {
+  let term: host.Rect | null = null;
+  await expect.poll(async () => (term = await host.terminal()), { message: 'an xterm is mapped', timeout: 15_000 }).not.toBeNull();
+  const t = term!;
+  const centre = await pagePoint(page, SCREEN, t.x + t.width / 2, t.y + t.height / 2);
+  await page.mouse.click(centre.x, centre.y);
+  await page.keyboard.type(command, { delay: 15 });
+  await page.keyboard.press('Enter');
+}
+
+// offerFromHost offers file to the page as a program on the host would:
+// robin-send typed in the session's xterm, or in attach, where the desktop
+// was not started by the agent, robin-agent send over ssh. It resolves
+// with what the command printed and its exit status.
+async function offerFromHost(file: string): Promise<string> {
+  const out = `/tmp/robin-e2e-send-${Date.now()}.out`;
+  if (SCENARIO === 'attach') {
+    const r = await host.sshRaw(`"$(ls ~/.cache/robin/robin-agent-* | head -n1)" send ${host.shellQuote(file)}; echo "exit $?"`, 60_000);
+    return r.stdout + r.stderr;
+  }
+  await typeCommand(`robin-send ${host.shellQuote(file)} > ${out} 2>&1; echo "exit $?" >> ${out}`);
+  let printed = '';
+  await expect
+    .poll(async () => (printed = (await host.sshRaw(`cat ${out}`)).stdout), { message: `${out} on the host`, timeout: 60_000 })
+    .toMatch(/exit \d+/);
+  return printed;
+}
+
+test('files: uploads land in the download folder and never replace a file', async () => {
+  test.skip(!FILES, NO_FILES);
+  await host.ssh('rm -rf ~/Downloads');
+  const content = crypto.randomBytes(300_000);
+  const file = { name: 'robin-e2e-upload.bin', mimeType: 'application/octet-stream', buffer: content };
+  await page.locator('#files-input').setInputFiles(file);
+  await expect.poll(() => host.fileSha256('~/Downloads/robin-e2e-upload.bin'), { timeout: 15_000 }).toBe(sha256(content));
+  await page.locator('#files-input').setInputFiles(file);
+  await expect.poll(() => host.fileSha256('~/Downloads/robin-e2e-upload (1).bin'), { timeout: 15_000 }).toBe(sha256(content));
+  await expect(page.locator('.transfer[data-dir="up"] .status').filter({ hasText: 'Uploaded as robin-e2e-upload (1).bin' })).toHaveCount(1);
+
+  // A drop anywhere on the page uploads too.
+  await page.evaluate(() => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(['dropped on the page'], 'robin-e2e-drop.txt', { type: 'text/plain' }));
+    window.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, cancelable: true }));
+    window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, cancelable: true }));
+  });
+  await expect
+    .poll(async () => (await host.sshRaw('cat ~/Downloads/robin-e2e-drop.txt')).stdout, { timeout: 15_000 })
+    .toBe('dropped on the page');
+  // Only the files: no partial file, nothing outside the folder.
+  expect((await host.ssh('ls -A ~/Downloads')).split('\n').sort()).toEqual(
+    ['robin-e2e-drop.txt', 'robin-e2e-upload (1).bin', 'robin-e2e-upload.bin'],
+  );
+});
+
+test('files: the host offers a file, shown as text, saved only on a click', async () => {
+  test.skip(!FILES, NO_FILES);
+  // Markup in the name must show as the name, not as markup.
+  const name = '<b>robin<b> & co.bin';
+  const path = `/tmp/${name}`;
+  await host.ssh(`head -c 200000 /dev/urandom > ${host.shellQuote(path)}`);
+  const want = (await host.ssh(`sha256sum ${host.shellQuote(path)}`)).split(' ')[0];
+  let downloads = 0;
+  page.on('download', () => downloads++);
+
+  const sending = offerFromHost(path);
+  const row = page.locator('.transfer[data-dir="down"]');
+  await expect(row).toHaveCount(1, { timeout: 20_000 });
+  await expect(row.locator('.name')).toHaveText(name);
+  expect(await row.locator('.name').evaluate((el) => el.children.length), 'elements inside the name').toBe(0);
+  await expect(row.locator('.size')).toHaveText('195.3 KiB');
+  await expect(row.locator('.status')).toHaveText('Offered by the host');
+  // The tab stays out while the offer waits.
+  await page.waitForTimeout(3_500);
+  await expect(page.locator('#hud')).not.toHaveClass(/tucked/);
+  expect(downloads, 'downloads before any click').toBe(0);
+
+  const [download] = await Promise.all([page.waitForEvent('download'), row.locator('.save').click()]);
+  // The browser makes the name safe for the client's disk: Chrome turns
+  // < and > into _.
+  expect(download.suggestedFilename()).toMatch(/^.b.robin.b. & co\.bin$/);
+  const saved = await download.path();
+  expect(sha256(fs.readFileSync(saved!)), 'the downloaded file').toBe(want);
+  const printed = await sending;
+  expect(printed).toContain(`${name}: saved by the browser`);
+  expect(printed).toContain('exit 0');
+
+  // Dismissed: the host hears it, and nothing downloads.
+  const again = offerFromHost(path);
+  await expect(row).toHaveCount(1, { timeout: 20_000 });
+  await row.locator('.dismiss').click();
+  const declined = await again;
+  expect(declined).toContain(`${name}: declined in the browser`);
+  expect(declined).toContain('exit 1');
+  expect(downloads).toBe(1);
+});
+
+test('clipboard: an image and HTML pasted in the page reach the host, an image copied there reaches the page', async () => {
+  test.skip(!FILES, NO_FILES);
+  const png = Buffer.from(PNG_B64, 'base64');
+  const html = `<b>robin-e2e</b> ${Date.now()}`;
+  await page.evaluate(({ b64, html }) => {
+    const dt = new DataTransfer();
+    dt.setData('text/html', html);
+    dt.items.add(new File([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], 'image.png', { type: 'image/png' }));
+    window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, cancelable: true }));
+  }, { b64: PNG_B64, html });
+  await expect
+    .poll(async () => (await host.sshRaw('robin-x xclip -o -selection clipboard -t image/png | sha256sum')).stdout.split(' ')[0], {
+      message: 'the image on the host clipboard',
+      timeout: 15_000,
+    })
+    .toBe(sha256(png));
+  expect((await host.sshRaw('robin-x xclip -o -selection clipboard -t text/html')).stdout).toBe(html);
+
+  // The other way: an image copied on the host.
+  const other = Buffer.concat([png, Buffer.from(`robin-e2e-${Date.now()}`)]);
+  await host.ssh(`echo ${other.toString('base64')} | base64 -d | robin-x xclip -selection clipboard -t image/png -i >/dev/null 2>&1`);
+  await expect
+    .poll(
+      () =>
+        page.evaluate(async () => {
+          const png = (window as any).robin.lastRemoteClip?.png as Uint8Array | undefined;
+          if (!png) return '';
+          const digest = new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', png));
+          return [...digest].map((b) => b.toString(16).padStart(2, '0')).join('');
+        }),
+      { message: 'robin.lastRemoteClip.png', timeout: 15_000 },
+    )
+    .toBe(sha256(other));
 });
 
 if (SCENARIO === 'direct') {
