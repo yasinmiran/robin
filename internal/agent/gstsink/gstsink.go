@@ -6,8 +6,8 @@
 //
 // The child dies with the agent: it has its own process group, Pdeathsig,
 // no inherited stdout, and Close stops it. A child that exits on its own is
-// started again, because GStreamer 1.26's pipewiresink quits when a program
-// reading its video node lets go.
+// started again, because the pipewiresink of PipeWire 1.4 quits when a
+// program reading its video node lets go.
 package gstsink
 
 import (
