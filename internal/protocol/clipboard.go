@@ -44,9 +44,6 @@ type Clip struct {
 // Size is the bytes of data c holds.
 func (c Clip) Size() int { return len(c.Text) + len(c.HTML) + len(c.PNG) }
 
-// TextOnly reports whether c is plain text and nothing else.
-func (c Clip) TextOnly() bool { return c.Text != "" && c.HTML == "" && len(c.PNG) == 0 }
-
 // EncodeClip lays c out as a BulkClipboard payload: for each format it
 // holds, in the order text, HTML, PNG, one byte of MIME type length, the
 // MIME type, four bytes of big-endian data length and the data.

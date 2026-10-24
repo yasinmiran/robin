@@ -151,7 +151,7 @@ func sendClipBulk(ctx context.Context, p *peer.Peer, c protocol.Clip) error {
 		return err
 	}
 	if len(payload) == 0 {
-		return fmt.Errorf("nothing on the clipboard to send")
+		return errors.New("nothing on the clipboard to send")
 	}
 	return p.SendBulk(ctx, protocol.Bulk{Kind: protocol.BulkClipboard, Size: int64(len(payload))}, bytes.NewReader(payload))
 }

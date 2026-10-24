@@ -97,7 +97,7 @@ export class Files {
       this.#aborts.set(id, abort);
       this.#transfers.sending(id);
       try {
-        await this.#bulk({ kind: FILE_KIND, id, name: file.name, mime: file.type }, file, {
+        await this.#bulk({ kind: FILE_KIND, id, name: file.name }, file, {
           signal: abort.signal,
           progress: (done) => this.#transfers.progress(id, done),
         });

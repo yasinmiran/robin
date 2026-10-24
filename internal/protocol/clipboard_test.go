@@ -95,19 +95,3 @@ func TestDecodeClipRefusesJunk(t *testing.T) {
 		})
 	}
 }
-
-func TestClipTextOnly(t *testing.T) {
-	for _, tc := range []struct {
-		c    Clip
-		want bool
-	}{
-		{Clip{Text: "a"}, true},
-		{Clip{}, false},
-		{Clip{Text: "a", HTML: "<b>a</b>"}, false},
-		{Clip{Text: "a", PNG: []byte{1}}, false},
-	} {
-		if got := tc.c.TextOnly(); got != tc.want {
-			t.Errorf("%+v.TextOnly() = %v, want %v", tc.c, got, tc.want)
-		}
-	}
-}

@@ -3,8 +3,7 @@ package protocol
 // BulkFile is the bulk kind of a whole file. From the browser it is an
 // upload into the host's download directory; from the agent it is a file a
 // program on the host offered and the user then asked for. ID ties the
-// transfer to its upload or offer, Name is the file's base name, and MIME
-// its type when the sender knows it.
+// transfer to its upload or offer, and Name is the file's base name.
 const BulkFile = "file"
 
 // MaxFile bounds one file in either direction. The page holds a download
