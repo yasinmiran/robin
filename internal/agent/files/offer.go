@@ -30,11 +30,10 @@ const (
 	maxOffer = 64
 	// maxRequest bounds a request's names.
 	maxRequest = 64 << 10
+	// requestTimeout bounds how long a connection may take to say what it
+	// offers, and a report to it.
+	requestTimeout = 5 * time.Second
 )
-
-// requestTimeout bounds how long a connection may take to say what it
-// offers, and a report to it. A variable so that tests need not wait it out.
-var requestTimeout = 5 * time.Second
 
 // Status is what became of an offered file, as robin-agent send hears it.
 type Status string
@@ -70,10 +69,11 @@ type report struct {
 // own user may offer: the socket is 0600, and each connection's peer
 // credentials must name that user too.
 type Listener struct {
-	ln  *net.UnixListener
-	uid int
-	log *slog.Logger
-	wg  sync.WaitGroup
+	ln      *net.UnixListener
+	uid     int
+	timeout time.Duration // bounds a request's arrival and each report
+	log     *slog.Logger
+	wg      sync.WaitGroup
 }
 
 // Listen opens the offer socket at path.
@@ -86,7 +86,7 @@ func Listen(path string, log *slog.Logger) (*Listener, error) {
 		ln.Close()
 		return nil, fmt.Errorf("files: %w", err)
 	}
-	return &Listener{ln: ln, uid: os.Getuid(), log: log}, nil
+	return &Listener{ln: ln, uid: os.Getuid(), timeout: requestTimeout, log: log}, nil
 }
 
 // Serve hands each request to handle, on a goroutine of its own, until
@@ -105,7 +105,7 @@ func (l *Listener) Serve(handle func(*Request)) {
 			if err != nil {
 				l.log.Info("offer refused", "err", err)
 				if !errors.Is(err, errStranger) {
-					writeReport(c, report{I: -1, Detail: err.Error()})
+					writeReport(c, l.timeout, report{I: -1, Detail: err.Error()})
 				}
 				c.Close()
 				return
@@ -124,7 +124,7 @@ func (l *Listener) read(c *net.UnixConn) (*Request, error) {
 	if err := l.checkPeer(c); err != nil {
 		return nil, err
 	}
-	c.SetReadDeadline(time.Now().Add(requestTimeout))
+	c.SetReadDeadline(time.Now().Add(l.timeout))
 	buf := make([]byte, maxRequest)
 	oob := make([]byte, unix.CmsgSpace(maxOffer*4))
 	n, oobn, flags, _, err := c.ReadMsgUnix(buf, oob)
@@ -152,7 +152,7 @@ func (l *Listener) read(c *net.UnixConn) (*Request, error) {
 		closeAll()
 		return nil, fmt.Errorf("files: malformed offer: %d names for %d files", len(req.Names), len(fds))
 	}
-	r := &Request{conn: c, gone: make(chan struct{})}
+	r := &Request{conn: c, timeout: l.timeout, gone: make(chan struct{})}
 	for i, name := range req.Names {
 		r.Files = append(r.Files, offered(name, os.NewFile(uintptr(fds[i]), name)))
 	}
@@ -224,9 +224,10 @@ func offered(name string, f *os.File) Offer {
 type Request struct {
 	Files []Offer
 
-	conn *net.UnixConn
-	mu   sync.Mutex
-	gone chan struct{}
+	conn    *net.UnixConn
+	timeout time.Duration
+	mu      sync.Mutex
+	gone    chan struct{}
 }
 
 // Offer is one file of a request. File is nil, and Err says why, when it
@@ -242,7 +243,7 @@ type Offer struct {
 func (r *Request) Tell(i int, s Status, detail string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	writeReport(r.conn, report{I: i, Status: s, Detail: detail})
+	writeReport(r.conn, r.timeout, report{I: i, Status: s, Detail: detail})
 }
 
 // Gone is closed once robin-agent send has gone, or Close was called.
@@ -259,11 +260,11 @@ func (r *Request) watch() {
 	close(r.gone)
 }
 
-func writeReport(c *net.UnixConn, rep report) {
+func writeReport(c *net.UnixConn, timeout time.Duration, rep report) {
 	b, err := json.Marshal(rep)
 	if err != nil {
 		return
 	}
-	c.SetWriteDeadline(time.Now().Add(requestTimeout))
+	c.SetWriteDeadline(time.Now().Add(timeout))
 	c.Write(b)
 }

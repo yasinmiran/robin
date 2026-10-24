@@ -26,6 +26,9 @@ const (
 	// maxUploads bounds the uploads in progress at once, and with the queue
 	// the memory they hold.
 	maxUploads = 4
+	// diskTimeout bounds how long Commit waits on the disk, since it holds
+	// the transfer's read loop meanwhile.
+	diskTimeout = 5 * time.Second
 	// closeTimeout bounds how long Close waits for writers stuck on a disk.
 	closeTimeout = 5 * time.Second
 	// maxNumbered bounds the " (n)" names tried before giving up.
@@ -33,11 +36,6 @@ const (
 	// tempPrefix starts the name a file has until it is whole.
 	tempPrefix = ".robin-upload-"
 )
-
-// commitTimeout bounds how long Commit waits for the writer to drain its
-// queue and name the file, since Commit holds the read loop meanwhile. A
-// variable so that tests need not wait it out.
-var commitTimeout = 5 * time.Second
 
 // Reasons an upload fails.
 var (
@@ -53,8 +51,12 @@ type Inbox struct {
 	dir    string
 	margin int64
 	log    *slog.Logger
-	statfs func(fd int, st *unix.Statfs_t) error
-	create func(dir int, name string) (*os.File, error)
+	// The disk, through calls a test can replace, and how long a wait on it
+	// may hold the read loop.
+	statfs  func(fd int, st *unix.Statfs_t) error
+	create  func(dir int, name string) (*os.File, error)
+	rename  func(olddirfd int, oldpath string, newdirfd int, newpath string, flags uint) error
+	timeout time.Duration
 
 	mu       sync.Mutex
 	uploads  map[*Upload]struct{}
@@ -65,7 +67,11 @@ type Inbox struct {
 
 // NewInbox takes uploads into dir, creating it when the first one comes.
 func NewInbox(dir string, log *slog.Logger) *Inbox {
-	return &Inbox{dir: dir, margin: SpaceMargin, log: log, statfs: unix.Fstatfs, create: createTemp, uploads: map[*Upload]struct{}{}}
+	return &Inbox{
+		dir: dir, margin: SpaceMargin, log: log,
+		statfs: unix.Fstatfs, create: createTemp, rename: unix.Renameat2, timeout: diskTimeout,
+		uploads: map[*Upload]struct{}{},
+	}
 }
 
 // Dir is where uploads land.
@@ -193,15 +199,15 @@ func (u *Upload) Write(p []byte) (int, error) {
 
 // Commit waits for the writer to drain its queue and gives the file its
 // name, or the name with the first free " (n)": it never replaces a file.
-// It gives up, and the file goes, after commitTimeout.
+// It gives up, and the file goes, after the inbox's timeout.
 func (u *Upload) Commit() error {
 	close(u.queue)
 	select {
 	case <-u.done:
 		return u.err
-	case <-time.After(commitTimeout):
+	case <-time.After(u.in.timeout):
 		u.stop()
-		return fmt.Errorf("%w: %s took over %v to finish", ErrSlowDisk, u.name, commitTimeout)
+		return fmt.Errorf("%w: %s took over %v to finish", ErrSlowDisk, u.name, u.in.timeout)
 	}
 }
 
@@ -265,7 +271,7 @@ func (u *Upload) keep() (string, error) {
 	}
 	for n := 0; n <= maxNumbered; n++ {
 		name := Numbered(u.name, n)
-		err := renameNoReplace(u.dir, u.tmp, name)
+		err := u.renameNoReplace(name)
 		if err == nil {
 			return name, nil
 		}
@@ -286,23 +292,19 @@ func createTemp(dir int, name string) (*os.File, error) {
 	return os.NewFile(uintptr(fd), name), nil
 }
 
-// renameat2 is unix.Renameat2, replaced in tests to stand in for a
-// filesystem without RENAME_NOREPLACE.
-var renameat2 = unix.Renameat2
-
-// renameNoReplace renames from to to in dir, failing with EEXIST rather
-// than replacing anything at to.
-func renameNoReplace(dir int, from, to string) error {
-	err := renameat2(dir, from, dir, to, unix.RENAME_NOREPLACE)
+// renameNoReplace gives the temporary file the name to, failing with
+// EEXIST rather than replacing anything there.
+func (u *Upload) renameNoReplace(to string) error {
+	err := u.in.rename(u.dir, u.tmp, u.dir, to, unix.RENAME_NOREPLACE)
 	if !errors.Is(err, unix.EINVAL) && !errors.Is(err, unix.ENOSYS) {
 		return err
 	}
 	// Some filesystems cannot rename without replacing; a hard link never
 	// replaces either.
-	if err := unix.Linkat(dir, from, dir, to, 0); err != nil {
+	if err := unix.Linkat(u.dir, u.tmp, u.dir, to, 0); err != nil {
 		return err
 	}
-	return unix.Unlinkat(dir, from, 0)
+	return unix.Unlinkat(u.dir, u.tmp, 0)
 }
 
 // humanSize formats n for people, in the binary units the page uses.

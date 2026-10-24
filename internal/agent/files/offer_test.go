@@ -318,15 +318,13 @@ func TestListenerRefusesOtherUsers(t *testing.T) {
 }
 
 func TestListenerTimesOutSilentClients(t *testing.T) {
-	requestTimeout = 200 * time.Millisecond
-	t.Cleanup(func() { requestTimeout = 5 * time.Second })
-	_, sock, _ := serve(t)
+	l, sock, _ := serve(t, func(l *Listener) { l.timeout = 200 * time.Millisecond })
 	c, err := net.Dial("unixpacket", sock)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	c.SetReadDeadline(time.Now().Add(requestTimeout + 3*time.Second))
+	c.SetReadDeadline(time.Now().Add(l.timeout + 3*time.Second))
 	buf := make([]byte, 512)
 	n, err := c.Read(buf)
 	var rep report

@@ -161,9 +161,8 @@ func TestUploadGivesUpOnNumbering(t *testing.T) {
 }
 
 func TestUploadWithoutRenameNoReplace(t *testing.T) {
-	renameat2 = func(int, string, int, string, uint) error { return unix.EINVAL }
-	t.Cleanup(func() { renameat2 = unix.Renameat2 })
 	in := testInbox(t)
+	in.rename = func(int, string, int, string, uint) error { return unix.EINVAL }
 	os.MkdirAll(in.Dir(), 0o700)
 	os.WriteFile(filepath.Join(in.Dir(), "b.bin"), []byte("old"), 0o600)
 	u, err := upload(t, in, "b.bin", []byte("new"))
@@ -376,9 +375,8 @@ func TestUploadFailsRatherThanStall(t *testing.T) {
 }
 
 func TestUploadCommitGivesUp(t *testing.T) {
-	commitTimeout = 300 * time.Millisecond
-	t.Cleanup(func() { commitTimeout = 5 * time.Second })
 	in := testInbox(t)
+	in.timeout = 300 * time.Millisecond
 	release := make(chan struct{})
 	in.create = stuckCreate(release)
 	u, err := in.Accept("slow.bin", 4<<20)
@@ -395,8 +393,8 @@ func TestUploadCommitGivesUp(t *testing.T) {
 	if !errors.Is(err, ErrSlowDisk) {
 		t.Errorf("Commit on a stuck disk: %v, want ErrSlowDisk", err)
 	}
-	if took := time.Since(start); took < commitTimeout || took > commitTimeout+time.Second {
-		t.Errorf("Commit gave up after %v, want %v", took, commitTimeout)
+	if took := time.Since(start); took < in.timeout || took > in.timeout+time.Second {
+		t.Errorf("Commit gave up after %v, want %v", took, in.timeout)
 	}
 	close(release)
 	waitEmpty(t, in)
