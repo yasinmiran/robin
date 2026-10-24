@@ -1,6 +1,7 @@
 package vqtest
 
 import (
+	"encoding/binary"
 	"strings"
 	"testing"
 	"time"
@@ -65,7 +66,41 @@ func TestSpans(t *testing.T) {
 			t.Errorf("table lacks %q:\n%s", want, table)
 		}
 	}
-	if s := r.Summary(); !strings.Contains(s, "NACKed 2, recovered 1") || !strings.Contains(s, "idle=2") {
+	if s := r.Summary(); !strings.Contains(s, "NACKed 2, recovered 1") || !strings.Contains(s, "idle=2") || strings.Contains(s, "sound") {
 		t.Errorf("summary %q", s)
+	}
+	// The first half of the scroll, counted as motion.
+	if w := r.Window("half", 30, 45); w.Name != "half" || w.SentFrames != 1 || w.Shown != 1 || w.MaxFreeze != 50*time.Millisecond {
+		t.Fatalf("window %+v", w)
+	}
+}
+
+func TestSoundDelays(t *testing.T) {
+	start := time.Unix(100, 0)
+	r := &Run{}
+	for i := range 100 {
+		sent := start.Add(time.Duration(i) * 20 * time.Millisecond)
+		r.Result.Sound = append(r.Result.Sound, Sound{Sent: sent, At: sent.Add(time.Duration(10+i) * time.Millisecond)})
+	}
+	d := r.SoundDelays()
+	if d.N != 100 || d.Median != 60*time.Millisecond || d.P99 != 109*time.Millisecond || d.Max != 109*time.Millisecond {
+		t.Fatalf("delays %+v", d)
+	}
+	if s := r.Summary(); !strings.Contains(s, "sound 100 packets, one way 60ms median, 109ms at the 99th percentile, 109ms at most") {
+		t.Errorf("summary %q", s)
+	}
+	if (&Run{}).SoundDelays() != (Delays{}) {
+		t.Error("delays without sound")
+	}
+}
+
+func TestSoundPayloadCarriesItsSendTime(t *testing.T) {
+	sent := time.Unix(1700000000, 123456789)
+	b := SoundPayload(240, sent)
+	if len(b) != 240 || time.Unix(0, int64(binary.BigEndian.Uint64(b))) != sent {
+		t.Fatalf("payload of %d bytes starting %x", len(b), b[:8])
+	}
+	if len(SoundPayload(2, sent)) != 8 {
+		t.Fatal("a short payload has no room for the time")
 	}
 }
