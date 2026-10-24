@@ -143,8 +143,8 @@ func (fs *fileShare) settle(o *offer, s files.Status, detail string) {
 	}
 }
 
-// withdraw ends the offers from made, or every offer when from is nil,
-// and returns them.
+// withdraw ends the offers that from made, or every offer when from is
+// nil, and returns them.
 func (fs *fileShare) withdraw(from *sendCall) []*offer {
 	fs.mu.Lock()
 	var gone []*offer
