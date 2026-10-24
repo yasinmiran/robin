@@ -46,6 +46,14 @@ export function request(key, on) {
   return { t: key, on: Boolean(on) };
 }
 
+// requests are the control messages that ask again for every switch still
+// waiting on the agent, for a control channel that just opened: a click
+// while the page reconnected went nowhere, and an answer sent on the old
+// channel may have been lost with it. Asking twice changes nothing.
+export function requests(pending) {
+  return Object.entries(pending).map(([key, on]) => request(key, on));
+}
+
 // settle drops from pending, a map from switch to the position asked for,
 // each request the agent's state answers: the switch is where it was asked
 // to be, or it failed.

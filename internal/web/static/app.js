@@ -211,6 +211,7 @@ function createPeer(config) {
   channel.onopen = () => {
     lastControlAt = Date.now();
     input.sendResize();
+    privateSwitches.reopened();
   };
   channel.onclose = () => input.release();
   channel.onmessage = (e) => {
