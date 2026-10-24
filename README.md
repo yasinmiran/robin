@@ -490,10 +490,11 @@ link while video streams, to measure how the two share it. Uploads have
 units of their own in `internal/agent/files`: every name and collision
 rule, a symlink in the way, a full disk (writes to `/dev/full`), a disk
 that stops (the transfer fails instead of holding the read loop), cancel
-and the end of a session, and the offer socket's checks. `make test-x`
-then runs good, corrupt, truncated, cancelled and badly named uploads, offers
-and the rich clipboard through a whole agent session, and the X11 targets
-with INCR both ways against `xclip`. `go test
+and the end of a session, and the offer socket's checks. `go test
+./internal/agent` sends good, corrupt, truncated, cancelled and badly named
+uploads and fetches an offer over a real peer, and `make test-x` runs them
+again through a whole agent session, with the rich clipboard and the X11
+targets, INCR both ways, against `xclip`. `go test
 ./internal/web` runs the page's DOM-free modules under `node --test`, from
 `internal/web/static/test`, and, with the browser smoke test's dependencies
 installed, sends bulk transfers both ways between Chrome and the agent's own
