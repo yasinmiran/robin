@@ -170,8 +170,12 @@ func (m *Master) Command(ctx context.Context, remoteCmd string) *exec.Cmd {
 // installs a SIGINT handler only when the signal is not already ignored),
 // so the connection outlives the keystroke and the CLI ends the session
 // over it, then closes it. Sessions over the master install their handler
-// unconditionally and do die, which the CLI expects.
+// unconditionally and do die, which the CLI expects. Windows has no
+// /bin/sh to do it with.
 func ignoringInterrupt(ssh string, args ...string) (string, []string) {
+	if runtime.GOOS == "windows" {
+		return ssh, args
+	}
 	return "/bin/sh", append([]string{"-c", `trap '' INT; exec "$0" "$@"`, ssh}, args...)
 }
 
