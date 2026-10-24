@@ -6,6 +6,7 @@
 package peer
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -68,6 +69,9 @@ type Config struct {
 	// comparison for measurements; the agent paces.
 	Unpaced bool
 	Log     *slog.Logger
+
+	// headerWait replaces bulkHeaderWait, for tests that cannot wait it out.
+	headerWait time.Duration
 }
 
 // Handlers receive the peer's events. Each may be nil. They are called from
@@ -109,6 +113,7 @@ type Peer struct {
 
 	remote      remoteCandidates
 	waitingBulk atomic.Int32 // bulk channels the browser opened, before their first frame
+	headerWait  time.Duration
 }
 
 // New builds the peer connection and its video track. Nothing is sent until
@@ -244,7 +249,7 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 		return nil, err
 	}
 	pcRef.Store(pc)
-	p := &Peer{pc: pc, h: h, log: log, mic: cfg.Mic, camera: cfg.Camera}
+	p := &Peer{pc: pc, h: h, log: log, mic: cfg.Mic, camera: cfg.Camera, headerWait: cmp.Or(cfg.headerWait, bulkHeaderWait)}
 
 	select {
 	case p.bwe = <-bweReady:

@@ -126,7 +126,8 @@ func TestPeerLeavesMDNSAlone(t *testing.T) {
 	if err := p.AddCandidate(protocol.Candidate{Candidate: name, SDPMid: ptr("0")}); err != nil {
 		t.Errorf("AddCandidate(%s): %v", name, err)
 	}
-	time.Sleep(200 * time.Millisecond)
+	// With mDNS on, Pion opens its mDNS connection in New, so the
+	// regression is on record before the candidate is even added.
 	watch.mu.Lock()
 	defer watch.mu.Unlock()
 	if len(watch.seen) != 0 {
@@ -249,10 +250,11 @@ func TestPeerNeverDialsTCP(t *testing.T) {
 	if err := p.AddCandidate(c); err != nil {
 		t.Fatalf("AddCandidate: %v", err)
 	}
+	// Pion's active ICE-TCP dials as soon as the candidate is added.
 	select {
 	case <-dialed:
 		t.Error("the agent connected to a TCP port the page named")
-	case <-time.After(3 * time.Second):
+	case <-time.After(time.Second):
 	}
 }
 
@@ -361,15 +363,19 @@ func TestBulkChannelsWithoutAHeaderAreBounded(t *testing.T) {
 }
 
 // TestBulkHeaderDeadline leaves one bulk channel idle past the deadline,
-// which the agent closes with a refusal, while a transfer that sent its
-// header in time may take as long as it likes over the rest.
+// which the agent closes with a refusal, while a transfer opened beside it
+// that sent its header in time may take as long as it likes over the rest.
 func TestBulkHeaderDeadline(t *testing.T) {
-	saved := bulkHeaderWait
-	bulkHeaderWait = 300 * time.Millisecond
-	t.Cleanup(func() { bulkHeaderWait = saved })
-	bp := newBulkPair(t, Config{}, Handlers{})
+	t.Parallel()
+	const wait = time.Second
+	bp := newBulkPair(t, Config{headerWait: wait}, Handlers{})
 
 	c := idleBulk(t, bp.browser)
+	dc, frames, done := bp.rawBulk(t)
+	payload := []byte("slow but sure")
+	sendJSON(t, dc, protocol.Bulk{T: protocol.BulkHeader, Kind: testKind, ID: "slow", Size: int64(len(payload))})
+	s := receiveID(t, bp.atAgent, "slow")
+
 	select {
 	case <-c.closed:
 	case <-time.After(5 * time.Second):
@@ -384,11 +390,8 @@ func TestBulkHeaderDeadline(t *testing.T) {
 		t.Error("the agent closed the channel without a verdict")
 	}
 
-	dc, frames, done := bp.rawBulk(t)
-	payload := []byte("slow but sure")
-	sendJSON(t, dc, protocol.Bulk{T: protocol.BulkHeader, Kind: testKind, ID: "slow", Size: int64(len(payload))})
-	s := receiveID(t, bp.atAgent, "slow")
-	time.Sleep(3 * bulkHeaderWait)
+	// The slow transfer is now twice its wait old.
+	time.Sleep(wait)
 	if err := dc.Send(payload); err != nil {
 		t.Fatal(err)
 	}
@@ -534,12 +537,20 @@ func TestPeerRefusesInboundMedia(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			cands := make(chan protocol.Candidate, 32)
 			tracks := make(chan *webrtc.TrackRemote, 8)
+			connected := make(chan struct{})
+			var once sync.Once
 			tc.cfg.MinBitrate, tc.cfg.StartBitrate, tc.cfg.MaxBitrate, tc.cfg.IncludeLoopback = 100_000, 1_000_000, 5_000_000, true
 			p, err := New(tc.cfg, Handlers{
 				Candidate: func(c protocol.Candidate) { cands <- c },
 				Track:     func(tr *webrtc.TrackRemote, _ *webrtc.RTPReceiver) { tracks <- tr },
+				State: func(s webrtc.PeerConnectionState) {
+					if s == webrtc.PeerConnectionStateConnected {
+						once.Do(func() { close(connected) })
+					}
+				},
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -575,15 +586,28 @@ func TestPeerRefusesInboundMedia(t *testing.T) {
 					}
 				}
 			})
+			select {
+			case <-connected:
+			case <-time.After(15 * time.Second):
+				t.Fatal("peer never connected")
+			}
+			// Once connected, each track comes with its first packet, 20 ms
+			// apart; one the peer should not have taken comes with them.
 			got := 0
-			for timeout := time.After(4 * time.Second); ; {
+			timeout := time.After(10 * time.Second)
+		counting:
+			for got < tc.wantTracks {
 				select {
 				case <-tracks:
 					got++
-					continue
 				case <-timeout:
+					break counting
 				}
-				break
+			}
+			select {
+			case <-tracks:
+				got++
+			case <-time.After(500 * time.Millisecond):
 			}
 			if got != tc.wantTracks {
 				t.Errorf("%d tracks reached Handlers.Track, want %d", got, tc.wantTracks)

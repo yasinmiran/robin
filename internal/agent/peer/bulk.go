@@ -268,19 +268,56 @@ type bulkReceiver struct {
 	sink BulkSink
 	sum  *protocol.BulkSum
 	over bool // a verdict went out or the channel closed
+	// While the header is awaited, late refuses the transfer and settled
+	// is called once the first frame or the close comes.
+	late    *time.Timer
+	settled func()
 }
 
 // receiveBulk takes one transfer the remote side opened on dc. accept
 // decides on its header; nil refuses everything.
-func receiveBulk(dc *webrtc.DataChannel, accept func(protocol.Bulk) (BulkSink, error), log *slog.Logger) {
+func receiveBulk(dc *webrtc.DataChannel, accept func(protocol.Bulk) (BulkSink, error), log *slog.Logger) *bulkReceiver {
 	r := &bulkReceiver{dc: dc, accept: accept, log: log}
 	dc.OnMessage(r.message)
 	dc.OnClose(r.closed)
+	return r
+}
+
+// awaitHeader refuses the transfer unless its first frame comes within
+// wait, and calls settled once that frame or the close has come. It must
+// be called from the handler that took the channel, before Pion delivers
+// anything on it.
+func (r *bulkReceiver) awaitHeader(wait time.Duration, settled func()) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.settled = settled
+	r.late = time.AfterFunc(wait, func() { r.expire(wait) })
+}
+
+// expire refuses a transfer that has sent nothing within wait.
+func (r *bulkReceiver) expire(wait time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.sink == nil && !r.over {
+		r.fail(fmt.Errorf("peer: no header within %s", wait))
+	}
+}
+
+// settle ends the wait for the header.
+func (r *bulkReceiver) settle() {
+	if r.late != nil {
+		r.late.Stop()
+	}
+	if r.settled != nil {
+		r.settled()
+		r.settled = nil
+	}
 }
 
 func (r *bulkReceiver) message(m webrtc.DataChannelMessage) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.settle()
 	if r.over {
 		return
 	}
@@ -346,20 +383,31 @@ func (r *bulkReceiver) fail(err error) {
 	}
 }
 
-// reply sends the verdict and closes the channel, which ends the transfer.
-// A send fails only once the channel is closing, and the sender learns from
-// the close instead.
 func (r *bulkReceiver) reply(v protocol.Bulk) {
 	r.over = true
+	sendVerdict(r.dc, v)
+}
+
+// sendVerdict sends v and closes dc, which ends the transfer. A send fails
+// only once the channel is closing, and the sender learns from the close
+// instead.
+func sendVerdict(dc *webrtc.DataChannel, v protocol.Bulk) {
 	if b, err := json.Marshal(v); err == nil {
-		_ = r.dc.SendText(string(b))
+		_ = dc.SendText(string(b))
 	}
-	r.dc.Close()
+	dc.Close()
+}
+
+// refuseBulk turns down the transfer on dc, which the remote side opened,
+// as soon as the channel is open.
+func refuseBulk(dc *webrtc.DataChannel, err error) {
+	dc.OnOpen(func() { sendVerdict(dc, protocol.Bulk{T: protocol.BulkError, Error: reason(err)}) })
 }
 
 func (r *bulkReceiver) closed() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.settle()
 	if r.over {
 		return
 	}
