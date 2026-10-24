@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -90,10 +91,10 @@ func resumedReady(id string) protocol.Message {
 	return protocol.Message{Type: protocol.TypeReady, Ready: &protocol.Ready{Version: protocol.Version, ID: id, Resumed: true, Keep: 60}}
 }
 
-// TestReconnectResumesTheKeptSession: a redial runs the agent's serve
-// with -resume over a fresh connection and goes on with the session it
-// answers for, with the agent's verbose log on the user's terminal,
-// escaped. A tunnel it cannot forward again costs only the tunnel.
+// A redial runs the agent's serve with -resume over a fresh connection and
+// goes on with the session it answers for, with the agent's verbose log on
+// the user's terminal, escaped. A tunnel it cannot forward again costs
+// only the tunnel.
 func TestReconnectResumesTheKeptSession(t *testing.T) {
 	h, _, stderr := sshHost(t)
 	h.o.Verbose = true
@@ -125,8 +126,8 @@ func TestReconnectResumesTheKeptSession(t *testing.T) {
 	}
 }
 
-// TestReconnectGivesUpWhenTheSessionIsGone: an agent that has no such
-// session ends the redialing at once; it would say so every time.
+// An agent that has no such session ends the redialing at once; it would
+// say so every time.
 func TestReconnectGivesUpWhenTheSessionIsGone(t *testing.T) {
 	h, _, _ := sshHost(t)
 	path, calls := fakeServe(t, "", protocol.Message{Type: protocol.TypeError, Error: "no session ab12 on this host"})
@@ -142,26 +143,31 @@ func TestReconnectGivesUpWhenTheSessionIsGone(t *testing.T) {
 	}
 }
 
-// TestReconnectStopsWhenTheKeepWindowCloses: a host that stays out of
-// reach is redialed with backoff until the next try would come after the
-// host let the desktop go.
+// A host that stays out of reach is redialed with backoff until the next
+// try would come after the host let the desktop go.
 func TestReconnectStopsWhenTheKeepWindowCloses(t *testing.T) {
 	h, s, _ := sshHost(t)
+	var logged lockedBuffer
+	h.log = slog.New(slog.NewTextHandler(&logged, nil))
 	h.close()
 	s.Stop()
-	start := time.Now()
-	ag, _, err := h.reconnect(context.Background(), "/nowhere", "ab12", start.Add(1500*time.Millisecond), &tunnel{log: h.log})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	// Room for a second try after the first backoff, and none for the
+	// backoff after that, however long each try takes to fail.
+	until := time.Now().Add(reconnectFirst + 1500*time.Millisecond)
+	ag, _, err := h.reconnect(ctx, "/nowhere", "ab12", until, &tunnel{log: h.log})
 	if ag != nil || err == nil || !strings.Contains(err.Error(), "before the host let the desktop go") {
 		t.Fatalf("reconnect to a host out of reach: %v, %v", ag, err)
 	}
-	if took := time.Since(start); took < reconnectFirst || took > 20*time.Second {
-		t.Fatalf("gave up after %s, want one backoff of %s and a second try", took, reconnectFirst)
+	if n := strings.Count(logged.String(), "reconnect failed"); n != 2 {
+		t.Fatalf("%d tries, want a second after a backoff of %s and no third:\n%s", n, reconnectFirst, logged.String())
 	}
 }
 
-// TestTunnelCarriesTheBrowsersTCPToTheHost: the tunnel's loopback port
-// leads through the SSH forward to the agent's ICE-TCP listener, and
-// stops doing so once the forward or the tunnel is gone.
+// The tunnel's loopback port leads through the SSH forward to the agent's
+// ICE-TCP listener, and stops doing so once the forward or the tunnel is
+// gone.
 func TestTunnelCarriesTheBrowsersTCPToTheHost(t *testing.T) {
 	h, _, _ := sshHost(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -186,8 +192,8 @@ func TestTunnelCarriesTheBrowsersTCPToTheHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := roundTrip(t, tun.Port()); got != "ice" {
-		t.Fatalf("through the tunnel: %q", got)
+	if got, err := roundTrip(t, tun.Port()); got != "ice" || err != nil {
+		t.Fatalf("through the tunnel: %q, %v", got, err)
 	}
 
 	direct, err := openTunnel(ctx, h.m, remote, relay.Direct, h.log)
@@ -198,8 +204,8 @@ func TestTunnelCarriesTheBrowsersTCPToTheHost(t *testing.T) {
 	// The master gone, the forward's socket goes with it: the tunnel
 	// still accepts, and hangs up.
 	h.m.Close()
-	if got := roundTrip(t, tun.Port()); got != "" {
-		t.Fatalf("through a tunnel whose forward is gone: %q", got)
+	if got, err := roundTrip(t, tun.Port()); got != "" || !hungUp(err) {
+		t.Fatalf("through a tunnel whose forward is gone: %q, %v, want a hang-up", got, err)
 	}
 	if _, err := openTunnel(ctx, h.m, remote, relay.Tunnel, h.log); err == nil || !strings.Contains(err.Error(), "forward ICE-TCP over SSH") {
 		t.Fatalf("a tunnel-only session without its forward: %v", err)
@@ -209,8 +215,8 @@ func TestTunnelCarriesTheBrowsersTCPToTheHost(t *testing.T) {
 		t.Fatalf("an auto session without its forward: %v", err)
 	}
 	defer auto.Close()
-	if got := roundTrip(t, auto.Port()); got != "" {
-		t.Fatalf("through a tunnel that never had a forward: %q", got)
+	if got, err := roundTrip(t, auto.Port()); got != "" || !hungUp(err) {
+		t.Fatalf("through a tunnel that never had a forward: %q, %v, want a hang-up", got, err)
 	}
 
 	port := tun.Port()
@@ -222,8 +228,9 @@ func TestTunnelCarriesTheBrowsersTCPToTheHost(t *testing.T) {
 }
 
 // roundTrip sends "ice" through the tunnel at port and returns what came
-// back before it hung up.
-func roundTrip(t *testing.T, port int) string {
+// back, with the error that ended the read: none once all of it came, EOF
+// or a reset when the tunnel hung up, a timeout when it held on.
+func roundTrip(t *testing.T, port int) (string, error) {
 	t.Helper()
 	c, err := net.Dial("tcp4", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
@@ -233,14 +240,22 @@ func roundTrip(t *testing.T, port int) string {
 	c.SetDeadline(time.Now().Add(10 * time.Second))
 	c.Write([]byte("ice"))
 	b := make([]byte, 3)
-	n, _ := io.ReadFull(c, b)
-	return string(b[:n])
+	n, err := io.ReadFull(c, b)
+	return string(b[:n]), err
 }
 
-// TestRunRefusesAnUnknownEncoderBeforeDeploying: the probe's answer is
-// checked before anything lands on the host.
+// hungUp reports whether a read's err says the other end closed the
+// connection, at once or with what was sent to it still unread.
+func hungUp(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET)
+}
+
+// The probe's answer is checked before anything lands on the host: Run
+// with an encoder no host has deploys no agent into the directory the
+// probe chose, here one of the test's own.
 func TestRunRefusesAnUnknownEncoderBeforeDeploying(t *testing.T) {
-	o, _, _ := localhost(t)
+	cache := t.TempDir()
+	o, _, _ := localhost(t, "XDG_CACHE_HOME="+cache)
 	o.Attach, o.Encoder = ":99", "h265"
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -248,9 +263,19 @@ func TestRunRefusesAnUnknownEncoderBeforeDeploying(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), o.Dest+`: unknown encoder "h265"`) {
 		t.Fatalf("Run with an unknown encoder: %v", err)
 	}
+	agentDir := filepath.Join(cache, "robin")
+	entries, err := os.ReadDir(agentDir)
+	if err != nil {
+		t.Fatalf("the probe did not choose %s: %v", agentDir, err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), agentbin.NamePrefix) {
+			t.Fatalf("Run deployed %s before refusing the encoder", e.Name())
+		}
+	}
 }
 
-// TestProbeOverADeadConnection: the probe's failure says it was the probe.
+// The probe's failure says it was the probe.
 func TestProbeOverADeadConnection(t *testing.T) {
 	h, _, _ := sshHost(t)
 	h.m.Close()
@@ -261,9 +286,9 @@ func TestProbeOverADeadConnection(t *testing.T) {
 	}
 }
 
-// TestDeployAgent: a host of an architecture this CLI carries no agent
-// for is refused; one it does gets the agent, by its content's name, in
-// the directory the probe chose.
+// A host of an architecture this CLI carries no agent for is refused; one
+// it does gets the agent, by its content's name, in the directory the
+// probe chose.
 func TestDeployAgent(t *testing.T) {
 	h, _, _ := sshHost(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -293,32 +318,47 @@ func TestDeployAgent(t *testing.T) {
 	}
 }
 
-func TestHostDefaults(t *testing.T) {
+// Options left empty write to the process's own stdout and stderr and log
+// to slog's default.
+func TestFillDefaults(t *testing.T) {
 	o, log := Options{}.fill()
 	if o.Stdout != os.Stdout || o.Stderr == nil || log != slog.Default() {
 		t.Errorf("fill: %+v, %v", o, log)
 	}
+}
+
+// A desktop that goes with its controller has no keep window; a kept one
+// lasts as long as the host said from now.
+func TestKeepUntil(t *testing.T) {
 	if !keepUntil(&protocol.Ready{}).IsZero() {
 		t.Error("keepUntil of a desktop that goes with its controller")
 	}
 	if until := keepUntil(&protocol.Ready{Keep: 60}); time.Until(until) < 59*time.Second {
 		t.Errorf("keepUntil of a minute: %s", until)
 	}
+}
+
+// No error stays no error when the agent's stderr is added to it.
+func TestExplainNothing(t *testing.T) {
 	if (&agentProc{}).explain(nil) != nil {
 		t.Error("explain made an error of nothing")
 	}
-	// The page reads its ICE servers as a JSON array, never null.
-	for stun, want := range map[string]string{"": `[]`, "stun:example.net:3478": `[{"urls":["stun:example.net:3478"]}]`} {
-		var list []string
-		if stun != "" {
-			list = []string{stun}
-		}
-		if b, _ := json.Marshal(iceServers(list)); string(b) != want {
-			t.Errorf("iceServers(%q) = %s, want %s", list, b, want)
-		}
-	}
-	s, _ := startMessage(Options{Camera: true}, &probe.Report{V4L2Loopback: []probe.VideoDevice{{Path: "/dev/video3", Label: "Dummy"}, {Path: "/dev/video7", Label: "Robin camera"}}})
-	if s.CameraDevice != "/dev/video7" {
-		t.Errorf("the camera robin's loopback offers: %q", s.CameraDevice)
+}
+
+// The page reads its ICE servers as a JSON array, never null.
+func TestICEServersAreAnArray(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		stun []string
+		want string
+	}{
+		{"none", nil, `[]`},
+		{"one", []string{"stun:example.net:3478"}, `[{"urls":["stun:example.net:3478"]}]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if b, _ := json.Marshal(iceServers(tc.stun)); string(b) != tc.want {
+				t.Errorf("iceServers(%q) = %s, want %s", tc.stun, b, tc.want)
+			}
+		})
 	}
 }

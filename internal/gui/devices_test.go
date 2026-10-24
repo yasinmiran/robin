@@ -9,10 +9,10 @@ import (
 )
 
 func TestStartMessageDevices(t *testing.T) {
-	loopback := &probe.Report{V4L2Loopback: []probe.VideoDevice{{Path: "/dev/video9", Label: "Robin camera"}}}
+	loopback := &probe.Report{V4L2Loopback: []probe.VideoDevice{{Path: "/dev/video3", Label: "Dummy"}, {Path: "/dev/video9", Label: "Robin camera"}}}
 	s, _ := startMessage(Options{Mic: true, Camera: true}, loopback)
 	if !s.Mic || !s.Camera || s.CameraDevice != "/dev/video9" {
-		t.Errorf("start %+v, want both devices and the loopback device", s)
+		t.Errorf("start %+v, want both devices and robin's loopback device", s)
 	}
 	s, _ = startMessage(Options{Mic: true}, loopback)
 	if !s.Mic || s.Camera || s.CameraDevice != "" {

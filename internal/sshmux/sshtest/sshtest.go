@@ -42,8 +42,9 @@ type Server struct {
 var errPortTaken = errors.New("port taken")
 
 // Start runs sshd until the test ends. It skips the test when ssh, ssh-keygen
-// or sshd are missing.
-func Start(t testing.TB) *Server {
+// or sshd are missing. env, as NAME=VALUE, is set in every session, over
+// what the session would have (sshd's SetEnv, OpenSSH 8.7 and later).
+func Start(t testing.TB, env ...string) *Server {
 	t.Helper()
 	if noServer != "" {
 		t.Skip(noServer)
@@ -71,7 +72,7 @@ func Start(t testing.TB) *Server {
 
 	for attempt := 0; ; attempt++ {
 		port := freePort(t)
-		err := s.launch(t, sshd, port, hostKey)
+		err := s.launch(t, sshd, port, hostKey, env)
 		if errors.Is(err, errPortTaken) && attempt < 5 {
 			continue
 		}
@@ -107,9 +108,13 @@ func (s *Server) Log() string {
 	return string(b)
 }
 
-func (s *Server) launch(t testing.TB, sshd string, port int, hostKey string) error {
+func (s *Server) launch(t testing.TB, sshd string, port int, hostKey string, env []string) error {
 	cfg := filepath.Join(s.Dir, "sshd_config")
-	writeFile(t, cfg, fmt.Sprintf(`ListenAddress 127.0.0.1:%d
+	setEnv := ""
+	if len(env) > 0 {
+		setEnv = `SetEnv "` + strings.Join(env, `" "`) + "\"\n"
+	}
+	writeFile(t, cfg, setEnv+fmt.Sprintf(`ListenAddress 127.0.0.1:%d
 HostKey %s
 AuthorizedKeysFile %s
 PidFile none
