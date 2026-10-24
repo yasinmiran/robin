@@ -778,7 +778,8 @@ container, which has a second account: a copy of the test binary run as that
 account is refused by the 0700 run directory at `ctl.sock` and
 `files.sock`, and with the directory opened up by the peer check, before a
 byte of what it sent is read; its `robin-agent end`, aimed at another
-user's kept session, leaves the session running. `go test
+user's kept session, leaves the session running, and the owner's end takes
+no process of that account's for a daemon, whatever its command line. `go test
 ./internal/web` runs the page's DOM-free modules under `node --test`, from
 `internal/web/static/test`, and, with the browser smoke test's dependencies
 installed, sends bulk transfers both ways between Chrome and the agent's own

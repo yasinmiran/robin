@@ -881,6 +881,16 @@ in rootless podman, with nothing on the workstation itself.
   through a run link to that user's run root, fails on the 0700 root with
   `permission denied`, and opened up, on the signal with `operation not
   permitted`; the session lives on and its owner's end still works.
+- Review found the other direction open. End picked the daemon by its
+  command line alone, which /proc shows every user, so another user's
+  process with `daemon -id <id>` in its argv passed for it: found while
+  session.json was missing, or holding the pid session.json named once the
+  daemon died. The owner's `robin end` then failed on the signal and left
+  the directory behind, and an agent running as root killed that process.
+  End now counts a process only when its real uid, from
+  `/proc/<pid>/status`, is ours. `TestEndLeavesAnotherUsersLookalikeAlone`
+  starts such a process as the stranger; without the check End signals it
+  and times out with the directory still there.
 - "Before a byte it sent is read" is checked, not assumed: a unix socket
   closed with data still unread resets its peer's connection, where one
   closed after a read gives EOF. Unit tests under plain `make test` set the

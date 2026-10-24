@@ -36,7 +36,7 @@ go test ./internal/agent/peer -run Congestion
 
 Builds the X-dependent tests of the agent, the display and the X11 packages, plus the sound server tests, and runs them in a container with Xvfb and pulseaudio. These cover capture, input, resize, the clipboard, compositors and DAMAGE, the private sound server, and whole agent sessions, including that an attached display's keymap is byte-identical afterwards and that the private sound server goes with an agent killed by SIGKILL.
 
-The container also has a second account, and its root runs a copy of the test binary as that account. That user is kept from a session's `ctl.sock` and `files.sock` by the 0700 run directory and, with the directory opened up, by the peer credential check, before a byte it sent is read. Its `robin-agent end`, aimed at another user's kept session, leaves the session running. Arguments go to every test binary:
+The container also has a second account, and its root runs a copy of the test binary as that account. That user is kept from a session's `ctl.sock` and `files.sock` by the 0700 run directory and, with the directory opened up, by the peer credential check, before a byte it sent is read. Its `robin-agent end`, aimed at another user's kept session, leaves the session running, and the owner's end takes no process of that account's for a daemon, whatever its command line. Arguments go to every test binary:
 
 ```sh
 internal/agent/x11/testdata/xtest.sh -test.run=Clipboard

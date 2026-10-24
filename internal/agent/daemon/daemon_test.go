@@ -454,15 +454,9 @@ func TestEndRemovesAStaleDirectoryWithoutSignaling(t *testing.T) {
 	if err := End(ctx, root, "s1"); !errors.As(err, &noSession) || !strings.Contains(err.Error(), "no session s1") {
 		t.Fatalf("End of nothing: %v", err)
 	}
-	// A socket nobody listens on is what a killed daemon leaves.
 	stale := filepath.Join(root, "s2")
 	os.Mkdir(stale, 0o700)
-	ln, err := net.Listen("unix", filepath.Join(stale, SocketFile))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ln.(*net.UnixListener).SetUnlinkOnClose(false)
-	ln.Close()
+	abandonSocket(t, stale)
 	os.WriteFile(filepath.Join(stale, "x"), nil, 0o600)
 	if err := End(ctx, root, "s2"); err != nil {
 		t.Fatalf("End of a dir with a dead socket: %v", err)
@@ -577,6 +571,9 @@ func TestCommandIsDaemon(t *testing.T) {
 	if findDaemon("no-such-session-anywhere") != 0 {
 		t.Error("findDaemon found a daemon where there is none")
 	}
+	if !ours(os.Getpid()) || ours(1<<30) {
+		t.Error("ours mistook whose process is whose")
+	}
 }
 
 func TestEndFindsADaemonWithoutSessionJSON(t *testing.T) {
@@ -651,4 +648,16 @@ func TestNewIDNeverReadsAsAPid(t *testing.T) {
 			t.Fatalf("id %q", id)
 		}
 	}
+}
+
+// abandonSocket leaves in dir the socket a killed daemon leaves: bound,
+// with nobody listening.
+func abandonSocket(t *testing.T, dir string) {
+	t.Helper()
+	ln, err := net.Listen("unix", filepath.Join(dir, SocketFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	ln.Close()
 }

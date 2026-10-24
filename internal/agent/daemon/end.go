@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,10 +23,11 @@ const endTimeout = 15 * time.Second
 
 // End tells the daemon of session id under runRoot to end, which tears the
 // desktop down like bye does, and waits for its run directory to go. It
-// signals only a process whose command line is that daemon's, since the
-// pid in session.json may have been reused once the daemon died; such a
-// stale directory is removed instead. A directory with no trace of a
-// session is left alone.
+// signals only a process of this user whose command line is that daemon's,
+// since the pid in session.json may have been reused once the daemon died,
+// and anyone may start a process with any command line; such a stale
+// directory is removed instead. A directory with no trace of a session is
+// left alone.
 func End(ctx context.Context, runRoot, id string) error {
 	if err := validID(id); err != nil {
 		return err
@@ -82,15 +84,16 @@ func daemonPID(dir, id string) (int, error) {
 	return 0, &NoSessionError{id}
 }
 
-// isDaemon reports whether pid runs `robin-agent daemon -id id`.
+// isDaemon reports whether pid is a process of ours running
+// `robin-agent daemon -id id`.
 func isDaemon(pid int, id string) bool {
 	if pid <= 0 {
 		return false
 	}
-	return commandIsDaemon(cmdline(pid), id)
+	return commandIsDaemon(cmdline(pid), id) && ours(pid)
 }
 
-// findDaemon is the pid of the process running `robin-agent daemon -id id`,
+// findDaemon is the pid of our process running `robin-agent daemon -id id`,
 // or 0.
 func findDaemon(id string) int {
 	entries, _ := os.ReadDir("/proc")
@@ -99,11 +102,22 @@ func findDaemon(id string) int {
 		if err != nil {
 			continue
 		}
-		if commandIsDaemon(cmdline(pid), id) {
+		if isDaemon(pid, id) {
 			return pid
 		}
 	}
 	return 0
+}
+
+// ours reports whether pid's real uid is this process's. Its command line
+// alone proves nothing: another user's process may say what it likes
+// there, and /proc shows it to everyone.
+func ours(pid int) bool {
+	b, _ := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "status"))
+	// "Uid:\t<real>\t<effective>\t<saved>\t<filesystem>", never the first line.
+	_, ids, _ := strings.Cut(string(b), "\nUid:")
+	ruid, _, _ := strings.Cut(strings.TrimLeft(ids, "\t "), "\t")
+	return ruid == strconv.Itoa(os.Getuid())
 }
 
 func cmdline(pid int) [][]byte {

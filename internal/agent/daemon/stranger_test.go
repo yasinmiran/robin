@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yasinmiran/robin/internal/agent"
 	"github.com/yasinmiran/robin/internal/agent/agenttest"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
@@ -119,4 +120,75 @@ func TestListenRefusesAnotherUsersDirectory(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(dir, SocketFile)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("a socket in the stranger's directory: %v", err)
 	}
+}
+
+// End takes no process of another user for a session's daemon, however
+// its command line reads: not one that session.json names, as when the
+// daemon died and another user's process got its pid, and not one it
+// finds by its command line while session.json is missing. It removes the
+// directory the daemon left behind instead, and leaves that process be.
+func TestEndLeavesAnotherUsersLookalikeAlone(t *testing.T) {
+	s := agenttest.NewStranger(t)
+	root := filepath.Join(t.TempDir(), "run")
+	for _, tc := range []struct {
+		name, id string
+		named    bool // session.json names the lookalike's pid
+	}{
+		{"found by its command line", "ab12", false},
+		{"named by session.json", "cd34", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pid, exited := lookalike(t, s, tc.id)
+			dir := filepath.Join(root, tc.id)
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if tc.named {
+				if err := agent.WriteSession(dir, protocol.Session{ID: tc.id, PID: pid}); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				abandonSocket(t, dir)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := End(ctx, root, tc.id); err != nil {
+				t.Fatalf("End beside the stranger's lookalike: %v", err)
+			}
+			if _, err := os.Lstat(dir); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("the run directory after End: %v", err)
+			}
+			select {
+			case <-exited:
+				t.Fatal("End ended the stranger's process")
+			default:
+			}
+		})
+	}
+}
+
+// lookalike starts a process of the stranger's whose command line reads
+// as the daemon of session id's, which runs until the test ends, and
+// returns its pid and a channel closed once it has exited.
+func lookalike(t *testing.T, s *agenttest.Stranger, id string) (int, <-chan struct{}) {
+	t.Helper()
+	cmd := s.Command("sh", "-c", "read line", "daemon", "-id", id)
+	in, err := cmd.StdinPipe()
+	if err == nil {
+		err = cmd.Start()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	exited := make(chan struct{})
+	go func() {
+		cmd.Wait()
+		close(exited)
+	}()
+	t.Cleanup(func() {
+		in.Close()
+		cmd.Process.Kill()
+		<-exited
+	})
+	return cmd.Process.Pid, exited
 }
