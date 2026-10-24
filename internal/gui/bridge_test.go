@@ -183,6 +183,42 @@ func waitResult(t *testing.T, result <-chan error) error {
 	}
 }
 
+// TestBridgeTellsTheTunnelEachAnswerFirst: the tunnel learns an answer's
+// ICE credentials before the page sees the answer, since the browser checks
+// through the tunnel with them as soon as it has it; an answer the relay
+// rejects teaches it nothing.
+func TestBridgeTellsTheTunnelEachAnswerFirst(t *testing.T) {
+	b, s, ctx := testBridge(t)
+	answers := make(chan string, 4)
+	b.answered = func(sdp string) { answers <- sdp }
+	agent := newFakeAgent()
+	result, _ := runBridge(ctx, b, agent)
+	pg := openPage(t, s)
+	pg.recv()
+
+	sdp := iceAnswer("agentufrag", "agentpasswordagentpasswo")
+	agent.in <- protocol.Message{Type: protocol.TypeAnswer, SDP: sdp}
+	if m := pg.recv(); m.Type != protocol.TypeAnswer {
+		t.Fatalf("page got %+v, want the answer", m)
+	}
+	select {
+	case got := <-answers:
+		if got != sdp {
+			t.Fatalf("the tunnel got %q", got)
+		}
+	default:
+		t.Fatal("the page had the answer before the tunnel")
+	}
+
+	agent.in <- protocol.Message{Type: protocol.TypeAnswer, SDP: strings.Replace(sdp, "AB:CD", "EF:01", 1)}
+	if err := waitResult(t, result); !errors.Is(err, relay.ErrFingerprintChanged) {
+		t.Fatalf("run: %v, want the fingerprint change", err)
+	}
+	if len(answers) > 0 {
+		t.Fatal("the tunnel took the credentials of an answer the relay refused")
+	}
+}
+
 func TestBridgeRelaysAndSurvivesAnAgentConnection(t *testing.T) {
 	b, s, ctx := testBridge(t)
 	agent := newFakeAgent()

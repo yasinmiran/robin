@@ -51,6 +51,9 @@ type bridge struct {
 	relay  *relay.Relay
 	config protocol.Config
 	log    *slog.Logger
+	// answered, if set, gets the SDP of each answer the relay accepts,
+	// before the page does.
+	answered func(sdp string)
 
 	mu    sync.Mutex
 	cur   *web.Browser
@@ -212,6 +215,9 @@ func (b *bridge) fromAgent(ctx context.Context, agent signaling) error {
 			// A fingerprint change means something other than our agent is
 			// answering. End the session rather than connect the page to it.
 			return err
+		}
+		if m.Type == protocol.TypeAnswer && b.answered != nil {
+			b.answered(m.SDP)
 		}
 		b.mu.Lock()
 		br := b.cur

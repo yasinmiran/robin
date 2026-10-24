@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -203,6 +202,7 @@ func Run(ctx context.Context, o Options) (err error) {
 	config := protocol.Config{ICEServers: iceServers(start.STUN), HiDPI: o.HiDPI, Keep: ready.Keep}
 	config.Mic, config.Camera = offeredDevices(ready)
 	b := newBridge(ag.conn, relay.New(relay.Policy{Transport: o.Transport, TunnelPort: t.Port()}), config, log)
+	b.answered = t.answered
 	go b.accept(ctx, srv)
 	defer b.close()
 
@@ -887,99 +887,4 @@ func endSession(ctx context.Context, m *sshmux.Master, path, id string) error {
 		return fmt.Errorf("%w: %v", errNoSession, err)
 	}
 	return err
-}
-
-// tunnel is the client end of the ICE-TCP fallback: a loopback TCP listener
-// whose connections are spliced into an SSH forward to the agent's listener.
-// The listener lives as long as the session; the forward is remade on each
-// SSH connection, so the port the browser was told never changes.
-type tunnel struct {
-	ln  net.Listener
-	log *slog.Logger
-
-	mu  sync.Mutex
-	fwd *sshmux.Forward // nil while there is none
-}
-
-// openTunnel sets the tunnel up for transport: none for Direct, and for
-// the others the listener plus the forward over m, where a forward that
-// fails is an error only when the tunnel is all the user allowed.
-func openTunnel(ctx context.Context, m *sshmux.Master, remote string, transport relay.Transport, log *slog.Logger) (*tunnel, error) {
-	t := &tunnel{log: log}
-	if remote == "" || transport == relay.Direct {
-		return t, nil
-	}
-	ln, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		return nil, err
-	}
-	t.ln = ln
-	go func() {
-		for {
-			c, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			go t.splice(c)
-		}
-	}()
-	if err := t.forward(ctx, m, remote); err != nil {
-		if transport == relay.Tunnel {
-			ln.Close()
-			return nil, err
-		}
-		log.Warn("SSH tunnel unavailable; direct UDP only", "err", err)
-	}
-	return t, nil
-}
-
-// forward points the tunnel at remote through m.
-func (t *tunnel) forward(ctx context.Context, m *sshmux.Master, remote string) error {
-	if t.ln == nil {
-		return nil
-	}
-	fwd, err := m.Forward(ctx, remote)
-	if err != nil {
-		return fmt.Errorf("forward ICE-TCP over SSH: %w", err)
-	}
-	t.mu.Lock()
-	t.fwd = fwd
-	t.mu.Unlock()
-	return nil
-}
-
-// Port is the loopback port the browser's tunnel candidate names, or 0
-// without a tunnel.
-func (t *tunnel) Port() int {
-	if t.ln == nil {
-		return 0
-	}
-	return t.ln.Addr().(*net.TCPAddr).Port
-}
-
-func (t *tunnel) Close() error {
-	if t.ln == nil {
-		return nil
-	}
-	return t.ln.Close()
-}
-
-func (t *tunnel) splice(c net.Conn) {
-	defer c.Close()
-	t.mu.Lock()
-	fwd := t.fwd
-	t.mu.Unlock()
-	if fwd == nil {
-		return
-	}
-	u, err := fwd.Dial()
-	if err != nil {
-		t.log.Warn("tunnel dial", "err", err)
-		return
-	}
-	defer u.Close()
-	done := make(chan struct{}, 2)
-	go func() { io.Copy(u, c); done <- struct{}{} }()
-	go func() { io.Copy(c, u); done <- struct{}{} }()
-	<-done
 }
