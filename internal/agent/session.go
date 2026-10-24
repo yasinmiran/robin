@@ -326,6 +326,7 @@ func (s *session) currentPeer() (*peer.Peer, error) {
 			}
 		},
 		Control: s.control,
+		Bulk:    s.bulk,
 		ControlOpen: func() {
 			s.sendCurrentCursor()
 			s.sendMonitors()
@@ -361,46 +362,50 @@ func (s *session) closePeer() {
 	p.Close()
 }
 
-func (s *session) control(m protocol.Control) {
-	switch m.T {
-	case protocol.ControlKey, protocol.ControlMove, protocol.ControlButton, protocol.ControlWheel, protocol.ControlRelease:
-		if err := s.desk.Input(s.stream.toDesktop(m)); err != nil {
-			s.log.Debug("input", "err", err)
-		}
-	case protocol.ControlResize:
-		w, h := fit(m.W, m.H, s.start.MaxWidth, s.start.MaxHeight)
-		if w <= 0 || h <= 0 {
-			return
-		}
-		gw, gh, err := s.desk.Resize(w, h)
-		switch {
-		case errors.Is(err, desktop.ErrFixedSize):
-			// An attached desktop keeps its size; the page scales the video.
-			return
-		case err != nil:
-			s.log.Warn("resize", "w", w, "h", h, "err", err)
-			return
-		}
-		s.log.Info("resized", "w", gw, "h", gh)
-		s.stream.requestKeyframe()
-	case protocol.ControlMonitor:
-		mm, ok := s.desk.(desktop.MultiMonitor)
-		if !ok {
-			return
-		}
-		if err := mm.ShowMonitor(m.Monitor); err != nil {
-			s.log.Warn("show monitor", "err", err)
-			return
-		}
-		s.log.Info("showing monitor", "monitor", m.Monitor)
-	case protocol.ControlClipboard:
-		if len(m.Text) > clipboardSize {
-			s.log.Warn("clipboard from browser too large", "bytes", len(m.Text))
-			return
-		}
-		if err := s.desk.SetClipboard(m.Text); err != nil {
-			s.log.Warn("set clipboard", "err", err)
-		}
+// applyInput takes key, pointer, wheel and release messages.
+func (s *session) applyInput(m protocol.Control) {
+	if err := s.desk.Input(s.stream.toDesktop(m)); err != nil {
+		s.log.Debug("input", "err", err)
+	}
+}
+
+func (s *session) applyResize(m protocol.Control) {
+	w, h := fit(m.W, m.H, s.start.MaxWidth, s.start.MaxHeight)
+	if w <= 0 || h <= 0 {
+		return
+	}
+	gw, gh, err := s.desk.Resize(w, h)
+	switch {
+	case errors.Is(err, desktop.ErrFixedSize):
+		// An attached desktop keeps its size; the page scales the video.
+		return
+	case err != nil:
+		s.log.Warn("resize", "w", w, "h", h, "err", err)
+		return
+	}
+	s.log.Info("resized", "w", gw, "h", gh)
+	s.stream.requestKeyframe()
+}
+
+func (s *session) applyMonitor(m protocol.Control) {
+	mm, ok := s.desk.(desktop.MultiMonitor)
+	if !ok {
+		return
+	}
+	if err := mm.ShowMonitor(m.Monitor); err != nil {
+		s.log.Warn("show monitor", "err", err)
+		return
+	}
+	s.log.Info("showing monitor", "monitor", m.Monitor)
+}
+
+func (s *session) applyClipboard(m protocol.Control) {
+	if len(m.Text) > clipboardSize {
+		s.log.Warn("clipboard from browser too large", "bytes", len(m.Text))
+		return
+	}
+	if err := s.desk.SetClipboard(m.Text); err != nil {
+		s.log.Warn("set clipboard", "err", err)
 	}
 }
 
