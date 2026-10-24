@@ -20,6 +20,7 @@ import (
 	"github.com/pion/webrtc/v4"
 
 	"github.com/yasinmiran/robin/internal/agent/desktop"
+	"github.com/yasinmiran/robin/internal/agent/yuv"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
@@ -64,12 +65,30 @@ type tileBrowser struct {
 	batches   chan protocol.TileBatch
 }
 
+// skippingEncoder drops every third frame, as rate control does when it
+// skips one.
+type skippingEncoder struct{ n *atomic.Int64 }
+
+func (e skippingEncoder) Encode(*yuv.I420, time.Duration, bool) ([]byte, error) {
+	if e.n.Add(1)%3 == 0 {
+		return nil, nil
+	}
+	return []byte{0, 0, 0, 1, 0x65, 0x88, 0x84, 0x21}, nil
+}
+func (skippingEncoder) SetBitrate(int) error { return nil }
+func (skippingEncoder) Close() error         { return nil }
+
 // streamBrowser runs a stream of desk to a stand-in browser that takes
-// tiles.
-func streamBrowser(t *testing.T, desk desktop.Desktop) *tileBrowser {
+// tiles. skip makes the encoder drop every third frame.
+func streamBrowser(t *testing.T, desk desktop.Desktop, skip bool) *tileBrowser {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	var encodes atomic.Int64
-	open := func(int, int, int, int) (Encoder, error) { return countingEncoder{&encodes}, nil }
+	open := func(int, int, int, int) (Encoder, error) {
+		if skip {
+			return skippingEncoder{&encodes}, nil
+		}
+		return countingEncoder{&encodes}, nil
+	}
 	s := testSession(desk)
 	s.stream = newStream(desk, 60, 1280, 720, open, log)
 	s.stream.refresh = 50 * time.Millisecond
@@ -184,11 +203,21 @@ func (b *tileBrowser) batch() protocol.TileBatch {
 }
 
 // TestStreamSendsTiles runs tiles end to end over a real peer: the page
-// asks, every frame it receives has a manifest, a still screen arrives
-// sharp and exact, a change is named, and asking them off stops it all.
+// asks, every frame it receives has a manifest of its own, a still screen
+// arrives sharp and exact, a change is named, and asking them off stops it
+// all. With an encoder that drops frames, a dropped frame's timestamp is
+// spent, so no two manifests name the same one.
 func TestStreamSendsTiles(t *testing.T) {
+	for _, skip := range []bool{false, true} {
+		t.Run(map[bool]string{false: "every frame encoded", true: "frames dropped"}[skip], func(t *testing.T) {
+			testStreamSendsTiles(t, skip)
+		})
+	}
+}
+
+func testStreamSendsTiles(t *testing.T, skip bool) {
 	desk := &paintDesktop{frame: tileFrame(128, 64)}
-	b := streamBrowser(t, desk)
+	b := streamBrowser(t, desk, skip)
 	b.ask(true)
 	b.wait("the answer", func() bool { return len(b.answers) > 0 })
 	if a := b.answers[0]; !a.On || a.Unsupported != "" {
@@ -267,7 +296,7 @@ func TestStreamSendsTiles(t *testing.T) {
 // A desktop whose frames come already in 4:2:0 says so, and sends nothing.
 func TestStreamRefusesTilesOnI420(t *testing.T) {
 	f := &desktop.Frame{Width: 64, Height: 64, Stride: 64, Pix: make([]byte, 64*64*3/2), Format: desktop.I420}
-	b := streamBrowser(t, &paintDesktop{frame: f})
+	b := streamBrowser(t, &paintDesktop{frame: f}, false)
 	b.ask(true)
 	b.wait("the answer", func() bool { return len(b.answers) > 0 })
 	if a := b.answers[0]; a.On || a.Unsupported != errNoTiles {

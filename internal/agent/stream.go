@@ -118,8 +118,11 @@ func (s *stream) run(ctx context.Context) {
 		began          = time.Now()
 		lastWrite      time.Time
 		lastKey        time.Time
-		sharp          = newTiles(s.log)
-		sharpFor       sharpState
+		// lastClock is when the RTP clock last moved: a frame written, or
+		// one spent unwritten.
+		lastClock time.Time
+		sharp     = newTiles(s.log)
+		sharpFor  sharpState
 	)
 	closeEncoder := func() {
 		if enc != nil {
@@ -156,8 +159,34 @@ func (s *stream) run(ctx context.Context) {
 			}
 			continue
 		}
+		// The sample duration advances the RTP clock, so it must be the real
+		// gap since the previous frame, not the nominal frame interval.
+		d := interval
+		if !lastClock.IsZero() {
+			d = min(max(now.Sub(lastClock), interval/2), time.Second)
+		}
+		// The manifest goes out before the frame is converted and encoded, a
+		// head start on the frame's packets. A frame that then never goes
+		// out still spends its timestamp, so no later frame shares it and
+		// a manifest the page holds always covers the whole frame.
+		rtp, manifest := uint32(0), false
 		if tiles {
 			sharp.update(f, now)
+			if rtp, manifest = p.NextFrameRTP(); manifest {
+				if err := p.SendControl(sharp.manifest(rtp)); err != nil {
+					// The page must never see a later manifest without
+					// this one: a new grid drops whatever it holds.
+					s.log.Debug("tile manifest", "err", err)
+					sharp.reset()
+					manifest = false
+				}
+			}
+		}
+		spend := func() {
+			if manifest {
+				p.WriteFrame(nil, d)
+				lastClock = now
+			}
 		}
 		w, h := f.Width&^1, f.Height&^1
 		// An I420 desktop already delivers frames at the size it was asked for.
@@ -170,6 +199,7 @@ func (s *stream) run(ctx context.Context) {
 			br := s.bitrate.Load()
 			if enc, err = s.newEncoder(w, h, s.fps, int(br)); err != nil {
 				s.log.Error("encoder", "w", w, "h", h, "err", err)
+				spend()
 				continue
 			}
 			appliedBitrate = br
@@ -201,6 +231,7 @@ func (s *stream) run(ctx context.Context) {
 		au, err := enc.Encode(img, now.Sub(began), force)
 		if err != nil {
 			s.log.Warn("encode", "err", err)
+			spend()
 			continue
 		}
 		if force {
@@ -214,30 +245,13 @@ func (s *stream) run(ctx context.Context) {
 		}
 		stale = len(au) == 0
 		if stale {
+			spend()
 			continue
-		}
-		// The sample duration advances the RTP clock, so it must be the real
-		// gap since the previous frame, not the nominal frame interval.
-		d := interval
-		if !lastWrite.IsZero() {
-			d = min(max(now.Sub(lastWrite), interval/2), time.Second)
-		}
-		rtp, manifest := uint32(0), false
-		if tiles {
-			if rtp, manifest = p.NextFrameRTP(); manifest {
-				if err := p.SendControl(sharp.manifest(rtp)); err != nil {
-					// The page must never see a later manifest without
-					// this one: a new grid drops whatever it holds.
-					s.log.Debug("tile manifest", "err", err)
-					sharp.reset()
-					manifest = false
-				}
-			}
 		}
 		if err := p.WriteFrame(au, d); err != nil {
 			s.log.Debug("write frame", "err", err)
 		}
-		lastWrite = now
+		lastWrite, lastClock = now, now
 		if manifest {
 			sharp.wrote(rtp)
 			sharp.cut(p, now)
