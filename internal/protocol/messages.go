@@ -244,9 +244,10 @@ type Control struct {
 	Monitors *Monitors `json:"monitors,omitempty"`
 	Monitor  string    `json:"monitor,omitempty"`
 
-	// On, from the browser, for ControlCurtain and ControlSilent. Private,
-	// from the agent.
-	On      bool     `json:"on,omitempty"`
+	// On is the position the browser asks for in ControlCurtain and
+	// ControlSilent.
+	On bool `json:"on,omitempty"`
+	// Private is the agent's state of a private session, in ControlPrivate.
 	Private *Private `json:"private,omitempty"`
 }
 

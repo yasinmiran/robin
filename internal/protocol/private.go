@@ -21,9 +21,11 @@ type Private struct {
 
 // PrivateSwitch is one switch of a private session.
 type PrivateSwitch struct {
+	// On says the switch is on now.
 	On bool `json:"on,omitempty"`
 	// Unsupported says why this desktop cannot do it at all.
 	Unsupported string `json:"unsupported,omitempty"`
-	// Error says why the last change failed.
+	// Error says why the last change failed or, while the switch is on,
+	// what it fails to hide.
 	Error string `json:"error,omitempty"`
 }
