@@ -1,13 +1,13 @@
-// Just enough of a DOM for files.js, clipboard.js, devicebar.js and keys.js
-// under node: elements that hold children, attributes and click listeners, a
-// window and a body, and animation frames on timers. installDom puts it on
-// globalThis.
+// Just enough of a DOM for files.js, clipboard.js, devicebar.js, keys.js
+// and input.js under node: elements that hold children, attributes, focus
+// and listeners, a window and a body, and animation frames on timers.
+// installDom puts it on globalThis.
 
 export class FakeElement extends EventTarget {
   children = [];
   dataset = {};
   classList = new Set(); // add and has, as a DOMTokenList has
-  #attrs = new Set();
+  #attrs = new Map();
 
   constructor(tag) {
     super();
@@ -24,7 +24,13 @@ export class FakeElement extends EventTarget {
 
   remove() {}
 
-  blur() {}
+  focus() {
+    document.activeElement = this;
+  }
+
+  blur() {
+    if (document.activeElement === this) document.activeElement = document.body;
+  }
 
   click() {
     this.dispatchEvent(new Event('click'));
@@ -34,12 +40,20 @@ export class FakeElement extends EventTarget {
     return this.#attrs.has(name);
   }
 
-  setAttribute(name) {
-    this.#attrs.add(name);
+  getAttribute(name) {
+    return this.#attrs.get(name) ?? null;
+  }
+
+  setAttribute(name, value = '') {
+    this.#attrs.set(name, String(value));
+  }
+
+  removeAttribute(name) {
+    this.#attrs.delete(name);
   }
 
   toggleAttribute(name, force = !this.#attrs.has(name)) {
-    if (force) this.#attrs.add(name);
+    if (force) this.#attrs.set(name, '');
     else this.#attrs.delete(name);
     return force;
   }
@@ -60,8 +74,10 @@ export function installDom() {
   const saved = [];
   const body = new FakeElement('body');
   globalThis.window = new EventTarget();
-  globalThis.document = {
+  globalThis.document = Object.assign(new EventTarget(), {
     body,
+    activeElement: body,
+    documentElement: new FakeElement('html'),
     createElement(tag) {
       const el = new FakeElement(tag);
       if (tag === 'a') el.addEventListener('click', () => saved.push({ name: el.download, href: el.href }));
@@ -69,7 +85,7 @@ export function installDom() {
     },
     createElementNS: (_, tag) => new FakeElement(tag),
     createTextNode: (textContent) => ({ textContent }),
-  };
+  });
   globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0);
   // The page's long timers, clearing rows and revoking URLs, must not keep
   // a finished test alive.
