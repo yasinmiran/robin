@@ -3,84 +3,55 @@
 package daemon
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"testing"
 	"time"
-	"unicode"
 
 	"github.com/yasinmiran/robin/internal/agent/agenttest"
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
-// strangerSocketEnv names the socket the stranger's side of a test dials.
-const strangerSocketEnv = "ROBIN_TEST_STRANGER_SOCKET"
-
-// hostile is what the stranger writes once connected: a message the
+// hostile is what a stranger writes once connected: a start message the
 // daemon would act on, behind escape sequences a terminal would.
-const hostile = "\x1b]0;robin\x07\x1b[2J" + `{"type":"start","start":{"version":2}}` + "\n"
+func hostile(t testing.TB) []byte {
+	b, err := json.Marshal(protocol.Message{Type: protocol.TypeStart, Start: &protocol.Start{Version: protocol.Version}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append([]byte("\x1b]0;robin\x07\x1b[2J"), append(b, '\n')...)
+}
 
-// strangerDial is the stranger's side: it dials the socket, sends hostile,
-// and prints what came of it for the test to read.
-func strangerDial() {
-	c, err := net.Dial("unix", os.Getenv(strangerSocketEnv))
+// strangerDial is the stranger's side: it dials sock, sends hostile, and
+// prints what came of it for the test to read.
+func strangerDial(t *testing.T, sock string) {
+	c, err := net.Dial("unix", sock)
 	if err != nil {
 		fmt.Printf("stranger: dial eacces=%v: %v\n", errors.Is(err, syscall.EACCES), err)
 		return
 	}
 	defer c.Close()
-	c.Write([]byte(hostile))
+	c.Write(hostile(t))
 	c.SetReadDeadline(time.Now().Add(10 * time.Second))
-	b, err := io.ReadAll(c)
-	fmt.Printf("stranger: read %d bytes: %v\n", len(b), err)
+	n, err := c.Read(make([]byte, 4096))
+	fmt.Printf("stranger: read %d bytes, hung up %v: %v\n", n, agenttest.HungUp(err), err)
 }
 
-// syncLog collects a logger's output while the test reads it.
-type syncLog struct {
-	mu sync.Mutex
-	b  bytes.Buffer
-}
-
-func (l *syncLog) Write(p []byte) (int, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.b.Write(p)
-}
-
-func (l *syncLog) String() string {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.b.String()
-}
-
-// terminalSafe fails the test when s holds anything a terminal would act
-// on: the daemon's log reaches the user's terminal through the proxy.
-func terminalSafe(t *testing.T, what, s string) {
-	t.Helper()
-	for _, r := range s {
-		if r != '\n' && (unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r)) {
-			t.Fatalf("%s holds %U: %q", what, r, s)
-		}
-	}
-}
-
-// TestAnotherUserCannotReachTheControlSocket: a second account on the
-// host is kept from the session's socket by its 0700 run directory, and
-// where that directory was opened up, by the peer check, which turns it
-// away before reading a byte. What the daemon logs of it, which the CLI
-// shows its user, holds nothing the stranger sent.
+// A second account on the host is kept from the session's socket by its
+// 0700 run directory, and where that directory was opened up, by the peer
+// check, which turns it away before reading a byte. What the daemon logs
+// of it, which the CLI shows its user, holds nothing the stranger sent.
 func TestAnotherUserCannotReachTheControlSocket(t *testing.T) {
-	if agenttest.IsStranger() {
-		strangerDial()
+	if sock := agenttest.StrangerSocket(); sock != "" {
+		strangerDial(t, sock)
 		return
 	}
 	s := agenttest.NewStranger(t)
@@ -88,14 +59,14 @@ func TestAnotherUserCannotReachTheControlSocket(t *testing.T) {
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	var logged syncLog
+	var logged agenttest.LockedBuffer
 	ln, err := Listen(dir, "a", slog.New(slog.NewTextHandler(&logged, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ln.Close()
 	sock := filepath.Join(dir, SocketFile)
-	dial := func() string { return s.RunTest(t, t.Name(), strangerSocketEnv+"="+sock) }
+	dial := func() string { return s.RunTest(t, t.Name(), sock) }
 
 	if out := dial(); !strings.Contains(out, "stranger: dial eacces=true") {
 		t.Fatalf("through the 0700 run directory:\n%s", out)
@@ -110,22 +81,16 @@ func TestAnotherUserCannotReachTheControlSocket(t *testing.T) {
 	if err := os.Chmod(sock, 0o666); err != nil {
 		t.Fatal(err)
 	}
-	if out := dial(); !strings.Contains(out, "stranger: read 0 bytes") {
+	if out := dial(); !strings.Contains(out, "stranger: read 0 bytes, hung up true") {
 		t.Fatalf("through an open run directory:\n%s", out)
 	}
+	// admit logs the refusal before it hangs up, and the stranger's run
+	// ended after that: the line is there already.
 	want := fmt.Sprintf("connection from uid %d, not %d", s.UID, os.Getuid())
-	deadline := time.Now().Add(5 * time.Second)
-	for !strings.Contains(logged.String(), want) {
-		if time.Now().After(deadline) {
-			t.Fatalf("the daemon's log does not say %q:\n%s", want, logged.String())
-		}
-		time.Sleep(20 * time.Millisecond)
+	if l := logged.String(); !strings.Contains(l, "controller refused") || !strings.Contains(l, want) || strings.Count(l, "\n") != 1 {
+		t.Fatalf("the daemon's log, want one line saying %q:\n%s", want, l)
 	}
-	// One line, the refusal: nothing of what the stranger sent was read.
-	if l := logged.String(); !strings.Contains(l, "controller refused") || strings.Count(l, "\n") != 1 {
-		t.Fatalf("the daemon's log:\n%s", l)
-	}
-	terminalSafe(t, "the daemon's log", logged.String())
+	agenttest.TerminalSafe(t, "the daemon's log", logged.String())
 
 	// The session's own user still gets through.
 	dialConn(t, dir)
@@ -136,8 +101,8 @@ func TestAnotherUserCannotReachTheControlSocket(t *testing.T) {
 	}
 }
 
-// TestListenRefusesAnotherUsersDirectory: a run directory that belongs to
-// someone else is no place for a session's socket, whatever its mode.
+// A run directory that belongs to someone else is no place for a
+// session's socket, whatever its mode.
 func TestListenRefusesAnotherUsersDirectory(t *testing.T) {
 	s := agenttest.NewStranger(t)
 	dir := filepath.Join(agenttest.OpenDir(t), "s1")

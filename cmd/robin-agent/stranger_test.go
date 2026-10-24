@@ -9,19 +9,18 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"unicode"
 
 	"github.com/yasinmiran/robin/internal/agent"
 	"github.com/yasinmiran/robin/internal/agent/agenttest"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
-// TestEndOfAnotherUsersSessionIsRefused: a second account's robin-agent
-// end, aimed at a kept session through a run link to its owner's run root
-// (the only way its end could name that session), cannot end it. The
-// owner's 0700 run root refuses it first; opened up, the kernel refuses
-// the signal. Either way the session lives on, the stranger hears why in
-// words its terminal shows as they are, and the owner's end still works.
+// A second account's robin-agent end, aimed at a kept session through a
+// run link to its owner's run root (the only way its end could name that
+// session), cannot end it. The owner's 0700 run root refuses it first;
+// opened up, the kernel refuses the signal. Either way the session lives
+// on, the stranger hears why in words its terminal shows as they are, and
+// the owner's end still works.
 func TestEndOfAnotherUsersSessionIsRefused(t *testing.T) {
 	needXvfb(t)
 	s := agenttest.NewStranger(t)
@@ -52,11 +51,7 @@ func TestEndOfAnotherUsersSessionIsRefused(t *testing.T) {
 		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 || !strings.Contains(string(out), want) {
 			t.Fatalf("the stranger's end %s: %v, want exit 1 saying %q:\n%s", why, err, want, out)
 		}
-		for _, r := range string(out) {
-			if r != '\n' && (unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r)) {
-				t.Fatalf("the stranger's end %s printed %U: %q", why, r, out)
-			}
-		}
+		agenttest.TerminalSafe(t, "what the stranger's end "+why+" printed", string(out))
 		if !alive(st.PID) {
 			t.Fatalf("the stranger's end %s ended the session", why)
 		}

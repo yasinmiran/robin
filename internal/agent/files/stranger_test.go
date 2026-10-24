@@ -3,7 +3,6 @@
 package files
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -21,13 +19,11 @@ import (
 	"github.com/yasinmiran/robin/internal/agent/agenttest"
 )
 
-// strangerSocketEnv names the socket the stranger's side of a test dials.
-const strangerSocketEnv = "ROBIN_TEST_STRANGER_SOCKET"
-
-// strangerOffer is the stranger's side: it offers its own executable under
-// a name that holds escapes, and prints what came of it for the test.
-func strangerOffer() {
-	c, err := net.DialUnix("unixpacket", nil, &net.UnixAddr{Name: os.Getenv(strangerSocketEnv), Net: "unixpacket"})
+// strangerOffer is the stranger's side: it offers its own executable at
+// sock under a name that holds escapes, and prints what came of it for the
+// test.
+func strangerOffer(sock string) {
+	c, err := net.DialUnix("unixpacket", nil, &net.UnixAddr{Name: sock, Net: "unixpacket"})
 	if err != nil {
 		fmt.Printf("stranger: dial eacces=%v: %v\n", errors.Is(err, syscall.EACCES), err)
 		return
@@ -46,35 +42,16 @@ func strangerOffer() {
 	}
 	c.SetReadDeadline(time.Now().Add(10 * time.Second))
 	n, err := c.Read(make([]byte, 4096))
-	fmt.Printf("stranger: read %d bytes: %v\n", n, err)
+	fmt.Printf("stranger: read %d bytes, hung up %v: %v\n", n, agenttest.HungUp(err), err)
 }
 
-// lockedLog collects a logger's output while the test reads it.
-type lockedLog struct {
-	mu sync.Mutex
-	b  bytes.Buffer
-}
-
-func (l *lockedLog) Write(p []byte) (int, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.b.Write(p)
-}
-
-func (l *lockedLog) String() string {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.b.String()
-}
-
-// TestAnotherUserCannotOfferFiles: a second account on the host is kept
-// from the offer socket by the session's 0700 run directory, and where
-// that directory was opened up, by the peer check: no offer reaches the
-// session, nothing is answered, and the log says only that a uid was
-// refused, never the names it sent.
+// A second account on the host is kept from the offer socket by the
+// session's 0700 run directory, and where that directory was opened up,
+// by the peer check: no offer reaches the session, nothing is answered,
+// and the log says only that a uid was refused, never the names it sent.
 func TestAnotherUserCannotOfferFiles(t *testing.T) {
-	if agenttest.IsStranger() {
-		strangerOffer()
+	if sock := agenttest.StrangerSocket(); sock != "" {
+		strangerOffer(sock)
 		return
 	}
 	s := agenttest.NewStranger(t)
@@ -83,7 +60,7 @@ func TestAnotherUserCannotOfferFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	sock := filepath.Join(dir, SocketName)
-	var logged lockedLog
+	var logged agenttest.LockedBuffer
 	l, err := Listen(sock, slog.New(slog.NewTextHandler(&logged, nil)))
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +72,7 @@ func TestAnotherUserCannotOfferFiles(t *testing.T) {
 		l.Close()
 		<-served
 	}()
-	offer := func() string { return s.RunTest(t, t.Name(), strangerSocketEnv+"="+sock) }
+	offer := func() string { return s.RunTest(t, t.Name(), sock) }
 
 	if out := offer(); !strings.Contains(out, "stranger: dial eacces=true") {
 		t.Fatalf("through the 0700 run directory:\n%s", out)
@@ -106,7 +83,7 @@ func TestAnotherUserCannotOfferFiles(t *testing.T) {
 	if err := os.Chmod(sock, 0o666); err != nil {
 		t.Fatal(err)
 	}
-	if out := offer(); !strings.Contains(out, "stranger: read 0 bytes") {
+	if out := offer(); !strings.Contains(out, "stranger: read 0 bytes, hung up true") {
 		t.Fatalf("through an open run directory:\n%s", out)
 	}
 	select {
@@ -118,5 +95,5 @@ func TestAnotherUserCannotOfferFiles(t *testing.T) {
 	if l := logged.String(); !strings.Contains(l, want) || strings.Count(l, "\n") != 1 || strings.Contains(l, "report.pdf") {
 		t.Fatalf("the log, want one line saying %q:\n%s", want, l)
 	}
-	terminalSafe(t, "the log", logged.String())
+	agenttest.TerminalSafe(t, "the log", logged.String())
 }

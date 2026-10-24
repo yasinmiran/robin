@@ -15,10 +15,10 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unicode"
 
 	"golang.org/x/sys/unix"
 
+	"github.com/yasinmiran/robin/internal/agent/agenttest"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
@@ -216,19 +216,6 @@ func TestSendRefusesWhatItCannotOffer(t *testing.T) {
 	}
 }
 
-// terminalSafe fails t when s holds anything that would act on a terminal
-// rather than show: control characters other than newlines, and the
-// invisible marks that reorder text.
-func terminalSafe(t *testing.T, what, s string) {
-	t.Helper()
-	for _, r := range s {
-		if r != '\n' && (unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r)) {
-			t.Errorf("%s holds %U: %q", what, r, s)
-			return
-		}
-	}
-}
-
 // A name that holds escapes is refused by the session, and robin-send
 // says so without sending the escapes to the terminal it runs in.
 func TestSendPrintsNamesSafely(t *testing.T) {
@@ -241,7 +228,7 @@ func TestSendPrintsNamesSafely(t *testing.T) {
 	if !errors.Is(got.err, ErrNotSaved) {
 		t.Errorf("Send = %v, want ErrNotSaved", got.err)
 	}
-	terminalSafe(t, "the report", got.out)
+	agenttest.TerminalSafe(t, "the report", got.out)
 	if !strings.Contains(got.out, `a\x1b]0;owned\ab\u202e.txt`) {
 		t.Errorf("the report %q does not show the name escaped", got.out)
 	}
@@ -253,7 +240,7 @@ func TestSendPrintsNamesSafely(t *testing.T) {
 		if err == nil {
 			t.Fatalf("Send of %s succeeded", what)
 		}
-		terminalSafe(t, "the error for "+what, err.Error())
+		agenttest.TerminalSafe(t, "the error for "+what, err.Error())
 	}
 }
 

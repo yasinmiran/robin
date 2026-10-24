@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/yasinmiran/robin/internal/agent"
+	"github.com/yasinmiran/robin/internal/agent/agenttest"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
@@ -187,8 +188,8 @@ func TestListenRefusesAnOpenDirectory(t *testing.T) {
 	}
 }
 
-// TestListenWhereTheSocketCannotBe: a directory in the socket's place,
-// which removing a stale socket cannot clear, fails Listen.
+// A directory in the socket's place, which removing a stale socket cannot
+// clear, fails Listen.
 func TestListenWhereTheSocketCannotBe(t *testing.T) {
 	dir := privateDir(t)
 	os.MkdirAll(filepath.Join(dir, SocketFile, "x"), 0o700)
@@ -197,10 +198,9 @@ func TestListenWhereTheSocketCannotBe(t *testing.T) {
 	}
 }
 
-// TestListenLogsToTheDefaultLogger: a daemon given no logger logs its
-// refusals to slog's default.
+// A daemon given no logger logs its refusals to slog's default.
 func TestListenLogsToTheDefaultLogger(t *testing.T) {
-	var logged syncLog
+	var logged agenttest.LockedBuffer
 	defer slog.SetDefault(slog.Default())
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
 	dir := privateDir(t)
