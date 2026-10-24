@@ -225,7 +225,9 @@ export class Keys {
     if (host) {
       e.pin = document.createElement('input');
       e.pin.type = 'checkbox';
-      e.pin.checked = Boolean(m?.host);
+      // A new macro stays on this host until unticked: what one host's
+      // session recorded should not play into every other.
+      e.pin.checked = m ? Boolean(m.host) : true;
       const pin = document.createElement('label');
       pin.className = 'pin';
       pin.title = `Show this macro only in sessions to ${host}, the host as typed`;
@@ -302,6 +304,8 @@ export class Keys {
       const li = document.createElement('li');
       const label = document.createElement('span');
       label.textContent = stepLabel(step);
+      // The label cuts long text short; the whole of it is a hover away.
+      if (step.text) li.title = step.text;
       const remove = button('×', `Remove step ${i + 1}`, () => this.#removeStep(i), 'remove', { keepFocus: true });
       remove.setAttribute('aria-label', `Remove step ${i + 1}, ${label.textContent}`);
       remove.tabIndex = i === e.at ? 0 : -1;

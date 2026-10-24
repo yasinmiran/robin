@@ -253,7 +253,6 @@ test('a new macro records keys that reach nothing else, then saves through the C
   assert.deepEqual(t.steps(), ['Ctrl+Alt+T', '“lsA”', 'Enter', 'Alt+Tab', '“from the clipboard and more”', '“echo hi⏎”', 'Wait 250 ms']);
   assert.equal(document.activeElement, t.removes()[5], 'the focus goes on to the step that took its place');
 
-  t.find((el) => el.type === 'checkbox').checked = true;
   t.click('Save');
   assert.equal(t.note().textContent, 'Saving…');
   assert.equal(t.note().dataset.tone, undefined);
@@ -263,7 +262,7 @@ test('a new macro records keys that reach nothing else, then saves through the C
   const m = signal.macroChange.put;
   assert.match(m.id, /^[A-Za-z0-9_-]{1,32}$/);
   assert.equal(m.name, 'Terminal');
-  assert.equal(m.host, 'alice@box');
+  assert.equal(m.host, 'alice@box', 'a new macro is pinned to the host it was made for');
   assert.deepEqual(m.steps, [
     { keys: [{ key: 'Control', code: 'ControlLeft' }, { key: 'Alt', code: 'AltLeft' }, { key: 't', code: 'KeyT' }] },
     { text: 'lsA' },
@@ -288,6 +287,31 @@ test('a new macro records keys that reach nothing else, then saves through the C
   assert.equal(t.note().hidden, true);
   assert.equal(t.button('Terminal').title, 'Play Terminal, only in sessions to alice@box');
   assert.ok(t.section.hasAttribute('data-pinned'), 'the section stays out after a save');
+});
+
+test('a macro is shared across hosts only once its pin is unticked', () => {
+  const t = setup({ host: 'box', list: [] });
+  t.click('New macro');
+  t.byClass('macro-name').value = 'Everywhere';
+  t.byClass('macro-text').value = 'uptime\n';
+  t.click('Add text');
+  t.click('Save');
+  assert.equal(t.signals.splice(0)[0].macroChange.put.host, 'box');
+  t.find((el) => el.type === 'checkbox').checked = false;
+  t.click('Save');
+  assert.equal(t.signals.splice(0)[0].macroChange.put.host, undefined);
+});
+
+test('a text step shows all of its text, past what its label holds', () => {
+  const t = setup(box());
+  t.click('New macro');
+  const long = `${'x'.repeat(40)}\n${'y'.repeat(159)}`;
+  t.byClass('macro-text').value = long;
+  t.click('Add text');
+  const li = t.byClass('steps').children[0];
+  assert.match(li.children[0].textContent, /…”$/);
+  assert.equal(li.title, long);
+  assert.match(li.children[1].getAttribute('aria-label'), /^Remove step 1, “x+…”$/);
 });
 
 test('the steps are one stop for Tab, walked with the arrows, removed with Delete', () => {
