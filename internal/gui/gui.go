@@ -129,11 +129,11 @@ func Run(ctx context.Context, o Options) (err error) {
 			return err
 		}
 	}
-	a, path, err := h.deployAgent(ctx)
+	a, err := agentbin.For(report.Arch)
 	if err != nil {
 		return err
 	}
-	resume, err := pickSession(o, report, a.Name())
+	resume, path, err := h.prepare(ctx, o, a)
 	if err != nil {
 		return err
 	}
@@ -325,21 +325,35 @@ func (h *host) close() {
 	}
 }
 
-// deployAgent puts this CLI's agent for the host's architecture in place and
-// returns it and its path there.
-func (h *host) deployAgent(ctx context.Context) (agentbin.Agent, string, error) {
-	a, err := agentbin.For(h.report.Arch)
-	if err != nil {
-		return agentbin.Agent{}, "", err
+// prepare decides which kept session, if any, to resume with agent a, and
+// only then puts a in place, since a CLI that refuses to resume must leave
+// the host as it found it.
+func (h *host) prepare(ctx context.Context, o Options, a agentbin.Agent) (resume, path string, err error) {
+	if resume, err = pickSession(o, h.report, a.Name()); err != nil {
+		return "", "", err
+	}
+	if path, err = h.deployAgent(ctx, a); err != nil {
+		return "", "", err
+	}
+	return resume, path, nil
+}
+
+// deployAgent puts agent a in place on the host and returns its path there.
+// The agents kept sessions run from stay beside it.
+func (h *host) deployAgent(ctx context.Context, a agentbin.Agent) (string, error) {
+	var inUse []string
+	for _, s := range h.report.Kept {
+		inUse = append(inUse, s.Agent)
 	}
 	path, err := deploy.Ensure(ctx, h.m, deploy.Target{
 		Dir: h.report.AgentDir, PresentHash: h.report.AgentHash(a.Name()), SHA256Tool: h.report.SHA256Tool,
+		InUse: inUse,
 	}, a)
 	if err != nil {
-		return agentbin.Agent{}, "", fmt.Errorf("deploy agent: %w", err)
+		return "", fmt.Errorf("deploy agent: %w", err)
 	}
 	h.log.Info("agent in place", "path", path)
-	return a, path, nil
+	return path, nil
 }
 
 // end finishes session id on purpose: bye over the connection when it is

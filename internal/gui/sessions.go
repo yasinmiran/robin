@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/yasinmiran/robin/internal/agentbin"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
@@ -49,7 +50,11 @@ func End(ctx context.Context, o Options, id string) (err error) {
 	if err != nil {
 		return err
 	}
-	_, path, err := h.deployAgent(ctx)
+	a, err := agentbin.For(h.report.Arch)
+	if err != nil {
+		return err
+	}
+	path, err := h.deployAgent(ctx, a)
 	if err != nil {
 		return err
 	}

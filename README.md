@@ -76,8 +76,11 @@ connection as before. Name a `--keep` and it is kept like any other.
 
 A resumed session is the same session: the agent on the host kept its
 identity, so the fingerprint the CLI pinned still holds, and a CLI that
-carries a different agent than the one running refuses to resume and says to
-run `robin end`, since its upload would have replaced the daemon's binary.
+carries a different agent than the one running refuses to resume, before it
+uploads anything, and says to run `robin end`, since the daemon runs code
+this CLI does not carry. Started beside it with `--new`, the upload leaves
+the kept session's agent in place, so `robin-send` in that desktop keeps
+working.
 
 With `--attach`, nothing new is started: the agent streams a desktop that is
 already running on the host, usually the one you are logged in to at the

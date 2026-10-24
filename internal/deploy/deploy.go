@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -30,6 +31,8 @@ type Target struct {
 	// SHA256Tool is the host's hashing tool: sha256sum, shasum, openssl,
 	// busybox, or empty when the host has none.
 	SHA256Tool string
+	// InUse names the agent files kept sessions run from.
+	InUse []string
 }
 
 // Host is what Ensure needs from the connection; *sshmux.Master provides it.
@@ -41,8 +44,9 @@ type Host interface {
 // Ensure makes sure the agent a is installed in t.Dir and returns its path on
 // the host. It uploads under a temporary name, verifies the SHA-256 on the
 // host, and renames into place, so a partial or corrupt upload is never
-// installed. Older agents in the directory are removed; one that is running
-// keeps running, since Linux keeps an unlinked executable alive.
+// installed. Older agents in the directory are removed, except those in
+// t.InUse, which a kept desktop's robin-send links to; one that is running
+// keeps running either way, since Linux keeps an unlinked executable alive.
 func Ensure(ctx context.Context, h Host, t Target, a agentbin.Agent) (string, error) {
 	if !path.IsAbs(t.Dir) {
 		return "", fmt.Errorf("deploy: agent dir %q is not absolute", t.Dir)
@@ -68,7 +72,7 @@ func Ensure(ctx context.Context, h Host, t Target, a agentbin.Agent) (string, er
 		_ = c.Remove(tmp)
 		return "", err
 	}
-	removeStale(c, t.Dir, a.Name())
+	removeStale(c, t.Dir, append([]string{a.Name()}, t.InUse...))
 	return final, nil
 }
 
@@ -199,17 +203,17 @@ func parseHash(out []byte) (string, bool) {
 	return sum, true
 }
 
-// removeStale deletes other agent versions, and temporary files that an
-// interrupted upload left behind. Fresh temporary files may belong to an
-// upload in progress, so they stay.
-func removeStale(c *sftp.Client, dir, keep string) {
+// removeStale deletes agent versions other than keep, and temporary files
+// that an interrupted upload left behind. Fresh temporary files may belong
+// to an upload in progress, so they stay.
+func removeStale(c *sftp.Client, dir string, keep []string) {
 	entries, err := c.ReadDir(dir)
 	if err != nil {
 		return
 	}
 	for _, e := range entries {
 		name := e.Name()
-		if name == keep || !e.Mode().IsRegular() {
+		if slices.Contains(keep, name) || !e.Mode().IsRegular() {
 			continue
 		}
 		old := strings.HasPrefix(name, agentbin.NamePrefix)

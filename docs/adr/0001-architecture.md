@@ -795,7 +795,11 @@ keeps the reflex and moves it one process out.
   `session.json` records the agent's file name, which is its content hash,
   and a CLI whose embedded agent differs refuses to resume and says to run
   `robin end`. The version string is `dev` on every local build and would
-  not have caught that.
+  not have caught that. The refusal comes before the upload, which used to
+  run first and unlink the kept daemon's binary even though the CLI then
+  left the session alone, and the upload spares every agent a kept
+  session runs from: the desktop's `robin-send` is a symlink to it, and
+  dangled after a `--new` beside the session.
 - The CLI: the relay, the page server, the tunnel's loopback listener and
   the page itself outlive the SSH connection; only the master, the proxy
   and the forward are remade. The page is told `reconnecting`, drops its
