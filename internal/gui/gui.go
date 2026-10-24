@@ -234,7 +234,8 @@ func Run(ctx context.Context, o Options) (err error) {
 		b.reconnecting()
 		fmt.Fprintf(o.Stderr, "robin: %v; reconnecting to %s until %s (Ctrl+C ends the session)\n", err, o.Dest, until.Format(time.Kitchen))
 		ag.stop()
-		if ag, ready, err = h.reconnect(ctx, path, ready.ID, until, t); err != nil {
+		if ag, ready, err = h.reconnect(ctx, path, ready.ID, until, t); ag == nil {
+			// Failed, or Ctrl+C during the redial ended the session.
 			return err
 		}
 		fmt.Fprintf(o.Stderr, "robin: reconnected to %s\n", o.Dest)
@@ -395,7 +396,8 @@ func dial(ctx context.Context, o Options) (*sshmux.Master, error) {
 
 // reconnect redials the host with backoff and resumes session id, until it
 // works, ctx ends or the keep window closes at until. The tunnel is
-// forwarded again over the new connection.
+// forwarded again over the new connection. When ctx ends first it ends the
+// session instead and returns no agent, with the end's error.
 func (h *host) reconnect(ctx context.Context, path, id string, until time.Time, t *tunnel) (*agentProc, *protocol.Ready, error) {
 	backoff := reconnectFirst
 	for attempt := 1; ; attempt++ {

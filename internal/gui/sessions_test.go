@@ -201,3 +201,23 @@ func TestAbandonEndsTheDesktopAndKeepsTheError(t *testing.T) {
 		t.Fatalf("the host ran %q", b)
 	}
 }
+
+// TestReconnectEndsTheSessionWhenItsContextEnds: Ctrl+C during a redial
+// ends the kept desktop over a fresh connection, and reconnect returns no
+// agent to go on with, which is how Run tells it from a reconnect.
+func TestReconnectEndsTheSessionWhenItsContextEnds(t *testing.T) {
+	o, _, _ := localhost(t)
+	o, log := o.fill()
+	h := &host{o: o, log: log}
+	defer h.close()
+	path, calls := endScript(t, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ag, ready, err := h.reconnect(ctx, path, "ab12", time.Now().Add(time.Hour), &tunnel{log: log})
+	if ag != nil || ready != nil || err != nil {
+		t.Fatalf("reconnect after Ctrl+C: %v, %v, %v; want no agent and no error", ag, ready, err)
+	}
+	if b, _ := os.ReadFile(calls); strings.TrimSpace(string(b)) != "end ab12" {
+		t.Fatalf("the host ran %q, want the end command", b)
+	}
+}
