@@ -8,12 +8,16 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/pion/stun/v4"
+
+	"github.com/yasinmiran/robin/internal/relay"
+	"github.com/yasinmiran/robin/internal/sshmux"
 )
 
 // fakeForward is the SSH forward's local end, a unix socket whose listener
@@ -141,6 +145,7 @@ func TestTunnelRefusesStrangers(t *testing.T) {
 	refused(t, "a guessed password", dialTunnel(t, tun, framedCheck(t, ufrag+":brws", "guessedpasswordguessedpa")))
 	refused(t, "not STUN", dialTunnel(t, tun, framed([]byte("GET / HTTP/1.1\r\nHost: x\r\n\r\n"))))
 	refused(t, "a frame over the agent's limit", dialTunnel(t, tun, append([]byte{0xff, 0xff}, make([]byte, 600)...)))
+	refused(t, "a frame cut short", dialTunnel(t, tun, framedCheck(t, ufrag+":brws", pwd)[:40]))
 	select {
 	case <-accepted:
 		t.Fatal("a stranger reached the forward")
@@ -200,4 +205,43 @@ func TestTunnelOutlivesAFailedAccept(t *testing.T) {
 	check := framedCheck(t, "agentufrag:brws", "agentpasswordagentpasswo")
 	dialTunnel(t, tun, check)
 	spliced(t, accepted, check)
+}
+
+// TestTunnelWithoutAForward: a check that passes while the forward is gone,
+// as between two SSH connections, is dropped like any other.
+func TestTunnelWithoutAForward(t *testing.T) {
+	tun := &tunnel{ln: loopback(t), log: slog.New(slog.DiscardHandler), firstCheck: time.Second,
+		fwd: fakeForward{filepath.Join(t.TempDir(), "gone.sock")}}
+	go tun.serve()
+	defer tun.Close()
+	tun.answered(iceAnswer("agentufrag", "agentpasswordagentpasswo"))
+	refused(t, "a check with no forward to take it", dialTunnel(t, tun, framedCheck(t, "agentufrag:brws", "agentpasswordagentpasswo")))
+}
+
+// TestOpenTunnel: Direct sets up no tunnel, and a forward that fails is
+// fatal only when the tunnel is the only transport allowed.
+func TestOpenTunnel(t *testing.T) {
+	log := slog.New(slog.DiscardHandler)
+	m, err := sshmux.Dial(t.Context(), "host", sshmux.Options{NoMux: true, Stderr: io.Discard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+
+	tun, err := openTunnel(t.Context(), m, "127.0.0.1:4000", relay.Direct, log)
+	if err != nil || tun.Port() != 0 || tun.Close() != nil || tun.forward(t.Context(), m, "127.0.0.1:4000") != nil {
+		t.Fatalf("Direct: %v, port %d; want no tunnel", err, tun.Port())
+	}
+
+	// A malformed target fails the forward before any ssh runs.
+	if _, err := openTunnel(t.Context(), m, "a:b:c", relay.Tunnel, log); err == nil || !strings.Contains(err.Error(), "forward ICE-TCP over SSH") {
+		t.Fatalf("Tunnel with a forward that fails: %v", err)
+	}
+	tun, err = openTunnel(t.Context(), m, "a:b:c", relay.Auto, log)
+	if err != nil || tun.Port() == 0 {
+		t.Fatalf("Auto with a forward that fails: %v, port %d; want the listener, direct UDP beside it", err, tun.Port())
+	}
+	if err := tun.Close(); err != nil {
+		t.Fatal(err)
+	}
 }
