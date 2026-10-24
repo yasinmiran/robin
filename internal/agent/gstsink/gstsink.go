@@ -6,8 +6,8 @@
 //
 // The child dies with the agent: it has its own process group, Pdeathsig,
 // no inherited stdout, and Close stops it. A child that exits on its own is
-// started again, because pipewiresink in PipeWire 1.4 quits when the last
-// program reading its node lets go.
+// started again, because GStreamer 1.26's pipewiresink quits when a program
+// reading its video node lets go.
 package gstsink
 
 import (
@@ -35,13 +35,14 @@ var (
 	// stopGrace is how long Close waits after closing stdin, the pipeline's
 	// end of stream, before it kills the child.
 	stopGrace = 2 * time.Second
+	// stableAfter is how long a child must run for its exit to count as the
+	// pipeline having worked rather than failed.
+	stableAfter = 5 * time.Second
 )
 
-// maxRestarts in restartWindow, and the sink gives up.
-const (
-	maxRestarts   = 10
-	restartWindow = time.Minute
-)
+// maxQuickExits children in a row that exit within stableAfter, and the
+// sink gives up.
+const maxQuickExits = 5
 
 // ErrClosed is what Write returns once Close has been called.
 var ErrClosed = errors.New("gstsink: closed")
@@ -61,20 +62,20 @@ type Sink struct {
 	o    Options
 	log  *slog.Logger
 
-	mu       sync.Mutex
-	cur      *child // nil while a dead child is being replaced
-	closed   bool
-	err      error // why the sink gave up
-	restarts []time.Time
-	done     chan struct{} // closed once the supervisor has stopped
+	mu     sync.Mutex
+	cur    *child // nil while a dead child is being replaced
+	closed bool
+	err    error         // why the sink gave up
+	done   chan struct{} // closed once the supervisor has stopped
 }
 
 type child struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stderr *tail.Buffer
-	exited chan struct{}
-	err    error // valid once exited is closed
+	cmd     *exec.Cmd
+	stdin   io.WriteCloser
+	stderr  *tail.Buffer
+	started time.Time
+	exited  chan struct{}
+	err     error // valid once exited is closed
 }
 
 // Start runs gst-launch-1.0 with args and returns once the pipeline has
@@ -99,7 +100,7 @@ func (s *Sink) spawn() (*child, error) {
 	cmd := exec.Command("gst-launch-1.0", s.args...)
 	cmd.Env = append(os.Environ(), s.o.Env...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
-	c := &child{cmd: cmd, stderr: &tail.Buffer{}, exited: make(chan struct{})}
+	c := &child{cmd: cmd, stderr: &tail.Buffer{}, started: time.Now(), exited: make(chan struct{})}
 	cmd.Stderr = c.stderr
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -124,10 +125,11 @@ func (s *Sink) spawn() (*child, error) {
 	}
 }
 
-// supervise replaces each child that exits before Close, until too many
-// have in restartWindow.
+// supervise replaces each child that exits before Close, until
+// maxQuickExits in a row have died young.
 func (s *Sink) supervise(c *child) {
 	defer close(s.done)
+	quick := 0
 	for {
 		<-c.exited
 		s.mu.Lock()
@@ -136,17 +138,17 @@ func (s *Sink) supervise(c *child) {
 			s.mu.Unlock()
 			return
 		}
-		now := time.Now()
-		for len(s.restarts) > 0 && now.Sub(s.restarts[0]) > restartWindow {
-			s.restarts = s.restarts[1:]
+		if time.Since(c.started) < stableAfter {
+			quick++
+		} else {
+			quick = 1
 		}
-		if len(s.restarts) >= maxRestarts {
-			s.err = fmt.Errorf("%s: gst-launch-1.0 exited %d times in %s, last: %s", s.o.Name, maxRestarts+1, restartWindow, c.reason())
+		if quick >= maxQuickExits {
+			s.err = fmt.Errorf("%s: gst-launch-1.0 exited %d times in a row, last: %s", s.o.Name, quick, c.reason())
 			s.mu.Unlock()
 			s.log.Warn("pipeline keeps exiting; giving up", "pipeline", s.o.Name, "err", s.err)
 			return
 		}
-		s.restarts = append(s.restarts, now)
 		s.mu.Unlock()
 		s.log.Info("pipeline exited; starting it again", "pipeline", s.o.Name, "why", c.reason())
 
