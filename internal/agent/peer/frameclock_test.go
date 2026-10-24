@@ -66,15 +66,36 @@ func TestNextFrameRTPIsTheFramesTimestamp(t *testing.T) {
 	}
 	const n = 400
 	want := make([]atomic.Uint32, n)
+	stop, wrote := make(chan struct{}), make(chan struct{})
 	go func() {
+		defer close(wrote)
+		pace := time.NewTicker(2 * time.Millisecond)
+		defer pace.Stop()
 		for i := range n {
 			ts, _ := p.NextFrameRTP()
 			want[i].Store(ts)
-			p.WriteFrame(frame(i), durations[i%len(durations)])
-			time.Sleep(2 * time.Millisecond)
+			if err := p.WriteFrame(frame(i), durations[i%len(durations)]); err != nil {
+				t.Errorf("write frame %d: %v", i, err)
+				return
+			}
+			select {
+			case <-pace.C:
+			case <-stop:
+				return
+			}
 		}
 	}()
-	tr := <-b.track
+	// The writer stops before the deferred Close.
+	defer func() {
+		close(stop)
+		<-wrote
+	}()
+	var tr *webrtc.TrackRemote
+	select {
+	case tr = <-b.track:
+	case <-time.After(15 * time.Second):
+		t.Fatal("no video track arrived")
+	}
 	checked := 0
 	deadline := time.Now().Add(20 * time.Second)
 	for checked < 100 && time.Now().Before(deadline) {

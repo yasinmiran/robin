@@ -42,7 +42,8 @@ func newVideoTrack() (*videoTrack, error) {
 	return &videoTrack{TrackLocalStaticSample: t, next: base}, nil
 }
 
-// Bind is the track's, under the clock's lock.
+// Bind binds the underlying track and starts the frame clock under the lock
+// write takes, so NextFrameRTP never sees one without the other.
 func (t *videoTrack) Bind(ctx webrtc.TrackLocalContext) (webrtc.RTPCodecParameters, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -66,11 +67,15 @@ func (t *videoTrack) write(annexB []byte, d time.Duration) error {
 	return err
 }
 
+// nextRTP returns the timestamp the next write will carry, and whether the
+// track is bound.
+func (t *videoTrack) nextRTP() (uint32, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.next, t.bound
+}
+
 // NextFrameRTP returns the RTP timestamp the next WriteFrame will carry. It
 // reports false while the browser has not been answered yet, when no frame
 // written reaches it.
-func (p *Peer) NextFrameRTP() (uint32, bool) {
-	p.track.mu.Lock()
-	defer p.track.mu.Unlock()
-	return p.track.next, p.track.bound
-}
+func (p *Peer) NextFrameRTP() (uint32, bool) { return p.track.nextRTP() }
