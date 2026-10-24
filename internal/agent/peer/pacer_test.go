@@ -1,7 +1,9 @@
 package peer
 
 import (
+	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -122,30 +124,101 @@ func TestPacerFollowsTheTarget(t *testing.T) {
 	}
 }
 
-func TestPacerRunsUntilClosed(t *testing.T) {
-	log := &sentLog{now: new(time.Time)}
-	p := newPacer(1_000_000)
-	p.AddStream(1, log.writer())
-	for i := range 20 {
-		p.Write(&rtp.Header{SSRC: 1, SequenceNumber: uint16(i)}, make([]byte, 1188), nil)
-	}
+// countingWriter counts the packets written through it, from any goroutine.
+func countingWriter(n *atomic.Int64) interceptor.RTPWriter {
+	return interceptor.RTPWriterFunc(func(h *rtp.Header, payload []byte, _ interceptor.Attributes) (int, error) {
+		n.Add(1)
+		return h.MarshalSize() + len(payload), nil
+	})
+}
+
+// waitDrained waits until the drain goroutine has emptied p's queue.
+func waitDrained(t *testing.T, p *pacer) {
+	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		p.mu.Lock()
 		left := len(p.queue)
 		p.mu.Unlock()
 		if left == 0 {
-			break
+			return
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("%d packets still queued after 2 s", left)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if err := p.Close(); err != nil {
-		t.Fatal(err)
+}
+
+func TestPacerRunsUntilClosed(t *testing.T) {
+	var sent atomic.Int64
+	p := newPacer(1_000_000)
+	p.AddStream(1, countingWriter(&sent))
+	for i := range 20 {
+		p.Write(&rtp.Header{SSRC: 1, SequenceNumber: uint16(i)}, make([]byte, 1188), nil)
+	}
+	waitDrained(t, p)
+	if n := sent.Load(); n != 20 {
+		t.Fatalf("%d of 20 packets sent", n)
 	}
 	if err := p.Close(); err != nil {
 		t.Fatal(err)
+	}
+	select {
+	case <-p.stopped:
+	default:
+		t.Fatal("Close returned before the drain goroutine did")
+	}
+	if err := p.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestPacerSleepsWhileIdle checks that the drain goroutine stops waking
+// once the queue is empty, and wakes again for the next burst.
+func TestPacerSleepsWhileIdle(t *testing.T) {
+	var reads, sent atomic.Int64
+	p := newPacerAt(1_000_000, func() time.Time {
+		reads.Add(1)
+		return time.Now()
+	}).start()
+	defer p.Close()
+	p.AddStream(1, countingWriter(&sent))
+	for burst := range 2 {
+		for i := range 20 {
+			p.Write(&rtp.Header{SSRC: 1, SequenceNumber: uint16(20*burst + i)}, make([]byte, 1188), nil)
+		}
+		waitDrained(t, p)
+		before := reads.Load()
+		time.Sleep(100 * time.Millisecond)
+		// A wake left over from the burst may cost one more drain; ticking
+		// on would read the clock about 50 times.
+		if n := reads.Load() - before; n > 2 {
+			t.Fatalf("burst %d: the clock was read %d times in 100 ms with nothing queued", burst, n)
+		}
+	}
+	if n := sent.Load(); n != 40 {
+		t.Fatalf("%d of 40 packets sent", n)
+	}
+}
+
+func TestPacerDropsItsQueueOnClose(t *testing.T) {
+	now := time.Unix(0, 0)
+	var sent atomic.Int64
+	p := newPacerAt(1_000_000, func() time.Time { return now })
+	p.AddStream(1, countingWriter(&sent))
+	for i := range 100 {
+		p.Write(&rtp.Header{SSRC: 1, SequenceNumber: uint16(i)}, make([]byte, 1188), nil)
+	}
+	early := sent.Load()
+	if err := p.Close(); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Second)
+	if p.drain() || sent.Load() != early {
+		t.Fatalf("%d packets sent after Close", sent.Load()-early)
+	}
+	if _, err := p.Write(&rtp.Header{SSRC: 1}, make([]byte, 10), nil); !errors.Is(err, errPacerClosed) {
+		t.Fatalf("Write after Close: %v", err)
 	}
 }

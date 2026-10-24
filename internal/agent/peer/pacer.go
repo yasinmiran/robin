@@ -1,6 +1,7 @@
 package peer
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -33,6 +34,9 @@ const (
 	pacingTick = 2 * time.Millisecond
 )
 
+// errPacerClosed is what Write returns once the pacer is closed.
+var errPacerClosed = errors.New("peer: pacer: closed")
+
 // pacer is the congestion controller's pacer: packets go out at once
 // while they fit in a small burst allowance and queue behind each other at
 // pacingFactor times the target beyond it, never for longer than
@@ -48,6 +52,8 @@ type pacer struct {
 	refill  time.Time
 	wake    chan struct{}
 	done    chan struct{}
+	// stopped is closed when run returns; nil for a pacer without it.
+	stopped chan struct{}
 	now     func() time.Time
 }
 
@@ -59,13 +65,11 @@ type pacedPacket struct {
 }
 
 func newPacer(initialBps int) *pacer {
-	p := newPacerAt(initialBps, time.Now)
-	go p.run()
-	return p
+	return newPacerAt(initialBps, time.Now).start()
 }
 
 // newPacerAt makes a pacer reading time from now, without its drain
-// goroutine; tests drain it with drain.
+// goroutine; tests drain it with drain, or start it.
 func newPacerAt(initialBps int, now func() time.Time) *pacer {
 	p := &pacer{
 		writers: map[uint32]interceptor.RTPWriter{},
@@ -83,6 +87,13 @@ func (p *pacer) SetTargetBitrate(bps int) {
 	defer p.mu.Unlock()
 	p.top(p.now())
 	p.rate = pacingFactor * float64(bps) / 8
+}
+
+// start runs the drain goroutine, which Close stops.
+func (p *pacer) start() *pacer {
+	p.stopped = make(chan struct{})
+	go p.run()
+	return p
 }
 
 func (p *pacer) burst() float64 { return p.rate * pacingBurst.Seconds() }
@@ -112,6 +123,11 @@ func (p *pacer) Write(header *rtp.Header, payload []byte, attrs interceptor.Attr
 	size := header.MarshalSize() + len(payload)
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	select {
+	case <-p.done:
+		return 0, errPacerClosed
+	default:
+	}
 	w, ok := p.writers[header.SSRC]
 	if !ok {
 		return 0, fmt.Errorf("peer: pacer: unknown SSRC %d", header.SSRC)
@@ -133,23 +149,34 @@ func (p *pacer) Write(header *rtp.Header, payload []byte, attrs interceptor.Attr
 	return size, nil
 }
 
+// run drains the queue every pacingTick while it holds packets, and sleeps
+// until Write queues one otherwise.
 func (p *pacer) run() {
+	defer close(p.stopped)
 	t := time.NewTicker(pacingTick)
-	defer t.Stop()
+	t.Stop()
 	for {
 		select {
 		case <-p.done:
 			return
 		case <-p.wake:
-		case <-t.C:
 		}
-		p.drain()
+		t.Reset(pacingTick)
+		for p.drain() {
+			select {
+			case <-p.done:
+				t.Stop()
+				return
+			case <-t.C:
+			}
+		}
+		t.Stop()
 	}
 }
 
 // drain sends what the allowance covers from the head of the queue, and
-// anything already due.
-func (p *pacer) drain() {
+// anything already due. It reports whether packets are left queued.
+func (p *pacer) drain() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := p.now()
@@ -158,7 +185,7 @@ func (p *pacer) drain() {
 		pp := &p.queue[0]
 		size := pp.header.MarshalSize() + len(pp.payload)
 		if p.tokens < float64(size) && now.Before(pp.due) {
-			return
+			return true
 		}
 		p.tokens = max(p.tokens-float64(size), 0)
 		p.queued -= size
@@ -168,16 +195,22 @@ func (p *pacer) drain() {
 		p.queue[0] = pacedPacket{}
 		p.queue = p.queue[1:]
 	}
+	return false
 }
 
-// Close stops draining; whatever is queued is dropped.
+// Close stops the pacer and returns once nothing more will go out:
+// whatever is queued is dropped, and a later Write fails.
 func (p *pacer) Close() error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	select {
 	case <-p.done:
 	default:
 		close(p.done)
+		p.queue, p.queued = nil, 0
+	}
+	p.mu.Unlock()
+	if p.stopped != nil {
+		<-p.stopped
 	}
 	return nil
 }
