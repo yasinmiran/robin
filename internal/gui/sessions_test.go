@@ -255,9 +255,8 @@ func TestAgentOutlivesCtrlC(t *testing.T) {
 		}
 	}
 	roundTrip("before")
-	if err := ag.proc.Signal(os.Interrupt); err != nil {
-		t.Fatal(err)
+	if err := sshtest.CtrlC(ag.proc); err != nil {
+		t.Fatalf("Ctrl+C: %v", err)
 	}
-	time.Sleep(300 * time.Millisecond)
 	roundTrip("after")
 }

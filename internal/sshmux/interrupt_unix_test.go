@@ -7,19 +7,16 @@ import (
 	"io"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/yasinmiran/robin/internal/sshmux/sshtest"
 )
 
-// ctrlC sends p the SIGINT a terminal's Ctrl+C sends every process in its
-// foreground group, and gives ssh the moment it would take to die of it.
+// ctrlC is Ctrl+C at a terminal for ssh p, which must shrug it off.
 func ctrlC(t *testing.T, p *os.Process) {
 	t.Helper()
-	if err := p.Signal(os.Interrupt); err != nil {
-		t.Fatalf("SIGINT: %v", err)
+	if err := sshtest.CtrlC(p); err != nil {
+		t.Fatalf("Ctrl+C: %v", err)
 	}
-	time.Sleep(300 * time.Millisecond)
 }
 
 // TestOwnConnectionsOutliveCtrlC: every ssh that holds a connection of its
