@@ -187,6 +187,47 @@ click instead, because a browser's clipboard has no way to hand a file on as
 a file, and the browser only takes what the host copies while the page has
 focus.
 
+## Keys and macros
+
+The Keys row of the status tab sends what your keyboard cannot get to the
+desktop: Ctrl+Alt+Delete, Alt+Tab, Alt+F4, Super, Ctrl+W, Ctrl+T, Ctrl+N,
+Ctrl+Q and Print Screen. Outside full screen the browser or your own
+system keeps these for itself (Ctrl+W closes the tab); in full screen
+Chrome's keyboard lock passes most of them on, and the row covers the rest
+and the other browsers. There are no Ctrl+Alt+F keys: on an attached
+desktop they would switch the host's console away from the session. Type
+clipboard reads this computer's clipboard when you click it and types the
+text as keys, up to 16 KiB, for prompts that take no paste: a lock screen,
+a VM console, a password dialog.
+
+Macros are your own. New macro opens an editor for a name and steps, each
+a chord, a run of text or a pause. Record keys takes chords as you press
+them, modifiers included, and sends none of them to the desktop until you
+stop; a click on a key in the Keys row while recording adds that key, which
+is how a macro gets Ctrl+W outside full screen. Text and pauses are added
+below. Click a macro to play it and again to stop it. It plays as the same
+key and text messages the keyboard sends, holds nothing down when it ends,
+and stops when the page loses the keyboard or the connection.
+
+The CLI keeps the macros, not the browser, since the page's address is a
+new port every session and the browser's storage for it goes with it. They
+live in one file, `macros.json` in your config directory, shared by every
+session on this computer:
+
+| Client | File |
+|---|---|
+| Linux | `$XDG_CONFIG_HOME/robin/macros.json`, else `~/.config/robin/macros.json` |
+| macOS | `~/Library/Application Support/robin/macros.json` |
+| Windows | `%AppData%\robin\macros.json` |
+
+A macro shows on every host unless you tick Only on in its editor, which
+pins it to the host argument as you typed it: `alice@box` and `box` are
+two hosts.
+Text in a macro is stored as plain text, and the editor says so where you
+type it. A file Robin cannot read, or one that breaks its rules, is
+reported in the terminal and in the page and left as it is; Robin saves no
+macro until it reads again.
+
 ## What the host needs
 
 Linux on x86_64 or arm64, an SSH server you can log in to, and for the
@@ -493,9 +534,10 @@ tests prove for each browser:
    portal on Wayland. Files, images and anything else too big for that
    channel travel in a transfer layer of their own, a data channel each and
    a SHA-256 checked at the far end.
-6. The CLI serves the page on loopback and relays offer, answer and
-   candidates between it and the agent, adding one passive TCP candidate that
-   leads into an SSH forward to the agent.
+6. The CLI serves the page on loopback, hands it the macros it keeps for
+   you, and relays offer, answer and candidates between it and the agent,
+   adding one passive TCP candidate that leads into an SSH forward to the
+   agent.
 
 The decisions behind each of these, and what measurement changed along the
 way, are in [docs/adr/0001-architecture.md](docs/adr/0001-architecture.md).
@@ -521,6 +563,21 @@ desktop, which leaves the desktop for `--keep`), and move files, within
 these bounds.
 A view-only Wayland grant takes the keyboard, the pointer and uploads away,
 and leaves the clipboard and the files the host offers.
+
+On your own computer the page can ask the CLI to write one file, your
+macros (see [Keys and macros](#keys-and-macros)), and nothing else. It
+names no path: the CLI writes `macros.json` in your config directory and
+nowhere else. The page asks for one change at a time, to add or replace
+one macro or to delete one, and the CLI checks it before writing: a name of
+up to 64 bytes of printable text, 1 to 100 steps, each a chord of up to 8
+keys, up to 16 KiB of text or a pause of up to 60 s, and at most 100 macros
+and 256 KiB in the file. It reads the file afresh for every change, refuses
+the change while the file does not read, and writes the whole file anew to
+a temporary file, 0600 in a 0700 directory, which it then renames into
+place. A macro pinned to another host is out of the page's reach: it can
+neither see, replace nor delete it. Within that, whatever drives the page
+can read the macros of this host and every unpinned one, text included,
+type them, and replace or delete them.
 
 Text from an input method or a soft keyboard types what keys could type:
 through spare keycodes on X11 and, on Wayland, as keysyms for ASCII and as
@@ -706,6 +763,11 @@ so the second lands as `(1)`, offer one from the host (`robin-send` typed
 in the spawned xterm, `robin-agent send` over ssh for the attached desktop)
 under a name full of markup that the page must show as text and save only
 on a click, and paste an image and HTML into the host's clipboard and back.
+`direct` then records a macro whose keys must not reach the xterm while
+recording, checks the CLI wrote `macros.json` 0600 in a 0700 directory,
+reloads the page, finds the macro and plays it into the xterm, sends
+Ctrl+W from the Keys row into a shell line, and, in Chrome, types the
+local clipboard there with Type clipboard.
 A fifth scenario, `wayland`,
 runs the same CLI and browser against the headless GNOME session of
 `make test-wayland` over sshd: `--attach auto` picks it, the CLI waits while
@@ -956,6 +1018,19 @@ verified against a Linux build.
 - The browser puts what the host copies on its own clipboard only while the
   page has focus; copied while you are in another window, it waits for the
   next copy.
+- Recording a macro takes only the keys the browser hands the page:
+  outside full screen Ctrl+W, Alt+Tab and the like never reach it, so click
+  them in the Keys row while recording instead.
+- A macro plays at its own pace: each chord is held 20 ms and steps are
+  30 ms apart, with no wait for the desktop beyond the pauses you add, so a
+  macro that opens a window needs a pause before it types into it.
+- Two sessions that change macros at the same moment can lose one of the
+  two changes. Each change reads the file afresh, so a change another
+  session made earlier is kept, but there is no lock between CLIs.
+- Type clipboard needs the browser to hand over the clipboard: Chrome asks
+  once, and Firefox and Safari show a Paste button of their own at each
+  click, which only Chrome's run of the tests covers. It types 16 KiB at
+  most.
 - Files and clipboard content travel unpaced against the video. On a
   3 Mbit/s link a 2 MiB transfer takes about 9 s, the picture drops to about
   1 Mbit/s meanwhile and needs another 7 to 9 s to get its rate back, and a

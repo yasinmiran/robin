@@ -1669,6 +1669,71 @@ Pion's read loop, and loading a module or waiting for `pw-record`'s output
 to appear takes up to a few hundred milliseconds that every data channel
 would otherwise wait out.
 
+### Key macros: kept by the CLI, played by the page as keys
+
+The page plays a macro through the controls the keyboard already uses: a
+chord's keys go down in order as `ControlKey` and up in reverse, text goes
+as `ControlText` in pieces of `MaxTextBytes`, and a pause waits in the
+page. The agent gained no message, and its typing lane keeps a text step
+ahead of the keys that follow it, as it does for an input method. Playing
+in the page also stops a macro where the keyboard would stop: when the
+window loses the keyboard, the moment `Input` releases every key, and when
+the control channel closes, where the agent's own release on a closed peer
+covers what the page can no longer send. Whatever the macro pressed is let
+go before it ends, so it never leaves a key down.
+
+A chord is held 20 ms and steps are 30 ms apart, so the desktop sees each
+chord pressed and let go; the macro does not wait for the desktop beyond
+the pauses in it. In the direct e2e scenario a recorded macro of 30 steps
+(a text step, 28 chords and Enter) had its file on the host 1.7 s after the
+click, against the 1.45 s its holds and gaps add up to, and Type clipboard
+of 250 characters, one `ControlText`, had its file there in 0.2 s.
+
+The CLI keeps the macros because the page cannot: its origin is
+`http://127.0.0.1:PORT` with a new port every session, and browser storage
+belongs to an origin, so whatever the page stored would be gone the next
+time. The CLI's home is stable: `macros.json` in `os.UserConfigDir()`, a
+path the page never names. The page asks for one change per message (put
+or delete one macro, by an ID the page made up) instead of sending its
+whole list, because two sessions to different hosts both show the unpinned
+macros, and a whole list from one would drop whatever the other saved
+since it loaded. Each change reads the file afresh, so it keeps what
+another CLI wrote before; there is no lock between CLIs, which leaves two
+changes at the same moment to the last writer.
+
+The file is schema-checked JSON: version 1, nothing the schema does not
+name, one value, and every macro within the caps the page restates
+(`TestPageLimitsMatchTheAgent` holds the two to each other). The 256 KiB
+cap keeps one change well inside a websocket message (`MaxLineBytes`,
+1 MiB). Indented as the CLI writes it, an everyday macro of four steps
+takes about 0.5 KiB, so 100 of them take 66 KiB, while a macro of 100
+three-key chords takes 32 KiB and eight of those fill the file. A file that
+does not read, hand-edited or from a newer Robin, is reported once in the
+terminal and in every Config, and every change is refused until it reads,
+so it is never overwritten silently. A write goes to a temporary file in
+the same directory, made 0600 by `os.CreateTemp`, synced and renamed over
+the old one; the directory is set to 0700 on every write, since an
+existing `~/.config/robin` may be wider. The text in a macro may be a
+password, and it is stored as plain text: the page says so where it is
+typed.
+
+A pinned macro names the host argument as the user typed it, not what ssh
+makes of it: the CLI does not know what `~/.ssh/config` resolves a name
+to, and the user recognises what they typed.
+
+Recording takes chords as they are pressed: each key that is not a
+modifier, with the modifiers held as it went down, and modifiers pressed
+and let go with no other key, such as Super alone, as a chord of their
+own. Repeats are dropped. While recording, `Input.capture` takes every key
+in place of the remote, except the release of a key the remote saw
+pressed. Keys the browser keeps for itself never reach the page, so while
+recording the Keys row's buttons add their chord instead of sending it.
+Those buttons are the keys a browser or desktop keeps outside full screen,
+where keyboard lock does not apply: Ctrl+Alt+Delete, Alt+Tab, Alt+F4,
+Super, Ctrl+W, Ctrl+T, Ctrl+N, Ctrl+Q and Print Screen. No Ctrl+Alt+F key
+is offered, since on an attached desktop it would switch the host's
+console away from the session.
+
 ## Verification parked
 
 Two checks were parked by decision on 2026-10-18. Both needed hardware the
