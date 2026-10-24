@@ -85,7 +85,9 @@ export class DeviceSwitch {
     }
     if (superseded()) {
       track.stop();
-      // A later start puts its own track on the sender; only an off leaves it.
+      // replaceTrack calls settle in the order they were made, so a later
+      // start's track already follows this one on the sender. Only when the
+      // switch is still off does this one have to come off again.
       if (this.#state === 'off') await this.#io.send(null).catch(() => {});
       return;
     }
