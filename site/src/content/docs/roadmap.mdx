@@ -6,7 +6,7 @@ order: 2
 ---
 
 <Callout type="warning" title="Planned work.">
-Everything on this page is **planned**. None of it is in Robin today, and flag and command names shown here are the plan's working names, which may change before they ship. For what Robin does now, see [Using Robin](/using) and [Known limits](/known-limits).
+Everything on this page is **planned** unless its status says shipped, and flag and command names shown here are the plan's working names, which may change before they ship. For what Robin does now, see [Using Robin](/using) and [Known limits](/known-limits).
 </Callout>
 
 The plan covers nine features, the gaps against Horizon judged worth closing (see [Robin and Horizon](/robin-and-horizon)), plus a track for picture quality while the screen changes. They land in waves, because several of them touch the same code, and every track ships with its tests: unit tests for new code, container tests for anything that needs X, Wayland, PulseAudio or PipeWire, and an end-to-end scenario for anything you see in the page.
@@ -72,7 +72,7 @@ Until this lands, [Using Robin](/using) lists what you can adjust today.
 
 ### Sharp text
 
-**Status: planned.** When a region of the screen has been still for a moment, the agent sends it again losslessly, as PNG tiles drawn on a layer over the video, and clears a tile the moment its region changes, before the next frame is encoded. Tiles are paced under the congestion target and dropped when stale. A toggle in the page, on by default. The test compares the page's pixels with the host's after a still second, and expects them to match exactly, which the video alone does not.
+**Status: shipped.** When a region of the screen has been still for 300 ms, the agent sends it again losslessly, as PNG tiles drawn on a layer over the video, and every frame's manifest names the tiles it changes, so the page clears them before the frame shows and hides every tile while a manifest is late. With it came an actual-size view, one desktop pixel to one device pixel, panned at the window's edge. Both are switches in the page; sharp text is on by default. The end-to-end test compares the page's pixels with the host's once the screen is still and finds them equal, which the video alone is not. See [Using Robin](/using#sharp-text-and-actual-size).
 
 ## Wave 3
 

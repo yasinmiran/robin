@@ -52,8 +52,16 @@ The session gets a sensible locale even when SSH brought none. The agent keeps a
 `--hidpi` sizes a spawned display in your browser's device pixels instead of CSS pixels. On a Retina screen that gives sharp text at about four times the pixels to encode. Raise `--max-size` with it if you want the display fully native.
 
 <Callout type="note" title="When the picture looks soft or blocky.">
-Two things are worth checking today. An attached monitor larger than `--max-size` is scaled down, and the default is 1920x1080, so a 2560x1440 monitor arrives shrunk; `--max-size 2560x1440` sends it at its own size, at the cost of more pixels to encode. On a Retina or other HiDPI client screen, a spawned desktop renders in device pixels with `--hidpi` and a raised `--max-size`. Blockiness while the screen is changing, when the link's estimate dips, is a known weak spot with planned work: see [crisp video in motion](/roadmap#crisp-video-in-motion) and [sharp text](/roadmap#sharp-text) on the Roadmap.
+Two things are worth checking today. An attached monitor larger than `--max-size` is scaled down, and the default is 1920x1080, so a 2560x1440 monitor arrives shrunk; `--max-size 2560x1440` sends it at its own size, at the cost of more pixels to encode. On a Retina or other HiDPI client screen, a spawned desktop renders in device pixels with `--hidpi` and a raised `--max-size`. Text that stays soft once the screen is still is what [sharp text](#sharp-text-and-actual-size) is for. Blockiness while the screen is changing, when the link's estimate dips, is a known weak spot with planned work: see [crisp video in motion](/roadmap#crisp-video-in-motion) on the Roadmap.
 </Callout>
+
+## Sharp text and actual size
+
+H.264 as browsers decode it keeps colour at a quarter of the picture's resolution, which smears coloured text and softens the rest, and a picture the browser scales by a fraction blurs it again. The status tab has a switch for each.
+
+**Sharp text**, on by default, sends the parts of the screen that have been still for 300 ms again without loss: 64x64 tiles, compressed to PNG on the host within a quarter of one core and drawn on a layer over the video, at the desktop's own resolution even where the video is scaled down to `--max-size`. A tile goes the moment its part of the screen changes, before the frame that changes it shows, so what moves is plain video and text you stop at sharpens about half a second later. A screen full of small text costs about 700 KB once at 2560x1440, and nothing more while it stays still. A tile that keeps changing soon after it was sent, as one with a blinking caret does, soon stays video rather than flicker. Sharp text needs an X11 desktop and a browser that says which frame it shows (Chrome, Edge and Firefox do); otherwise the switch is off and says why.
+
+**Actual size** shows one desktop pixel to one pixel of your screen instead of fitting the picture to the window, so text never goes through a fractional scale. A desktop larger than the window pans: hold the pointer near an edge of the window, or on a touch screen move two fingers apart and along.
 
 ## Monitors
 
