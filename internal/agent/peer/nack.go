@@ -13,8 +13,13 @@ import (
 // to help a live desktop, and an unbounded responder turns a burst of loss
 // into a retransmission storm: everything lost gets resent, mostly lost
 // again, and congestion control reads the storm as permanent heavy loss.
+//
+// The history holds packets by count and is read by age, so it has to
+// hold nackMaxAge at the highest rate, about 1000 packets a second at
+// 10 Mbit/s: Chrome asks for a packet again every 100 ms for about a
+// second.
 const (
-	nackHistory     = 512 // packets kept per stream; a power of two
+	nackHistory     = 4096 // packets kept per stream; a power of two
 	nackMaxAge      = time.Second
 	nackMaxResends  = 2
 	nackBudgetShare = 0.25 // of the congestion controller's target
@@ -22,13 +27,17 @@ const (
 )
 
 // nackResponderFactory builds the responder for each peer connection.
-// budget reports the current target bitrate in bits per second.
+// budget reports the current target bitrate in bits per second. lost, if
+// set, is called when a NACK names a packet too old to send again: the
+// browser cannot decode past it until a keyframe, and asks for one only
+// after 3 s without a frame.
 type nackResponderFactory struct {
 	budget func() int
+	lost   func()
 }
 
 func (f *nackResponderFactory) NewInterceptor(string) (interceptor.Interceptor, error) {
-	return &nackResponder{budget: f.budget, streams: map[uint32]*sendHistory{}}, nil
+	return &nackResponder{budget: f.budget, lost: f.lost, streams: map[uint32]*sendHistory{}}, nil
 }
 
 // nackResponder answers RTCP NACKs from a short history of sent packets,
@@ -36,6 +45,7 @@ func (f *nackResponderFactory) NewInterceptor(string) (interceptor.Interceptor, 
 type nackResponder struct {
 	interceptor.NoOp
 	budget func() int
+	lost   func()
 
 	mu      sync.Mutex
 	streams map[uint32]*sendHistory
@@ -113,10 +123,15 @@ func (r *nackResponder) resend(nack *rtcp.TransportLayerNack, now time.Time) {
 	}
 	r.refill = now
 	var due []*sentPacket
+	gone := false
 	for _, pair := range nack.Nacks {
 		for _, seq := range pair.PacketList() {
 			p := h.packets[seq%nackHistory]
-			if p == nil || p.header.SequenceNumber != seq || now.Sub(p.sentAt) > nackMaxAge || p.resends >= nackMaxResends {
+			if p == nil || p.header.SequenceNumber != seq || now.Sub(p.sentAt) > nackMaxAge {
+				gone = true
+				continue
+			}
+			if p.resends >= nackMaxResends {
 				continue
 			}
 			cost := float64(8 * (p.header.MarshalSize() + len(p.payload)))
@@ -132,6 +147,9 @@ func (r *nackResponder) resend(nack *rtcp.TransportLayerNack, now time.Time) {
 	for _, p := range due {
 		hdr := p.header
 		h.writer.Write(&hdr, p.payload, nil)
+	}
+	if gone && r.lost != nil {
+		r.lost()
 	}
 }
 

@@ -155,12 +155,15 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 	// Registered after the TWCC and congestion-control interceptors so
 	// retransmissions carry transport sequence numbers and count as sent.
 	var bwe atomic.Pointer[cc.BandwidthEstimator]
-	reg.Add(&nackResponderFactory{budget: func() int {
-		if e := bwe.Load(); e != nil {
-			return (*e).GetTargetBitrate()
-		}
-		return cfg.StartBitrate
-	}})
+	reg.Add(&nackResponderFactory{
+		budget: func() int {
+			if e := bwe.Load(); e != nil {
+				return (*e).GetTargetBitrate()
+			}
+			return cfg.StartBitrate
+		},
+		lost: h.Keyframe,
+	})
 	if err := webrtc.ConfigureRTCPReports(reg); err != nil {
 		return nil, err
 	}
