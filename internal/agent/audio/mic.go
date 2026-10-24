@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jfreymuth/pulse/proto"
 	"github.com/pion/interceptor"
@@ -126,15 +127,46 @@ func newMic(sink micSink, where string, log *slog.Logger) *Mic {
 	return m
 }
 
+// idleSink is a sink that needs silence while the browser sends nothing. A
+// PipeWire node that a stream provides negotiates its format, and so
+// appears, only once fed, and a program recording it would wait on it.
+type idleSink interface{ idleSilence() }
+
+// micIdle is how long the sound may stop before an idleSink gets silence:
+// three packets, past the jitter of a live track.
+const micIdle = 60 * time.Millisecond
+
 // write hands the queue to the sink, on a goroutine of its own so a slow
 // server stalls nothing but this.
 func (m *Mic) write() {
 	defer close(m.drained)
+	var tick <-chan time.Time
+	if _, ok := m.sink.(idleSink); ok {
+		t := time.NewTicker(opus.FrameSamples * time.Second / opus.SampleRate)
+		defer t.Stop()
+		tick = t.C
+	}
+	silence := make([]byte, micFrameBytes)
+	var last time.Time
 	failed := 0
-	for b := range m.queue {
+	put := func(b []byte) {
 		if err := m.sink.write(b); err != nil {
 			if failed++; failed%250 == 1 {
 				m.log.Warn("microphone: the sound server took no sound", "err", err, "times", failed)
+			}
+		}
+	}
+	for {
+		select {
+		case b, ok := <-m.queue:
+			if !ok {
+				return
+			}
+			put(b)
+			last = time.Now()
+		case <-tick:
+			if time.Since(last) >= micIdle {
+				put(silence)
 			}
 		}
 	}

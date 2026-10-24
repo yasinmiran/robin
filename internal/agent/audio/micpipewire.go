@@ -47,9 +47,11 @@ type pipewireMic struct{ s *gstsink.Sink }
 
 func (p pipewireMic) write(pcm []byte) error { return p.s.Write(pcm) }
 func (p pipewireMic) close() error           { return p.s.Close() }
+func (pipewireMic) idleSilence()             {}
 
 // startPipeWireMic starts the child and waits for its node to appear as a
-// source on c, the user's pipewire-pulse.
+// source on c, the user's pipewire-pulse, feeding it silence meanwhile: the
+// node appears only once its format is known, from the first sound.
 func startPipeWireMic(ctx context.Context, c *proto.Client, log *slog.Logger) (micSink, error) {
 	node := micSourcePrefix + strconv.Itoa(os.Getpid())
 	s, err := gstsink.Start(pipewireMicPipeline(node), gstsink.Options{
@@ -60,7 +62,10 @@ func startPipeWireMic(ctx context.Context, c *proto.Client, log *slog.Logger) (m
 	}
 	ctx, cancel := context.WithTimeout(ctx, micNodeTimeout)
 	defer cancel()
+	const wait = 40 * time.Millisecond
+	silence := make([]byte, int(wait/time.Millisecond)*opus.SampleRate/1000*2)
 	for {
+		s.Write(silence)
 		var info proto.GetSourceInfoReply
 		if c.Request(&proto.GetSourceInfo{SourceIndex: proto.Undefined, SourceName: node}, &info) == nil {
 			return pipewireMic{s}, nil
@@ -69,7 +74,7 @@ func startPipeWireMic(ctx context.Context, c *proto.Client, log *slog.Logger) (m
 		case <-ctx.Done():
 			s.Close()
 			return nil, fmt.Errorf("the microphone's PipeWire node %s never reached the sound server", node)
-		case <-time.After(50 * time.Millisecond):
+		case <-time.After(wait):
 		}
 	}
 }

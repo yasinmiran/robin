@@ -88,6 +88,44 @@ func TestMicQueueDropsWhenTheServerIsBehind(t *testing.T) {
 	}
 }
 
+// idleFakeSink is a fakeSink that wants silence while nothing plays, as a
+// PipeWire node does.
+type idleFakeSink struct{ fakeSink }
+
+func (*idleFakeSink) idleSilence() {}
+
+// TestMicFillsSilenceForPipeWire: a node that needs feeding gets 20 ms of
+// silence at a time while the browser sends nothing, and the browser's
+// sound once it does.
+func TestMicFillsSilenceForPipeWire(t *testing.T) {
+	sink := &idleFakeSink{}
+	m := newMic(sink, "test", quiet())
+	for deadline := time.Now().Add(2 * time.Second); sink.count() < 3; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("no silence while the browser sent nothing")
+		}
+	}
+	m.enqueue(make([]int16, micFrameBytes/2))
+	m.Close()
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	for i, b := range sink.writes {
+		if len(b) != micFrameBytes || slices.ContainsFunc(b, func(v byte) bool { return v != 0 }) {
+			t.Errorf("write %d is %d bytes of %v, want 20 ms of silence", i, len(b), b[:4])
+		}
+	}
+}
+
+func TestMicLeavesSilenceToPulseAudio(t *testing.T) {
+	sink := &fakeSink{}
+	m := newMic(sink, "test", quiet())
+	time.Sleep(150 * time.Millisecond)
+	m.Close()
+	if n := sink.count(); n != 0 {
+		t.Errorf("%d writes to a sink that makes its own silence", n)
+	}
+}
+
 func TestMicCarriesOnWhenTheServerRefuses(t *testing.T) {
 	sink := &fakeSink{fail: errors.New("stream gone")}
 	m := newMic(sink, "test", quiet())
