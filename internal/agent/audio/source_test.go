@@ -22,7 +22,7 @@ import (
 // returns that sound.
 func listen(t *testing.T, src *Source) []int16 {
 	t.Helper()
-	dec, err := opus.NewDecoder()
+	dec, err := opus.NewDecoder(opus.Channels)
 	if err != nil {
 		t.Fatal(err)
 	}

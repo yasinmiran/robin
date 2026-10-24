@@ -1,6 +1,7 @@
-// Package opus is the agent's audio encoder: libopus, statically linked,
-// turning 20 ms of 48 kHz stereo into one packet for a WebRTC Opus track.
-// Builds without the opus tag get a stub whose NewEncoder fails.
+// Package opus is the agent's audio codec: libopus, statically linked,
+// turning 20 ms of 48 kHz stereo into one packet for a WebRTC Opus track,
+// and the browser's microphone packets back into sound. Builds without the
+// opus tag get a stub whose NewEncoder and NewDecoder fail.
 package opus
 
 const (
@@ -11,6 +12,8 @@ const (
 	Channels = 2
 	// FrameSamples is the length of one 20 ms frame, per channel.
 	FrameSamples = SampleRate / 50
+	// MaxFrameSamples is the longest packet Opus codes, 120 ms, per channel.
+	MaxFrameSamples = 6 * FrameSamples
 	// Bitrate is the target for stereo desktop sound: enough that music
 	// survives, a rounding error next to the video.
 	Bitrate = 96_000
