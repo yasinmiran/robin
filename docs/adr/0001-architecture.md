@@ -814,6 +814,113 @@ keeps the reflex and moves it one process out.
   In test-x a session with a 2 s keep window was gone, run directory and
   Xvfb included, 2.10 s after its controller left.
 
+### Files: into the download folder, out on a click
+
+The page writes files on the host now, so the first decision was where, and
+the answer is one place: `$XDG_DOWNLOAD_DIR`, else what
+`~/.config/user-dirs.dirs` says (xdg-user-dirs writes the variable there,
+not into the environment), else `~/Downloads`, created 0700 when missing.
+An upload is a bulk transfer of kind `file`. Its name has to pass
+`files.CheckName`: one path component of valid UTF-8, at most NAME_MAX's
+255 bytes, not `.` or `..`, no control characters (NUL and newlines among
+them), and none of Unicode's bidirectional controls, which can make
+`invoice‮fdp.exe` read as a PDF. The bytes go into
+`.robin-upload-<random>` in the same directory, opened with
+`O_EXCL|O_NOFOLLOW`, so the file is new and no symlink can redirect it, and
+the rename stays on one filesystem. Only once the SHA-256 matched does it
+get its name, by `renameat2` with `RENAME_NOREPLACE`; a name that is taken
+moves on to `name (1).ext`, the number going before the extension, and
+before `.tar` in `a.tar.gz`, with the stem cut at a character boundary to
+stay within 255 bytes. A filesystem without the flag gets a hard link and an
+unlink, which cannot replace either. An upload that would leave less than
+256 MiB free, counting what uploads in progress still have to write, is
+refused before a byte lands, so the desktop's own disk does not fill up.
+
+A sink runs on the data channel's read loop, and holding that loop holds the
+keyboard and pointer too, so `Upload.Write` never waits. It hands each
+chunk, as Pion delivers it in a slice of its own, to a writer goroutine
+through a queue of 256 chunks, 16 MiB, and fails the transfer when the queue
+is full. On the workstation (ext4 on NVMe) that writer drains into the page
+cache at 2.3 to 4.1 GB/s, where the bulk layer delivers 15 to 30 MB/s from
+Chrome, so the queue fills only when the disk stops answering, and then the
+upload fails instead of the session freezing. At most four uploads run at
+once, which bounds the queues to 64 MiB. Commit has to wait, since the
+verdict is what it returns: it waits for the drain and the rename, which
+took 3 to 7 ms from 16 MiB to 1 GiB, and gives up after 5 s. Cancel,
+failure and the end of the session remove the partial file; only a SIGKILL
+leaves one, and the agent does not sweep the user's download folder for
+names that look like its own.
+
+There is no fsync before the rename. Flushing after the last byte took 15,
+42 and 213 ms for 16 MiB, 256 MiB and 1 GiB on that NVMe disk, all of it on
+the read loop; a disk that writes 150 MB/s would hold every channel about
+7 s for a gigabyte, past any bound that leaves the session usable. A power
+cut in the seconds after an upload can leave it short, which the README
+says.
+
+Downloads run the other way round, offer first and bytes after the click.
+`robin-agent send FILE...`, also on a spawned desktop's `PATH` as a
+`robin-send` link to the agent (it answers to that name), opens each file
+itself and passes the descriptors with `SCM_RIGHTS` over `files.sock`, a
+sequenced-packet socket in the 0700 run directory, mode 0600, whose peer
+credentials must name the session's own uid. The page never names a path;
+the session sends exactly what its sender could open, re-reading the size
+when the user clicks Save, and an offer lasts as long as `robin-send`'s
+connection, which hears saved, declined or failed for each file. It finds
+the session by `ROBIN_FILES_SOCK`, which spawned desktops get, or as the only
+`run/*/files.sock` that answers, and with several it refuses to guess.
+Sending at the offer would have parked every offered file in the page's
+memory and given the host a way to push a download into the browser; with
+fetch on the click it has neither. The page shows name and size as
+`textContent`, gathers a download in 16 MiB blobs and saves it through an
+anchor with `download`, which also lets the browser make the name safe for
+the client's disk: Chrome turns `<` and `>` into `_`. Since the page holds a
+download until it is whole, the 4 GiB limit on kind `file` is a bound on the
+browser's memory as much as on the transfer.
+
+### The clipboard: text, HTML and PNG in one transfer
+
+The rich clipboard carries text/plain, text/html and image/png, the three
+types `navigator.clipboard.write` takes in every browser with
+`ClipboardItem`. One copy travels as one transfer of kind `clipboard`
+holding each of its formats as a part (a byte of MIME type length, the type,
+four bytes of data length, the data), up to 16 MiB in all, so the far side
+offers them together as one clipboard the way the source did. Plain text
+that fits a control message still goes as one. A newer copy on the host
+cancels the transfer of an older one still under way.
+
+Setting the clipboard is the one thing a sink does on the read loop on
+purpose. The page holds the paste key until the transfer's verdict, for up
+to 3 s, and the agent sets the clipboard before it answers, so the paste
+that follows finds the new content; handed to a goroutine, the key could
+win the race and paste the old one. The cost is one X round trip, 0.13 to
+0.23 ms for a 3 MiB clip in test-x and capped by the 2 s wait for a
+timestamp, or one D-Bus call to the portal on Wayland.
+
+On X11 the agent asks a new owner for `TARGETS` and then, one at a time, for
+its best text target, `text/html` and `image/png`. `TEXT` alone is skipped,
+since it may come as `COMPOUND_TEXT`, and HTML that starts with a UTF-16 byte
+order mark, as Firefox has served it, is converted to UTF-8. Anything bigger
+than one request, `maxReq`, 256 KiB without BIG-REQUESTS, goes by INCR in
+both directions: outbound the agent selects property changes on the
+requestor's window and writes a chunk at each delete, up to 16 transfers at
+once, dropping one whose requestor has been silent for 30 s. 16 MiB went
+in from `xclip` in 181 ms and out to it in 211 ms. On Wayland the portal
+does the formats: `SetSelection` lists the MIME types the content has,
+`SelectionTransfer` names the one a program wants, and a copy on the desktop
+is read type by type through `SelectionRead`, each pipe with an idle
+timeout of 2 s rather than one for the whole transfer. GNOME 46, GNOME 49
+and KDE Plasma 6.7 pass an image bigger than a pipe holds both ways.
+
+A paste in the page is split by `splitPaste`: one PNG file and the text
+beside it is clipboard content, which is how a browser pastes an image
+copied from a page or a screenshot tool, and anything else with files in it
+is uploads, its text dropped, because that text is the files' names. A PNG
+copied as a file in a file manager therefore pastes as an image. Firefox
+keeps nothing of a script's `DataTransfer` in a `ClipboardEvent` it
+constructs, so its e2e run hands the page the `DataTransfer` through
+`robin.paste` while Chrome's goes through a real paste event.
+
 ## Verification parked
 
 Two checks were parked by decision on 2026-10-18. Both needed hardware the
