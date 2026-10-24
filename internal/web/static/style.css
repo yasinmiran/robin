@@ -299,7 +299,8 @@ body:has(#hud[data-state="reconnecting"]) #wire { opacity: 1; }
 }
 .section button:hover { box-shadow: inset 0 0 0 1px var(--ink-soft); }
 .section button:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
-.section button.save { color: #fff; background: var(--ok); }
+.section button.save,
+.section button.send { color: #fff; background: var(--ok); }
 .transfers {
   display: grid;
   gap: 6px;

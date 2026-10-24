@@ -130,8 +130,10 @@ host cannot provide sound the session runs without it, and the CLI says why.
 
 ## Files and the clipboard
 
-Files go to the host when you drop them anywhere on the page, pick them with
-Upload files in the status tab, or paste them. They land in your download
+Files go to the host when you drop them anywhere on the page or pick them
+with Upload files in the status tab. Files you paste are listed there too,
+and each goes only when you click its Upload, since the clipboard can still
+hold files you copied long ago. They land in your download
 folder there: `$XDG_DOWNLOAD_DIR`, else the one `~/.config/user-dirs.dirs`
 names, else `~/Downloads`, which is created if it is missing. A download
 folder that is your home directory itself counts as unset, which is what
@@ -158,9 +160,10 @@ finds running, and refuses to guess between several.
 The clipboard carries plain text, HTML and PNG images both ways, up to
 16 MiB at a time, so a screenshot copied on one side pastes as a picture on
 the other. One PNG pasted into the page goes to the host's clipboard as an
-image. Any other file you paste there becomes an upload instead, because a
-browser's clipboard has no way to hand a file on as a file, and the browser
-only takes what the host copies while the page has focus.
+image. Any other file you paste there becomes an upload waiting for its
+click instead, because a browser's clipboard has no way to hand a file on as
+a file, and the browser only takes what the host copies while the page has
+focus.
 
 ## What the host needs
 
@@ -376,16 +379,18 @@ and leaves the clipboard and the files the host offers.
   download folder. A name has to be a single path component of UTF-8, at
   most 255 bytes, not starting with a dot, so an upload can be neither
   hidden nor a startup file such as `.bash_login`, with no control
-  characters and none of the invisible marks that reorder text. The bytes go to a new file of a temporary name, opened so
-  that it can be neither an existing file nor a symlink, and the file gets
-  its name only after every byte arrived and the SHA-256 matched, through a
-  rename that fails rather than replace anything. An upload bigger than the
-  free space less 256 MiB is refused before a byte is written, four at most
-  run at once, and one that is cancelled, fails, or is still running when
-  the session ends is removed, unless the disk under it stopped answering
-  (see Known limits).
+  characters and none of the invisible marks that reorder text. A file
+  pasted into the page goes only once you click its Upload. The bytes go to
+  a new file of a temporary name, opened so that it can be neither an
+  existing file nor a symlink, and the file gets its name only after every
+  byte arrived and the SHA-256 matched, through a rename that fails rather
+  than replace anything. An upload bigger than the free space less 256 MiB
+  is refused before a byte is written, four at most run at once, and one
+  that is cancelled, fails, or is still running when the session ends is
+  removed, unless the disk under it stopped answering (see Known limits).
 - **Reading files**, only those a program running as you on the host offered
-  with `robin-send`, and only after a click on Save in the page. `robin-send`
+  with `robin-send`, and only after a click on Save in the page, which takes
+  one transfer for each click. `robin-send`
   opens each file itself and hands the session its descriptor over a socket
   in the 0700 run directory, which also checks that the caller's uid is
   yours, so the page never names a path on the host and the session reads

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  FAILED, FETCHING, KEPT, OFFERED, QUEUED, SAVED, SENDING, Transfers, formatSize, statusOf,
+  FAILED, FETCHING, KEPT, OFFERED, PENDING, QUEUED, RECEIVING, SAVED, SENDING, Transfers, formatSize, statusOf,
 } from '../transfers.js';
 
 test('formatSize writes binary units as the agent does', () => {
@@ -51,11 +51,15 @@ test('a download is fetched only from the offered state, and a failure leaves it
   assert.equal(list.fetch('nope'), false);
   list.offer('d1', 'report.pdf', 2048);
   assert.equal(statusOf(list.get('d1')), 'Offered by the host');
-  assert.equal(list.fetching('d1'), false);
+  assert.equal(list.receive('d1'), false, 'bytes before any click');
   assert.equal(list.waiting(), true);
   assert.equal(list.fetch('d1'), true);
-  assert.equal(list.fetching('d1'), true);
+  assert.equal(list.get('d1').state, FETCHING);
   assert.equal(list.fetch('d1'), false, 'a second click while it downloads');
+  assert.equal(list.receive('d1'), true);
+  assert.equal(list.get('d1').state, RECEIVING);
+  assert.equal(list.receive('d1'), false, 'a second transfer for one click');
+  assert.equal(list.waiting(), true);
   list.progress('d1', 1024);
   assert.equal(statusOf(list.get('d1')), 'Downloading 50%');
   list.failed('d1', 'bulk transfer cancelled');
@@ -63,10 +67,24 @@ test('a download is fetched only from the offered state, and a failure leaves it
   assert.equal(statusOf(list.get('d1')), 'Download failed: bulk transfer cancelled');
   assert.equal(list.fetch('d1'), true, 'it can be tried again');
   assert.equal(list.get('d1').error, '');
+  assert.equal(list.receive('d1'), true);
   list.finished('d1');
   assert.equal(list.get('d1').state, SAVED);
   assert.equal(statusOf(list.get('d1')), 'Downloaded');
   assert.equal(list.waiting(), false);
+  assert.equal(list.receive('d1'), false, 'bytes after it was saved');
+});
+
+test('a pasted file waits for its click, once', () => {
+  const list = new Transfers();
+  assert.equal(list.confirm('nope'), false);
+  list.propose('p1', 'old.zip', 10);
+  assert.equal(list.get('p1').state, PENDING);
+  assert.equal(statusOf(list.get('p1')), 'Pasted, waiting for Upload');
+  assert.equal(list.waiting(), true, 'the tab stays out for it');
+  assert.equal(list.confirm('p1'), true);
+  assert.equal(list.get('p1').state, QUEUED);
+  assert.equal(list.confirm('p1'), false);
 });
 
 test('an offer heard again is left as it is, and removal is final', () => {

@@ -98,16 +98,15 @@ export function clipTypes(clip) {
 // nothing but text beside it is clipboard content: that is how a browser
 // pastes an image copied from a page or a screenshot tool. Any other file
 // is an upload, since a browser's clipboard cannot hand a file on as a
-// file. Returns { clip, uploads }, clip null when there is nothing to put
-// on the clipboard.
+// file. Returns { clip, image, uploads }: clip the text and HTML, null
+// when there is neither, and image the PNG file to go beside it, or null.
 export function splitPaste({ text = '', html = '', files = [] }) {
   const image = files.length === 1 && files[0].type === PNG ? files[0] : null;
   const uploads = image ? [] : [...files];
+  // Text beside uploads is the files' names, which no one wants pasted.
+  if (uploads.length) return { clip: null, image: null, uploads };
   const clip = {};
   if (text) clip.text = text;
   if (html) clip.html = html;
-  if (image) clip.image = image;
-  // Text beside uploads is the files' names, which no one wants pasted.
-  if (uploads.length) return { clip: null, uploads };
-  return { clip: Object.keys(clip).length ? clip : null, uploads };
+  return { clip: Object.keys(clip).length ? clip : null, image, uploads };
 }

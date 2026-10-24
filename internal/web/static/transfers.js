@@ -21,14 +21,20 @@ export function formatSize(n) {
 }
 
 // The states of a transfer.
-//   upload:   queued -> sending -> kept | failed
-//   download: offered -> fetching -> saved, or back to offered with an error
+//   upload:   [pending ->] queued -> sending -> kept | failed
+//   download: offered -> fetching -> receiving -> saved, or back to offered
+//             with an error
+// An upload is pending only when it came from a paste: it waits for the
+// user's click on Upload. A download is receiving once the host's bytes
+// for that click have started; only one transfer may follow each click.
+export const PENDING = 'pending';
 export const QUEUED = 'queued';
 export const SENDING = 'sending';
 export const KEPT = 'kept';
 export const FAILED = 'failed';
 export const OFFERED = 'offered';
 export const FETCHING = 'fetching';
+export const RECEIVING = 'receiving';
 export const SAVED = 'saved';
 
 // Transfers holds every transfer the tab shows, in the order they came.
@@ -53,7 +59,7 @@ export class Transfers {
   // waiting reports whether something needs the user or is under way, for
   // keeping the tab out.
   waiting() {
-    return this.list().some((t) => [QUEUED, SENDING, OFFERED, FETCHING].includes(t.state));
+    return this.list().some((t) => [PENDING, QUEUED, SENDING, OFFERED, FETCHING, RECEIVING].includes(t.state));
   }
 
   #set(id, fields) {
@@ -68,6 +74,19 @@ export class Transfers {
   upload(id, name, size) {
     this.#list.set(id, { id, dir: 'up', name, size, done: 0, state: QUEUED, saved: '', error: '' });
     this.#onChange();
+  }
+
+  // propose adds a file the user pasted, which waits for a click on Upload.
+  propose(id, name, size) {
+    this.#list.set(id, { id, dir: 'up', name, size, done: 0, state: PENDING, saved: '', error: '' });
+    this.#onChange();
+  }
+
+  // confirm queues a pasted file the user chose to upload, unless it is not
+  // pending.
+  confirm(id) {
+    if (this.get(id)?.state !== PENDING) return false;
+    return this.#set(id, { state: QUEUED });
   }
 
   // offer adds a file the host offers, or leaves one it already offered as
@@ -89,8 +108,12 @@ export class Transfers {
     return this.#set(id, { state: FETCHING, done: 0, error: '' });
   }
 
-  fetching(id) {
-    return this.get(id)?.state === FETCHING;
+  // receive marks the bytes of a download the user asked for as arriving,
+  // and reports whether they may: once per click, so a host cannot push a
+  // second download on the back of one Save.
+  receive(id) {
+    if (this.get(id)?.state !== FETCHING) return false;
+    return this.#set(id, { state: RECEIVING });
   }
 
   progress(id, done) {
@@ -126,6 +149,8 @@ export class Transfers {
 export function statusOf(t) {
   const percent = t.size ? ` ${Math.floor((t.done / t.size) * 100)}%` : '';
   switch (t.state) {
+    case PENDING:
+      return 'Pasted, waiting for Upload';
     case QUEUED:
       return 'Waiting to upload';
     case SENDING:
@@ -137,6 +162,7 @@ export function statusOf(t) {
     case OFFERED:
       return t.error ? `Download failed: ${t.error}` : 'Offered by the host';
     case FETCHING:
+    case RECEIVING:
       return `Downloading${percent}`;
     case SAVED:
       return 'Downloaded';

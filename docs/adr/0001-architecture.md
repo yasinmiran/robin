@@ -883,7 +883,13 @@ the session by `ROBIN_FILES_SOCK`, which spawned desktops get, or as the only
 `run/*/files.sock` that answers, and with several it refuses to guess.
 Sending at the offer would have parked every offered file in the page's
 memory and given the host a way to push a download into the browser; with
-fetch on the click it has neither. The page shows name and size as
+fetch on the click it has neither, as long as the page spends each click on
+one transfer: a header for an offer that is not waiting on its click is
+refused, so a host that opens a second channel for the same ID gets nothing
+from it. Uploads hold to the same rule from the other side. A paste of files
+lists them as uploads that each wait for a click on Upload, since the
+browser's clipboard may still hold files copied long before, and Ctrl+V
+meant a paste into a remote program, not a copy off the client. The page shows name and size as
 `textContent`, gathers a download in 16 MiB blobs and saves it through an
 anchor with `download`, which also lets the browser make the name safe for
 the client's disk: Chrome turns `<` and `>` into `_`. Since the page holds a

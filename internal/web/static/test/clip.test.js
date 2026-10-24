@@ -85,12 +85,13 @@ test('clipSize counts UTF-8 bytes, and fitsControl takes short plain text only',
 test('splitPaste: one PNG is the clipboard, other files are uploads', () => {
   const png = { name: 'image.png', type: PNG };
   const pdf = { name: 'report.pdf', type: 'application/pdf' };
-  assert.deepEqual(splitPaste({ text: 'hi' }), { clip: { text: 'hi' }, uploads: [] });
-  assert.deepEqual(splitPaste({ html: '<b>hi</b>', text: 'hi' }), { clip: { text: 'hi', html: '<b>hi</b>' }, uploads: [] });
-  assert.deepEqual(splitPaste({ html: '<img>', files: [png] }), { clip: { html: '<img>', image: png }, uploads: [] });
+  assert.deepEqual(splitPaste({ text: 'hi' }), { clip: { text: 'hi' }, image: null, uploads: [] });
+  assert.deepEqual(splitPaste({ html: '<b>hi</b>', text: 'hi' }), { clip: { text: 'hi', html: '<b>hi</b>' }, image: null, uploads: [] });
+  assert.deepEqual(splitPaste({ html: '<img>', files: [png] }), { clip: { html: '<img>' }, image: png, uploads: [] });
+  assert.deepEqual(splitPaste({ files: [png] }), { clip: null, image: png, uploads: [] });
   // Pasted files come with their names as text, which is not wanted.
-  assert.deepEqual(splitPaste({ text: 'report.pdf', files: [pdf] }), { clip: null, uploads: [pdf] });
-  assert.deepEqual(splitPaste({ files: [png, png] }), { clip: null, uploads: [png, png] });
-  assert.deepEqual(splitPaste({ files: [png, pdf] }), { clip: null, uploads: [png, pdf] });
-  assert.deepEqual(splitPaste({}), { clip: null, uploads: [] });
+  assert.deepEqual(splitPaste({ text: 'report.pdf', files: [pdf] }), { clip: null, image: null, uploads: [pdf] });
+  assert.deepEqual(splitPaste({ files: [png, png] }), { clip: null, image: null, uploads: [png, png] });
+  assert.deepEqual(splitPaste({ files: [png, pdf] }), { clip: null, image: null, uploads: [png, pdf] });
+  assert.deepEqual(splitPaste({}), { clip: null, image: null, uploads: [] });
 });

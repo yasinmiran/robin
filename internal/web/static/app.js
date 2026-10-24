@@ -21,14 +21,13 @@ const TOKEN_KEY = 'robin.token';
 const video = document.getElementById('screen');
 const overlay = new Overlay();
 const sampler = new StatsSampler();
-const input = new Input(video, sendControl, () => channel?.readyState === 'open');
+const toAgent = (header, blob, options) => sendBulk(pc, header, blob, options);
+const files = new Files({ overlay, send: sendControl, bulk: toAgent });
+const clipboard = new Clipboard({ send: sendControl, bulk: toAgent, propose: (list) => files.propose(list) });
+const input = new Input(video, sendControl, () => channel?.readyState === 'open', { paste: (data) => clipboard.paste(data) });
 const cursor = new RemoteCursor(video);
 const session = new Session();
 const sessionControls = sessionSection(overlay.addSection('session'));
-const toAgent = (header, blob, options) => sendBulk(pc, header, blob, options);
-const files = new Files({ overlay, send: sendControl, bulk: toAgent });
-const clipboard = new Clipboard({ send: sendControl, bulk: toAgent, upload: (list) => files.upload(list) });
-input.paste = (data) => clipboard.paste(data);
 
 let ws = null;
 let pc = null;

@@ -15,14 +15,15 @@ export class Clipboard {
   last = null;
   #send;
   #bulk;
-  #upload;
+  #propose;
 
   // send delivers a control message, bulk(header, blob) sends a transfer
-  // as sendBulk does, and upload takes files pasted into the page.
-  constructor({ send, bulk, upload }) {
+  // as sendBulk does, and propose takes files pasted into the page, which
+  // must not leave it before the user asks.
+  constructor({ send, bulk, propose }) {
     this.#send = send;
     this.#bulk = bulk;
-    this.#upload = upload;
+    this.#propose = propose;
     onControl('clipboard', (c) => this.#copied({ text: c.text ?? '' }));
     onBulk(CLIP_KIND, (h) => {
       const bytes = new Uint8Array(h.size ?? 0);
@@ -39,20 +40,17 @@ export class Clipboard {
   }
 
   // paste takes what a paste event carries to the host, and resolves once
-  // the host's clipboard holds it.
+  // the host's clipboard holds it. Files in it other than one image wait
+  // to be uploaded.
   async paste(data) {
-    const { clip, uploads } = splitPaste({
+    const { clip, image, uploads } = splitPaste({
       text: data?.getData('text/plain') ?? '',
       html: data?.getData('text/html') ?? '',
       files: [...(data?.files ?? [])],
     });
-    if (uploads.length) this.#upload(uploads);
-    if (!clip) return;
-    if (clip.image) {
-      clip.png = new Uint8Array(await clip.image.arrayBuffer());
-      delete clip.image;
-    }
-    await this.put(clip);
+    if (uploads.length) this.#propose(uploads);
+    if (image) await this.put({ ...clip, png: new Uint8Array(await image.arrayBuffer()) });
+    else if (clip) await this.put(clip);
   }
 
   // put puts clip on the host's clipboard. An image too big to go is left

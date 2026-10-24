@@ -13,6 +13,7 @@ export class Input {
   #video;
   #send;
   #active;
+  #paste;
   #held = new Map(); // code -> key, as sent to the remote
   #buttons = 0;
   #move = null;
@@ -26,11 +27,18 @@ export class Input {
 
   // send delivers one Control message; active reports whether input should
   // be captured at all, so a closed session leaves the browser's own keys
-  // (reload, close tab) alone.
-  constructor(video, send, active) {
+  // (reload, close tab) alone. paste hands what a paste event carries to
+  // the remote clipboard, by default its plain text; it may return a
+  // promise, which the paste key waits on for up to PASTE_HOLD_MS so that
+  // it finds the clipboard set.
+  constructor(video, send, active, { paste } = {}) {
     this.#video = video;
     this.#send = send;
     this.#active = active;
+    this.#paste = paste ?? ((data) => {
+      const text = data?.getData('text/plain');
+      if (text) this.sendClipboard(text);
+    });
   }
 
   attach() {
@@ -183,21 +191,13 @@ export class Input {
     else this.#send(msg);
   }
 
-  // paste hands what a paste event carries to the remote clipboard. It may
-  // return a promise, which the paste key waits on for up to PASTE_HOLD_MS
-  // so that it finds the clipboard set.
-  paste = (data) => {
-    const text = data?.getData('text/plain');
-    if (text) this.sendClipboard(text);
-  };
-
   #onPaste(e) {
     if (!this.#active()) return;
     e.preventDefault();
     clearTimeout(this.#pasteTimer);
     let held;
     const hold = new Promise((resolve) => { held = setTimeout(resolve, PASTE_HOLD_MS); });
-    Promise.race([Promise.resolve(this.paste(e.clipboardData)), hold])
+    Promise.race([Promise.resolve(this.#paste(e.clipboardData)), hold])
       .catch((err) => console.warn('robin: paste', err))
       .finally(() => {
         clearTimeout(held);

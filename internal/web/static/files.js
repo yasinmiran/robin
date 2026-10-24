@@ -1,14 +1,17 @@
 // Files between the page and the host, in a section of the status tab.
 // Uploads come from its button, a drop anywhere on the page or a paste, and
-// land in the host's download directory. Downloads are offered by the host
-// (robin-send there) and fetched only when the user clicks Save, so the
-// host cannot push a file into the browser unasked.
+// land in the host's download directory; a pasted file waits for a click
+// on Upload, since a paste may carry files copied long ago. Downloads are
+// offered by the host (robin-send there) and fetched only when the user
+// clicks Save, one transfer per click, so the host cannot push a file into
+// the browser unasked.
 
 import { registerKind } from './bulkframe.js';
 import { onBulk } from './bulk.js';
 import { onControl } from './control.js';
 import {
-  FAILED, FETCHING, FILE_KIND, KEPT, MAX_FILE, OFFERED, QUEUED, SAVED, SENDING, Transfers, formatSize, statusOf,
+  FAILED, FETCHING, FILE_KIND, KEPT, MAX_FILE, OFFERED, PENDING, QUEUED, RECEIVING, SAVED, SENDING, Transfers, formatSize,
+  statusOf,
 } from './transfers.js';
 
 // How long a finished transfer stays listed.
@@ -30,6 +33,7 @@ export class Files {
   #list;
   #picker;
   #queue = [];
+  #proposed = new Map(); // pasted files waiting for a click, by id
   #pumping = false;
   #aborts = new Map();
   #uploads = 0;
@@ -78,13 +82,32 @@ export class Files {
     for (const file of files) {
       const id = `up-${++this.#uploads}`;
       this.#transfers.upload(id, file.name, file.size);
-      if (file.size > MAX_FILE) {
-        this.#transfers.failed(id, `over the ${formatSize(MAX_FILE)} limit`);
-        continue;
-      }
-      this.#queue.push({ id, file });
+      this.#enqueue(id, file);
     }
     this.#pump();
+  }
+
+  // propose lists files as uploads that go only once the user clicks
+  // Upload on each.
+  propose(files) {
+    for (const file of files) {
+      const id = `up-${++this.#uploads}`;
+      this.#proposed.set(id, file);
+      this.#transfers.propose(id, file.name, file.size);
+    }
+  }
+
+  #confirm(id) {
+    const file = this.#proposed.get(id);
+    this.#proposed.delete(id);
+    if (!file || !this.#transfers.confirm(id)) return;
+    this.#enqueue(id, file);
+    this.#pump();
+  }
+
+  #enqueue(id, file) {
+    if (file.size > MAX_FILE) this.#transfers.failed(id, `over the ${formatSize(MAX_FILE)} limit`);
+    else this.#queue.push({ id, file });
   }
 
   async #pump() {
@@ -114,16 +137,19 @@ export class Files {
   }
 
   // download takes a transfer the agent opened, which must be a file the
-  // user asked to save.
+  // user asked to save, once for each click on Save. Dismissing it on the
+  // way makes the rest of its bytes nobody's.
   #download(h) {
-    if (!this.#transfers.fetching(h.id)) throw new Error('nobody asked for this file');
+    if (!this.#transfers.receive(h.id)) throw new Error('nobody asked for this file');
     const t = this.#transfers.get(h.id);
+    const wanted = () => this.#transfers.get(h.id) === t && t.state === RECEIVING;
     const pieces = [];
     let piece = [];
     let pieceBytes = 0;
     let done = 0;
     return {
       write: (chunk) => {
+        if (!wanted()) throw new Error('dismissed in the page');
         piece.push(chunk);
         pieceBytes += chunk.length;
         done += chunk.length;
@@ -135,12 +161,15 @@ export class Files {
         this.#transfers.progress(h.id, done);
       },
       commit: () => {
+        if (!wanted()) throw new Error('dismissed in the page');
         pieces.push(new Blob(piece));
         save(new Blob(pieces, { type: 'application/octet-stream' }), t.name);
         this.#transfers.finished(h.id);
         this.#clearLater(h.id);
       },
-      abort: (err) => this.#transfers.failed(h.id, reasonOf(err)),
+      abort: (err) => {
+        if (wanted()) this.#transfers.failed(h.id, reasonOf(err));
+      },
     };
   }
 
@@ -205,7 +234,7 @@ export class Files {
     status.className = 'status';
     status.textContent = statusOf(t);
     li.append(name, size, status);
-    if (t.state === SENDING || t.state === FETCHING) {
+    if (t.state === SENDING || t.state === FETCHING || t.state === RECEIVING) {
       const bar = document.createElement('progress');
       bar.max = Math.max(t.size, 1);
       bar.value = t.done;
@@ -218,10 +247,17 @@ export class Files {
         if (this.#transfers.fetch(t.id)) this.#send({ t: 'file-fetch', file: { id: t.id } });
       }));
     }
-    if (t.state === OFFERED || t.state === FETCHING) {
+    if (t.state === OFFERED || t.state === FETCHING || t.state === RECEIVING) {
       actions.append(button('dismiss', 'Dismiss', () => {
         this.#transfers.remove(t.id);
         this.#send({ t: 'file-decline', file: { id: t.id } });
+      }));
+    }
+    if (t.state === PENDING) {
+      actions.append(button('send', 'Upload', () => this.#confirm(t.id)));
+      actions.append(button('dismiss', 'Dismiss', () => {
+        this.#proposed.delete(t.id);
+        this.#transfers.remove(t.id);
       }));
     }
     if (t.state === QUEUED || t.state === SENDING) {
