@@ -2,6 +2,8 @@
 // One master process holds the connection; commands, SFTP and port forwards
 // ride it through its control socket. Using the user's own ssh keeps their
 // config, agent, jump hosts, hardware keys and interactive prompts working.
+// Where ssh has no ControlMaster, as on Windows, Options.NoMux gives each of
+// them a connection of its own instead.
 package sshmux
 
 import (
@@ -34,20 +36,34 @@ type Options struct {
 	// Default os.Stderr. Password, 2FA and host key prompts use /dev/tty, not
 	// this writer.
 	Stderr io.Writer
+	// NoMux runs every command, SFTP session and forward as an ssh process
+	// with a connection of its own, for clients without ControlMaster such
+	// as Windows OpenSSH. Each one authenticates by itself, so a password or
+	// 2FA prompt comes once per connection unless a key or an agent answers.
+	NoMux bool
 }
 
-// Master is a running ssh ControlMaster.
+// Master is a running ssh ControlMaster, or with Options.NoMux the settings
+// that each connection of its own starts from.
 type Master struct {
 	ssh  string
 	args []string
 	dest string
 	dir  string
 	ctl  string
+	mux  bool
+	// out receives the stderr of the master, or of each forward without one.
+	out io.Writer
 
 	cmd     *exec.Cmd
 	stderr  tail.Buffer
 	done    chan struct{}
 	waitErr error
+
+	mu       sync.Mutex
+	forwards []*process // forwards of their own, stopped by Close
+	closed   bool       // Close has stopped the forwards
+	sockets  int        // unix sockets handed out for forwards
 
 	closeOnce sync.Once
 	closeErr  error
@@ -58,29 +74,32 @@ const controlName = "ctl"
 // Dial starts a master connection to dest and returns once it accepts
 // multiplexed sessions. ctx bounds only the wait, which includes any prompts
 // the user answers; the connection itself lives until Close or a network drop.
+//
+// With opts.NoMux nothing connects yet: each command, SFTP session and
+// forward connects when it starts, and the first to fail says why.
 func Dial(ctx context.Context, dest string, opts Options) (*Master, error) {
 	if dest == "" || strings.HasPrefix(dest, "-") {
 		return nil, fmt.Errorf("sshmux: invalid destination %q", dest)
-	}
-	dir, err := controlDir()
-	if err != nil {
-		return nil, err
 	}
 	m := &Master{
 		ssh:  cmp.Or(opts.SSHPath, "ssh"),
 		args: opts.Args,
 		dest: dest,
-		dir:  dir,
-		ctl:  filepath.Join(dir, controlName),
+		mux:  !opts.NoMux,
+		out:  cmp.Or[io.Writer](opts.Stderr, os.Stderr),
 		done: make(chan struct{}),
 	}
-	stderr := opts.Stderr
-	if stderr == nil {
-		stderr = os.Stderr
+	if !m.mux {
+		return m, nil
 	}
+	dir, err := controlDir()
+	if err != nil {
+		return nil, err
+	}
+	m.dir, m.ctl = dir, filepath.Join(dir, controlName)
 
 	m.cmd = exec.Command(m.ssh, m.masterArgs()...)
-	m.cmd.Stderr = io.MultiWriter(&m.stderr, stderr)
+	m.cmd.Stderr = io.MultiWriter(&m.stderr, m.out)
 	// A ProxyCommand child can hold stderr open after the master exits.
 	m.cmd.WaitDelay = time.Second
 	if err := m.cmd.Start(); err != nil {
@@ -146,11 +165,14 @@ func (m *Master) Output(ctx context.Context, remoteCmd string, stdin io.Reader) 
 	return out, err
 }
 
-// ForwardLocal makes the master listen on the unix socket path local and
+// forwardLocal makes the master listen on the unix socket path local and
 // forward each connection to remote, which is "host:port" or a unix socket
-// path on the remote host. local must not exist yet; SocketPath gives a
+// path on the remote host. local must not exist yet; socketPath gives a
 // suitable one. The forward lasts until the master exits.
-func (m *Master) ForwardLocal(ctx context.Context, local, remote string) error {
+func (m *Master) forwardLocal(ctx context.Context, local, remote string) error {
+	if !m.mux {
+		return errors.New("sshmux: unix socket forwards need a ControlMaster")
+	}
 	if !filepath.IsAbs(local) || strings.Contains(local, ":") {
 		return fmt.Errorf("sshmux: local forward path %q must be absolute and free of ':'", local)
 	}
@@ -160,23 +182,30 @@ func (m *Master) ForwardLocal(ctx context.Context, local, remote string) error {
 	return m.control(ctx, "forward", "-L", local+":"+remote)
 }
 
-// SocketPath returns a path for a unix socket called name in the master's
+// socketPath returns a path for a unix socket called name in the master's
 // private directory, which Close removes. The directory is chosen so short
 // names fit the platform's socket path limit.
-func (m *Master) SocketPath(name string) string {
+func (m *Master) socketPath(name string) string {
 	return filepath.Join(m.dir, name)
 }
 
 // Done is closed when the master process exits, whether through Close, a
-// network drop or a signal.
+// network drop or a signal. Without a master it is closed by Close only: a
+// network drop shows as the failure of whatever was using the connection.
 func (m *Master) Done() <-chan struct{} {
 	return m.done
 }
 
 // Close asks the master to exit, kills it if it does not, and removes the
-// control directory. Commands still running over the master fail.
+// control directory. Commands still running over the master fail. Without
+// a master it stops the forwards; commands end with their contexts.
 func (m *Master) Close() error {
 	m.closeOnce.Do(func() {
+		m.stopForwards()
+		if !m.mux {
+			close(m.done)
+			return
+		}
 		select {
 		case <-m.done:
 		default:
@@ -244,8 +273,12 @@ func (m *Master) subsystemArgs(name string) []string {
 // forwards, RemoteCommand or a -J would conflict with session flags.
 // ProxyCommand=false makes ssh fail instead of silently opening a fresh
 // connection when the master is gone. -e none keeps "~." in binary stdin from
-// being an escape.
+// being an escape. Without a master, each session is a connection of its
+// own and takes ownArgs instead.
 func (m *Master) sessionArgs() []string {
+	if !m.mux {
+		return m.ownArgs(true)
+	}
 	return []string{
 		"-F", os.DevNull,
 		"-o", "ControlMaster=no",

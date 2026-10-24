@@ -384,8 +384,8 @@ type tunnel struct {
 }
 
 func openTunnel(ctx context.Context, m *sshmux.Master, remote string, log *slog.Logger) (*tunnel, error) {
-	sock := m.SocketPath("ice.sock")
-	if err := m.ForwardLocal(ctx, sock, remote); err != nil {
+	fwd, err := m.Forward(ctx, remote)
+	if err != nil {
 		return nil, fmt.Errorf("forward ICE-TCP over SSH: %w", err)
 	}
 	ln, err := net.Listen("tcp4", "127.0.0.1:0")
@@ -399,7 +399,7 @@ func openTunnel(ctx context.Context, m *sshmux.Master, remote string, log *slog.
 			if err != nil {
 				return
 			}
-			go splice(c, sock, log)
+			go splice(c, fwd, log)
 		}
 	}()
 	return t, nil
@@ -409,9 +409,9 @@ func (t *tunnel) Port() int { return t.ln.Addr().(*net.TCPAddr).Port }
 
 func (t *tunnel) Close() error { return t.ln.Close() }
 
-func splice(c net.Conn, sock string, log *slog.Logger) {
+func splice(c net.Conn, fwd *sshmux.Forward, log *slog.Logger) {
 	defer c.Close()
-	u, err := net.Dial("unix", sock)
+	u, err := fwd.Dial()
 	if err != nil {
 		log.Warn("tunnel dial", "err", err)
 		return

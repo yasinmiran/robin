@@ -45,6 +45,9 @@ var errPortTaken = errors.New("port taken")
 // or sshd are missing.
 func Start(t testing.TB) *Server {
 	t.Helper()
+	if noServer != "" {
+		t.Skip(noServer)
+	}
 	sshd := findSSHD()
 	if sshd == "" {
 		t.Skip("sshtest: sshd not found")
@@ -89,11 +92,11 @@ func (s *Server) Stop() {
 		return
 	default:
 	}
-	_ = syscall.Kill(-s.cmd.Process.Pid, syscall.SIGTERM)
+	signalGroup(s.cmd, syscall.SIGTERM)
 	select {
 	case <-s.exited:
 	case <-time.After(5 * time.Second):
-		_ = syscall.Kill(-s.cmd.Process.Pid, syscall.SIGKILL)
+		signalGroup(s.cmd, syscall.SIGKILL)
 		<-s.exited
 	}
 }
@@ -132,7 +135,7 @@ LogLevel VERBOSE
 	cmd := exec.Command(sshd, "-D", "-e", "-f", cfg)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	ownGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start sshd: %w", err)
 	}

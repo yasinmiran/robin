@@ -78,7 +78,7 @@ func splitArgs(out []byte) []string {
 }
 
 func TestArgs(t *testing.T) {
-	m := &Master{ssh: "ssh", args: []string{"-F", "cfg", "-p", "2222"}, dest: "host", ctl: "/tmp/robin-1/ctl"}
+	m := &Master{ssh: "ssh", args: []string{"-F", "cfg", "-p", "2222"}, dest: "host", ctl: "/tmp/robin-1/ctl", mux: true}
 
 	want := []string{
 		"-o", "ControlMaster=yes", "-o", "ControlPersist=no",
