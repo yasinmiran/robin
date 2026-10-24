@@ -33,12 +33,9 @@ func TestMain(m *testing.M) {
 
 // agentCopy puts the test binary in a writable directory of its own, since
 // the agent keeps its sessions beside itself and the test binary may live
-// on a read-only mount.
+// on a read-only mount. Tests that spawn a desktop call needXvfb first.
 func agentCopy(t *testing.T) string {
 	t.Helper()
-	if _, err := exec.LookPath("Xvfb"); err != nil {
-		t.Skip("Xvfb not installed; run via internal/agent/x11/testdata/xtest.sh")
-	}
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -52,6 +49,13 @@ func agentCopy(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return exe
+}
+
+func needXvfb(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("Xvfb"); err != nil {
+		t.Skip("Xvfb not installed; run via internal/agent/x11/testdata/xtest.sh")
+	}
 }
 
 // proxy is a running `robin-agent serve`, driven as the CLI drives it.
@@ -222,6 +226,7 @@ func waitRunDirGone(t *testing.T, dir string, within time.Duration) {
 }
 
 func TestDaemonOutlivesTheProxyAndEndsWithTheKeepWindow(t *testing.T) {
+	needXvfb(t)
 	exe := agentCopy(t)
 	p1 := serveAgent(t, exe, "-keep", "4s")
 	ready, dir := start(p1, exe)
@@ -288,6 +293,7 @@ func TestDaemonOutlivesTheProxyAndEndsWithTheKeepWindow(t *testing.T) {
 }
 
 func TestEndStopsAKeptSession(t *testing.T) {
+	needXvfb(t)
 	exe := agentCopy(t)
 	p := serveAgent(t, exe, "-keep", "1h")
 	ready, dir := start(p, exe)
@@ -345,6 +351,7 @@ func TestEndRefusesWhatIsNoSessionID(t *testing.T) {
 }
 
 func TestServeWithoutKeepEndsWithItsController(t *testing.T) {
+	needXvfb(t)
 	exe := agentCopy(t)
 	p := serveAgent(t, exe)
 	ready, dir := start(p, exe)

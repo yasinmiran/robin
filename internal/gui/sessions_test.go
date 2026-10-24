@@ -152,3 +152,52 @@ func TestEndFallsBackToTheAgentsEndCommand(t *testing.T) {
 		t.Fatal("the end command ran for a desktop that was not kept")
 	}
 }
+
+// TestAbandonEndsTheDesktopAndKeepsTheError: an error that stops the CLI
+// after Ready ends the kept desktop too, and the error says when that
+// failed as well.
+func TestAbandonEndsTheDesktopAndKeepsTheError(t *testing.T) {
+	o, _, _ := localhost(t)
+	o, log := o.fill()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	m, err := sshmux.Dial(ctx, o.Dest, sshmux.Options{Args: o.SSHArgs, Stderr: o.Stderr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &host{o: o, log: log, m: m}
+	defer h.close()
+	ready := &protocol.Ready{ID: "ab12", Keep: 3600}
+	cause := errors.New("page server stopped")
+
+	// The agent answers the bye: nothing else to do, the error is untouched.
+	path, calls := endScript(t, 0)
+	ag, f := agentOverPipes(t)
+	go func() {
+		if m := <-f.calls; m.Type == protocol.TypeBye {
+			f.conn.Send(protocol.Message{Type: protocol.TypeEnded, Error: "the CLI ended the session"})
+			f.outW.Close()
+		}
+	}()
+	if err := h.abandon(cause, ag, ready, path); err != cause {
+		t.Fatalf("abandon with bye answered: %v", err)
+	}
+	if _, err := os.Stat(calls); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the end command ran though bye was answered")
+	}
+
+	// Nothing answers and the end command fails: both reasons come back.
+	path, calls = endScript(t, 1)
+	ag, f = agentOverPipes(t)
+	go func() {
+		<-f.calls
+		f.exit()
+	}()
+	err = h.abandon(cause, ag, ready, path)
+	if !errors.Is(err, cause) || !strings.Contains(err.Error(), "could not end session ab12") {
+		t.Fatalf("abandon with the end failing: %v", err)
+	}
+	if b, _ := os.ReadFile(calls); !strings.Contains(string(b), "end ab12") {
+		t.Fatalf("the host ran %q", b)
+	}
+}
