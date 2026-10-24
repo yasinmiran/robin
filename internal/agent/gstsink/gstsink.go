@@ -38,11 +38,11 @@ var (
 	// stableAfter is how long a child must run for its exit to count as the
 	// pipeline having worked rather than failed.
 	stableAfter = 5 * time.Second
+	// maxQuickExits children in a row that exit within stableAfter, and the
+	// sink gives up. A program that opens the camera for a moment and lets
+	// go ends a child each time, so this allows for a few of those.
+	maxQuickExits = 20
 )
-
-// maxQuickExits children in a row that exit within stableAfter, and the
-// sink gives up.
-const maxQuickExits = 5
 
 // ErrClosed is what Write returns once Close has been called.
 var ErrClosed = errors.New("gstsink: closed")

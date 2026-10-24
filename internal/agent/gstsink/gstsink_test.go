@@ -33,10 +33,14 @@ esac
 `
 
 func TestMain(m *testing.M) {
+	if os.Getenv(helperEnv) != "" {
+		runHelper()
+	}
 	startGrace = 100 * time.Millisecond
 	restartDelay = 10 * time.Millisecond
 	stopGrace = 300 * time.Millisecond
 	stableAfter = time.Second
+	maxQuickExits = 5
 	os.Exit(m.Run())
 }
 
