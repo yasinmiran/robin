@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -278,4 +279,72 @@ func TestUploadThroughTheSession(t *testing.T) {
 	if _, err := testSession(&fakeDesktop{}).acceptUpload(protocol.Bulk{Name: "x", Size: 1}); err == nil {
 		t.Error("a session without files took an upload")
 	}
+}
+
+// rawOffer offers path n times over one connection, under names f0, f1 and
+// so on, as robin-agent send would, and stays connected.
+func rawOffer(t *testing.T, sock, path string, n int) *net.UnixConn {
+	t.Helper()
+	c, err := net.DialUnix("unixpacket", nil, &net.UnixAddr{Name: sock, Net: "unixpacket"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+	var names []string
+	var fds []int
+	for i := range n {
+		f, err := os.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		names = append(names, "f"+strconv.Itoa(i))
+		fds = append(fds, int(f.Fd()))
+	}
+	req, _ := json.Marshal(map[string][]string{"names": names})
+	if _, _, err := c.WriteMsgUnix(req, unix.UnixRights(fds...), nil); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// TestOffersAreBounded keeps offering files without hanging up: past
+// maxOffers on offer at once a request is refused whole, its descriptors
+// closed, and once a sender goes there is room again.
+func TestOffersAreBounded(t *testing.T) {
+	s, runDir, _ := sharedSession(t, &fakeDesktop{})
+	sock := filepath.Join(runDir, files.SocketName)
+	path := hostFile(t, "a.txt", "a")
+	const perSender = 64 // the most one request may hold
+	var senders []*net.UnixConn
+	for range maxOffers / perSender {
+		senders = append(senders, rawOffer(t, sock, path, perSender))
+	}
+	openOffers(t, s, maxOffers)
+
+	late := rawOffer(t, sock, path, 1)
+	late.SetReadDeadline(time.Now().Add(5 * time.Second))
+	buf := make([]byte, 4096)
+	n, err := late.Read(buf)
+	if err != nil {
+		t.Fatalf("no answer to an offer past the bound: %v", err)
+	}
+	var rep struct {
+		I      int    `json:"i"`
+		Detail string `json:"detail"`
+	}
+	if err := json.Unmarshal(buf[:n], &rep); err != nil || rep.I != -1 || !strings.Contains(rep.Detail, "on offer") {
+		t.Errorf("an offer past the bound got %s, want a refusal of the request", buf[:n])
+	}
+	if _, err := late.Read(buf); !errors.Is(err, io.EOF) {
+		t.Errorf("the refused sender was not hung up on: %v", err)
+	}
+	openOffers(t, s, maxOffers)
+
+	if err := senders[0].CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	openOffers(t, s, maxOffers-perSender)
+	rawOffer(t, sock, path, 1)
+	openOffers(t, s, maxOffers-perSender+1)
 }

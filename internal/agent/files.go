@@ -196,8 +196,15 @@ func (s *session) serveFiles(ctx context.Context) {
 	<-served
 }
 
+// maxOffers bounds the files on offer at once, from every robin-send
+// together. Each keeps a descriptor open in the agent and a line in the
+// page, and four full requests are more than anyone picks through; a
+// program that offers and never hangs up holds no more than that.
+const maxOffers = 256
+
 // takeOffers puts the files of one robin-agent send on offer and keeps
-// them there until each is settled or the sender goes.
+// them there until each is settled or the sender goes. A request that
+// would bring more than maxOffers on offer is refused whole.
 func (s *session) takeOffers(r *files.Request) {
 	defer r.Close()
 	fs := s.files
@@ -212,7 +219,8 @@ func (s *session) takeOffers(r *files.Request) {
 	}
 	fs.mu.Lock()
 	closed := fs.closed
-	if !closed {
+	full := len(fs.offers)+len(mine) > maxOffers
+	if !closed && !full {
 		for _, o := range mine {
 			fs.seq++
 			o.seq = fs.seq
@@ -221,9 +229,13 @@ func (s *session) takeOffers(r *files.Request) {
 		from.open = len(mine)
 	}
 	fs.mu.Unlock()
-	if closed || len(mine) == 0 {
+	if closed || full || len(mine) == 0 {
 		for _, o := range mine {
 			o.file.Close()
+		}
+		if full && !closed {
+			s.log.Info("offer refused", "files", len(mine), "on offer", maxOffers)
+			r.Tell(-1, "", fmt.Sprintf("%d files are on offer already, the most a session holds", maxOffers))
 		}
 		return
 	}
