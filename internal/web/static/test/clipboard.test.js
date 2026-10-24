@@ -4,7 +4,7 @@ import { Sum } from '../bulkframe.js';
 import { CLIP_KIND, CLIP_LIMIT, MAX_CLIP, encodeClip } from '../clip.js';
 import { Clipboard } from '../clipboard.js';
 import { dispatchControl } from '../control.js';
-import { fromAgent, until } from './fakes.js';
+import { fromAgent, until, within } from './fakes.js';
 
 const later = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -49,22 +49,45 @@ test('what the host copied reaches the browser in chunks', async () => {
   assert.deepEqual(written.at(-1)[0].types, ['text/plain', 'text/html']);
 });
 
-test('headers alone reserve no memory, and a third transfer at once is refused', async () => {
+test('headers alone reserve no memory, and a third at once pushes out the oldest', async () => {
   const before = process.memoryUsage().arrayBuffers;
-  const held = [clipFromAgent(CLIP_LIMIT), clipFromAgent(CLIP_LIMIT)];
-  // The third is refused only once the two before it hold their places,
-  // so by then their sinks are what they are.
-  const third = await clipFromAgent(CLIP_LIMIT).verdict;
-  assert.equal(third.t, 'error');
-  assert.match(third.error, /too many clipboard transfers under way/);
+  const [first, second, third] = [clipFromAgent(CLIP_LIMIT), clipFromAgent(CLIP_LIMIT), clipFromAgent(CLIP_LIMIT)];
+  // The third pushes out the first only once the two before it hold their
+  // places, and takes its own before the first hears, so by then the
+  // sinks are what they are.
+  const pushed = await within(first.verdict);
+  assert.equal(pushed.t, 'error', `the first transfer: ${JSON.stringify(pushed)}`);
+  assert.match(pushed.error, /superseded by a newer clipboard transfer/);
   const grew = process.memoryUsage().arrayBuffers - before;
-  assert.ok(grew < 1024 * 1024, `two headers took ${grew} bytes`);
+  assert.ok(grew < 1024 * 1024, `two held headers took ${grew} bytes`);
 
+  const held = [second, third];
   for (const t of held) t.agent.close();
   await until('both channels closed at the page', () => held.every((t) => t.page.readyState === 'closed'));
   const empty = clipFromAgent(0);
   empty.agent.send(JSON.stringify(new Sum(0).end()));
   assert.deepEqual(await empty.verdict, { t: 'done' });
+});
+
+test('the newest host copy reaches the page while two older ones have yet to close', async () => {
+  const [a, b, c] = ['a', 'b', 'c'].map((text) => {
+    const clip = { text, html: `<b>${text}</b>` };
+    const bytes = encodeClip(clip);
+    return { clip, bytes, ...clipFromAgent(bytes.length) };
+  });
+  // The agent cancelled a and b for c, but c's header got here first.
+  const pushed = await within(a.verdict);
+  assert.equal(pushed.t, 'error', `the oldest copy: ${JSON.stringify(pushed)}`);
+  assert.match(pushed.error, /superseded/);
+  a.agent.close();
+  b.agent.close();
+  const sum = new Sum(c.bytes.length);
+  sum.add(c.bytes);
+  c.agent.send(c.bytes);
+  c.agent.send(JSON.stringify(sum.end()));
+  assert.deepEqual(await within(c.verdict), { t: 'done' });
+  assert.deepEqual(clipboard.last, c.clip);
+  await until('the cancelled copy closed at the page', () => b.page.readyState === 'closed');
 });
 
 test('put sends short text as a control message, the rest as a transfer, and leaves out an image too big', async () => {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { BulkRefused, Inbound, acceptBulk, onBulk, sendBulk } from '../bulk.js';
 import { CHUNK_SIZE, Sum, registerKind } from '../bulkframe.js';
-import { FakeChannel, FakePeer, fromAgent, until } from './fakes.js';
+import { FakeChannel, FakePeer, fromAgent, until, within } from './fakes.js';
 
 registerKind('test', 16 * 1024 * 1024);
 
@@ -257,8 +257,6 @@ function emptyFromAgent(header) {
   return { ...t, end: () => t.agent.send(JSON.stringify(new Sum(0).end())) };
 }
 
-const within = (p, ms = 2000) => Promise.race([p, new Promise((resolve) => setTimeout(() => resolve('no verdict'), ms))]);
-
 test('a third transfer of a kind that takes two at once is refused on its header', async () => {
   const first = emptyFromAgent({ kind: 'capped', id: '1' });
   const second = emptyFromAgent({ kind: 'capped', id: '2' });
@@ -307,6 +305,37 @@ test('a place is taken before accept runs, so two headers cannot both take the l
   first.end();
   second.end();
   assert.deepEqual([await first.verdict, await second.verdict], [{ t: 'done' }, { t: 'done' }]);
+});
+
+// A kind that takes one at a time, a newer one pushing out the one before;
+// accepting a waits.
+registerKind('latest', 1024);
+const latest = [];
+let admitA;
+const aGate = new Promise((resolve) => { admitA = resolve; });
+onBulk('latest', async (h) => {
+  const sink = memSink();
+  sink.header = h;
+  latest.push(sink);
+  if (h.id === 'a') await aGate;
+  return sink;
+}, { inbound: 1, supersede: true });
+
+test('a newer transfer of a kind that supersedes ends the oldest, whose sink hears first', async () => {
+  const a = emptyFromAgent({ kind: 'latest', id: 'a' });
+  await until('accepting a', () => latest.length === 1);
+  const b = emptyFromAgent({ kind: 'latest', id: 'b' });
+  assert.match((await within(a.verdict)).error ?? '', /superseded by a newer latest transfer/);
+  const c = emptyFromAgent({ kind: 'latest', id: 'c' });
+  assert.match((await within(b.verdict)).error ?? '', /superseded by a newer latest transfer/);
+  assert.equal(latest.length, 1, 'a newer one was accepted before the sink it pushed out heard');
+
+  admitA();
+  c.end();
+  assert.deepEqual(await within(c.verdict), { t: 'done' });
+  assert.deepEqual(latest.map((sink) => sink.header.id), ['a', 'c'], 'b was accepted after it was pushed out');
+  assert.match((await latest[0].ended).err.message, /superseded/);
+  assert.deepEqual(await latest[1].ended, { ok: true });
 });
 
 test('Inbound aborts on a close before the end', async () => {

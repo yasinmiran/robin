@@ -566,9 +566,9 @@ escapes, as `ls` does. Bulk transfers of any kind the agent has not registered
 are refused.
 
 The page holds the host to bounds of its own. A host may have two clipboard
-transfers open to the page at once, and a download only for each click on
-Save; what arrives is kept as it comes, never reserved ahead for the size a
-header claims. A download may be no
+transfers open to the page at once, a newer copy pushing out the oldest,
+and a download only for each click on Save; what arrives is kept as it
+comes, never reserved ahead for the size a header claims. A download may be no
 larger than the offer you clicked, and the host can withdraw only the files
 it offered, never your uploads. The page keeps at most 128 pointer images
 of at most 256 KiB each, and puts nothing from the host into the pointer's

@@ -973,10 +973,17 @@ side's, which is why it sits there and not with the size limit in
 header passes its checks, before accept runs, so two headers on two
 channels cannot both take the last one while accept awaits, and it is
 given back with the verdict or the close. One more header than that is
-refused with a reason and its channel closed. The clipboard takes two, as
-many as the agent takes from the page, since a newer copy's header can
-arrive before the cancelled older one's close; files take any number,
-because each download already needs a click on Save of its own. The
+refused with a reason and its channel closed, unless the kind supersedes:
+then it ends the oldest transfer of the kind still open, with an error
+verdict that frees the place at once, and waits for that transfer's sink
+to hear before its own accept runs, so the kind never has more sinks open
+than its limit. The clipboard takes two, as many as the agent takes from
+the page, and supersedes. The agent cancels an older copy's transfer for
+a newer one without waiting, and the page hears that close only after the
+stream reset, about a round trip, so three rich copies inside one round
+trip used to leave the newest refused and the browser holding an older
+item, which is what a paste then gave. Files take any number, because
+each download already needs a click on Save of its own. The
 clipboard's sink used to reserve the size a header declared, up to 16 MiB,
 before a byte came. It now gathers chunks as they arrive and joins them at
 the commit, which the hash and the size check have already passed. In

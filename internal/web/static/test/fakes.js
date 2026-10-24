@@ -14,6 +14,9 @@ export async function until(what, cond) {
   assert.ok(cond(), what);
 }
 
+// within resolves with what p does, or 'no verdict' once ms pass first.
+export const within = (p, ms = 2000) => Promise.race([p, new Promise((resolve) => setTimeout(() => resolve('no verdict'), ms))]);
+
 export class FakeChannel extends EventTarget {
   readyState = 'connecting';
   bufferedAmount = 0;

@@ -36,7 +36,7 @@ export class Clipboard {
         commit: () => this.#copied(decodeClip(join(chunks))),
         abort: () => {},
       };
-    }, { inbound: CLIP_INBOUND });
+    }, { inbound: CLIP_INBOUND, supersede: true });
   }
 
   // paste takes what a paste event carries to the host, and resolves once
