@@ -175,8 +175,8 @@ func Run(ctx context.Context, o Options) (err error) {
 	if o.Audio && !ready.Audio && !ready.Resumed {
 		fmt.Fprintf(o.Stderr, "robin: no sound from %s: %s\n", o.Dest, ready.AudioError)
 	}
-	devices := askedDevices(o, ready)
-	for _, note := range deviceNotes(o.Dest, devices) {
+	mic, camera := askedDevices(o, ready)
+	for _, note := range deviceNotes(o.Dest, mic, camera) {
 		fmt.Fprintln(o.Stderr, note)
 	}
 
@@ -206,7 +206,7 @@ func Run(ctx context.Context, o Options) (err error) {
 	}
 
 	config := protocol.Config{ICEServers: iceServers(start.STUN), HiDPI: o.HiDPI, Keep: ready.Keep}
-	config.Mic, config.Camera = offeredDevices(devices)
+	config.Mic, config.Camera = offeredDevices(mic, camera)
 	b := newBridge(ag.conn, relay.New(relay.Policy{Transport: o.Transport, TunnelPort: t.Port()}), config, log)
 	go b.accept(ctx, srv)
 	defer b.close()
