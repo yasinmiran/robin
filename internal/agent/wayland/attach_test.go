@@ -206,6 +206,52 @@ func TestAttachStreamsAndDrives(t *testing.T) {
 		}
 	})
 
+	t.Run("text", func(t *testing.T) {
+		if d.clip == nil {
+			t.Fatal("clipboard not granted")
+		}
+		// The probe owns the clipboard, which the pastes must leave as it was.
+		tap(t, d, "F3")
+		select {
+		case text := <-d.Clipboard():
+			if text != "from-session" {
+				t.Fatalf("desktop copied %q, want from-session", text)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("the probe's clipboard never reached the agent")
+		}
+
+		// ASCII types as keys.
+		mark := p.mark()
+		if err := d.Type(t.Context(), "ok!"); err != nil {
+			t.Fatal(err)
+		}
+		p.await(t, mark, func(e probeEvent) bool { return e.Ev == "key" && e.Text == "!" })
+		if got := p.entered(mark); got != "ok!" {
+			t.Errorf("entered %q, want ok!", got)
+		}
+
+		// Anything else is pasted whole, and the clipboard put back after.
+		mark = p.mark()
+		const text = "a日本b€ c"
+		start := time.Now()
+		if err := d.Type(t.Context(), text); err != nil {
+			t.Fatal(err)
+		}
+		pasted := p.await(t, mark, func(e probeEvent) bool { return e.Ev == "paste" || e.Ev == "paste-error" })
+		t.Logf("pasted %+v %v after Type began", pasted, time.Since(start))
+		if got := p.entered(mark); got != text {
+			t.Errorf("entered %q, want %q", got, text)
+		}
+		time.Sleep(restoreAfter + 500*time.Millisecond)
+		mark = p.mark()
+		tap(t, d, "F2")
+		ev := p.await(t, mark, func(e probeEvent) bool { return e.Ev == "clipboard" || e.Ev == "clipboard-error" })
+		if ev.Text != "from-session" {
+			t.Errorf("clipboard after the paste holds %+v, want from-session back", ev)
+		}
+	})
+
 	t.Run("cursor", func(t *testing.T) {
 		select {
 		case c := <-d.Cursor():
@@ -301,6 +347,9 @@ func TestAttachViewOnly(t *testing.T) {
 	}
 	if err := d.Input(protocol.Control{T: protocol.ControlMove, X: 10, Y: 10}); !errors.Is(err, errViewOnly) {
 		t.Errorf("input on a view-only session: %v", err)
+	}
+	if err := d.Type(t.Context(), "日本"); !errors.Is(err, errViewOnly) {
+		t.Errorf("text on a view-only session: %v", err)
 	}
 	if f, _, err := d.Capture(true); err != nil || f.Width != 1280 {
 		t.Errorf("view-only session streams no picture: %v", err)
@@ -574,6 +623,20 @@ func (p *probe) typed(mark int) string {
 	var b strings.Builder
 	for _, e := range p.events[mark:] {
 		if e.Ev == "key" && e.Text != "\x00" {
+			b.WriteString(e.Text)
+		}
+	}
+	return b.String()
+}
+
+// entered returns the text that reached the probe from mark on, typed or
+// pasted, in the order it arrived.
+func (p *probe) entered(mark int) string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var b strings.Builder
+	for _, e := range p.events[mark:] {
+		if e.Ev == "key" && e.Text != "\x00" || e.Ev == "paste" {
 			b.WriteString(e.Text)
 		}
 	}

@@ -250,6 +250,7 @@ func (d *Desktop) Close() error {
 			d.frames.stop()
 		}
 		if d.clip != nil {
+			d.clip.putBack()
 			d.clip.close()
 		}
 		if d.sess != nil {
