@@ -1,7 +1,8 @@
 // Package peer is the agent's side of one WebRTC session with a browser: an
 // H.264 video track out, the control data channel and bulk transfers both
-// ways, and the congestion controller that tells the encoder how fast it
-// may go.
+// ways, the browser's microphone and camera tracks in with the feedback a
+// receiver owes for them, and the congestion controller that tells the
+// encoder how fast it may go.
 package peer
 
 import (
