@@ -28,7 +28,9 @@ const (
 const closeGrace = 5 * time.Second
 
 // maxBulkReason bounds the reason a receiver sends back, so the verdict
-// frame stays within protocol.BulkChunkSize after JSON escaping.
+// frame stays within protocol.BulkChunkSize after JSON escaping, and the
+// reason the agent takes from the browser's refusals, which reaches
+// robin-send's terminal and the log.
 const maxBulkReason = 1 << 10
 
 // ErrBulkCancelled means the other side closed a bulk channel before the
@@ -244,7 +246,7 @@ func refusal(v protocol.Bulk) error {
 	if v.T == protocol.BulkDone {
 		return &BulkRefusedError{Reason: "receiver finished before the end"}
 	}
-	return &BulkRefusedError{Reason: v.Error}
+	return &BulkRefusedError{Reason: bounded(v.Error)}
 }
 
 func outcome(v protocol.Bulk) error {
@@ -367,8 +369,9 @@ func (r *bulkReceiver) closed() {
 	}
 }
 
-func reason(err error) string {
-	s := err.Error()
+func reason(err error) string { return bounded(err.Error()) }
+
+func bounded(s string) string {
 	if len(s) > maxBulkReason {
 		s = s[:maxBulkReason]
 	}
