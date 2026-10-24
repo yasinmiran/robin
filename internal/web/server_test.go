@@ -401,10 +401,10 @@ func TestPageMessagesRestricted(t *testing.T) {
 	}
 }
 
-// TestPageMayEndOrDetach: besides offers and candidates, the page may say
-// bye and detach, and change the user's macros, which the bridge acts on
-// itself.
-func TestPageMayEndOrDetach(t *testing.T) {
+// TestPageSignalsTheBridgeTakes: besides offers and candidates, the page
+// may say bye and detach, and change the user's macros, which the bridge
+// acts on itself.
+func TestPageSignalsTheBridgeTakes(t *testing.T) {
 	s, _ := start(t)
 	c, b := connect(t, s)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
