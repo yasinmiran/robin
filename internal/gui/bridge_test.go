@@ -68,6 +68,31 @@ func testServer(t *testing.T) (*web.Server, context.Context) {
 
 func openPage(t *testing.T, s *web.Server) *page {
 	t.Helper()
+	pg, err := dialPage(t, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pg
+}
+
+// reopenPage opens a page once the server has let the previous one go,
+// which follows its close by a moment.
+func reopenPage(t *testing.T, s *web.Server) *page {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		pg, err := dialPage(t, s)
+		if err == nil {
+			return pg
+		}
+		if time.Now().After(deadline) {
+			t.Fatal(err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func dialPage(t *testing.T, s *web.Server) (*page, error) {
 	url := s.URL()
 	host := strings.TrimPrefix(url[:strings.Index(url, "/#")], "http://")
 	token := url[strings.Index(url, "#")+1:]
@@ -78,10 +103,10 @@ func openPage(t *testing.T, s *web.Server) *page {
 		Subprotocols: []string{"robin", "token." + token},
 	})
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	t.Cleanup(func() { c.CloseNow() })
-	return &page{t: t, c: c}
+	return &page{t: t, c: c}, nil
 }
 
 func (p *page) send(m protocol.Message) {
@@ -218,7 +243,7 @@ func TestBridgeRelaysAndSurvivesAnAgentConnection(t *testing.T) {
 	// A page arriving while the CLI redials waits for the next Config.
 	b.reconnecting()
 	pg.c.CloseNow()
-	late := openPage(t, s)
+	late := reopenPage(t, s)
 	if m := late.recv(); m.Type != protocol.TypeReconnecting {
 		t.Fatalf("late page got %+v, want reconnecting", m)
 	}
@@ -296,7 +321,7 @@ func TestBridgeRunOwnsTheAgentReader(t *testing.T) {
 	}
 	pg.send(protocol.Message{Type: protocol.TypeOffer, SDP: "v=0"})
 	pg.c.CloseNow()
-	next := openPage(t, s)
+	next := reopenPage(t, s)
 	if m := next.recv(); m.Type != protocol.TypeConfig {
 		t.Fatalf("next page got %+v, want config", m)
 	}
