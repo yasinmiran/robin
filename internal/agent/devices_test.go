@@ -146,7 +146,7 @@ func TestStartCamera(t *testing.T) {
 		{"not asked", protocol.Start{}, newCamera, nil},
 		{"spawned with a loopback device", protocol.Start{Camera: true, CameraDevice: "/dev/video9"}, newCamera, &protocol.Device{Available: true, Where: "/dev/video9"}},
 		{"attached to PipeWire", protocol.Start{Camera: true, Attach: protocol.AttachWayland}, newCamera, &protocol.Device{Available: true, Where: "/dev/video9"}},
-		{"spawned without one", protocol.Start{Camera: true}, newCamera, &protocol.Device{Error: errNoCameraRoute.Error()}},
+		{"spawned without one", protocol.Start{Camera: true}, newCamera, &protocol.Device{Error: noCameraRoute}},
 		{"no support", protocol.Start{Camera: true, Attach: ":0"}, nil, &protocol.Device{Error: "this agent was built without a camera"}},
 		{"refused", protocol.Start{Camera: true, Attach: ":0"}, func(context.Context, CameraOptions) (Camera, error) {
 			return nil, errors.New("no element pipewiresink")

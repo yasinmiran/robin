@@ -4,7 +4,6 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 
 	"github.com/pion/webrtc/v4"
@@ -57,9 +56,9 @@ type CameraOptions struct {
 // NewCameraFunc gives the host the browser's camera.
 type NewCameraFunc func(ctx context.Context, o CameraOptions) (Camera, error)
 
-// errNoCameraRoute is what a spawned desktop without a v4l2loopback device
-// gets: there is no PipeWire session of the user's to put a camera in.
-var errNoCameraRoute = errors.New("a spawned desktop takes the camera only through v4l2loopback, and the host has no device this user can write")
+// noCameraRoute is why a spawned desktop without a v4l2loopback device has
+// no camera: there is no PipeWire session of the user's to put one in.
+const noCameraRoute = "a spawned desktop takes the camera only through v4l2loopback, and the host has no device this user can write"
 
 // spawnMic says the session wants a microphone on the sound server it
 // starts itself, which has to know before it starts.
@@ -101,7 +100,7 @@ func startCamera(ctx context.Context, start protocol.Start, newCamera NewCameraF
 	case newCamera == nil:
 		return fail("this agent was built without a camera")
 	case start.Attach == "" && start.CameraDevice == "":
-		return fail(errNoCameraRoute.Error())
+		return fail(noCameraRoute)
 	}
 	c, err := newCamera(ctx, CameraOptions{Device: start.CameraDevice, Log: log})
 	if err != nil {
