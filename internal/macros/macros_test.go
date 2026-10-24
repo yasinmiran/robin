@@ -345,7 +345,7 @@ func atTheCaps() protocol.Macro {
 		steps = append(steps, protocol.MacroStep{Pause: protocol.MaxMacroPauseMs})
 	}
 	return protocol.Macro{
-		ID:    long(protocol.MacroIDChars),
+		ID:    long(protocol.MaxMacroIDBytes),
 		Name:  strings.Repeat("é", protocol.MaxMacroNameBytes/2),
 		Host:  long(protocol.MaxMacroHostBytes),
 		Steps: steps,

@@ -16,7 +16,7 @@ export const MAX_MACRO_PAUSE_MS = 60000;
 export const MAX_MACRO_KEY_BYTES = 32;
 export const MAX_MACRO_HOST_BYTES = 255;
 export const MAX_MACROS_BYTES = 256 * 1024;
-export const MACRO_ID_CHARS = 32;
+export const MAX_MACRO_ID_BYTES = 32;
 
 // How long a chord's keys stay down before they go up, and the wait
 // between two steps, so the desktop sees each chord as pressed and let go.
@@ -86,7 +86,7 @@ const printable = (s) => typeof s === 'string' && !/[\u0000-\u001f\u007f-\u009f]
 // checkMacro says what would make the CLI refuse m, as macros.Check does,
 // or returns '' for a macro it takes.
 export function checkMacro(m) {
-  if (typeof m.id !== 'string' || !new RegExp(`^[A-Za-z0-9_-]{1,${MACRO_ID_CHARS}}$`).test(m.id)) return 'The macro has no usable ID';
+  if (typeof m.id !== 'string' || !new RegExp(`^[A-Za-z0-9_-]{1,${MAX_MACRO_ID_BYTES}}$`).test(m.id)) return 'The macro has no usable ID';
   if (!printable(m.name) || !m.name.trim() || utf8Bytes(m.name) > MAX_MACRO_NAME_BYTES) {
     return `Give the macro a name of up to ${MAX_MACRO_NAME_BYTES} bytes`;
   }

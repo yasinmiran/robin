@@ -31,7 +31,8 @@ type MacroChange struct {
 
 // Macro is a named run of steps the page plays on the remote desktop.
 type Macro struct {
-	// ID is the page's own name for the macro, MacroIDChars long at most.
+	// ID is the page's own name for the macro: ASCII letters, digits, - and
+	// _, MaxMacroIDBytes at most.
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	// Host pins the macro to the host argument it was made with; empty
@@ -72,5 +73,5 @@ const (
 	// the host a macro is pinned to.
 	MaxMacroKeyBytes  = 32
 	MaxMacroHostBytes = 255
-	MacroIDChars      = 32
+	MaxMacroIDBytes   = 32
 )

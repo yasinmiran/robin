@@ -49,7 +49,7 @@ func TestPageLimitsMatchTheAgent(t *testing.T) {
 		{"macro.js", "MAX_MACRO_KEY_BYTES", protocol.MaxMacroKeyBytes},
 		{"macro.js", "MAX_MACRO_HOST_BYTES", protocol.MaxMacroHostBytes},
 		{"macro.js", "MAX_MACROS_BYTES", protocol.MaxMacrosBytes},
-		{"macro.js", "MACRO_ID_CHARS", protocol.MacroIDChars},
+		{"macro.js", "MAX_MACRO_ID_BYTES", protocol.MaxMacroIDBytes},
 	} {
 		got, err := pageConst(filepath.Join("static", c.file), c.name)
 		if err != nil {

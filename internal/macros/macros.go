@@ -268,7 +268,7 @@ func (s *Store) write(all []protocol.Macro) (err error) {
 // Check reports what keeps m out of the file.
 func Check(m protocol.Macro) error {
 	if !validID(m.ID) {
-		return fmt.Errorf("macro ID %q is not 1 to %d letters, digits, - or _", m.ID, protocol.MacroIDChars)
+		return fmt.Errorf("macro ID %q is not 1 to %d letters, digits, - or _", m.ID, protocol.MaxMacroIDBytes)
 	}
 	if len(m.Name) > protocol.MaxMacroNameBytes || !printable(m.Name) || strings.TrimSpace(m.Name) == "" {
 		return fmt.Errorf("a macro's name is 1 to %d bytes of printable text", protocol.MaxMacroNameBytes)
@@ -320,7 +320,7 @@ func checkStep(st protocol.MacroStep) error {
 }
 
 func validID(id string) bool {
-	if id == "" || len(id) > protocol.MacroIDChars {
+	if id == "" || len(id) > protocol.MaxMacroIDBytes {
 		return false
 	}
 	for _, r := range id {
