@@ -45,9 +45,7 @@ func main() {
 	switch os.Args[1] {
 	case "gui":
 		os.Exit(runGUI(os.Args[2:]))
-	case "ls":
-		os.Exit(runSessions(os.Args[1], os.Args[2:]))
-	case "end":
+	case "ls", "end":
 		os.Exit(runSessions(os.Args[1], os.Args[2:]))
 	case "version", "--version", "-version":
 		fmt.Println("robin", version)

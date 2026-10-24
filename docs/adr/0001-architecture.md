@@ -795,7 +795,15 @@ keeps the reflex and moves it one process out.
   the time the host lets the desktop go. In the e2e teardown after the
   resume, the bye's answer was lost with the session's ssh, the end command
   over the surviving master found the session already gone, and the CLI
-  exited 0 in 399 ms with one `connecting` line in its whole log.
+  exited 0 in 399 ms with one `connecting` line in its whole log. The
+  page's End session button takes the same path: the bridge reports the
+  wish and forwards nothing, the CLI sends bye and falls back to the end
+  command, and only then tells the page `ended`; a socket that closes
+  first leaves the page saying the end is unconfirmed. Errors that stop
+  the CLI after Ready end the desktop the same way. What the CLI acts on
+  crosses the wire as a code, not as wording: the daemon's busy refusal
+  carries `protocol.CodeBusy`, and `robin-agent end` exits
+  `protocol.ExitNoSession` when there is nothing left to end.
 - Measured in the `resume` e2e scenario on 2026-10-24: killing the host's
   sshd children drops every connection at once, the page shows
   Reconnecting 5 ms later and is connected again 263 ms after the cut on

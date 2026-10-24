@@ -50,6 +50,10 @@ type Options struct {
 	// Keep is how long the session waits for a controller to come back
 	// after one left without bye. Zero ends it with its controller.
 	Keep time.Duration
+	// FirstController bounds the wait for the first controller, so a daemon
+	// whose proxy died before it connected does not wait for ever. Zero
+	// waits startTimeout.
+	FirstController time.Duration
 	// StateDir keeps what outlives a session, such as the Wayland portal's
 	// restore token. Empty keeps nothing.
 	StateDir string
@@ -69,6 +73,20 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 	return Serve(ctx, Stdio(r, w), o)
 }
 
+// firstController waits at most wait for the first controller.
+func firstController(ctx context.Context, cs Controllers, wait time.Duration) (*protocol.Conn, error) {
+	if wait <= 0 {
+		wait = startTimeout
+	}
+	ctx, cancel := context.WithTimeoutCause(ctx, wait, fmt.Errorf("agent: no controller connected within %s", wait))
+	defer cancel()
+	conn, err := cs.Next(ctx)
+	if err != nil && ctx.Err() != nil {
+		return nil, context.Cause(ctx)
+	}
+	return conn, err
+}
+
 // Serve runs one session for the controllers cs yields, one at a time: the
 // first sends Start, each later one Resume. It returns when a controller
 // says bye, the last one leaves and o.Keep runs out with no other, the
@@ -79,7 +97,7 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 	if log == nil {
 		log = slog.Default()
 	}
-	conn, err := cs.Next(ctx)
+	conn, err := firstController(ctx, cs, o.FirstController)
 	if err != nil {
 		return err
 	}

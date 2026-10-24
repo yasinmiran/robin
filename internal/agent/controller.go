@@ -99,12 +99,15 @@ func (s *session) serve(ctx context.Context, cs Controllers, ready *protocol.Rea
 		state.Connected, state.Until = false, &until
 		cs.Changed(state)
 		conn, err = s.linger(ctx, cs, ready, desktopDone, until)
-		if err != nil {
-			return err
-		}
-		if conn == nil {
+		switch {
+		case errors.Is(err, errKeepRanOut):
 			s.log.Info("keep window ran out; ending the session")
 			return nil
+		case errors.Is(err, ErrNoControllers):
+			s.log.Info("no controller can come back; ending the session")
+			return nil
+		case err != nil:
+			return err
 		}
 		state.Connected, state.Until = true, nil
 		cs.Changed(state)
@@ -152,18 +155,33 @@ func (s *session) relay(ctx context.Context, conn *protocol.Conn, desktopDone <-
 	}
 }
 
+// errKeepRanOut is linger's answer when the keep window closed with no
+// controller back.
+var errKeepRanOut = errors.New("agent: the keep window ran out")
+
 // linger waits for the next controller until the keep window ends. It
-// returns the resumed connection, nil when the window ran out, or an error
-// when the desktop went away or ctx ended. A controller whose first message
-// is not a matching Resume is told so and dropped; the wait goes on.
+// returns the resumed connection, or an error: errKeepRanOut, ErrNoControllers
+// when none can come back, or why the desktop went away or ctx ended. A
+// controller whose first message is not a matching Resume is told so and
+// dropped; the wait goes on.
 func (s *session) linger(ctx context.Context, cs Controllers, ready *protocol.Ready, desktopDone <-chan error, until time.Time) (*protocol.Conn, error) {
 	type next struct {
 		conn *protocol.Conn
 		err  error
 	}
 	waitCtx, stopWait := context.WithCancel(ctx)
-	defer stopWait()
 	arrivals := make(chan next, 1)
+	defer func() {
+		// A controller that arrived after the decision has nobody to serve it.
+		stopWait()
+		select {
+		case a := <-arrivals:
+			if a.conn != nil {
+				a.conn.Close()
+			}
+		default:
+		}
+	}()
 	go func() {
 		c, err := cs.Next(waitCtx)
 		arrivals <- next{c, err}
@@ -177,14 +195,13 @@ func (s *session) linger(ctx context.Context, cs Controllers, ready *protocol.Re
 		case err := <-desktopDone:
 			return nil, fmt.Errorf("desktop went away: %w", err)
 		case <-expiry.C:
-			return nil, nil
+			return nil, errKeepRanOut
 		case a := <-arrivals:
 			if a.err != nil {
 				if ctx.Err() != nil {
 					return nil, ctx.Err()
 				}
-				// Nobody can come back: ending now wastes nothing.
-				return nil, nil
+				return nil, ErrNoControllers
 			}
 			if err := awaitResume(ctx, a.conn, ready.ID); err != nil {
 				s.log.Warn("controller refused", "err", err)

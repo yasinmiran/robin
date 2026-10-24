@@ -209,7 +209,7 @@ commands() {
 		xterm x-terminal-emulator xfce4-terminal \
 		dbus-run-session dbus-launch \
 		pulseaudio pipewire pipewire-pulse wireplumber pactl \
-		ffmpeg gst-launch-1.0; do
+		ffmpeg gst-launch-1.0 systemd-run; do
 		p=$(command -v "$c" 2>/dev/null) && kv "cmd.$c" "$p"
 	done
 }
@@ -391,7 +391,6 @@ logind() {
 		esac
 	fi
 	[ -n "$kup" ] && kv kill_user_processes "$kup"
-	have systemd-run && kv cmd.systemd-run "$(command -v systemd-run)"
 	user=$(id -un 2>/dev/null)
 	[ -n "$user" ] && [ -e "/var/lib/systemd/linger/$user" ] && kv linger yes
 	return 0

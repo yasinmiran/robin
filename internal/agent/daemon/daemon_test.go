@@ -189,35 +189,25 @@ func TestListenRefusesAnOpenDirectory(t *testing.T) {
 
 func TestChangedWithoutItsDirectoryOnlyWarns(t *testing.T) {
 	dir := privateDir(t)
-	ln, err := Listen(dir, "a", testLog())
+	var logged bytes.Buffer
+	ln, err := Listen(dir, "a", slog.New(slog.NewTextHandler(&logged, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ln.Close()
 	os.RemoveAll(dir)
 	ln.Changed(protocol.Session{ID: "s1"})
+	if !strings.Contains(logged.String(), "level=WARN") || !strings.Contains(logged.String(), "write session.json") {
+		t.Fatalf("log after Changed without its directory:\n%s", logged.String())
+	}
 }
 
 func TestCheckPeerWantsAUnixConnection(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-	go func() {
-		c, err := net.Dial("tcp", ln.Addr().String())
-		if err == nil {
-			defer c.Close()
-			time.Sleep(200 * time.Millisecond)
-		}
-	}()
-	c, err := ln.Accept()
-	if err != nil {
-		t.Fatal(err)
-	}
+	c, peer := net.Pipe()
 	defer c.Close()
+	defer peer.Close()
 	if err := checkPeer(c); err == nil || !strings.Contains(err.Error(), "not a unix connection") {
-		t.Fatalf("checkPeer on TCP: %v", err)
+		t.Fatalf("checkPeer on a pipe: %v", err)
 	}
 }
 

@@ -61,10 +61,13 @@ End session, and a later `robin gui <host>` resumes the one kept desktop by
 default (`--new` starts another beside it; with more than one kept, the CLI
 lists them and asks for `--id`). `robin ls <host>` shows what the host
 keeps, with when each kept desktop ends on its own, and `robin end <host>
-[id]` ends one. Ctrl+C in the CLI always ends the session, desktop included,
-even when it has to reconnect to say so. An attached desktop is never kept:
-nothing of yours would be lost, so `--keep` defaults to 0 there and the
-session ends with the connection as before.
+[id]` ends one. Ctrl+C in the CLI, the page's End session button and an
+error that stops the CLI once the desktop is up all end the session,
+desktop included, even when the CLI has to reconnect to say so; the page
+reports the end only once the host confirmed it, and says so when it could
+not. An attached desktop is not kept by default: nothing of yours would be
+lost, so `--keep` defaults to 0 there and the session ends with the
+connection as before. Name a `--keep` and it is kept like any other.
 
 A resumed session is the same session: the agent on the host kept its
 identity, so the fingerprint the CLI pinned still holds, and a CLI that
@@ -326,9 +329,11 @@ connections carrying the session's credentials; the X display is protected by
 a fresh cookie in a 0600 file; the session's sound server listens only on a
 socket inside the run directory; the agent and its run directory are 0700.
 Input from the page is limited to what a keyboard, a pointer and a clipboard
-can do in that session. The agent also listens for bulk transfers from the
-page, but takes only kinds a feature has registered, and no feature has yet,
-so it refuses every one.
+can do in that session, plus two words about the session itself: End
+session, which the CLI carries out as it does Ctrl+C, and Disconnect, keep
+desktop, which leaves the desktop for `--keep`. The agent also listens for
+bulk transfers from the page, but takes only kinds a feature has registered,
+and no feature has yet, so it refuses every one.
 
 A kept session is reached through a unix socket in its 0700 run directory,
 and the daemon accepts a connection only from a process of its own uid
@@ -337,7 +342,11 @@ SSH login as starting did, and the daemon keeps its DTLS certificate for its
 whole life, so the fingerprint the CLI pinned at the start still has to
 match after a reconnect: anything else answering in the session's place ends
 it. A fresh `robin gui` that resumes pins the fingerprint of the daemon it
-finds, trusting SSH and the uid check as the first run did.
+finds, trusting SSH and the uid check as the first run did. While a session
+is kept, its X server, its sound socket and its loopback ICE-TCP listener
+stay up in the 0700 run directory for the whole keep window, reachable by
+anything running as the same user on the host, as they are while a CLI is
+connected.
 
 One exposure is on the client side: to open your browser the CLI hands the
 page URL, token included, to `open` or `xdg-open`, so for that moment another
@@ -491,9 +500,9 @@ to print the comparison the ADR quotes.
   processes alone on logout (the default) or a user systemd manager can
   hold it (`KillUserProcesses=yes` with `systemd-run` and, for your last
   login, `loginctl enable-linger`). Elsewhere the CLI warns and the desktop
-  ends with the connection. Neither path has a test: the test hosts run in
-  containers without systemd, so `systemd-run --user` is checked by hand
-  only.
+  ends with the connection. The systemd-run path has no automated test:
+  the test hosts run in containers without systemd, so it is checked by
+  hand; the setsid path is what test-x and e2e exercise.
 - While a kept session has a controller, a second `robin gui` for it is
   refused as busy. A CLI that lost its network keeps the daemon's socket
   busy until the daemon's 20 s idle timeout notices, so a fresh `robin gui`

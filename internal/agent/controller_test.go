@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -178,8 +179,14 @@ func TestSessionFileRoundTrip(t *testing.T) {
 		t.Errorf("session.json is not one line:\n%s", b)
 	}
 	got, err := ReadSession(dir)
-	if err != nil || got.ID != want.ID || got.Agent != want.Agent || !got.Until.Equal(until) || !got.Started.Equal(want.Started) {
-		t.Fatalf("got %+v, %v; want %+v", got, err, want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Times come back in UTC; compare the rest field for field.
+	got.Started, want.Started = got.Started.UTC(), want.Started.UTC()
+	*got.Until, *want.Until = got.Until.UTC(), want.Until.UTC()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v; want %+v", got, want)
 	}
 	if _, err := ReadSession(t.TempDir()); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("ReadSession of nothing: %v", err)
@@ -229,5 +236,16 @@ func TestSweepRunRootTrustsSessionJSONOverTheName(t *testing.T) {
 	}
 	if _, err := os.Lstat(dead); !errors.Is(err, os.ErrNotExist) {
 		t.Error("a dead daemon's directory survived because its name is a live pid")
+	}
+}
+
+func TestServeGivesUpWithoutAFirstController(t *testing.T) {
+	none := &feed{conns: make(chan *protocol.Conn), changes: make(chan protocol.Session, 1)}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	err := Serve(ctx, none, Options{RunRoot: t.TempDir(), FirstController: 200 * time.Millisecond})
+	if err == nil || !strings.Contains(err.Error(), "no controller connected within") || time.Since(start) > 3*time.Second {
+		t.Fatalf("Serve with no controller: %v after %s", err, time.Since(start))
 	}
 }

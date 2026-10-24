@@ -644,9 +644,33 @@ if (SCENARIO === 'attach') {
   });
 }
 
+if (SCENARIO === 'direct') {
+  test('end: the End session button ends the desktop on the host, and the page is told once it did', async ({}, testInfo) => {
+    testInfo.setTimeout(60_000);
+    const dir = await host.runDir();
+    expect(await host.leftovers(), 'session processes are visible before the end').not.toBe('');
+    await page.mouse.move(640, 5);
+    const end = page.locator('#end');
+    await expect(end, 'the end button').toBeVisible({ timeout: 10_000 });
+    await end.click();
+    const exit = await cli!.waitExit(15_000);
+    testInfo.annotations.push({ type: 'end exit', description: JSON.stringify(exit) });
+    expect(exit, 'the CLI exited after the page ended the session').not.toBeNull();
+    expect(exit!.code, 'CLI exit code').toBe(0);
+    await expect.poll(() => state(page), { message: 'the page says the session ended' }).toBe('ended');
+    await expect(page.locator('#state-label')).toHaveText('Session ended');
+    await expect(page.locator('#hud .notice')).toContainText('the desktop on the host is gone');
+    await expect.poll(host.leftovers, { message: 'session processes on the host', timeout: 10_000 }).toBe('');
+    await expect.poll(() => host.exists(dir), { message: `run dir ${dir} exists`, timeout: 1_000 }).toBe(false);
+    expect(await host.agentLeftovers(), 'agents and run dirs').toBe('');
+    expect(cli!.extraStdout, 'stdout carries only the URL').toEqual([]);
+  });
+}
+
 test('teardown: SIGINT ends the CLI and leaves nothing behind on the host', async ({}, testInfo) => {
   test.skip(SCENARIO === 'attach', 'the attached desktop outlives the session; see the attach teardown');
   test.skip(SCENARIO === 'rejoin', 'robin end tore the session down; see the rejoin test');
+  test.skip(SCENARIO === 'direct', 'the page ended the session; see the end test');
   const dir = await host.runDir();
   expect(await host.leftovers(), 'session processes are visible before teardown').not.toBe('');
 
