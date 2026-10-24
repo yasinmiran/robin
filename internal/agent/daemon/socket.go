@@ -35,8 +35,14 @@ const (
 // another is attached hears so promptly.
 const handoffWait = 2 * time.Second
 
-// ErrBusy is sent to a controller that connects while another is attached.
-var ErrBusy = errors.New("another CLI is connected to this session")
+// errBusy is sent to a controller that connects while another is attached,
+// with protocol.CodeBusy.
+var errBusy = errors.New("another CLI is connected to this session")
+
+// NoSessionError says the host has no session with that id.
+type NoSessionError struct{ ID string }
+
+func (e *NoSessionError) Error() string { return "no session " + e.ID + " on this host" }
 
 // Listener accepts controllers on the session's socket. It is the
 // agent.Controllers of a daemon.
@@ -121,8 +127,8 @@ func (l *Listener) admit(c net.Conn) {
 	select {
 	case l.conns <- conn:
 	case <-time.After(handoffWait):
-		l.log.Warn("controller refused", "err", ErrBusy)
-		conn.Send(protocol.Message{Type: protocol.TypeError, Error: ErrBusy.Error()})
+		l.log.Warn("controller refused", "err", errBusy)
+		conn.Send(protocol.Message{Type: protocol.TypeError, Error: errBusy.Error(), Code: protocol.CodeBusy})
 		conn.Close()
 	}
 }

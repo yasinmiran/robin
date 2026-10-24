@@ -158,8 +158,8 @@ func TestListenerTurnsAwayASecondController(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), handoffWait+5*time.Second)
 	defer cancel()
 	m, err := cli.Recv(ctx)
-	if err != nil || m.Type != protocol.TypeError || m.Error != ErrBusy.Error() {
-		t.Fatalf("got %+v, %v; want error %q", m, err, ErrBusy)
+	if err != nil || m.Type != protocol.TypeError || m.Error != errBusy.Error() || m.Code != protocol.CodeBusy {
+		t.Fatalf("got %+v, %v; want error %q with code busy", m, err, errBusy)
 	}
 	if _, err := cli.Recv(ctx); err == nil {
 		t.Fatal("the refused connection stayed open")
@@ -260,6 +260,7 @@ func TestStartProxyAndEnd(t *testing.T) {
 	if err != nil || st.ID != id || st.Agent != "fake-agent" || st.PID == 0 {
 		t.Fatalf("session.json %+v, %v", st, err)
 	}
+	killLater(t, st.PID)
 	if os.Getppid() == st.PID || st.PID == os.Getpid() {
 		t.Fatal("the daemon is not a process of its own")
 	}
@@ -326,12 +327,13 @@ func TestEndSignalsTheDaemon(t *testing.T) {
 	sp, _ := fakeSpawn(t, "1")
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	_, dir, err := Start(ctx, sp)
+	id, dir, err := Start(ctx, sp)
 	if err != nil {
 		t.Fatal(err)
 	}
 	st, _ := agent.ReadSession(dir)
-	if err := End(dir); err != nil {
+	killLater(t, st.PID)
+	if err := End(ctx, filepath.Dir(dir), id); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(dir); !errors.Is(err, os.ErrNotExist) {
@@ -349,23 +351,71 @@ func TestEndSignalsTheDaemon(t *testing.T) {
 }
 
 func TestEndRemovesAStaleDirectoryWithoutSignaling(t *testing.T) {
+	ctx := context.Background()
 	dir := privateDir(t)
+	root := filepath.Dir(dir)
 	// Our own pid is alive but is no daemon: End must not kill us.
 	if err := agent.WriteSession(dir, protocol.Session{ID: "s1", PID: os.Getpid()}); err != nil {
 		t.Fatal(err)
 	}
-	if err := End(dir); err != nil {
+	if err := End(ctx, root, "s1"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(dir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("stale dir after End: %v", err)
 	}
-	if err := End(dir); err == nil || !strings.Contains(err.Error(), "no session") {
+	var noSession *NoSessionError
+	if err := End(ctx, root, "s1"); !errors.As(err, &noSession) || !strings.Contains(err.Error(), "no session s1") {
 		t.Fatalf("End of nothing: %v", err)
 	}
-	empty := privateDir(t)
-	if err := End(empty); err != nil {
-		t.Fatalf("End of a dir without session.json: %v", err)
+	// A socket nobody listens on is what a killed daemon leaves.
+	stale := filepath.Join(root, "s2")
+	os.Mkdir(stale, 0o700)
+	ln, err := net.Listen("unix", filepath.Join(stale, SocketFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	ln.Close()
+	os.WriteFile(filepath.Join(stale, "x"), nil, 0o600)
+	if err := End(ctx, root, "s2"); err != nil {
+		t.Fatalf("End of a dir with a dead socket: %v", err)
+	}
+	if _, err := os.Lstat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dead socket's dir after End: %v", err)
+	}
+}
+
+// TestEndLeavesWhatIsNoSession guards the agent directory and the run root:
+// an id that names either, or a directory with no trace of a session, is
+// refused and nothing is removed.
+func TestEndLeavesWhatIsNoSession(t *testing.T) {
+	ctx := context.Background()
+	agentDir := t.TempDir()
+	agentFile := filepath.Join(agentDir, "robin-agent-abc")
+	os.WriteFile(agentFile, []byte("binary"), 0o700)
+	root := filepath.Join(agentDir, "run")
+	live := filepath.Join(root, "s1")
+	os.MkdirAll(live, 0o700)
+	os.WriteFile(filepath.Join(live, "Xauthority"), nil, 0o600)
+	empty := filepath.Join(root, "s3")
+	os.Mkdir(empty, 0o700)
+	var noSession *NoSessionError
+	for _, id := range []string{"", ".", "..", "/", "../robin-agent-abc", "s1/..", "S1"} {
+		if err := End(ctx, root, id); err == nil || !strings.Contains(err.Error(), "bad session id") {
+			t.Errorf("End(%q): %v", id, err)
+		}
+	}
+	if err := End(ctx, root, "s1"); !errors.As(err, &noSession) {
+		t.Errorf("End of a dir without session.json or socket: %v", err)
+	}
+	if err := End(ctx, root, "s3"); !errors.As(err, &noSession) {
+		t.Errorf("End of an empty dir: %v", err)
+	}
+	for _, path := range []string{agentFile, root, live, filepath.Join(live, "Xauthority"), empty} {
+		if _, err := os.Lstat(path); err != nil {
+			t.Errorf("%s is gone: %v", path, err)
+		}
 	}
 }
 
@@ -415,7 +465,7 @@ func TestCommandLines(t *testing.T) {
 	if strings.Join(got, " ") != want {
 		t.Errorf("systemd-run args %q, want %q", strings.Join(got, " "), want)
 	}
-	sp := Spawn{Exe: "/a/robin-agent", Detach: DetachSystemdRun}
+	sp := Spawn{Exe: "/a/robin-agent", Detach: protocol.DetachSystemdRun}
 	if cmd := sp.command("ab12", "/a/run/ab12"); filepath.Base(cmd.Path) != "systemd-run" && cmd.Args[0] != "systemd-run" {
 		t.Errorf("systemd-run command runs %q", cmd.Args)
 	}
@@ -438,16 +488,40 @@ func TestCommandIsDaemon(t *testing.T) {
 	if isDaemon(os.Getpid(), "ab12") || isDaemon(0, "ab12") || isDaemon(1<<30, "ab12") {
 		t.Error("isDaemon found a daemon where there is none")
 	}
+	if findDaemon("no-such-session-anywhere") != 0 {
+		t.Error("findDaemon found a daemon where there is none")
+	}
+}
+
+func TestEndFindsADaemonWithoutSessionJSON(t *testing.T) {
+	sp, root := fakeSpawn(t, "1")
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	id, dir, err := Start(ctx, sp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, _ := agent.ReadSession(dir)
+	killLater(t, st.PID)
+	os.Remove(filepath.Join(dir, agent.SessionFile))
+	if got := findDaemon(id); got != st.PID {
+		t.Fatalf("findDaemon = %d, want %d", got, st.PID)
+	}
+	if err := End(ctx, root, id); err != nil {
+		t.Fatal(err)
+	}
+	waitGone(t, dir)
 }
 
 func TestFindRejectsOddIDs(t *testing.T) {
 	root := t.TempDir()
-	for _, id := range []string{"", ".", "..", "../x", "a/b"} {
+	for _, id := range []string{"", ".", "..", "../x", "a/b", "AB12", "ab-12"} {
 		if _, err := Find(root, id); err == nil || !strings.Contains(err.Error(), "bad session id") {
 			t.Errorf("Find(%q): %v", id, err)
 		}
 	}
-	if _, err := Find(root, "nope"); err == nil || !strings.Contains(err.Error(), "no session nope") {
+	var noSession *NoSessionError
+	if _, err := Find(root, "nope"); !errors.As(err, &noSession) || !strings.Contains(err.Error(), "no session nope") {
 		t.Errorf("Find of a missing session: %v", err)
 	}
 	// A plain file where the socket should be is not a session either.
@@ -456,6 +530,17 @@ func TestFindRejectsOddIDs(t *testing.T) {
 	if _, err := Find(root, "f"); err == nil {
 		t.Error("Find took a plain file for a socket")
 	}
+}
+
+// killLater makes sure a daemon a test started does not outlive the test
+// when the test fails before ending it: the daemon runs in a session of
+// its own, which no cleanup of the test's process group reaches.
+func killLater(t *testing.T, pid int) {
+	t.Helper()
+	if pid <= 0 {
+		t.Fatal("no daemon pid to clean up")
+	}
+	t.Cleanup(func() { syscall.Kill(pid, syscall.SIGKILL) })
 }
 
 func waitGone(t *testing.T, dir string) {

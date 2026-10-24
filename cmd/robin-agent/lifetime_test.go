@@ -10,8 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -19,6 +17,7 @@ import (
 	"time"
 
 	"github.com/yasinmiran/robin/internal/agent"
+	"github.com/yasinmiran/robin/internal/agent/agenttest"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
@@ -170,46 +169,45 @@ func (s *syncBuffer) String() string {
 	return s.b.String()
 }
 
-func alive(pid int) bool { return pid > 0 && syscall.Kill(pid, 0) != syscall.ESRCH }
+var alive, xvfbPID = agenttest.Alive, agenttest.XvfbPID
 
-// xvfbPID finds the Xvfb whose cookie file is in run directory dir, or 0.
-func xvfbPID(dir string) int {
-	want := []string{"Xvfb", "-auth", filepath.Join(dir, "Xauthority")}
-	entries, _ := os.ReadDir("/proc")
-	for _, e := range entries {
-		pid, err := strconv.Atoi(e.Name())
-		if err != nil {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
-		if err != nil {
-			continue
-		}
-		argv := strings.Split(string(b), "\x00")
-		// argv[0] is the path LookPath found, not the bare name.
-		if len(argv) == 0 || filepath.Base(argv[0]) != want[0] {
-			continue
-		}
-		found := true
-		for _, w := range want[1:] {
-			if !slices.Contains(argv, w) {
-				found = false
-				break
-			}
-		}
-		if found && alive(pid) {
-			return pid
-		}
-	}
-	return 0
-}
-
-func start(p *proxy) *protocol.Ready {
+// start begins a session through p and returns its Ready and run
+// directory. The daemon runs in a session of its own, so no cleanup of
+// the proxy's process group reaches it: a test that fails before ending
+// the session would leave a desktop on this machine for the keep window.
+// The daemon is killed when the test ends instead.
+func start(p *proxy, exe string) (*protocol.Ready, string) {
 	p.t.Helper()
 	p.conn.Send(protocol.Message{Type: protocol.TypeStart, Start: &protocol.Start{
 		Version: protocol.Version, Width: 640, Height: 480, MaxWidth: 1280, MaxHeight: 720, FPS: 10, Encoder: protocol.EncoderSoftware,
 	}})
-	return p.recv(protocol.TypeReady).Ready
+	ready := p.recv(protocol.TypeReady).Ready
+	dir := filepath.Join(filepath.Dir(exe), "run", ready.ID)
+	st, err := agent.ReadSession(dir)
+	if err != nil || st.PID <= 0 {
+		p.t.Fatalf("session.json after ready: %+v, %v", st, err)
+	}
+	p.t.Cleanup(func() {
+		syscall.Kill(st.PID, syscall.SIGKILL)
+		os.RemoveAll(dir)
+	})
+	return ready, dir
+}
+
+// waitSession polls session.json until ok says it is as expected.
+func waitSession(t *testing.T, dir string, ok func(protocol.Session) bool) protocol.Session {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		st, err := agent.ReadSession(dir)
+		if err == nil && ok(st) {
+			return st
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("session.json never became what was wanted: %+v, %v", st, err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // waitRunDirGone waits for the daemon to remove its directory.
@@ -228,11 +226,10 @@ func waitRunDirGone(t *testing.T, dir string, within time.Duration) {
 func TestDaemonOutlivesTheProxyAndEndsWithTheKeepWindow(t *testing.T) {
 	exe := agentCopy(t)
 	p1 := serveAgent(t, exe, "-keep", "4s")
-	ready := start(p1)
+	ready, dir := start(p1, exe)
 	if ready.ID == "" || ready.Keep != 4 || ready.Mode != protocol.ModeSpawn {
 		t.Fatalf("ready %+v", ready)
 	}
-	dir := filepath.Join(filepath.Dir(exe), "run", ready.ID)
 	st, err := agent.ReadSession(dir)
 	if err != nil || !st.Connected || st.Agent != filepath.Base(exe) || st.Build != version {
 		t.Fatalf("session.json %+v, %v", st, err)
@@ -254,14 +251,12 @@ func TestDaemonOutlivesTheProxyAndEndsWithTheKeepWindow(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	// sshd goes: the proxy's whole process group dies at once.
+	// sshd goes: the proxy's whole process group dies at once. The daemon
+	// notices the socket's end and records the keep window.
 	p1.killGroup()
-	time.Sleep(time.Second)
+	waitSession(t, dir, func(s protocol.Session) bool { return !s.Connected && s.Until != nil })
 	if !alive(st.PID) || xvfbPID(dir) != xvfb {
 		t.Fatal("the daemon or its display died with the proxy")
-	}
-	if st2, err := agent.ReadSession(dir); err != nil || st2.Connected || st2.Until == nil {
-		t.Fatalf("session.json while kept: %+v, %v", st2, err)
 	}
 
 	// A new proxy resumes.
@@ -297,8 +292,7 @@ func TestDaemonOutlivesTheProxyAndEndsWithTheKeepWindow(t *testing.T) {
 func TestEndStopsAKeptSession(t *testing.T) {
 	exe := agentCopy(t)
 	p := serveAgent(t, exe, "-keep", "1h")
-	ready := start(p)
-	dir := filepath.Join(filepath.Dir(exe), "run", ready.ID)
+	ready, dir := start(p, exe)
 	st, _ := agent.ReadSession(dir)
 	xvfb := xvfbPID(dir)
 	if xvfb == 0 {
@@ -323,16 +317,39 @@ func TestEndStopsAKeptSession(t *testing.T) {
 	}
 	end = exec.Command(exe, "end", ready.ID)
 	end.Env = append(os.Environ(), "ROBIN_AGENT_MAIN=1")
-	if out, err := end.CombinedOutput(); err == nil || !strings.Contains(string(out), "no session") {
+	out, err := end.CombinedOutput()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != protocol.ExitNoSession || !strings.Contains(string(out), "no session") {
 		t.Fatalf("end of nothing: %v\n%s", err, out)
+	}
+}
+
+func TestEndRefusesWhatIsNoSessionID(t *testing.T) {
+	exe := agentCopy(t)
+	root := filepath.Join(filepath.Dir(exe), "run")
+	live := filepath.Join(root, "abcd1234")
+	os.MkdirAll(live, 0o700)
+	os.WriteFile(filepath.Join(live, "Xauthority"), nil, 0o600)
+	for _, id := range []string{"", ".", "..", "/", "../" + filepath.Base(exe)} {
+		end := exec.Command(exe, "end", id)
+		end.Env = append(os.Environ(), "ROBIN_AGENT_MAIN=1")
+		out, err := end.CombinedOutput()
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 || !strings.Contains(string(out), "bad session id") {
+			t.Errorf("end %q: %v\n%s", id, err, out)
+		}
+	}
+	for _, path := range []string{exe, root, filepath.Join(live, "Xauthority")} {
+		if _, err := os.Lstat(path); err != nil {
+			t.Errorf("%s is gone: %v", path, err)
+		}
 	}
 }
 
 func TestServeWithoutKeepEndsWithItsController(t *testing.T) {
 	exe := agentCopy(t)
 	p := serveAgent(t, exe)
-	ready := start(p)
-	dir := filepath.Join(filepath.Dir(exe), "run", ready.ID)
+	ready, dir := start(p, exe)
 	xvfb := xvfbPID(dir)
 	if xvfb == 0 {
 		t.Fatalf("no Xvfb for %s", ready.Display)

@@ -53,6 +53,7 @@ type Message struct {
 	SDP       string     `json:"sdp,omitempty"`
 	Candidate *Candidate `json:"candidate,omitempty"`
 	Error     string     `json:"error,omitempty"`
+	Code      Code       `json:"code,omitempty"` // what Error means, where the other side acts on it
 	Notice    *Notice    `json:"notice,omitempty"`
 	Resume    *Resume    `json:"resume,omitempty"`
 }

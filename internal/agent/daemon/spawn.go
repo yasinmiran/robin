@@ -15,19 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yasinmiran/robin/internal/protocol"
 	"github.com/yasinmiran/robin/internal/tail"
-)
-
-// Detach modes: how the daemon leaves the SSH session behind.
-const (
-	// DetachSetsid starts it in a session of its own, which sshd's SIGHUP
-	// and the exec channel's pipes never reach. It stays in logind's
-	// session scope, so KillUserProcesses=yes would still kill it.
-	DetachSetsid = "setsid"
-	// DetachSystemdRun starts it as a transient unit of the user's systemd
-	// manager, outside the session scope. The unit lives while the user has
-	// any session or lingering is enabled.
-	DetachSystemdRun = "systemd-run"
 )
 
 // startTimeout bounds the wait for a new daemon's socket.
@@ -39,10 +28,12 @@ type Spawn struct {
 	Exe string
 	// RunRoot holds the session directories.
 	RunRoot string
-	Keep    time.Duration
+	// Keep is how long the daemon waits for a controller to come back.
+	Keep time.Duration
+	// Verbose makes the daemon log at info level.
 	Verbose bool
-	// Detach is DetachSetsid or DetachSystemdRun.
-	Detach string
+	// Detach is how the daemon leaves the SSH session behind.
+	Detach protocol.Detach
 	// Env is passed to a daemon under systemd-run, whose unit does not
 	// inherit this process's environment. Setsid inherits everything.
 	Env []string
@@ -97,13 +88,10 @@ const idLetters = "abcdef"
 // unit needs no pipe back to us.
 func (sp Spawn) command(id, dir string) *exec.Cmd {
 	args := daemonArgs(sp.Exe, id, dir, sp.Keep, sp.Verbose)
-	if sp.Detach == DetachSystemdRun {
-		cmd := exec.Command("systemd-run", systemdRunArgs(id, sp.Env, args)...)
-		cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, nil, nil
-		return cmd
+	if sp.Detach == protocol.DetachSystemdRun {
+		return exec.Command("systemd-run", systemdRunArgs(id, sp.Env, args)...)
 	}
 	cmd := exec.Command(args[0], args[1:]...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, nil, nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	return cmd
 }
@@ -132,7 +120,7 @@ func systemdRunArgs(id string, env, cmd []string) []string {
 // exits first (a setsid daemon is our child; systemd-run returns once the
 // unit started, so its exit says nothing) or the time runs out. The error
 // carries the end of the daemon's log, where the reason is.
-func waitSocket(ctx context.Context, dir, detach string, exited <-chan error) error {
+func waitSocket(ctx context.Context, dir string, detach protocol.Detach, exited <-chan error) error {
 	sock := filepath.Join(dir, SocketFile)
 	deadline := time.After(startTimeout)
 	tick := time.NewTicker(25 * time.Millisecond)
@@ -144,7 +132,7 @@ func waitSocket(ctx context.Context, dir, detach string, exited <-chan error) er
 		select {
 		case <-tick.C:
 		case err := <-exited:
-			if detach == DetachSystemdRun && err == nil {
+			if detach == protocol.DetachSystemdRun && err == nil {
 				exited = nil
 				continue
 			}
@@ -174,16 +162,28 @@ func logTail(dir string) string {
 // Find returns the run directory of session id under runRoot when a daemon
 // listens there.
 func Find(runRoot, id string) (string, error) {
-	if id == "" || strings.ContainsAny(id, "/\\") || id == "." || id == ".." {
-		return "", fmt.Errorf("bad session id %q", id)
+	if err := validID(id); err != nil {
+		return "", err
 	}
 	dir := filepath.Join(runRoot, id)
 	fi, err := os.Lstat(filepath.Join(dir, SocketFile))
 	if errors.Is(err, os.ErrNotExist) || (err == nil && fi.Mode()&os.ModeSocket == 0) {
-		return "", fmt.Errorf("no session %s on this host", id)
+		return "", &NoSessionError{id}
 	}
 	if err != nil {
 		return "", err
 	}
 	return dir, nil
+}
+
+// idAlphabet is every character a session id may hold; a name of these
+// alone cannot leave the run root.
+const idAlphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+// validID refuses anything newID would not have drawn.
+func validID(id string) error {
+	if id == "" || strings.Trim(id, idAlphabet) != "" {
+		return fmt.Errorf("bad session id %q", id)
+	}
+	return nil
 }

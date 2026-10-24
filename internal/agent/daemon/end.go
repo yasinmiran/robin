@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -19,37 +20,66 @@ import (
 // directory with it.
 const endTimeout = 15 * time.Second
 
-// End tells the daemon of the session in dir to end, which tears the
+// End tells the daemon of session id under runRoot to end, which tears the
 // desktop down like bye does, and waits for its run directory to go. It
 // signals only a process whose command line is that daemon's, since the
 // pid in session.json may have been reused once the daemon died; such a
-// stale directory is removed instead.
-func End(dir string) error {
-	id := filepath.Base(dir)
-	st, err := agent.ReadSession(dir)
-	if errors.Is(err, os.ErrNotExist) {
-		if _, statErr := os.Lstat(dir); statErr == nil {
-			return os.RemoveAll(dir)
-		}
-		return fmt.Errorf("no session %s on this host", id)
+// stale directory is removed instead. A directory with no trace of a
+// session is left alone.
+func End(ctx context.Context, runRoot, id string) error {
+	if err := validID(id); err != nil {
+		return err
 	}
+	dir := filepath.Join(runRoot, id)
+	pid, err := daemonPID(dir, id)
 	if err != nil {
 		return err
 	}
-	if !isDaemon(st.PID, id) {
+	if pid == 0 {
 		return os.RemoveAll(dir)
 	}
-	if err := syscall.Kill(st.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return fmt.Errorf("end session %s: %w", id, err)
 	}
-	deadline := time.Now().Add(endTimeout)
-	for time.Now().Before(deadline) {
+	ctx, cancel := context.WithTimeout(ctx, endTimeout)
+	defer cancel()
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for {
 		if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
-		time.Sleep(50 * time.Millisecond)
+		select {
+		case <-tick.C:
+		case <-ctx.Done():
+			return fmt.Errorf("session %s did not end within %s", id, endTimeout)
+		}
 	}
-	return fmt.Errorf("session %s did not end within %s", id, endTimeout)
+}
+
+// daemonPID is the pid of the live daemon of session id in dir: the one
+// session.json names when it still runs that daemon, else the one whose
+// command line says so, as a daemon that has not written session.json yet.
+// It is 0 for a directory the daemon left behind, and the error says when
+// dir is no session directory at all.
+func daemonPID(dir, id string) (int, error) {
+	st, err := agent.ReadSession(dir)
+	switch {
+	case err == nil:
+		if isDaemon(st.PID, id) {
+			return st.PID, nil
+		}
+		return 0, nil
+	case !errors.Is(err, os.ErrNotExist):
+		return 0, err
+	}
+	if pid := findDaemon(id); pid != 0 {
+		return pid, nil
+	}
+	if fi, err := os.Lstat(filepath.Join(dir, SocketFile)); err == nil && fi.Mode()&os.ModeSocket != 0 {
+		return 0, nil
+	}
+	return 0, &NoSessionError{id}
 }
 
 // isDaemon reports whether pid runs `robin-agent daemon -id id`.
@@ -57,11 +87,31 @@ func isDaemon(pid int, id string) bool {
 	if pid <= 0 {
 		return false
 	}
+	return commandIsDaemon(cmdline(pid), id)
+}
+
+// findDaemon is the pid of the process running `robin-agent daemon -id id`,
+// or 0.
+func findDaemon(id string) int {
+	entries, _ := os.ReadDir("/proc")
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		if commandIsDaemon(cmdline(pid), id) {
+			return pid
+		}
+	}
+	return 0
+}
+
+func cmdline(pid int) [][]byte {
 	b, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
 	if err != nil {
-		return false
+		return nil
 	}
-	return commandIsDaemon(bytes.Split(b, []byte{0}), id)
+	return bytes.Split(b, []byte{0})
 }
 
 func commandIsDaemon(argv [][]byte, id string) bool {

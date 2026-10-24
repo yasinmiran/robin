@@ -10,8 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
-	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -19,6 +17,7 @@ import (
 
 	"github.com/pion/webrtc/v4"
 
+	"github.com/yasinmiran/robin/internal/agent/agenttest"
 	"github.com/yasinmiran/robin/internal/protocol"
 	"github.com/yasinmiran/robin/internal/relay"
 )
@@ -260,41 +259,7 @@ func (k *kept) waitGone(display string) {
 
 // xvfbPID finds the session's Xvfb, the one whose cookie file is in the run
 // directory, or 0 when it is gone.
-func (k *kept) xvfbPID() int {
-	return findProcess("Xvfb", "-auth", filepath.Join(k.dir, "Xauthority"))
-}
-
-// findProcess returns the pid of a live process with the command named and
-// every other word given on its command line, or 0.
-func findProcess(want ...string) int {
-	entries, _ := os.ReadDir("/proc")
-	for _, e := range entries {
-		pid, err := strconv.Atoi(e.Name())
-		if err != nil {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
-		if err != nil {
-			continue
-		}
-		argv := strings.Split(string(b), "\x00")
-		// argv[0] is the path LookPath found, not the bare name.
-		if len(argv) == 0 || filepath.Base(argv[0]) != want[0] {
-			continue
-		}
-		found := true
-		for _, w := range want[1:] {
-			if !slices.Contains(argv, w) {
-				found = false
-				break
-			}
-		}
-		if found && syscall.Kill(pid, 0) != syscall.ESRCH {
-			return pid
-		}
-	}
-	return 0
-}
+func (k *kept) xvfbPID() int { return agenttest.XvfbPID(k.dir) }
 
 func TestKeptSessionSurvivesItsControllerAndResumes(t *testing.T) {
 	k := startKept(t, 30*time.Second)

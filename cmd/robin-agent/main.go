@@ -13,6 +13,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -57,13 +58,18 @@ func main() {
 	}
 }
 
-// runRoot is where sessions keep their directories: beside the agent.
-func runRoot() (exe, root string, err error) {
-	exe, err = os.Executable()
+// runRoot is where sessions keep their directories: beside the agent exe.
+func runRoot(exe string) string {
+	return filepath.Join(filepath.Dir(exe), "run")
+}
+
+// executable is this binary's path.
+func executable() (string, error) {
+	exe, err := os.Executable()
 	if err != nil {
-		return "", "", fmt.Errorf("locate executable: %w", err)
+		return "", fmt.Errorf("locate executable: %w", err)
 	}
-	return exe, filepath.Join(filepath.Dir(exe), "run"), nil
+	return exe, nil
 }
 
 // serve is the CLI's end on the host: a proxy to the session daemon.
@@ -72,15 +78,16 @@ func serve(args []string) int {
 	verbose := fs.Bool("v", false, "log at info level")
 	keep := fs.Duration("keep", 0, "how long the desktop waits for the CLI to come back")
 	resume := fs.String("resume", "", "resume the kept session with this id instead of starting one")
-	detach := fs.String("detach", daemon.DetachSetsid, "how the daemon leaves the SSH session: setsid or systemd-run")
+	detach := fs.String("detach", string(protocol.DetachSetsid), "how the daemon leaves the SSH session: setsid or systemd-run")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	exe, root, err := runRoot()
+	exe, err := executable()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "robin-agent:", err)
 		return 1
 	}
+	root := runRoot(exe)
 	// SIGHUP arrives when sshd tears the channel down; it means the same as
 	// stdin closing: this controller is gone, the daemon decides what next.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
@@ -96,7 +103,7 @@ func serve(args []string) int {
 	fromStart := false
 	if *resume == "" {
 		_, dir, err = daemon.Start(ctx, daemon.Spawn{
-			Exe: exe, RunRoot: root, Keep: *keep, Verbose: *verbose, Detach: *detach, Env: daemonEnv(),
+			Exe: exe, RunRoot: root, Keep: *keep, Verbose: *verbose, Detach: protocol.Detach(*detach), Env: daemonEnv(),
 		})
 		fromStart = true
 	} else {
@@ -155,7 +162,7 @@ func runDaemon(args []string) int {
 	// reports that through the display watcher.
 	xgb.Logger = stdlog.New(io.Discard, "", 0)
 
-	exe, _, err := runRoot()
+	exe, err := executable()
 	if err != nil {
 		log.Error("locate executable", "err", err)
 		return 1
@@ -195,17 +202,23 @@ func runDaemon(args []string) int {
 	return 0
 }
 
-// end stops the daemon of the session named, and waits for it to go.
+// end stops the daemon of the session named, and waits for it to go. It
+// exits protocol.ExitNoSession when the host has no such session.
 func end(args []string) int {
 	if len(args) != 1 {
 		fmt.Fprintln(os.Stderr, usage)
 		return 2
 	}
-	_, root, err := runRoot()
+	exe, err := executable()
 	if err == nil {
-		err = daemon.End(filepath.Join(root, filepath.Base(args[0])))
+		err = daemon.End(context.Background(), runRoot(exe), args[0])
 	}
-	if err != nil {
+	var noSession *daemon.NoSessionError
+	switch {
+	case errors.As(err, &noSession):
+		fmt.Fprintln(os.Stderr, "robin-agent:", err)
+		return protocol.ExitNoSession
+	case err != nil:
 		fmt.Fprintln(os.Stderr, "robin-agent:", err)
 		return 1
 	}

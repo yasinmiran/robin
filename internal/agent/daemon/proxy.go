@@ -16,6 +16,10 @@ import (
 // tailEvery is how often the proxy looks for new lines in the daemon's log.
 const tailEvery = 200 * time.Millisecond
 
+// finalLogGrace is how long the proxy keeps tailing after its connection
+// ended, for what the daemon logs about this controller leaving.
+const finalLogGrace = tailEvery
+
 // Proxy connects to the daemon in dir and carries in to it and it to out,
 // byte for byte, until either side ends or ctx does. The CLI's pings and
 // the daemon's answers pass through untouched, so the two keep each other's
@@ -25,7 +29,7 @@ const tailEvery = 200 * time.Millisecond
 func Proxy(ctx context.Context, dir string, in io.Reader, out, logOut io.Writer, fromStart bool) error {
 	c, err := net.Dial("unix", filepath.Join(dir, SocketFile))
 	if err != nil {
-		return fmt.Errorf("no session %s on this host: %w", filepath.Base(dir), err)
+		return fmt.Errorf("%w: %v", &NoSessionError{filepath.Base(dir)}, err)
 	}
 	defer c.Close()
 
@@ -51,9 +55,7 @@ func Proxy(ctx context.Context, dir string, in io.Reader, out, logOut io.Writer,
 		err = nil
 	}
 	c.Close()
-	// Whatever the daemon logged about this controller's end is still worth
-	// a moment.
-	time.Sleep(tailEvery)
+	time.Sleep(finalLogGrace)
 	stopTail()
 	<-tailDone
 	if errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) {

@@ -24,11 +24,38 @@ const (
 	TypeDetach Type = "detach"
 )
 
+// Code is what an Error message means, for the CLI to act on without
+// reading the text.
+type Code string
+
+// CodeBusy: another controller is attached to the kept session. The CLI
+// may try again; any other error on a resume is final.
+const CodeBusy Code = "busy"
+
+// ExitNoSession is the exit status of `robin-agent end` when the host has
+// no such session, so a CLI whose bye got through sees the end as done.
+const ExitNoSession = 3
+
 // Resume names the kept session a controller wants back.
 type Resume struct {
 	Version int    `json:"version"`
 	ID      string `json:"id"`
 }
+
+// Detach is how a session daemon leaves the SSH session that started it,
+// the agent's -detach flag.
+type Detach string
+
+const (
+	// DetachSetsid starts it in a session of its own, which sshd's SIGHUP
+	// and the exec channel's pipes never reach. It stays in logind's
+	// session scope, so KillUserProcesses=yes would still kill it.
+	DetachSetsid Detach = "setsid"
+	// DetachSystemdRun starts it as a transient unit of the user's systemd
+	// manager, outside the session scope. The unit lives while the user has
+	// any session or lingering is enabled.
+	DetachSystemdRun Detach = "systemd-run"
+)
 
 // DefaultKeep is how long a spawned desktop waits for its controller to
 // come back, when the user names no --keep. Attached desktops are not kept:
