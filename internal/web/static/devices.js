@@ -93,7 +93,7 @@ export class DeviceSwitch {
     }
     this.#track = track;
     // Unplugged, or the permission taken back in the browser's own controls.
-    track.addEventListener?.('ended', () => {
+    track.addEventListener('ended', () => {
       if (this.#track === track) this.off();
     });
     this.#set('on');
