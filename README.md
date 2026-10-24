@@ -300,7 +300,7 @@ list. On a shared client, use `--no-browser` and open the printed URL yourself.
 
 ```sh
 make test     # unit and integration tests; the encoders against real openh264 and libopus on linux/amd64
-make test-js  # the page's pure modules under node --test (make test runs it where node is installed)
+make test-js  # the page's pure modules under node --test (make test runs them too where node is installed)
 make test-x   # capture, input, display, sound server and agent session tests against Xvfb and pulseaudio, in podman
 make test-wayland  # Wayland attach against headless GNOME 46, GNOME 49 and KDE Plasma 6.7, in podman
 make e2e      # the whole thing: podman host, Playwright and Chrome client

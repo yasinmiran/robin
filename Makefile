@@ -81,9 +81,9 @@ ifeq ($(HOST_OS)/$(HOST_ARCH),linux/amd64)
 	@set -e; $(call zig_env,amd64) \
 	$(GO) test -tags openh264,opus $(CGO_TESTS)
 endif
-	@if command -v node >/dev/null; then $(MAKE) --no-print-directory test-js; else echo "make test: no node, skipping test-js"; fi
 
-# The page's pure modules, under Node's own test runner.
+# The page's pure modules, under Node's own test runner. make test runs them
+# too, through TestPageModules in internal/web; this target is for make cover.
 test-js:
 	node --test internal/web/static/test/
 
