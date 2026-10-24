@@ -315,11 +315,11 @@ key mounts are owned by root inside the container, and sshd reads
 `authorized_keys` as the user, which is why the public key is mounted 0644
 under `/etc/ssh/authorized_keys.d/` instead of into `~robin/.ssh`. iptables works
 with `--cap-add NET_ADMIN`. CNI networks here have no DNS between containers,
-so the host gets a static IP (`ROBIN_E2E_SUBNET`, `ROBIN_E2E_HOST_IP` override it).
+so the host gets a static IP (`ROBIN_E2E_SUBNET`, `ROBIN_E2E_HOST_IP` override it). `ROBIN_E2E_ID` (default `robin-e2e`) names the network, containers and images, so two checkouts can run at once with distinct subnets.
 
 The systemd host runs PAM after all, and logind works, but a rootless
 container cannot give a login an audit session of its own, so logind names
 every login after the one podman itself runs in (`session-8083.scope`, say),
 and a login that starts after another ended gets the same scope back.
 `tests/systemd.spec.ts` therefore follows the CLI's login by its processes,
-not by its scope's name. `ROBIN_E2E_ID` (default `robin-e2e`) names the network, containers and images, so two checkouts can run at once with distinct subnets.
+not by its scope's name.
