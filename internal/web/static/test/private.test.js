@@ -17,8 +17,17 @@ const switches = new PrivateSwitches(overlay, (c) => {
 const button = (key) => overlay.section.find((el) => el.dataset.switch === key);
 const agentSays = (state) => dispatchControl({ t: 'private', private: state });
 
-test('a switch clicked while the page reconnects waits for the next control channel', () => {
+// fresh starts a test on an open channel with both switches off and
+// nothing waiting: control.js allows one PrivateSwitches, so every test
+// shares this one.
+function fresh() {
+  channel.open = true;
   agentSays({ curtain: {}, silent: {} });
+  channel.delivered.length = 0;
+}
+
+test('a switch clicked while the page reconnects waits for the next control channel', () => {
+  fresh();
   assert.equal(button('curtain').getAttribute('aria-checked'), 'false');
 
   channel.open = false; // the CLI is redialing; there is no peer
@@ -26,13 +35,14 @@ test('a switch clicked while the page reconnects waits for the next control chan
   assert.deepEqual(channel.delivered, [], 'nothing could carry the click');
   assert.equal(button('curtain').getAttribute('aria-busy'), 'true', 'the switch waits, and shows it');
 
-  // The new peer's channel opens; the agent tells its state first, which
-  // does not answer the click.
+  // In app.js's order: the new peer's channel opens, and only then does
+  // the agent tell its state, which does not answer the click.
   channel.open = true;
-  agentSays({ curtain: {}, silent: {} });
   switches.reopened();
   assert.deepEqual(channel.delivered, [{ t: 'curtain', on: true }]);
-  assert.equal(button('curtain').getAttribute('aria-busy'), 'true');
+  agentSays({ curtain: {}, silent: {} });
+  assert.equal(button('curtain').getAttribute('aria-busy'), 'true', 'the click still waits');
+  assert.equal(channel.delivered.length, 1, 'and is not sent again');
 
   agentSays({ curtain: { on: true }, silent: {} });
   assert.equal(button('curtain').getAttribute('aria-checked'), 'true');
@@ -45,10 +55,10 @@ test('a switch clicked while the page reconnects waits for the next control chan
 });
 
 test('a click on an open channel goes at once, and an error ends the wait', () => {
-  channel.delivered.length = 0;
+  fresh();
   button('silent').click();
   assert.deepEqual(channel.delivered, [{ t: 'silent', on: true }]);
-  agentSays({ curtain: { on: true }, silent: { error: 'no null sink' } });
+  agentSays({ curtain: {}, silent: { error: 'no null sink' } });
   assert.equal(button('silent').getAttribute('aria-busy'), 'false');
   const errors = overlay.section.children.filter((el) => el.className === 'switch-error');
   assert.equal(errors.length, 1);
