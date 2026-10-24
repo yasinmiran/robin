@@ -9,22 +9,15 @@ import (
 	"sync"
 
 	"github.com/godbus/dbus/v5"
-)
 
-// runtimeDir is the user's XDG_RUNTIME_DIR. The agent arrives over SSH, where
-// it may be unset, so it falls back to where systemd-logind puts it.
-func runtimeDir() string {
-	if d := os.Getenv("XDG_RUNTIME_DIR"); d != "" {
-		return d
-	}
-	return fmt.Sprintf("/run/user/%d", os.Getuid())
-}
+	"github.com/yasinmiran/robin/internal/agent/xdg"
+)
 
 // sessionBus connects to the desktop session's bus. The socket in the runtime
 // directory comes first: an SSH login can carry a DBUS_SESSION_BUS_ADDRESS
 // of its own that the desktop's portal is not on.
 func sessionBus() (*dbus.Conn, error) {
-	sock := filepath.Join(runtimeDir(), "bus")
+	sock := filepath.Join(xdg.RuntimeDir(), "bus")
 	addr := "unix:path=" + sock
 	if fi, err := os.Stat(sock); err != nil || fi.Mode().Type() != os.ModeSocket {
 		if addr = os.Getenv("DBUS_SESSION_BUS_ADDRESS"); addr == "" {

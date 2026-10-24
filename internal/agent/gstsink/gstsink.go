@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yasinmiran/robin/internal/agent/xdg"
 	"github.com/yasinmiran/robin/internal/tail"
 )
 
@@ -100,7 +101,7 @@ func Start(args []string, o Options) (*Sink, error) {
 func (s *Sink) spawn() (*child, error) {
 	cmd := exec.Command("gst-launch-1.0", s.args...)
 	// pipewiresink finds the user's PipeWire through XDG_RUNTIME_DIR.
-	cmd.Env = append(append(os.Environ(), "XDG_RUNTIME_DIR="+RuntimeDir()), s.o.Env...)
+	cmd.Env = append(append(os.Environ(), "XDG_RUNTIME_DIR="+xdg.RuntimeDir()), s.o.Env...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
 	c := &child{cmd: cmd, stderr: &tail.Buffer{}, started: time.Now(), exited: make(chan struct{})}
 	cmd.Stderr = c.stderr
@@ -268,16 +269,6 @@ func lastLines(s string, n int) string {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, " | ")
-}
-
-// RuntimeDir is the user's XDG_RUNTIME_DIR, where their PipeWire and sound
-// server listen. The agent arrives over SSH, where it may be unset, so it
-// falls back to where systemd-logind puts it.
-func RuntimeDir() string {
-	if d := os.Getenv("XDG_RUNTIME_DIR"); d != "" {
-		return d
-	}
-	return fmt.Sprintf("/run/user/%d", os.Getuid())
 }
 
 // Quote returns s as a double-quoted value gst-launch-1.0 parses back to

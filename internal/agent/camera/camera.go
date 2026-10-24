@@ -24,6 +24,7 @@ import (
 	"github.com/yasinmiran/robin/internal/agent/gstsink"
 	"github.com/yasinmiran/robin/internal/agent/h264"
 	"github.com/yasinmiran/robin/internal/agent/track"
+	"github.com/yasinmiran/robin/internal/agent/xdg"
 )
 
 // The picture the host's programs see. The page asks the browser for this
@@ -281,7 +282,7 @@ func havePipeWire() error {
 	if os.Getenv("PIPEWIRE_REMOTE") != "" {
 		return nil
 	}
-	socket := filepath.Join(gstsink.RuntimeDir(), "pipewire-0")
+	socket := filepath.Join(xdg.RuntimeDir(), "pipewire-0")
 	if _, err := os.Stat(socket); err != nil {
 		return fmt.Errorf("no PipeWire for this user at %s, and no v4l2loopback device this user can write", socket)
 	}
