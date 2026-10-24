@@ -407,6 +407,10 @@ hosts only. What the GPU costs:
   take a few seconds.
 - NVENC follows NVIDIA's documented options but has not been run on NVIDIA
   hardware yet.
+- Run through the same quality harness as openh264, an Intel iGPU's
+  `vaapih264enc` showed every frame but spent about a third of its target
+  on desktop content, and scored 5 to 11 dB below openh264 at 1080p and
+  1440p, still screens included.
 
 The measurements and the reasons behind the design are in the
 [ADR](docs/adr/0001-architecture.md#hardware-h264-through-a-host-tool-picked-where-it-pays).
@@ -561,7 +565,9 @@ from the page that reach a terminal on the host, a refusal's reason printed by
 `robin-send`, have their control characters replaced first, and a file name it
 prints that holds any, or a mark that reorders text, is printed quoted with
 escapes, as `ls` does. Bulk transfers of any kind the agent has not registered
-are refused.
+are refused. A transfer runs at most 512 KiB ahead of what its receiver has
+taken, and the page fails one from the agent that runs past that, so a
+stalled transfer holds back neither the keyboard nor the page's memory.
 
 A kept session is reached through a unix socket in its 0700 run directory,
 and the daemon accepts a connection only from a process of its own uid
@@ -657,8 +663,21 @@ if the browser would have had to ask for a keyframe. `ROBIN_VQ=1` with
 1440p over three shaped links and prints, per stretch of the clip, what
 was sent, what was shown and how it scored against the screen.
 `ROBIN_VQ=all` adds the variants that put back each earlier policy, and
-`-run` picks cells by size, link and variant, as in
-`-run 'TestVideoQualityMatrix/^1440p$/tight/unpaced$'`.
+the `vaapi` variant, which streams through the host's VA-API encoder where
+one works, and `-run` picks cells by size, link and variant, as in
+`-run 'TestVideoQualityMatrix/^1440p$/tight/unpaced$'`. `make test` also
+scrolls, sits still for 20 s with sound playing and scrolls again over the
+tight link (`TestVideoQualityAfterStill`), and fails when the first second
+after the still shows under a third of the settled frame rate or went out
+at under half the settled target; `ROBIN_VQ=1` with
+`-run TestVideoQualityAfterStillMatrix` does it with a minute still over
+every link, as the agent does and as it did before it held its target or
+sent sound first, and prints how long sound took to arrive. In
+`internal/agent/peer`, `TestCongestionControlHoldsThroughAStillScreen`
+holds a shaped link still for 20 s (`ROBIN_FEED_WHILE_LIMITED=1` feeds
+congestion control as Pion would, to see it fail), and
+`TestCongestionControlProbesOnTheWayOut` narrows the link while the screen
+is still and checks that the motion after it finds the narrower link.
 
 The docs website in `site/` builds and tests apart from these, with Node and npm: see [site/README.md](site/README.md).
 
@@ -756,9 +775,13 @@ they were before.
 
 Bulk transfers run between two Pion peers in one process, both ways, along
 with the ones that must fail: oversized, corrupt, truncated, refused and
-cancelled, including a cancel while the sender waits for its queue to drain
-(`go test ./internal/agent/peer -run Bulk`). One goes through the shaped
-link while video streams, to measure how the two share it. Uploads have
+cancelled, including a cancel while the sender waits for credit, and a
+sink that stops taking chunks while control messages cross beside it,
+which must arrive at once (`go test ./internal/agent/peer -run Bulk`). One
+goes through the shaped link while video streams, the screen moving and
+still, to measure how the two share it. In `make e2e` the direct and
+attach scenarios type while a 256 MiB upload moves, and the keys must show
+within the 400 ms the still-screen test allows. Uploads have
 units of their own in `internal/agent/files`: every name and collision
 rule, a symlink in the way, a full disk (writes to `/dev/full`), a disk
 that stops (the transfer fails instead of holding the read loop), cancel
@@ -956,11 +979,17 @@ verified against a Linux build.
 - The browser puts what the host copies on its own clipboard only while the
   page has focus; copied while you are in another window, it waits for the
   next copy.
-- Files and clipboard content travel unpaced against the video. On a
-  3 Mbit/s link a 2 MiB transfer takes about 9 s, the picture drops to about
-  1 Mbit/s meanwhile and needs another 7 to 9 s to get its rate back, and a
-  host copy of a big image costs the same. A newer copy on the host cancels
-  the transfer of an older one still under way.
+- Files and clipboard content from the host go under the video's
+  congestion target: what the picture leaves of it, and a quarter of it
+  while the picture fills it. On a 3 Mbit/s link a 2 MiB download takes
+  about 7 s over a still screen and 30 s while the screen moves, and the
+  picture keeps its rate. The target is held while the screen is still, so
+  a download started before anything has moved goes at the starting
+  2 Mbit/s, and none goes faster than `--max-kbps`, even on a faster link.
+  Uploads are not paced, since the page has no target to go by, only held
+  to 512 KiB in flight each, which bounds one to about 40 Mbit/s over a
+  100 ms round trip. A newer copy on the host cancels the transfer of an
+  older one still under way.
 - A file is at most 4 GiB either way. The page holds a download in memory
   until the last byte is in, then hands it to the browser's downloads, so
   the browser has to have room for it; uploads stream from disk.
@@ -1003,18 +1032,22 @@ verified against a Linux build.
 - The status tab reads about 2 fps on an idle screen. A still picture is
   sent again every half second, a few hundred bytes each, so the browser
   never times out waiting for one; that is not a stall.
-- After a still stretch, the first seconds of motion can come at a low
-  bitrate. Congestion control (Pion's GCC) answers a hint of congestion by
-  dropping its target to 0.85 times the rate it received, and on a still
-  screen that rate is a few kbit/s; in the agent's measurements the target
-  fell from about 3 Mbit/s to between 0.3 and 1.2 in some runs and climbed
-  back at about 8% a second.
+- Motion after a still screen starts at the bitrate the screen went still
+  with, which the agent tries the link with again: if the link narrowed
+  meanwhile, that motion overflows it for about a second before congestion
+  control comes down (from 3 to 1 Mbit/s in the agent's measurements, in
+  1.1 s). Its first second can also show half the frames at a coarser
+  quantiser: openh264's rate control, after some still spells, skips every
+  other frame for that long at the same target. A session starts at
+  2 Mbit/s, and nothing tries the link beyond that until the screen moves,
+  so its first motion on a fast link is softer than later motion.
 - Below about 4 Mbit/s a busy 1440p picture drops to a few frames a second,
   by design (text stays legible rather than the frame rate high), and
   congestion control can still overshoot the link during video, which
   costs a freeze of up to about a second before a keyframe repairs it.
-- Sound is paced with the picture, so a keyframe on a slow link can hold
-  it back by up to half a second.
+- Sound goes out ahead of the picture, but the link's own buffer is
+  shared: on a 4 Mbit/s link that buffers 100 ms, a keyframe still delays
+  sound by up to that much.
 - Hardware encoding stays at Constrained Baseline, which every browser
   decodes; High profile measured at most 5% smaller on an Intel iGPU.
 - Through the SSH tunnel video is TCP inside TCP, so a lossy link shows
