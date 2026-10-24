@@ -187,6 +187,38 @@ func TestListenRefusesAnOpenDirectory(t *testing.T) {
 	}
 }
 
+// TestListenWhereTheSocketCannotBe: a directory in the socket's place,
+// which removing a stale socket cannot clear, fails Listen.
+func TestListenWhereTheSocketCannotBe(t *testing.T) {
+	dir := privateDir(t)
+	os.MkdirAll(filepath.Join(dir, SocketFile, "x"), 0o700)
+	if _, err := Listen(dir, "a", nil); err == nil || !strings.Contains(err.Error(), "daemon: listen") {
+		t.Fatalf("Listen over a directory: %v", err)
+	}
+}
+
+// TestListenLogsToTheDefaultLogger: a daemon given no logger logs its
+// refusals to slog's default.
+func TestListenLogsToTheDefaultLogger(t *testing.T) {
+	var logged syncLog
+	defer slog.SetDefault(slog.Default())
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	dir := privateDir(t)
+	ln, err := Listen(dir, "a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	// Nobody calls Next, so the controller is turned away as busy.
+	cli, _ := dialConn(t, dir)
+	ctx, cancel := context.WithTimeout(context.Background(), handoffWait+5*time.Second)
+	defer cancel()
+	cli.Recv(ctx)
+	if !strings.Contains(logged.String(), "controller refused") {
+		t.Fatalf("the default log:\n%s", logged.String())
+	}
+}
+
 func TestChangedWithoutItsDirectoryOnlyWarns(t *testing.T) {
 	dir := privateDir(t)
 	var logged bytes.Buffer
@@ -208,6 +240,33 @@ func TestCheckPeerWantsAUnixConnection(t *testing.T) {
 	defer peer.Close()
 	if err := checkPeer(c); err == nil || !strings.Contains(err.Error(), "not a unix connection") {
 		t.Fatalf("checkPeer on a pipe: %v", err)
+	}
+}
+
+// TestCheckPeerOfAConnectionAlreadyGone: a controller that hung up before
+// the check has no credentials to read and is refused.
+func TestCheckPeerOfAConnectionAlreadyGone(t *testing.T) {
+	dir := privateDir(t)
+	ln, err := net.Listen("unix", filepath.Join(dir, SocketFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		if c, err := net.Dial("unix", filepath.Join(dir, SocketFile)); err == nil {
+			c.Close()
+		}
+	}()
+	c, err := ln.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkPeer(c); err != nil {
+		t.Fatalf("checkPeer of a live connection: %v", err)
+	}
+	c.Close()
+	if err := checkPeer(c); err == nil {
+		t.Fatal("checkPeer of a closed connection passed")
 	}
 }
 
