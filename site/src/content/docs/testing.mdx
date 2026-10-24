@@ -34,7 +34,9 @@ go test ./internal/agent/peer -run Congestion
 
 ## `make test-x`
 
-Builds the X-dependent tests of the agent, the display and the X11 packages, plus the sound server tests, and runs them in a container with Xvfb and pulseaudio. These cover capture, input, resize, the clipboard, compositors and DAMAGE, the private sound server, and whole agent sessions, including that an attached display's keymap is byte-identical afterwards and that the private sound server goes with an agent killed by SIGKILL. Arguments go to every test binary:
+Builds the X-dependent tests of the agent, the display and the X11 packages, plus the sound server tests, and runs them in a container with Xvfb and pulseaudio. These cover capture, input, resize, the clipboard, compositors and DAMAGE, the private sound server, and whole agent sessions, including that an attached display's keymap is byte-identical afterwards and that the private sound server goes with an agent killed by SIGKILL.
+
+The container also has a second account, and its root runs a copy of the test binary as that account. That user is kept from a session's `ctl.sock` and `files.sock` by the 0700 run directory and, with the directory opened up, by the peer credential check, before a byte it sent is read. Its `robin-agent end`, aimed at another user's kept session, leaves the session running. Arguments go to every test binary:
 
 ```sh
 internal/agent/x11/testdata/xtest.sh -test.run=Clipboard
@@ -71,6 +73,7 @@ A real browser, Google Chrome in a Playwright container, runs the real CLI again
 | `wayland` | open, GNOME Wayland host | `--attach auto` finds the GNOME session, the consent dialog is answered once, and a second run restores without it |
 | `firefox` | open | the direct scenario in Playwright's Firefox with the OpenH264 plugin |
 | `webkit` | open | the direct scenario in Playwright's WebKit, Safari's WebRTC stack, minus the checks that need a rendered picture |
+| `systemd` | open, a host that boots systemd | where logind kills what a login started (`KillUserProcesses=yes`), the kept session's daemon runs as a `systemd-run --user` unit, outlives the CLI, and is listed, resumed and ended in that unit |
 
 The four X11 scenarios (`direct`, `blocked`, `restart` and `attach`) and `firefox` check, in order: decoded frames that are not black and that change after the host retitles the xterm; typing through the video that runs a command in the remote shell; four keystrokes after 20 s of a still screen, each on screen within 400 ms; pointer position within 2 px; the remote cursor image; the clipboard both ways; resize to a 1000x700 viewport; sound played on the host heard once the speaker is on; which transport ICE picked; and teardown. Teardown means SIGINT makes the CLI exit 0 within 10 s, no Xvfb, agent, openbox, xterm or pulseaudio is left running as the test user, the run directory is gone, and stdout held nothing but the URL. In `attach`, the desktop's processes, size, monitors, autorepeat and keymaps must match what was saved before the CLI ran. `webkit` skips the checks that need a rendered picture (frames, typing through a click, latency, pointer and cursor), and instead reads decoded frames from WebRTC stats and types into an xterm focused from the host.
 

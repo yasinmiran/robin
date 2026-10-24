@@ -768,10 +768,9 @@ keeps the reflex and moves it one process out.
   ends unless lingering is on, so the CLI warns, naming
   `loginctl enable-linger`, and warns differently where `systemd-run` is
   missing, where the desktop will end with the connection after all. The
-  containers the tests run in have no systemd, so the `systemd-run` path
-  has a unit test for its command line and a hand check on a real host
-  (see the README's Known limits); the `setsid` path is what test-x and e2e
-  exercise.
+  e2e `systemd` scenario runs the `systemd-run` path on a host that boots
+  systemd (see "Tests that need systemd or a second user" below); the
+  `setsid` path is what test-x and the other scenarios run.
 - Teardown guarantees moved with the ownership: children are spawned by the
   daemon, so their process groups, `Pdeathsig` and the display watchdog
   die with it; the keep window expiring returns from `Serve` through the
@@ -829,6 +828,59 @@ keeps the reflex and moves it one process out.
   page and ends with `robin end`, leaving no process or directory behind.
   In test-x a session with a 2 s keep window was gone, run directory and
   Xvfb included, 2.10 s after its controller left.
+
+### Tests that need systemd or a second user
+
+Two guarantees of kept sessions had been checked only against stand-ins:
+that `systemd-run --user` keeps the daemon alive where logind kills a
+login's processes, and that the `SO_PEERCRED` checks on `ctl.sock` and
+`files.sock` turn another user away. Both now run against the real thing,
+in rootless podman, with nothing on the workstation itself.
+
+- systemd as PID 1 in rootless podman 3.4 works with crun on cgroup v2:
+  `--systemd=always` with `/sbin/init` as the command mounts what systemd
+  needs, logind starts, and a lingering user's manager comes up at boot.
+  The e2e `systemd` host is the X11 host image plus systemd, sshd with
+  `UsePAM yes` (so every login is a logind session) and
+  `KillUserProcesses=yes`. That is a real kept session on a real systemd,
+  driven by the real CLI, rather than a Go test calling `daemon.Start`:
+  `robin ls`, a resume and `robin end` go over SSH and the probe as a user's
+  would.
+- The scenario first proves the host would kill a daemon that only left
+  the process session: a `setsid sleep` started over ssh was gone once
+  its login ended, within the 0.9 s the whole test took. Then the daemon ran as
+  `user@1000.service/app.slice/robin-<id>.service` with the proxy and its
+  sshd in `session-8083.scope`, outlived the CLI's SIGKILL, was listed,
+  resumed in the same unit, and ended by `robin end` while the resumed CLI
+  was connected, which exited 0 on its own. All five tests took 25.5 s on
+  2026-10-24.
+- Its first run failed for a reason worth knowing: a rootless container
+  cannot give a login its own audit session, so logind names every login
+  after the one podman runs in. A login that starts after another ended
+  gets the same scope back, and the test, polling that scope for being
+  empty, kept finding its own ssh in it. The test follows the CLI's login
+  by its pids instead.
+- A second user needs root to run as, and the workstation's root is not
+  ours to use: test-x's container already runs its tests as its root,
+  which rootless podman maps to the workstation user, with uid 1001 mapped
+  to a subordinate uid. The image gains an account there, `robin-stranger`,
+  and `agenttest.Stranger` runs a copy of the test binary as it
+  (`SysProcAttr.Credential`), in a directory it may read, on the test it
+  came from, which takes the stranger's side when it sees itself so
+  started. `internal/agent/daemon` and `internal/agent/files` run in
+  test-x for it, the rest of their tests as root alongside.
+- What they show: through the 0700 run directory the stranger's connect
+  gets `EACCES` and the daemon never hears of it; with the directory and
+  socket opened up, it is refused by the peer check before a byte it sent is
+  read, with one log line naming its uid (and nothing of the escape
+  sequences it sent), and the owner's own controller is still admitted
+  after. Removing the uid comparison from either check makes its test
+  fail: the daemon logs no refusal, and the offer reaches the session.
+  The stranger's `robin-agent end`, aimed at another user's kept session
+  through a run link to that user's run root, fails on the 0700 root with
+  `permission denied`, and opened up, on the signal with `operation not
+  permitted`; the session lives on and its owner's end still works. No
+  weakness turned up, so nothing in the agent changed.
 
 ### Files: into the download folder, out on a click
 

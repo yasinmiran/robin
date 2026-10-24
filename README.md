@@ -726,6 +726,13 @@ The `touch` scenario runs Chrome as a touch screen: taps and a pinch-zoomed
 tap must put the X pointer within 2 px of the pixel under the finger, two
 fingers must scroll the xterm back, and the keyboard button's soft keyboard
 must type a command that runs.
+The `systemd` scenario boots systemd in the host container, with logind
+killing what a login started once it ends and the test user lingering, as
+on a host with `KillUserProcesses=yes`. A `setsid` process must die with
+its login there, while the kept session's daemon has to start as a
+`systemd-run --user` unit, outlive the CLI's SIGKILL in it, show in `robin
+ls`, be resumed by a new `robin gui` and be gone, unit and run directory,
+after `robin end`.
 See [e2e/README.md](e2e/README.md). Rootless containers cannot shape bandwidth,
 so congestion control is tested separately over a shaped virtual link
 (`go test ./internal/agent/peer -run Congestion`).
@@ -766,7 +773,12 @@ and the end of a session, and the offer socket's checks. `go test
 ./internal/agent` sends good, corrupt, truncated, cancelled and badly named
 uploads and fetches an offer over a real peer, and `make test-x` runs them
 again through a whole agent session, with the rich clipboard and the X11
-targets, INCR both ways, against `xclip`. `go test
+targets, INCR both ways, against `xclip`. test-x also runs as root in its
+container, which has a second account: a copy of the test binary run as that
+account is refused by the 0700 run directory at `ctl.sock` and
+`files.sock`, and with the directory opened up by the peer check, before a
+byte of what it sent is read; its `robin-agent end`, aimed at another
+user's kept session, leaves the session running. `go test
 ./internal/web` runs the page's DOM-free modules under `node --test`, from
 `internal/web/static/test`, and, with the browser smoke test's dependencies
 installed, sends bulk transfers both ways between Chrome and the agent's own
@@ -934,9 +946,9 @@ verified against a Linux build.
   processes alone on logout (the default) or a user systemd manager can
   hold it (`KillUserProcesses=yes` with `systemd-run` and, for your last
   login, `loginctl enable-linger`). Elsewhere the CLI warns and the desktop
-  ends with the connection. The systemd-run path has no automated test:
-  the test hosts run in containers without systemd, so it is checked by
-  hand; the setsid path is what test-x and e2e exercise.
+  ends with the connection. The e2e `systemd` scenario checks the
+  systemd-run path with lingering on; without it, where the unit stops
+  with the user's last login, only the warning is tested.
 - While a kept session has a controller, a second `robin gui` for it is
   refused as busy. A CLI that lost its network keeps the daemon's socket
   busy until the daemon's 20 s idle timeout notices, so a fresh `robin gui`
