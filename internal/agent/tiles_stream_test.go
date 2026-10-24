@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"image/png"
 	"io"
 	"log/slog"
@@ -191,6 +192,35 @@ func (b *tileBrowser) wait(what string, cond func() bool) {
 	}
 }
 
+// answer waits for the agent's answer to the page's request number n,
+// counting from 0.
+func (b *tileBrowser) answer(n int) protocol.Tiles {
+	b.t.Helper()
+	var a protocol.Tiles
+	b.wait(fmt.Sprintf("answer %d", n), func() bool {
+		if len(b.answers) <= n {
+			return false
+		}
+		a = b.answers[n]
+		return true
+	})
+	return a
+}
+
+// counts is how many manifests and video frames have arrived.
+func (b *tileBrowser) counts() (manifests, frames int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.manifests), len(b.frames)
+}
+
+// moreFrames waits for n more video frames than have arrived so far.
+func (b *tileBrowser) moreFrames(n int) {
+	b.t.Helper()
+	_, from := b.counts()
+	b.wait(fmt.Sprintf("%d more frames", n), func() bool { return len(b.frames) >= from+n })
+}
+
 func (b *tileBrowser) batch() protocol.TileBatch {
 	b.t.Helper()
 	select {
@@ -219,8 +249,7 @@ func testStreamSendsTiles(t *testing.T, skip bool) {
 	desk := &paintDesktop{frame: tileFrame(128, 64)}
 	b := streamBrowser(t, desk, skip)
 	b.ask(true)
-	b.wait("the answer", func() bool { return len(b.answers) > 0 })
-	if a := b.answers[0]; !a.On || a.Unsupported != "" {
+	if a := b.answer(0); !a.On || a.Unsupported != "" {
 		t.Fatalf("answer %+v", a)
 	}
 
@@ -280,16 +309,29 @@ func testStreamSendsTiles(t *testing.T, skip bool) {
 	}
 	b.mu.Unlock()
 
+	// The answer to off comes after the last manifest: frames go on with
+	// none.
 	b.ask(false)
-	time.Sleep(200 * time.Millisecond)
-	b.mu.Lock()
-	n := len(b.manifests)
-	b.mu.Unlock()
-	time.Sleep(300 * time.Millisecond)
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if len(b.manifests) != n {
-		t.Fatalf("%d manifests after tiles were turned off", len(b.manifests)-n)
+	if a := b.answer(1); a.On || a.Unsupported != "" {
+		t.Fatalf("answer to off %+v", a)
+	}
+	n, _ := b.counts()
+	b.moreFrames(5)
+	if m, _ := b.counts(); m != n {
+		t.Fatalf("%d manifests after tiles were turned off", m-n)
+	}
+}
+
+// Tiles asked off and on again before the stream's next frame start afresh
+// all the same: the page dropped what it held, so the agent sends it again
+// in a new grid.
+func TestStreamRestartsTilesOnEveryRequest(t *testing.T) {
+	b := streamBrowser(t, &paintDesktop{frame: tileFrame(64, 64)}, false)
+	b.ask(true)
+	first := b.batch()
+	b.ask(false)
+	b.ask(true)
+	for b.batch().Gen == first.Gen {
 	}
 }
 
@@ -298,14 +340,11 @@ func TestStreamRefusesTilesOnI420(t *testing.T) {
 	f := &desktop.Frame{Width: 64, Height: 64, Stride: 64, Pix: make([]byte, 64*64*3/2), Format: desktop.I420}
 	b := streamBrowser(t, &paintDesktop{frame: f}, false)
 	b.ask(true)
-	b.wait("the answer", func() bool { return len(b.answers) > 0 })
-	if a := b.answers[0]; a.On || a.Unsupported != errNoTiles {
+	if a := b.answer(0); a.On || a.Unsupported != noTilesReason {
 		t.Fatalf("answer %+v", a)
 	}
-	time.Sleep(200 * time.Millisecond)
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if len(b.manifests) != 0 {
-		t.Fatalf("%d manifests for a desktop without tiles", len(b.manifests))
+	b.moreFrames(5)
+	if m, _ := b.counts(); m != 0 {
+		t.Fatalf("%d manifests for a desktop without tiles", m)
 	}
 }

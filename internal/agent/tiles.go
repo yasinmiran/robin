@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/yasinmiran/robin/internal/agent/desktop"
@@ -42,20 +43,21 @@ const (
 	tileBatches = 2
 )
 
-// errNoTiles is why a desktop gets no tiles: Wayland's portal hands the
-// agent its frames already in 4:2:0, the very loss tiles undo.
-const errNoTiles = "sharp text needs an X11 desktop: Wayland frames reach Robin already at 4:2:0"
+// noTilesReason is what the page shows for a desktop that gets no tiles:
+// Wayland's portal hands the agent its frames already in 4:2:0, the very
+// loss tiles undo.
+const noTilesReason = "Not available on a Wayland desktop: its frames reach Robin with their colour detail already gone. An X11 desktop has it."
 
 // tileSender is where tiles go: the peer, or a test's stand-in.
 type tileSender interface {
 	SendBulk(ctx context.Context, h protocol.Bulk, r io.Reader) error
 }
 
-// tiles finds the tiles of the screen that stay still and sends them
+// tileTracker finds the tiles of the screen that stay still and sends them
 // losslessly, and tells the page which tiles each frame changes. It belongs
 // to the stream's goroutine: only the batches it starts run elsewhere, and
 // they report back on done.
-type tiles struct {
+type tileTracker struct {
 	log    *slog.Logger
 	budget cpuBudget
 
@@ -76,6 +78,8 @@ type tiles struct {
 	batches map[*tileBatch]struct{}
 	done    chan tileResult
 	stop    chan struct{}
+	// running counts the batches' goroutines, so close outlives them all.
+	running sync.WaitGroup
 }
 
 // tileSlot is the state of one tile of the grid.
@@ -109,8 +113,8 @@ type tileResult struct {
 	err    error
 }
 
-func newTiles(log *slog.Logger) *tiles {
-	return &tiles{
+func newTileTracker(log *slog.Logger) *tileTracker {
+	return &tileTracker{
 		log:     log,
 		budget:  cpuBudget{share: tileShare, burst: tileBurst},
 		batches: map[*tileBatch]struct{}{},
@@ -119,15 +123,18 @@ func newTiles(log *slog.Logger) *tiles {
 	}
 }
 
-// close cancels every transfer for good.
-func (t *tiles) close() {
+// close cancels every transfer for good and returns once none is left
+// running: at worst one atlas still being encoded, since that cannot be
+// cancelled.
+func (t *tileTracker) close() {
 	t.reset()
 	close(t.stop)
+	t.running.Wait()
 }
 
 // reset forgets the grid and cancels every transfer, so that whatever
 // comes next is a new generation.
-func (t *tiles) reset() {
+func (t *tileTracker) reset() {
 	for b := range t.batches {
 		b.cancel()
 	}
@@ -142,7 +149,7 @@ func (t *tiles) reset() {
 // and marks the tiles it changes. A tile the page may hold is named in the
 // next manifest; its transfer, if under way, is cancelled once none of the
 // batch it rides in is current.
-func (t *tiles) update(f *desktop.Frame, now time.Time) {
+func (t *tileTracker) update(f *desktop.Frame, now time.Time) {
 	t.seq++
 	if f.Width != t.w || f.Height != t.h {
 		t.reset()
@@ -171,11 +178,12 @@ func (t *tiles) update(f *desktop.Frame, now time.Time) {
 				copy(t.prev[4*(t.w*r+x):4*(t.w*r+x+w)], f.Pix[f.Stride*r+4*x:])
 			}
 			t.changed(i, now)
+			break
 		}
 	}
 }
 
-func (t *tiles) changed(i int, now time.Time) {
+func (t *tileTracker) changed(i int, now time.Time) {
 	s := &t.slots[i]
 	if s.live {
 		t.gone = append(t.gone, i)
@@ -196,21 +204,21 @@ func (t *tiles) changed(i int, now time.Time) {
 }
 
 // rect is tile i's place in the desktop.
-func (t *tiles) rect(i int) (x, y, w, h int) {
+func (t *tileTracker) rect(i int) (x, y, w, h int) {
 	x, y = i%t.cols*protocol.TileSize, i/t.cols*protocol.TileSize
 	return x, y, min(protocol.TileSize, t.w-x), min(protocol.TileSize, t.h-y)
 }
 
 // manifest is the ControlFrame of the frame about to be written with RTP
 // timestamp rtp: the tiles changed since the previous one.
-func (t *tiles) manifest(rtp uint32) protocol.Control {
+func (t *tileTracker) manifest(rtp uint32) protocol.Control {
 	m := protocol.Control{T: protocol.ControlFrame, Frame: &protocol.Frame{RTP: rtp, Gen: t.gen, W: t.w, H: t.h, Gone: ranges(t.gone)}}
 	t.gone = t.gone[:0]
 	return m
 }
 
 // wrote records that the frame update saw last went out with timestamp rtp.
-func (t *tiles) wrote(rtp uint32) {
+func (t *tileTracker) wrote(rtp uint32) {
 	t.written, t.rtp = t.seq, rtp
 }
 
@@ -234,7 +242,7 @@ func ranges(idx []int) []int {
 // cut sends the tiles that have been still long enough, as far as the
 // transfers under way and the CPU budget allow, and takes the reports of
 // the transfers that ended.
-func (t *tiles) cut(to tileSender, now time.Time) {
+func (t *tileTracker) cut(to tileSender, now time.Time) {
 	t.collect(now)
 	if t.written == 0 || len(t.batches) >= tileBatches || !t.budget.ok(now) {
 		return
@@ -261,7 +269,7 @@ func (t *tiles) cut(to tileSender, now time.Time) {
 	t.batches[b] = struct{}{}
 	atlas := t.atlas(pick)
 	batch := protocol.TileBatch{RTP: t.rtp, Gen: t.gen, Tiles: pick}
-	go func() {
+	t.running.Go(func() {
 		r := tileResult{batch: b, err: ctx.Err()}
 		if r.err == nil {
 			began := time.Now()
@@ -277,11 +285,11 @@ func (t *tiles) cut(to tileSender, now time.Time) {
 		case t.done <- r:
 		case <-t.stop:
 		}
-	}()
+	})
 }
 
 // collect takes the reports of transfers that ended.
-func (t *tiles) collect(now time.Time) {
+func (t *tileTracker) collect(now time.Time) {
 	for {
 		select {
 		case r := <-t.done:
@@ -292,7 +300,7 @@ func (t *tiles) collect(now time.Time) {
 	}
 }
 
-func (t *tiles) ended(r tileResult, now time.Time) {
+func (t *tileTracker) ended(r tileResult, now time.Time) {
 	t.budget.spend(r.encode, now)
 	b := r.batch
 	if _, ok := t.batches[b]; !ok || b.gen != t.gen {
@@ -319,11 +327,10 @@ func (t *tiles) ended(r tileResult, now time.Time) {
 
 // atlas copies the tiles of pick out of the latest frame into an atlas of
 // TileAtlasColumns tiles a row, still BGRX.
-func (t *tiles) atlas(pick []int) *image.RGBA {
+func (t *tileTracker) atlas(pick []int) *image.RGBA {
 	const ts = protocol.TileSize
-	cols := min(len(pick), protocol.TileAtlasColumns)
-	rows := (len(pick) + protocol.TileAtlasColumns - 1) / protocol.TileAtlasColumns
-	img := image.NewRGBA(image.Rect(0, 0, cols*ts, rows*ts))
+	w, h := protocol.TileAtlasSize(len(pick))
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	for k, i := range pick {
 		x, y, w, h := t.rect(i)
 		ax, ay := k%protocol.TileAtlasColumns*ts, k/protocol.TileAtlasColumns*ts

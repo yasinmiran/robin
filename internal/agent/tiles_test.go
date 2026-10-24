@@ -115,26 +115,38 @@ func (s *tileSink) sent() []protocol.TileBatch {
 	return slices.Clone(s.batches)
 }
 
-func testTiles() *tiles {
-	t := newTiles(slog.New(slog.NewTextHandler(io.Discard, nil)))
+func (s *tileSink) cancelledCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cancelled
+}
+
+// testTracker is a tracker on an unlimited budget, closed when the test
+// ends, so no transfer it started outlives the test.
+func testTracker(tb testing.TB) *tileTracker {
+	t := newTileTracker(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	t.budget = cpuBudget{share: 1, burst: time.Hour}
+	tb.Cleanup(t.close)
 	return t
 }
 
 // settle waits for every transfer under way to report.
-func settle(tb testing.TB, t *tiles, now time.Time) {
+func settle(tb testing.TB, t *tileTracker, now time.Time) {
 	tb.Helper()
-	for deadline := time.Now().Add(10 * time.Second); len(t.batches) > 0; time.Sleep(time.Millisecond) {
-		if time.Now().After(deadline) {
+	deadline := time.After(10 * time.Second)
+	for len(t.batches) > 0 {
+		select {
+		case r := <-t.done:
+			t.ended(r, now)
+		case <-deadline:
 			tb.Fatalf("%d tile transfers never ended", len(t.batches))
 		}
-		t.collect(now)
 	}
 }
 
 // frame runs one frame through tr the way the stream does: update, the
 // manifest, the write, then a cut.
-func frame(tr *tiles, to tileSender, f *desktop.Frame, rtp uint32, now time.Time) protocol.Frame {
+func frame(tr *tileTracker, to tileSender, f *desktop.Frame, rtp uint32, now time.Time) protocol.Frame {
 	tr.update(f, now)
 	m := tr.manifest(rtp)
 	tr.wrote(rtp)
@@ -161,7 +173,7 @@ func sentTiles(bs []protocol.TileBatch) []int {
 
 // A tile goes out only once it has been still for tileStill, and then once.
 func TestTilesWaitForStillness(t *testing.T) {
-	tr, sink := testTiles(), &tileSink{}
+	tr, sink := testTracker(t), &tileSink{}
 	f := tileFrame(130, 70) // 3x2 tiles, the last column and row cut short
 	t0 := time.Unix(1000, 0)
 	m := frame(tr, sink, f, 10, t0)
@@ -189,7 +201,7 @@ func TestTilesWaitForStillness(t *testing.T) {
 // The atlas holds each tile's own pixels, edge tiles at the top left of
 // their square, decoded exactly as they were on the desktop.
 func TestTileAtlasIsLossless(t *testing.T) {
-	tr, sink := testTiles(), &tileSink{}
+	tr, sink := testTracker(t), &tileSink{}
 	f := tileFrame(64*17+5, 64+9) // 18 columns: the atlas wraps to a second row
 	t0 := time.Unix(1000, 0)
 	frame(tr, sink, f, 1, t0)
@@ -225,7 +237,7 @@ func TestTileAtlasIsLossless(t *testing.T) {
 // whatever else that frame changed, and only then; tiles the page never had
 // are not named at all.
 func TestTilesManifestNamesWhatChanged(t *testing.T) {
-	tr, sink := testTiles(), &tileSink{}
+	tr, sink := testTracker(t), &tileSink{}
 	f := tileFrame(64*4, 64*2)
 	t0 := time.Unix(1000, 0)
 	gen := frame(tr, sink, f, 100, t0).Gen
@@ -251,7 +263,7 @@ func TestTilesManifestNamesWhatChanged(t *testing.T) {
 // A tile that changed in a frame the encoder dropped waits for a frame that
 // shows it: tiles carry only pixels a written frame has.
 func TestTilesWaitForAWrittenFrame(t *testing.T) {
-	tr, sink := testTiles(), &tileSink{}
+	tr, sink := testTracker(t), &tileSink{}
 	f := tileFrame(64*2, 64)
 	t0 := time.Unix(1000, 0)
 	tr.update(f, t0)
@@ -283,7 +295,7 @@ func TestTilesWaitForAWrittenFrame(t *testing.T) {
 // A still screen goes in a few transfers of at most MaxTileBatch tiles, no
 // more than tileBatches at once.
 func TestTilesBatch(t *testing.T) {
-	tr, sink := testTiles(), &tileSink{hold: make(chan struct{})}
+	tr, sink := testTracker(t), &tileSink{hold: make(chan struct{})}
 	f := tileFrame(1920, 1080) // 30x17 tiles
 	t0 := time.Unix(1000, 0)
 	frame(tr, sink, f, 1, t0)
@@ -306,7 +318,7 @@ func TestTilesBatch(t *testing.T) {
 // A transfer is cancelled once every tile in it changed, and goes on while
 // some are still current: the page drops the others by the manifest.
 func TestTilesCancelStaleTransfers(t *testing.T) {
-	tr, sink := testTiles(), holding()
+	tr, sink := testTracker(t), holding()
 	f := tileFrame(64*3, 64)
 	t0 := time.Unix(1000, 0)
 	frame(tr, sink, f, 1, t0)
@@ -331,7 +343,7 @@ func TestTilesCancelStaleTransfers(t *testing.T) {
 	if m := step(2, t0.Add(time.Second)); !slices.Equal(m.Gone, []int{0, 2}) || b.left != 1 {
 		t.Fatalf("manifest %+v with %d current", m, b.left)
 	}
-	if sink.cancelled != 0 {
+	if sink.cancelledCount() != 0 {
 		t.Fatal("a transfer with a current tile was cancelled")
 	}
 	paint(f, 128, 0, 1, 1, 7)
@@ -339,8 +351,8 @@ func TestTilesCancelStaleTransfers(t *testing.T) {
 		t.Fatalf("manifest %+v", m)
 	}
 	settle(t, tr, t0.Add(2*time.Second))
-	if sink.cancelled != 1 {
-		t.Fatalf("%d transfers cancelled, want the one whose tiles all changed", sink.cancelled)
+	if n := sink.cancelledCount(); n != 1 {
+		t.Fatalf("%d transfers cancelled, want the one whose tiles all changed", n)
 	}
 	// Each tile is sent again once still, the page having none of them.
 	close(sink.hold)
@@ -355,7 +367,7 @@ func TestTilesCancelStaleTransfers(t *testing.T) {
 // its tiles is named all the same; they are tried again after another
 // still spell.
 func TestTilesAfterAFailedTransfer(t *testing.T) {
-	tr, sink := testTiles(), &tileSink{fail: errors.New("refused")}
+	tr, sink := testTracker(t), &tileSink{fail: errors.New("refused")}
 	f := tileFrame(64, 64)
 	t0 := time.Unix(1000, 0)
 	frame(tr, sink, f, 1, t0)
@@ -373,7 +385,7 @@ func TestTilesAfterAFailedTransfer(t *testing.T) {
 		t.Fatal("never tried again")
 	}
 
-	tr2, sink2 := testTiles(), &tileSink{fail: errors.New("closed")}
+	tr2, sink2 := testTracker(t), &tileSink{fail: errors.New("closed")}
 	frame(tr2, sink2, f, 1, t0)
 	tr2.cut(sink2, t0.Add(tileStill))
 	settle(t, tr2, t0)
@@ -387,7 +399,7 @@ func TestTilesAfterAFailedTransfer(t *testing.T) {
 // blinking caret, waits longer each time and stops flickering between
 // sharp and blurred; once it settles for good it is quick again.
 func TestTilesBackOffFromABlinkingCaret(t *testing.T) {
-	tr, sink := testTiles(), &tileSink{}
+	tr, sink := testTracker(t), &tileSink{}
 	f := tileFrame(64, 64)
 	at := time.Unix(1000, 0)
 	frame(tr, sink, f, 1, at)
@@ -425,7 +437,7 @@ func TestTilesBackOffFromABlinkingCaret(t *testing.T) {
 // A new desktop size is a new grid: every transfer is cancelled and the
 // next manifest names a new generation.
 func TestTilesNewGridOnResize(t *testing.T) {
-	tr, sink := testTiles(), holding()
+	tr, sink := testTracker(t), holding()
 	t0 := time.Unix(1000, 0)
 	gen := frame(tr, sink, tileFrame(128, 64), 1, t0).Gen
 	tr.cut(sink, t0.Add(tileStill))
@@ -434,18 +446,11 @@ func TestTilesNewGridOnResize(t *testing.T) {
 	if m.Gen == gen || m.W != 64 || m.Gone != nil {
 		t.Fatalf("manifest after a resize %+v, old gen %d", m, gen)
 	}
-	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(time.Millisecond) {
-		sink.mu.Lock()
-		n := sink.cancelled
-		sink.mu.Unlock()
-		if n == 1 {
-			break
-		}
+	for deadline := time.Now().Add(10 * time.Second); sink.cancelledCount() != 1; time.Sleep(time.Millisecond) {
 		if time.Now().After(deadline) {
-			t.Fatalf("%d transfers cancelled by the resize, want 1", n)
+			t.Fatalf("%d transfers cancelled by the resize, want 1", sink.cancelledCount())
 		}
 	}
-	tr.close()
 }
 
 func mustBenchClip(b testing.TB) *vqtest.Clip {
@@ -497,7 +502,7 @@ func TestCPUBudget(t *testing.T) {
 // The budget holds back the next batch until the last one's encode is paid
 // for.
 func TestTilesKeepToTheBudget(t *testing.T) {
-	tr, sink := testTiles(), &tileSink{}
+	tr, sink := testTracker(t), &tileSink{}
 	tr.budget = cpuBudget{share: tileShare}
 	f := tileFrame(64*2, 64)
 	t0 := time.Unix(1000, 0)
@@ -523,7 +528,7 @@ func BenchmarkTiles(b *testing.B) {
 	f := &desktop.Frame{Width: clip.W, Height: clip.H, Stride: 4 * clip.W, Pix: make([]byte, 4*clip.W*clip.H), Format: desktop.BGRX}
 	clip.Draw(f.Pix, 0)
 	b.Run("compare", func(b *testing.B) {
-		tr := testTiles()
+		tr := testTracker(b)
 		tr.update(f, time.Now())
 		b.SetBytes(int64(len(f.Pix)))
 		for b.Loop() {
@@ -531,7 +536,7 @@ func BenchmarkTiles(b *testing.B) {
 		}
 	})
 	b.Run("encode", func(b *testing.B) {
-		tr := testTiles()
+		tr := testTracker(b)
 		tr.update(f, time.Now())
 		all := allTiles(len(tr.slots))
 		var size int

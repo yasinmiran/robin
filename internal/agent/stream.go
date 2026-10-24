@@ -64,9 +64,14 @@ type stream struct {
 	// scale is how frames are shrunk on their way out, nil while they go
 	// out at desktop size.
 	scale atomic.Pointer[scale]
-	// tiles is what the page asked for in its latest ControlTiles.
-	tiles atomic.Bool
+	// tilesWanted is the page's latest ControlTiles, nil until it sends one.
+	tilesWanted atomic.Pointer[tileRequest]
 }
+
+// tileRequest is one ControlTiles from the page. Each is a value of its own,
+// so a request starts the tiles afresh even when the one before it, the
+// other way, came and went between two frames.
+type tileRequest struct{ on bool }
 
 // scale is a desktop size and the smaller one its frames are encoded at.
 type scale struct{ deskW, deskH, w, h int }
@@ -90,13 +95,13 @@ func newStream(desk desktop.Desktop, fps, maxW, maxH int, newEncoder NewEncoderF
 }
 
 func (s *stream) setPeer(p *peer.Peer) {
-	s.tiles.Store(false)
+	s.tilesWanted.Store(nil)
 	s.peer.Store(p)
 	s.keyframe.Store(true)
 }
 
 // wantTiles applies the page's ControlTiles.
-func (s *stream) wantTiles(on bool) { s.tiles.Store(on) }
+func (s *stream) wantTiles(on bool) { s.tilesWanted.Store(&tileRequest{on: on}) }
 
 func (s *stream) requestKeyframe() { s.keyframe.Store(true) }
 
@@ -121,8 +126,8 @@ func (s *stream) run(ctx context.Context) {
 		// lastClock is when the RTP clock last moved: a frame written, or
 		// one spent unwritten.
 		lastClock time.Time
-		sharp     = newTiles(s.log)
-		sharpFor  sharpState
+		tracker   = newTileTracker(s.log)
+		setup     tileSetup
 	)
 	closeEncoder := func() {
 		if enc != nil {
@@ -131,7 +136,7 @@ func (s *stream) run(ctx context.Context) {
 		}
 	}
 	defer closeEncoder()
-	defer sharp.close()
+	defer tracker.close()
 
 	for {
 		select {
@@ -152,10 +157,10 @@ func (s *stream) run(ctx context.Context) {
 			s.log.Warn("capture", "err", err)
 			continue
 		}
-		tiles := sharpFor.apply(sharp, p, s.tiles.Load(), f)
+		withTiles := setup.apply(tracker, p, s.tilesWanted.Load(), f)
 		if !changed && !force && !stale && !refresh {
-			if tiles {
-				sharp.cut(p, now)
+			if withTiles {
+				tracker.cut(p, now)
 			}
 			continue
 		}
@@ -170,19 +175,19 @@ func (s *stream) run(ctx context.Context) {
 		// out still spends its timestamp, so no later frame shares it and
 		// a manifest the page holds always covers the whole frame.
 		rtp, manifest := uint32(0), false
-		if tiles {
-			sharp.update(f, now)
+		if withTiles {
+			tracker.update(f, now)
 			if rtp, manifest = p.NextFrameRTP(); manifest {
-				if err := p.SendControl(sharp.manifest(rtp)); err != nil {
+				if err := p.SendControl(tracker.manifest(rtp)); err != nil {
 					// The page must never see a later manifest without
 					// this one: a new grid drops whatever it holds.
 					s.log.Debug("tile manifest", "err", err)
-					sharp.reset()
+					tracker.reset()
 					manifest = false
 				}
 			}
 		}
-		spend := func() {
+		skipTimestamp := func() {
 			if manifest {
 				p.WriteFrame(nil, d)
 				lastClock = now
@@ -199,7 +204,7 @@ func (s *stream) run(ctx context.Context) {
 			br := s.bitrate.Load()
 			if enc, err = s.newEncoder(w, h, s.fps, int(br)); err != nil {
 				s.log.Error("encoder", "w", w, "h", h, "err", err)
-				spend()
+				skipTimestamp()
 				continue
 			}
 			appliedBitrate = br
@@ -231,7 +236,7 @@ func (s *stream) run(ctx context.Context) {
 		au, err := enc.Encode(img, now.Sub(began), force)
 		if err != nil {
 			s.log.Warn("encode", "err", err)
-			spend()
+			skipTimestamp()
 			continue
 		}
 		if force {
@@ -245,7 +250,7 @@ func (s *stream) run(ctx context.Context) {
 		}
 		stale = len(au) == 0
 		if stale {
-			spend()
+			skipTimestamp()
 			continue
 		}
 		if err := p.WriteFrame(au, d); err != nil {
@@ -253,36 +258,38 @@ func (s *stream) run(ctx context.Context) {
 		}
 		lastWrite, lastClock = now, now
 		if manifest {
-			sharp.wrote(rtp)
-			sharp.cut(p, now)
+			tracker.wrote(rtp)
+			tracker.cut(p, now)
 		}
 	}
 }
 
-// sharpState is what the stream's tiles were last set up for: the peer,
-// whether that page asked for them, and whether it has been answered.
-type sharpState struct {
+// tileSetup is what the stream's tiles were last set up for: the peer, the
+// request of that page, and whether it has been answered.
+type tileSetup struct {
 	peer     *peer.Peer
-	on       bool
+	req      *tileRequest
 	answered bool
 }
 
-// apply follows the page's request for tiles: any change of peer or of
-// request starts the tiles afresh, and the page hears once whether this
-// desktop can have them. It reports whether f gets tiles.
-func (st *sharpState) apply(t *tiles, p *peer.Peer, want bool, f *desktop.Frame) bool {
-	if p != st.peer || want != st.on {
+// apply follows the page's latest request for tiles: a new peer or request
+// starts the tiles afresh, and the page hears once whether tiles are on:
+// off when it asked them off, and when it asked them on, on or why this
+// desktop cannot have them. The answer to an off request comes after every
+// manifest, so none follows it. apply reports whether f gets tiles.
+func (st *tileSetup) apply(t *tileTracker, p *peer.Peer, req *tileRequest, f *desktop.Frame) bool {
+	if p != st.peer || req != st.req {
 		t.reset()
-		*st = sharpState{peer: p, on: want}
+		*st = tileSetup{peer: p, req: req}
 	}
-	if !st.on || f == nil {
+	if req == nil || (req.on && f == nil) {
 		return false
 	}
-	ok := f.Format == desktop.BGRX
+	ok := req.on && f.Format == desktop.BGRX
 	if !st.answered {
 		answer := protocol.Tiles{On: ok}
-		if !ok {
-			answer.Unsupported = errNoTiles
+		if req.on && !ok {
+			answer.Unsupported = noTilesReason
 		}
 		st.answered = p.SendControl(protocol.Control{T: protocol.ControlTiles, Tiles: &answer}) == nil
 	}
