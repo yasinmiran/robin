@@ -83,7 +83,7 @@ func serve(args []string) int {
 	out := os.Stdout
 	os.Stdout = os.Stderr
 
-	keeperArgv := []string{exe, "keeper"}
+	keeperArgv := []string{exe, "keeper"} // exe names it; keeper.Client runs this same image
 	if *verbose {
 		keeperArgv = append(keeperArgv, "-v")
 	}
@@ -123,12 +123,7 @@ func keep(args []string) int {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 	xgb.Logger = stdlog.New(io.Discard, "", 0)
-	// The agent's SSH channel may be gone by the time there is anything to say.
-	signal.Ignore(syscall.SIGPIPE)
-	os.Stdout = os.Stderr
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-	defer stop()
-	keeper.Serve(ctx, os.Stdin, keeper.Undo{
+	keeper.Main(keeper.Undo{
 		x11.GammaStep:      x11.UndoGamma,
 		wayland.MutterStep: wayland.UndoMutter,
 		audio.RoomStep:     audio.UndoRoom,

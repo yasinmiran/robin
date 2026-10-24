@@ -10,11 +10,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -37,10 +35,7 @@ type roomSpec struct {
 }
 
 func serveKeeper() {
-	signal.Ignore(syscall.SIGPIPE)
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGHUP)
-	defer stop()
-	keeper.Serve(ctx, os.Stdin, keeper.Undo{RoomStep: UndoRoom}, quiet())
+	keeper.Main(keeper.Undo{RoomStep: UndoRoom}, quiet())
 }
 
 func silenceForTest(spec string) {

@@ -55,8 +55,9 @@ type Options struct {
 	Encoders map[string]NewEncoderFunc
 	// NewAudio captures the desktop's sound; nil when this build has none.
 	NewAudio NewAudioFunc
-	// Keeper starts the child that undoes a private session's changes if
-	// the agent dies; without it an attached desktop gets no private session.
+	// Keeper is the argv that makes this executable the child that undoes a
+	// private session's changes if the agent dies (see keeper.New); without
+	// it an attached desktop gets no private session.
 	Keeper []string
 	// Silence makes an attached desktop's room silent; nil when this build
 	// cannot.

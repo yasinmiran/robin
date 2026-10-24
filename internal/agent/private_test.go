@@ -9,11 +9,9 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -36,9 +34,6 @@ func TestMain(m *testing.M) {
 		os.Exit(serveForTest())
 	}
 	if dir := os.Getenv(keeperEnv); dir != "" {
-		signal.Ignore(syscall.SIGPIPE)
-		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGHUP)
-		defer stop()
 		note := func(kind string) func(context.Context, json.RawMessage) error {
 			return func(_ context.Context, data json.RawMessage) error {
 				f, err := os.OpenFile(filepath.Join(dir, "undone"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
@@ -50,7 +45,7 @@ func TestMain(m *testing.M) {
 				return err
 			}
 		}
-		keeper.Serve(ctx, os.Stdin, keeper.Undo{
+		keeper.Main(keeper.Undo{
 			"fake-curtain": note("fake-curtain"),
 			"fake-room":    note("fake-room"),
 			x11.GammaStep:  x11.UndoGamma,
