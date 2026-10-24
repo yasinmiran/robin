@@ -27,41 +27,15 @@ func (s *session) applyClipboard(m protocol.Control) {
 		s.log.Warn("clipboard from browser too large", "bytes", len(m.Text))
 		return
 	}
-	s.putClip(protocol.Clip{Text: m.Text})
-}
-
-// putClip hands c to setClips, replacing content not yet set. It never
-// waits, since it runs on a data channel's read loop and setting the
-// clipboard waits on the desktop.
-func (s *session) putClip(c protocol.Clip) {
-	for {
-		select {
-		case s.clips <- c:
-			return
-		default:
-		}
-		select {
-		case <-s.clips:
-		default:
-		}
+	if err := s.setClip(protocol.Clip{Text: m.Text}); err != nil {
+		s.log.Warn("set clipboard", "err", err)
 	}
 }
 
-// setClips puts what the browser copies on the desktop's clipboard, in
-// the order it arrived, until ctx ends.
-func (s *session) setClips(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case c := <-s.clips:
-			if err := s.setClip(c); err != nil {
-				s.log.Warn("set clipboard", "err", err)
-			}
-		}
-	}
-}
-
+// setClip puts c on the desktop's clipboard before it returns, on the
+// read loop of the channel c came on, so that a paste key the page sends
+// after it finds c there. It costs the desktop one round trip, bounded on
+// X11 by the wait for a timestamp.
 func (s *session) setClip(c protocol.Clip) error {
 	if rich, ok := s.desk.(desktop.RichClipboard); ok {
 		return rich.SetClipboardContent(c)
@@ -90,8 +64,7 @@ func (c *clipSink) Commit() error {
 	if err != nil {
 		return err
 	}
-	c.s.putClip(clip)
-	return nil
+	return c.s.setClip(clip)
 }
 
 func (c *clipSink) Abort(error) {}

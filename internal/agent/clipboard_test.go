@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,14 +19,10 @@ type richDesktop struct {
 	fakeDesktop
 	setMu sync.Mutex
 	set   []protocol.Clip
-	block chan struct{} // when set, SetClipboardContent waits until it closes
 	clips chan protocol.Clip
 }
 
 func (r *richDesktop) SetClipboardContent(c protocol.Clip) error {
-	if r.block != nil {
-		<-r.block
-	}
 	r.setMu.Lock()
 	defer r.setMu.Unlock()
 	r.set = append(r.set, c)
@@ -40,44 +37,23 @@ func (r *richDesktop) setSoFar() []protocol.Clip {
 	return slices.Clone(r.set)
 }
 
-func waitFor(t *testing.T, what string, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-}
-
-func TestClipboardFromTheBrowserKeepsOnlyTheLatest(t *testing.T) {
-	desk := &richDesktop{block: make(chan struct{})}
+// The clipboard is set before the message that set it is done with, so a
+// paste key after it finds it there.
+func TestClipboardFromTheBrowserIsSetInOrder(t *testing.T) {
+	desk := &richDesktop{}
 	s := testSession(desk)
-	ctx, stop := context.WithCancel(context.Background())
-	defer stop()
-	go s.setClips(ctx)
-
-	// The first set waits on the desktop; of those that come meanwhile only
-	// the newest is set after it.
 	s.control(protocol.Control{T: protocol.ControlClipboard, Text: "first"})
-	waitFor(t, "the first set to start", func() bool { return len(s.clips) == 0 })
+	s.control(protocol.Control{T: protocol.ControlClipboard, Text: strings.Repeat("x", clipboardSize+1)})
 	s.control(protocol.Control{T: protocol.ControlClipboard, Text: "second"})
-	s.putClip(protocol.Clip{Text: "third", HTML: "<b>third</b>"})
-	close(desk.block)
-	waitFor(t, "two sets", func() bool { return len(desk.setSoFar()) == 2 })
 	got := desk.setSoFar()
-	if got[0].Text != "first" || got[1].HTML != "<b>third</b>" {
-		t.Errorf("set %+v, want first and then third", got)
+	if len(got) != 2 || got[0].Text != "first" || got[1].Text != "second" {
+		t.Errorf("set %+v, want first and then second", got)
 	}
 }
 
 func TestClipboardBulkFromTheBrowser(t *testing.T) {
 	desk := &richDesktop{}
 	s := testSession(desk)
-	ctx, stop := context.WithCancel(context.Background())
-	defer stop()
-	go s.setClips(ctx)
 
 	want := protocol.Clip{Text: "a picture", PNG: []byte{0x89, 'P', 'N', 'G'}}
 	payload, _ := protocol.EncodeClip(want)
@@ -91,7 +67,9 @@ func TestClipboardBulkFromTheBrowser(t *testing.T) {
 	if err := sink.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "the clipboard set", func() bool { return len(desk.setSoFar()) == 1 })
+	if len(desk.setSoFar()) != 1 {
+		t.Fatalf("the clipboard was set %d times, want once", len(desk.setSoFar()))
+	}
 	if got := desk.setSoFar()[0]; got.Text != want.Text || string(got.PNG) != string(want.PNG) {
 		t.Errorf("set %+v, want %+v", got, want)
 	}

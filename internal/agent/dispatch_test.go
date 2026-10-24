@@ -3,7 +3,6 @@
 package agent
 
 import (
-	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -11,7 +10,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/yasinmiran/robin/internal/agent/desktop"
 	"github.com/yasinmiran/robin/internal/agent/peer"
@@ -70,7 +68,7 @@ func testSession(desk desktop.Desktop) *session {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return &session{
 		desk: desk, start: protocol.Start{MaxWidth: 1280, MaxHeight: 720}, log: log,
-		stream: newStream(desk, 30, 1280, 720, nil, log), clips: make(chan protocol.Clip, 1),
+		stream: newStream(desk, 30, 1280, 720, nil, log),
 	}
 }
 
@@ -120,23 +118,10 @@ func TestControlDispatch(t *testing.T) {
 	t.Run("clipboard", func(t *testing.T) {
 		desk := &fakeDesktop{}
 		s := testSession(desk)
-		ctx, stop := context.WithCancel(context.Background())
-		defer stop()
-		go s.setClips(ctx)
-		s.control(protocol.Control{T: protocol.ControlClipboard, Text: strings.Repeat("x", clipboardSize+1)})
 		s.control(protocol.Control{T: protocol.ControlClipboard, Text: "hi"})
-		deadline := time.Now().Add(5 * time.Second)
-		for {
-			desk.mu.Lock()
-			got := slices.Clone(desk.clipboard)
-			desk.mu.Unlock()
-			if len(got) > 0 || time.Now().After(deadline) {
-				if !slices.Equal(got, []string{"hi"}) {
-					t.Errorf("desktop clipboard set to %d texts, want only the one in bounds", len(got))
-				}
-				break
-			}
-			time.Sleep(5 * time.Millisecond)
+		s.control(protocol.Control{T: protocol.ControlClipboard, Text: strings.Repeat("x", clipboardSize+1)})
+		if !slices.Equal(desk.clipboard, []string{"hi"}) {
+			t.Errorf("desktop clipboard set to %d texts, want only the one in bounds", len(desk.clipboard))
 		}
 	})
 

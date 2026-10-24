@@ -199,7 +199,7 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 		conn: newController(conn), desk: d.desk, start: start, log: log, tcpMux: tcpMux, cert: cert, audio: audio != nil,
 		stream:  newStream(d.desk, start.FPS, start.MaxWidth, start.MaxHeight, newEncoder, log),
 		cursors: map[uint32]protocol.Cursor{},
-		files:   shared, clips: make(chan protocol.Clip, 1),
+		files:   shared,
 	}
 	defer s.closePeer()
 
@@ -230,7 +230,6 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 	}
 	run(s.stream.run)
 	run(s.forwardClipboard)
-	run(s.setClips)
 	run(s.serveFiles)
 	run(s.forwardCursor)
 	run(s.forwardMonitors)
@@ -265,8 +264,7 @@ type session struct {
 	cursor       uint32          // current pointer image
 	cursorsShown map[uint32]bool // images the current page already has
 
-	files *fileShare         // nil when the session takes no files
-	clips chan protocol.Clip // from the browser, for setClips
+	files *fileShare // nil when the session takes no files
 }
 
 // maxCursors bounds the pointer images a session keeps. The X11 desktop
