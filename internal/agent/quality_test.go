@@ -454,8 +454,7 @@ func TestVideoQualityMatrix(t *testing.T) {
 
 // afterStill is a clip that scrolls until congestion control has settled,
 // sits still and scrolls again, with sound throughout: the first motion
-// after a still screen, which used to go out at whatever GCC made of the
-// still spell.
+// after a still screen, which goes out at whatever target the spell left.
 type afterStill struct {
 	link  vqtest.Link
 	still float64 // seconds
@@ -496,15 +495,14 @@ func (a afterStill) run(t *testing.T) (r *vqtest.Run, steady, first vqtest.Span)
 
 // TestVideoQualityAfterStill streams the after-still clip over the
 // matrix's tight link, where a target that rose over the still spell
-// overflows the link's buffer: before the estimator held its target, the
-// first second of the second scroll showed 0 to 3 pictures. That second
-// must show at least a third as many as the settled scroll, encoded
-// against at least half its target, which a target that fell over the
-// spell would not be. The bounds leave room for what is not the link's:
-// after some spells openh264's rate control skips every other frame for a
-// second, at QP 35 where the settled scroll had QP 18, and GCC's target
-// saws by 15% at a time on a link it fills, so the spell can begin at a
-// low of the saw.
+// overflows the link's buffer: with feed-while-limited, the first second
+// of the second scroll shows 0 to 3 pictures. That second must show at
+// least a third as many as the settled scroll, encoded against at least
+// half its target, which a target that fell over the spell would not be.
+// The bounds leave room for what is not the link's: after some spells
+// openh264's rate control skips every other frame for a second, at QP 35
+// where the settled scroll had QP 18, and GCC's target saws by 15% at a
+// time on a link it fills, so the spell can begin at a low of the saw.
 func TestVideoQualityAfterStill(t *testing.T) {
 	if testing.Short() {
 		t.Skip("streams for about 40 s")
@@ -520,8 +518,8 @@ func TestVideoQualityAfterStill(t *testing.T) {
 }
 
 // TestVideoQualityAfterStillMatrix streams the after-still clip with a
-// minute still over each matrix link, as the agent does and as it did
-// before it held the estimate or sent sound ahead of video. Like the
+// minute still over each matrix link three ways: as the agent does, with
+// GCC fed while limited, and with sound queued behind video. Like the
 // matrix, it is a measuring aid for ROBIN_VQ.
 func TestVideoQualityAfterStillMatrix(t *testing.T) {
 	if os.Getenv("ROBIN_VQ") == "" {

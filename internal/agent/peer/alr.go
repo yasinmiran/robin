@@ -2,14 +2,15 @@ package peer
 
 import "time"
 
-// The application-limited region detector's constants are libwebrtc's
-// (AlrDetector): a budget fills at alrUsage times the target, up to
-// alrWindow of it, and every byte sent spends from it. Unlike libwebrtc's,
-// the budget does not go below empty, so a sender that filled the target
-// and then went quiet is limited 0.4 s later instead of 0.9 s. GCC raises
-// its target while the rate it hears falls: in one run over the quality
-// matrix's tight link the 0.9 s raised it by 16%, and the motion after
-// the spell overflowed the link.
+// The application-limited region detector. alrUsage, alrStart, alrStop
+// and alrWindow are libwebrtc AlrDetector's values: a budget fills at
+// alrUsage times the target, up to alrWindow of it, and every byte sent
+// spends from it. The budget stops at empty, so a sender that filled the
+// target and then went quiet is limited 0.4 s later. Every tenth of a
+// second counts, since GCC raises its target while the rate it hears
+// falls: in one run over the quality matrix's tight link, a budget that
+// ran into debt took 0.9 s, which raised the target by 16%, and the
+// motion after the spell overflowed the link.
 const (
 	// alrUsage of the target is what a sender has to keep up to count as
 	// testing the link.

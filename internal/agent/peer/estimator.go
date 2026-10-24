@@ -16,10 +16,10 @@ import (
 
 // estimator is Pion's GCC, kept from learning while the agent sends too
 // little to test the link. On a still screen the agent sends a refresh
-// every 500 ms and sound, a few hundred kbit/s at most, and GCC read
-// those as the link's measure: with no overuse its target rose 8% a
-// second to the ceiling, which the first motion then overflowed, and on
-// overuse it fell to 0.85 times a rate the browser received from a sender
+// every 500 ms and sound, a few hundred kbit/s at most, and GCC fed those
+// takes them as the link's measure: with no overuse its target rises 8% a
+// second to the ceiling, which the first motion then overflows, and on
+// overuse it falls to 0.85 times a rate the browser received from a sender
 // with nothing to send. libwebrtc tells such spells apart (AlrDetector);
 // Pion does not, so the feedback of a spell never reaches it, and its
 // target stays where the spell found it. Motion then starts at that

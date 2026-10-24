@@ -147,11 +147,11 @@ wait:
 
 // TestCongestionControlHoldsThroughAStillScreen streams until the target
 // settles, sits still for 20 s with a refresh every 500 ms, and streams
-// again. Over the still spell GCC used to raise its target 8% a second to
-// the ceiling, which the first motion then overflowed, or to fall to a
-// fraction of the link. The target must come out of the spell where it
-// went in, and the first second of motion must deliver most of the link.
-// ROBIN_FEED_WHILE_LIMITED=1 feeds GCC as Pion would, to see it fail.
+// again. The target must come out of the spell where it went in, and the
+// first second of motion must deliver most of the link. Fed while limited
+// (ROBIN_FEED_WHILE_LIMITED=1), GCC raises its target 8% a second over the
+// spell to the ceiling, which the first motion overflows, or falls to a
+// fraction of the link, and the test fails.
 func TestCongestionControlHoldsThroughAStillScreen(t *testing.T) {
 	if testing.Short() {
 		t.Skip("takes about 30 s")
