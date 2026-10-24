@@ -2,7 +2,7 @@
 // in the frames bulkframe.js defines. Features register the kinds they
 // send with registerKind and the kinds they take with onBulk.
 
-import { BULK_CHANNEL, CHUNK_SIZE, Sum, checkHeader, parseFrame } from './bulkframe.js';
+import { BULK_CHANNEL, CHUNK_SIZE, Sum, checkHeader, kindInbound, parseFrame } from './bulkframe.js';
 
 // A sender keeps between LOW_WATER and HIGH_WATER bytes queued, as the
 // agent does.
@@ -11,6 +11,9 @@ const LOW_WATER = 256 * 1024;
 const MAX_REASON = 1024;
 
 const receivers = new Map();
+// underWay counts, by kind, the transfers from the agent that hold a place
+// under the kind's inbound limit.
+const underWay = new Map();
 
 // BulkRefused is the far side turning a transfer down; reason is in its
 // own words.
@@ -29,7 +32,8 @@ export class BulkRefused extends Error {
 // then commit once every byte arrived intact, its throw refusing the
 // transfer after all, or abort with the reason it failed. Frames wait in
 // memory while a sink is slow, since a page cannot stop a data channel
-// reading.
+// reading. A header past the kind's inbound limit (registerKind) is
+// refused before accept sees it.
 export function onBulk(kind, accept) {
   if (receivers.has(kind)) throw new Error(`bulk: kind ${JSON.stringify(kind)} taken twice`);
   receivers.set(kind, accept);
@@ -139,6 +143,7 @@ export class Inbound {
   #sink = null;
   #sum = null;
   #over = false; // a verdict went out or the channel closed
+  #held = null; // the kind whose place this transfer holds
 
   constructor(channel, lookup) {
     this.#channel = channel;
@@ -175,6 +180,7 @@ export class Inbound {
   async closed() {
     if (this.#over) return;
     this.#over = true;
+    this.#release();
     await this.#sink?.abort(new Error('bulk transfer cancelled'));
   }
 
@@ -184,6 +190,7 @@ export class Inbound {
     checkHeader(h);
     const accept = this.#lookup(h.kind);
     if (!accept) throw new Error(`unknown bulk kind ${JSON.stringify(h.kind)}: this page takes none`);
+    this.#hold(h.kind);
     this.#sink = await accept(h);
     this.#sum = new Sum(h.size ?? 0);
   }
@@ -198,8 +205,25 @@ export class Inbound {
     }
   }
 
+  // hold takes one of kind's places before accept runs, so two headers
+  // cannot both take the last one while it does.
+  #hold(kind) {
+    const n = underWay.get(kind) ?? 0;
+    const most = kindInbound(kind);
+    if (n >= most) throw new Error(`too many ${kind} transfers under way: the page takes ${most} at once`);
+    underWay.set(kind, n + 1);
+    this.#held = kind;
+  }
+
+  #release() {
+    if (this.#held === null) return;
+    underWay.set(this.#held, underWay.get(this.#held) - 1);
+    this.#held = null;
+  }
+
   #reply(verdict) {
     this.#over = true;
+    this.#release();
     try {
       this.#channel.send(JSON.stringify(verdict));
     } catch {

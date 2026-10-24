@@ -9,6 +9,11 @@ export const MAX_CLIP = 16 * 1024 * 1024;
 // CLIP_LIMIT is the most a clipboard transfer carries: the data and the
 // framing of its parts.
 export const CLIP_LIMIT = MAX_CLIP + 64;
+// CLIP_INBOUND is how many clipboard transfers the agent may have open to
+// the page at once, as many as it takes from the page (maxClipsIn): a
+// newer copy cancels the transfer of an older one, whose close may reach
+// the page after the newer one's header.
+export const CLIP_INBOUND = 2;
 // CONTROL_TEXT is the longest plain text sent as a control message rather
 // than a transfer, as the agent's clipboardSize.
 export const CONTROL_TEXT = 256 * 1024 - 1024;

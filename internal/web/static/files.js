@@ -22,7 +22,9 @@ const PIECE_BYTES = 16 * 1024 * 1024;
 // Revoking a download's URL at once can cancel the download itself.
 const REVOKE_AFTER_MS = 60_000;
 
-registerKind(FILE_KIND, MAX_FILE);
+// Each download needs a click on Save of its own, which bounds how many
+// run at once.
+registerKind(FILE_KIND, MAX_FILE, { inbound: Infinity });
 
 export class Files {
   #transfers = new Transfers(() => this.#changed());

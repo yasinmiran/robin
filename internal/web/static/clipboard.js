@@ -6,9 +6,9 @@
 import { registerKind } from './bulkframe.js';
 import { onBulk } from './bulk.js';
 import { onControl } from './control.js';
-import { CLIP_KIND, CLIP_LIMIT, MAX_CLIP, clipSize, decodeClip, encodeClip, fitsControl, splitPaste } from './clip.js';
+import { CLIP_INBOUND, CLIP_KIND, CLIP_LIMIT, MAX_CLIP, clipSize, decodeClip, encodeClip, fitsControl, splitPaste } from './clip.js';
 
-registerKind(CLIP_KIND, CLIP_LIMIT);
+registerKind(CLIP_KIND, CLIP_LIMIT, { inbound: CLIP_INBOUND });
 
 export class Clipboard {
   // last is what the host copied most recently: { text, html, png }.
@@ -25,15 +25,15 @@ export class Clipboard {
     this.#bulk = bulk;
     this.#propose = propose;
     onControl('clipboard', (c) => this.#copied({ text: c.text ?? '' }));
-    onBulk(CLIP_KIND, (h) => {
-      const bytes = new Uint8Array(h.size ?? 0);
-      let at = 0;
+    // The content gathers as it arrives: what a header promises is no
+    // reason to hold memory for it.
+    onBulk(CLIP_KIND, () => {
+      const chunks = [];
       return {
         write: (chunk) => {
-          bytes.set(chunk, at);
-          at += chunk.length;
+          chunks.push(chunk);
         },
-        commit: () => this.#copied(decodeClip(bytes)),
+        commit: () => this.#copied(decodeClip(join(chunks))),
         abort: () => {},
       };
     });
@@ -91,4 +91,14 @@ export class Clipboard {
     }
     fallback();
   }
+}
+
+function join(chunks) {
+  const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+  let at = 0;
+  for (const c of chunks) {
+    out.set(c, at);
+    at += c.length;
+  }
+  return out;
 }
