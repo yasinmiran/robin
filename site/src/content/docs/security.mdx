@@ -46,6 +46,6 @@ The restore token that skips the dialog after the first approval is treated as a
 
 ## Text from the host
 
-Anything the host sends that reaches your terminal (the agent's log and errors, the probe's findings, what `ssh` prints) leaves through two paths only, and both escape control characters. A hostile or broken host cannot retitle your terminal or rewrite what you see in it with escape sequences.
+Host text that Robin prints (the agent's log and errors, the probe's findings, and the stderr of the `ssh` connection) leaves through two paths only, and both escape control characters, so a hostile or broken host cannot use that text to retitle your terminal or rewrite what you see in it. Password, 2FA and host key prompts are ssh's own: `ssh` writes them to the terminal itself, as it does without Robin.
 
 The agent's stdout carries signaling and nothing else. No child process inherits it, so a program started on the desktop cannot write into the control channel.

@@ -44,7 +44,7 @@ const needs = [
   { term: "Your machine", text: "macOS or Linux with OpenSSH, and a browser that decodes H.264 in WebRTC." },
   {
     term: "Afterwards",
-    text: "Nothing. When the SSH channel closes, the agent stops everything it started and removes its files.",
+    text: "When the SSH channel closes, the agent stops everything it started and removes its run directory. Only the agent binary stays, cached for the next session, plus the restore token if you approved a Wayland share.",
   },
 ];
 
@@ -151,7 +151,7 @@ alice@build-box:~$ <span class="xterm-cursor">_</span></pre>
     >
       <div>
         <h2 id="needs-heading" class="mb-2 text-2xl font-[650] tracking-[-0.012em]">What it needs</h2>
-        <p class="mb-8 text-muted-foreground">Nothing is installed for good, on either side.</p>
+        <p class="mb-8 text-muted-foreground">Nothing runs once the session ends.</p>
         <dl class="needs">
           {
             needs.map((need) => (

@@ -48,7 +48,7 @@ The terminal says which monitor it is showing and how many there are, along the 
 robin: attached to :1 on workstation, showing monitor DP-1 (2560x1440), one of 3 (switch in the page); press Ctrl+C to end the session
 ```
 
-While connected, the status tab has a monitor menu listing each monitor with its size, plus All monitors, and switching there changes the stream on the fly. Capture copies only the monitor shown, so drawing on the others costs nothing; grabbing and hashing the whole 5120x2640 root takes 11.7 ms against 3.2 ms for one 2560x1440 monitor. Monitors come from RandR 1.5, and an X server older than that shows the whole desktop. Monitors made with `xrandr --setmonitor` change without any RandR event, so the agent lists them again every second; if the monitor you are watching goes away, the page switches to the default one.
+While connected, the status tab has a monitor menu listing each monitor with its size, plus All monitors, and switching there changes the stream on the fly. Capture copies only the monitor shown, so drawing on the others costs nothing; grabbing and hashing the whole 5120x2640 root takes 11.7 ms against 3.2 ms for one 2560x1440 monitor. Monitors come from RandR 1.5, and an X server older than that shows the whole desktop. Monitors made with `xrandr --setmonitor` change without any RandR event, so the agent lists them again every second; if the monitor you are watching goes away, the agent shows the default one and the page's menu follows.
 
 There is no window per monitor: one browser tab shows one monitor. With `all`, every monitor arrives as one picture, gaps included, scaled to fit `--max-size`, and small text gets hard to read.
 

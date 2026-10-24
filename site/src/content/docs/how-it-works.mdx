@@ -92,13 +92,13 @@ When you press Ctrl+C, the CLI says goodbye on the agent's channel and closes it
 
 ## Transports and fallback
 
-`ProxyJump` cannot carry UDP, so the fallback is part of the design rather than an afterthought. The agent accepts ICE-TCP on a listener that only the host itself can reach. The CLI forwards to it over the SSH connection and hands the browser one extra candidate, a passive TCP candidate on the client's loopback that leads into that forward.
+`ProxyJump` cannot carry UDP, so the fallback is core. The agent accepts ICE-TCP on a listener that only the host itself can reach. The CLI forwards to it over the SSH connection and hands the browser one extra candidate, a passive TCP candidate on the client's loopback that leads into that forward.
 
 That candidate is offered on every session, next to the direct UDP and STUN candidates, and ICE priority decides. There is no detection step to get wrong. The tunnel candidate has priority 16777215, type preference 0 as for relayed candidates, and since pair priority uses the lower of the two sides, every tunnel pair ranks below every direct UDP pair. The CLI drops any other TCP candidate the agent emits, so TCP media can only take the SSH path, and drops the agent's loopback UDP candidates, which would point the browser at its own machine. The browser's own host candidates stay mDNS names.
 
 ### When UDP dies mid-session
 
-Chrome nominates the lower-priority tunnel pair within about two seconds of UDP going away. Pion, as the controlled side, would by default ignore a nomination of lower priority than its current pair and keep sending into the dead path for half a minute until ICE failed. So the agent follows a nomination once its own pair has gone quiet for 2 s and the nominated pair has answered a check. A path can also die in one direction only, which leaves the agent's side looking healthy, so the agent sends a heartbeat over the control channel every second and the page restarts ICE after 3.5 s without one. An ICE restart is a renegotiation, not a new session. In the e2e scenario that drops UDP mid-session, media is back over the tunnel about three seconds later.
+Chrome nominates the lower-priority tunnel pair within about two seconds of UDP going away. Pion, as the controlled side, would by default ignore a nomination of lower priority than its current pair and keep sending into the dead path for half a minute until ICE failed. So the agent follows a nomination once its own pair has gone quiet for 2 s and the nominated pair has answered a check. A path can also die in one direction only, which leaves the agent's side looking healthy, so the agent sends a heartbeat over the control channel every second and the page restarts ICE after 3.5 s without one, which renegotiates the same session. In the e2e scenario that drops UDP mid-session, media is back over the tunnel about three seconds later.
 
 Through the tunnel, video is TCP inside TCP, so a lossy link shows head-of-line stalls that direct UDP would not.
 

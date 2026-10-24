@@ -47,7 +47,7 @@ The session gets a sensible locale even when SSH brought none. The agent keeps a
 
 `--fps` caps the frame rate: 30 by default, 20 on small hosts. Below the cap, frames go out only when the screen changes, so the status tab reads 0 fps on an idle screen, which is not a stall.
 
-`--hidpi` sizes the remote display in your browser's device pixels instead of CSS pixels. On a Retina screen that gives sharp text at about four times the pixels to encode. Raise `--max-size` with it if you want the display fully native.
+`--hidpi` sizes a spawned display in your browser's device pixels instead of CSS pixels. On a Retina screen that gives sharp text at about four times the pixels to encode. Raise `--max-size` with it if you want the display fully native.
 
 ## Monitors
 
@@ -171,5 +171,5 @@ Everything after `--` is handed to `ssh` as it is, as in `robin gui build-box --
 </Flags>
 
 <Callout type="note" title="When the picture looks soft or blocky.">
-Two things are worth checking today. An attached monitor larger than `--max-size` is scaled down, and the default is 1920x1080, so a 2560x1440 monitor arrives shrunk; `--max-size 2560x1440` sends it at its own size, at the cost of more pixels to encode. On a Retina or other HiDPI client screen, `--hidpi` with a raised `--max-size` renders in device pixels. Blockiness while the screen is changing, when the link's estimate dips, is a known weak spot that is being worked on: see crisp video in motion and sharp text on the [Roadmap](/roadmap).
+Two things are worth checking today. An attached monitor larger than `--max-size` is scaled down, and the default is 1920x1080, so a 2560x1440 monitor arrives shrunk; `--max-size 2560x1440` sends it at its own size, at the cost of more pixels to encode. On a Retina or other HiDPI client screen, a spawned desktop renders in device pixels with `--hidpi` and a raised `--max-size`. Blockiness while the screen is changing, when the link's estimate dips, is a known weak spot with planned work: see [crisp video in motion](/roadmap#crisp-video-in-motion) and [sharp text](/roadmap#sharp-text) on the Roadmap.
 </Callout>
