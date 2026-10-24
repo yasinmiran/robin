@@ -364,3 +364,57 @@ func TestBridgeHangsUpWhenThePageLeaves(t *testing.T) {
 		t.Fatalf("next page got %+v", m)
 	}
 }
+
+// TestBridgeDropsAnOfferTooLongForTheAgent: a page frame within the
+// websocket's limit can grow sixfold when the bridge encodes it again, every
+// '<' becoming <, past the line the agent reads. The bridge drops it
+// rather than write a line that would end the agent's connection.
+func TestBridgeDropsAnOfferTooLongForTheAgent(t *testing.T) {
+	s, ctx := testServer(t)
+	toAgentR, toAgentW := io.Pipe()
+	fromAgentR, fromAgentW := io.Pipe()
+	cli := protocol.NewConn(fromAgentR, toAgentW, 0, 0)
+	agent := protocol.NewConn(toAgentR, fromAgentW, 0, 0)
+	t.Cleanup(func() {
+		cli.Close()
+		agent.Close()
+		toAgentR.Close()
+		fromAgentR.Close()
+	})
+	b := newBridge(cli, relay.New(relay.Policy{Transport: relay.Direct}),
+		protocol.Config{ICEServers: []protocol.ICEServer{}}, slog.New(slog.DiscardHandler))
+	go b.accept(ctx, s)
+	t.Cleanup(b.close)
+
+	got := make(chan protocol.Message, 4)
+	failed := make(chan error, 1)
+	go func() {
+		for {
+			m, err := agent.Recv(context.Background())
+			if err != nil {
+				failed <- err
+				return
+			}
+			got <- m
+		}
+	}()
+
+	pg := openPage(t, s)
+	pg.recv()
+	// Written by hand: json.Marshal would escape the '<'s already.
+	frame := `{"type":"offer","sdp":"` + strings.Repeat("<", 900<<10) + `"}`
+	if err := pg.c.Write(ctx, websocket.MessageText, []byte(frame)); err != nil {
+		t.Fatal(err)
+	}
+	pg.send(protocol.Message{Type: protocol.TypeOffer, SDP: "v=0"})
+	select {
+	case m := <-got:
+		if m.Type != protocol.TypeOffer || m.SDP != "v=0" {
+			t.Fatalf("the agent got %s of %d bytes, want the small offer", m.Type, len(m.SDP))
+		}
+	case err := <-failed:
+		t.Fatalf("the agent's connection failed: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("nothing reached the agent")
+	}
+}
