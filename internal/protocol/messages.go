@@ -288,6 +288,11 @@ type Control struct {
 	On bool `json:"on,omitempty"`
 	// Private is the agent's state of a private session, in ControlPrivate.
 	Private *Private `json:"private,omitempty"`
+
+	// Tiles is the agent's answer to ControlTiles, and Frame the manifest
+	// in ControlFrame.
+	Tiles *Tiles `json:"tiles,omitempty"`
+	Frame *Frame `json:"frame,omitempty"`
 }
 
 // Values for Start.Attach, Ready.Mode and Start.Encoder.
