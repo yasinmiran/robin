@@ -30,6 +30,9 @@ type Options struct {
 	Dest    string
 	SSHPath string
 	SSHArgs []string
+	// NoMux gives every ssh command and forward a connection of its own
+	// instead of one ControlMaster; see sshmux.Options.NoMux.
+	NoMux bool
 
 	Transport           relay.Transport
 	MaxWidth, MaxHeight int
@@ -82,7 +85,7 @@ func Run(ctx context.Context, o Options) (err error) {
 	}
 
 	log.Info("connecting", "dest", o.Dest)
-	m, err := sshmux.Dial(ctx, o.Dest, sshmux.Options{SSHPath: o.SSHPath, Args: o.SSHArgs, Stderr: o.Stderr})
+	m, err := sshmux.Dial(ctx, o.Dest, sshmux.Options{SSHPath: o.SSHPath, Args: o.SSHArgs, Stderr: o.Stderr, NoMux: o.NoMux})
 	if err != nil {
 		return err
 	}

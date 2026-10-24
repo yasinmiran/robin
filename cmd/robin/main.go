@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -71,6 +72,7 @@ func runGUI(args []string) int {
 	listen := fs.String("listen", "127.0.0.1:0", "loopback address for the browser page")
 	noBrowser := fs.Bool("no-browser", false, "print the page URL on stdout instead of opening a browser")
 	sshPath := fs.String("ssh", "ssh", "ssh client to use")
+	sshMux := fs.Bool("ssh-mux", defaultSSHMux(runtime.GOOS), "carry everything over one ssh ControlMaster connection; false gives each command and forward a connection of its own, the default on Windows, whose OpenSSH has no ControlMaster")
 	verbose := fs.Bool("v", false, "verbose logging, including the agent's log")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -108,7 +110,7 @@ func runGUI(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	err = gui.Run(ctx, gui.Options{
-		Dest: dest, SSHPath: *sshPath, SSHArgs: sshArgs,
+		Dest: dest, SSHPath: *sshPath, SSHArgs: sshArgs, NoMux: !*sshMux,
 		Transport: t, MaxWidth: w, MaxHeight: h, FPS: *fps, MaxKbps: *maxKbps,
 		Session: *session, Attach: *attach, Monitor: *monitor, Audio: *audio, Encoder: *encoder, HiDPI: *hidpi, STUN: parseSTUN(*stun),
 		Listen: *listen, NoBrowser: *noBrowser, Verbose: *verbose,
@@ -118,6 +120,12 @@ func runGUI(args []string) int {
 		return fail(err)
 	}
 	return 0
+}
+
+// defaultSSHMux reports whether the ssh client on goos multiplexes with
+// ControlMaster. Windows OpenSSH does not.
+func defaultSSHMux(goos string) bool {
+	return goos != "windows"
 }
 
 func parseSize(s string) (int, int, error) {
