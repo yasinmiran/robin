@@ -797,9 +797,9 @@ H.264 decoder installed, and fits each picture into one 1280x720 frame:
 the browser changes its resolution with the link and its CPU, and a
 program holding the device needs one size. Nearest-neighbour sampling,
 since the frame is watched, not analysed. On flat test pictures decoding
-took 1.4 ms at 1280x720 and fitting 0.2 ms (a copy), 4.7% of a core at 30
-fps; a 640x360 picture took 0.1 and 0.5 ms (a scale); a real camera's
-detail costs more decoding. The frames go to a `gst-launch-1.0` child as
+took 0.3 ms at 1280x720 and fitting 0.05 ms (a copy), about 1% of a core
+at 30 fps; a 640x360 picture took 0.1 and 0.5 ms (a scale), under 2%
+(`BenchmarkDecodeAndFit`); a real camera's detail costs more decoding. The frames go to a `gst-launch-1.0` child as
 raw I420 through `rawvideoparse`, which needs that fixed size, and from
 there to `pipewiresink` as a `Video/Source` with `media.role=Camera`, or to
 `v4l2sink` on a v4l2loopback device.

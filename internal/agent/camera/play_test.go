@@ -4,6 +4,7 @@ package camera
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -22,7 +23,7 @@ import (
 
 // browserCamera encodes n frames of a w x h picture that changes colour
 // halfway, as the browser's camera sender would, and packetizes them.
-func browserCamera(t *testing.T, w, h, n int) [][]*rtp.Packet {
+func browserCamera(t testing.TB, w, h, n int) [][]*rtp.Packet {
 	t.Helper()
 	enc, err := h264.New(w, h, 30, 1_000_000)
 	if err != nil {
@@ -103,50 +104,57 @@ func TestPlayShowsTheBrowsersPictures(t *testing.T) {
 	})
 }
 
-// TestCost reports what the agent spends on each picture of the browser's
-// camera: decoding and fitting it into the device's frame, for a picture
-// of the device's own size and for smaller ones that are scaled.
-func TestCost(t *testing.T) {
+// BenchmarkDecodeAndFit measures what the agent spends on each picture of
+// the browser's camera: decoding it and fitting it into the device's frame,
+// for a picture of the device's own size and for smaller ones that are
+// scaled, and the share of a core that comes to at FPS.
+func BenchmarkDecodeAndFit(b *testing.B) {
 	for _, size := range [][2]int{{1280, 720}, {640, 360}, {640, 480}} {
 		w, h := size[0], size[1]
-		frames := browserCamera(t, w, h, 90)
-		dec, err := h264.NewDecoder()
-		if err != nil {
-			t.Fatal(err)
-		}
-		dst := newFrame()
-		fit := newFitter(w, h)
-		var decode, fitting time.Duration
-		n := 0
-		for _, f := range frames {
-			var au []byte
-			for _, p := range f {
-				var d codecs.H264Packet
-				b, err := d.Unmarshal(p.Payload)
-				if err != nil {
-					t.Fatal(err)
+		b.Run(fmt.Sprintf("%dx%d", w, h), func(b *testing.B) {
+			var aus [][]byte
+			for _, f := range browserCamera(b, w, h, 90) {
+				var au []byte
+				var d codecs.H264Packet // one per frame, to join its FU-A fragments
+				for _, p := range f {
+					nal, err := d.Unmarshal(p.Payload)
+					if err != nil {
+						b.Fatal(err)
+					}
+					au = append(au, nal...)
 				}
-				au = append(au, b...)
+				aus = append(aus, au)
 			}
-			start := time.Now()
-			pic, err := dec.Decode(au)
-			decode += time.Since(start)
-			if err != nil || pic == nil {
-				continue
+			dec, err := h264.NewDecoder()
+			if err != nil {
+				b.Fatal(err)
 			}
-			start = time.Now()
-			fit.fit(dst, pic)
-			fitting += time.Since(start)
-			n++
-		}
-		dec.Close()
-		if n == 0 {
-			t.Fatalf("%dx%d: nothing decoded", w, h)
-		}
-		per := (decode + fitting) / time.Duration(n)
-		t.Logf("%dx%d: decode %.2f ms, fit %.2f ms a picture; %.1f%% of a core at %d fps",
-			w, h, float64(decode.Microseconds())/float64(n)/1000, float64(fitting.Microseconds())/float64(n)/1000,
-			100*per.Seconds()*FPS, FPS)
+			defer dec.Close()
+			dst, fit := newFrame(), newFitter(w, h)
+			var decode, fitting time.Duration
+			pictures := 0
+			// The pictures go round from the first, a keyframe, so each
+			// decodes as it did the first time.
+			for i := 0; b.Loop(); i++ {
+				start := time.Now()
+				pic, err := dec.Decode(aus[i%len(aus)])
+				decode += time.Since(start)
+				if err != nil || pic == nil {
+					continue
+				}
+				start = time.Now()
+				fit.fit(dst, pic)
+				fitting += time.Since(start)
+				pictures++
+			}
+			if pictures < b.N {
+				b.Fatalf("%d of %d pictures decoded", pictures, b.N)
+			}
+			n := float64(pictures)
+			b.ReportMetric(decode.Seconds()*1000/n, "decode-ms/picture")
+			b.ReportMetric(fitting.Seconds()*1000/n, "fit-ms/picture")
+			b.ReportMetric(100*(decode+fitting).Seconds()/n*FPS, "%core")
+		})
 	}
 }
 
