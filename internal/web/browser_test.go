@@ -176,6 +176,13 @@ func checkControls(t *testing.T, got []protocol.Control) {
 	if clip < 0 || v < 0 || clip > v {
 		t.Errorf("paste: clipboard at %d, V down at %d; want clipboard first", clip, v)
 	}
+	// The hidden text box holds the focus, and what is pasted must not be
+	// typed into it as well; nothing here is typed as text at all.
+	for _, c := range got {
+		if c.T == protocol.ControlText {
+			t.Errorf("the page sent text %q", c.Text)
+		}
+	}
 }
 
 // playAgent answers the page's offers with a Pion peer, the way the agent
