@@ -133,9 +133,12 @@ host cannot provide sound the session runs without it, and the CLI says why.
 Files go to the host when you drop them anywhere on the page, pick them with
 Upload files in the status tab, or paste them. They land in your download
 folder there: `$XDG_DOWNLOAD_DIR`, else the one `~/.config/user-dirs.dirs`
-names, else `~/Downloads`, which is created if it is missing. Nothing on the
-host is ever replaced; a second `report.pdf` becomes `report (1).pdf`, and the
-status tab shows the name it got.
+names, else `~/Downloads`, which is created if it is missing. A download
+folder that is your home directory itself counts as unset, which is what
+xdg-user-dirs-update leaves once `~/Downloads` is gone, so uploads then go to
+`~/Downloads` too. A file whose name starts with a dot is refused, so no
+upload is hidden. Nothing on the host is ever replaced; a second `report.pdf`
+becomes `report (1).pdf`, and the status tab shows the name it got.
 
 Getting a file from the host starts on the host:
 
@@ -364,10 +367,12 @@ in that session, say two words about the session itself (End session,
 which the CLI carries out as it does Ctrl+C, and Disconnect, keep desktop,
 which leaves the desktop for `--keep`), and move files, within these bounds:
 
-- **Writing files**, into the download folder and nowhere else. A name has to
-  be a single path component of UTF-8, at most 255 bytes, neither `.` nor
-  `..`, with no control characters and none of the invisible marks that
-  reorder text. The bytes go to a new file of a temporary name, opened so
+- **Writing files**, into the download folder and nowhere else, and never
+  into your home directory itself, even where xdg-user-dirs names it as the
+  download folder. A name has to be a single path component of UTF-8, at
+  most 255 bytes, not starting with a dot, so an upload can be neither
+  hidden nor a startup file such as `.bash_login`, with no control
+  characters and none of the invisible marks that reorder text. The bytes go to a new file of a temporary name, opened so
   that it can be neither an existing file nor a symlink, and the file gets
   its name only after every byte arrived and the SHA-256 matched, through a
   rename that fails rather than replace anything. An upload bigger than the

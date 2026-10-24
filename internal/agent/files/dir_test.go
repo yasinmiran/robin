@@ -36,9 +36,16 @@ func TestDownloadDir(t *testing.T) {
 	if got := DownloadDir(home, env(nil)); got != "/data/downloads" {
 		t.Errorf("absolute in user-dirs.dirs: %q", got)
 	}
-	write("XDG_DOWNLOAD_DIR=\"$HOME\"\n")
-	if got := DownloadDir(home, env(nil)); got != home {
-		t.Errorf("$HOME itself in user-dirs.dirs: %q, want %q", got, home)
+	// xdg-user-dirs-update points a folder that is gone at $HOME itself,
+	// where an upload could plant a startup file.
+	for _, dir := range []string{"$HOME", "$HOME/", home, home + "/."} {
+		write("XDG_DOWNLOAD_DIR=\"" + dir + "\"\n")
+		if got, want := DownloadDir(home, env(nil)), filepath.Join(home, "Downloads"); got != want {
+			t.Errorf("%s in user-dirs.dirs: %q, want %q", dir, got, want)
+		}
+		if got, want := DownloadDir(home, env(map[string]string{"XDG_DOWNLOAD_DIR": dir})), filepath.Join(home, "Downloads"); got != want {
+			t.Errorf("XDG_DOWNLOAD_DIR=%s: %q, want %q", dir, got, want)
+		}
 	}
 	write("XDG_DOWNLOAD_DIR=\"$HOMEWARD/x\"\nXDG_DOWNLOAD_DIR=relative\n")
 	if got, want := DownloadDir(home, env(nil)), filepath.Join(home, "Downloads"); got != want {

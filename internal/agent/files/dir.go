@@ -12,16 +12,19 @@ import (
 
 // DownloadDir is where uploads land: the XDG download directory, from the
 // environment or from user-dirs.dirs as xdg-user-dirs writes it, else
-// ~/Downloads. getenv reads the environment.
+// ~/Downloads. A download directory that is home itself counts as unset:
+// xdg-user-dirs-update points one it cannot find there, and uploads must
+// not land beside the shell's startup files. getenv reads the environment.
 func DownloadDir(home string, getenv func(string) string) string {
-	if dir := expand(getenv("XDG_DOWNLOAD_DIR"), home); dir != "" {
+	usable := func(dir string) bool { return dir != "" && dir != filepath.Clean(home) }
+	if dir := expand(getenv("XDG_DOWNLOAD_DIR"), home); usable(dir) {
 		return dir
 	}
 	config := getenv("XDG_CONFIG_HOME")
 	if !filepath.IsAbs(config) {
 		config = filepath.Join(home, ".config")
 	}
-	if dir := userDir(filepath.Join(config, "user-dirs.dirs"), "XDG_DOWNLOAD_DIR", home); dir != "" {
+	if dir := userDir(filepath.Join(config, "user-dirs.dirs"), "XDG_DOWNLOAD_DIR", home); usable(dir) {
 		return dir
 	}
 	return filepath.Join(home, "Downloads")

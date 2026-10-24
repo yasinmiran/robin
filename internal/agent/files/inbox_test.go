@@ -190,6 +190,23 @@ func TestUploadRefusesBadNames(t *testing.T) {
 	}
 }
 
+// A name that starts with a dot would be hidden, and in a home directory
+// could be a shell's startup file.
+func TestUploadNeverCreatesHiddenFiles(t *testing.T) {
+	in := testInbox(t)
+	for _, name := range []string{".bash_login", ".zshenv", "...", ".x.pdf"} {
+		if _, err := upload(t, in, name, []byte("echo hi\n")); !errors.Is(err, ErrName) {
+			t.Errorf("upload of %q: %v, want ErrName", name, err)
+		}
+	}
+	waitEmpty(t, in)
+	for _, name := range listing(t, in.Dir()) {
+		if strings.HasPrefix(name, ".") {
+			t.Errorf("an upload created %q", name)
+		}
+	}
+}
+
 func TestUploadAbortRemovesThePartialFile(t *testing.T) {
 	in := testInbox(t)
 	u, err := in.Accept("big.iso", 1<<20)

@@ -820,11 +820,16 @@ The page writes files on the host now, so the first decision was where, and
 the answer is one place: `$XDG_DOWNLOAD_DIR`, else what
 `~/.config/user-dirs.dirs` says (xdg-user-dirs writes the variable there,
 not into the environment), else `~/Downloads`, created 0700 when missing.
-An upload is a bulk transfer of kind `file`. Its name has to pass
-`files.CheckName`: one path component of valid UTF-8, at most NAME_MAX's
-255 bytes, not `.` or `..`, no control characters (NUL and newlines among
-them), and none of Unicode's bidirectional controls, which can make
-`invoice‮fdp.exe` read as a PDF. The bytes go into
+A download folder that is home itself counts as unset: xdg-user-dirs-update
+writes `$HOME/` for a folder it cannot find, and an upload into home could
+create a startup file the user lacks, `.bash_login` or `.zshenv`, which runs
+at the next login. An upload is a bulk transfer of kind `file`. Its name has
+to pass `files.CheckName`: one path component of valid UTF-8, at most
+NAME_MAX's 255 bytes, not `.` or `..`, no control characters (NUL and
+newlines among them), and none of Unicode's bidirectional controls: with a
+right-to-left override, U+202E, after `invoice`, the name
+`invoice<U+202E>fdp.exe` shows as `invoiceexe.pdf`. An upload also may not
+start with a dot, so it is never hidden. The bytes go into
 `.robin-upload-<random>` in the same directory, opened with
 `O_EXCL|O_NOFOLLOW`, so the file is new and no symlink can redirect it, and
 the rename stays on one filesystem. Only once the SHA-256 matched does it

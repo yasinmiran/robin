@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -71,13 +72,18 @@ func NewInbox(dir string, log *slog.Logger) *Inbox {
 func (in *Inbox) Dir() string { return in.dir }
 
 // Accept starts an upload of size bytes to be called name, or says why it
-// cannot: a bad name, too little space, or too many uploads at once. The
-// bytes go to a file of a temporary name, opened so that it can be neither
-// an existing file nor a symlink, and the file gets its name only once the
+// cannot: a bad name, too little space, or too many uploads at once. A name
+// CheckName refuses is bad, and so is one that starts with a dot: it would
+// be hidden, and in a home directory could be a startup file. The bytes go
+// to a file of a temporary name, opened so that it can be neither an
+// existing file nor a symlink, and the file gets its name only once the
 // whole upload is in.
 func (in *Inbox) Accept(name string, size int64) (*Upload, error) {
 	if err := CheckName(name); err != nil {
 		return nil, err
+	}
+	if strings.HasPrefix(name, ".") {
+		return nil, fmt.Errorf("%w: %q would be a hidden file", ErrName, name)
 	}
 	in.mu.Lock()
 	defer in.mu.Unlock()
