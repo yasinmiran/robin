@@ -806,25 +806,26 @@ keeps the reflex and moves it one process out.
   connection's `config` takes, so the two cannot cross. A page that
   arrived before the first connection's relay began used to get a second
   `config` in the middle of its signaling, which a bridge test caught one
-  run in many under load; the regression test now opens the page first. Redials back off from 1 s to 15 s until the keep
-  window closes. Ctrl+C has to end the session, and a terminal delivers it
-  to ssh as well: OpenSSH's sessions over the master die of it, but the
-  master itself keeps an inherited SIGINT ignore, so the master is started
-  through `sh -c 'trap "" INT; exec ssh ...'` and the CLI runs the agent's
-  end command over it when bye got no answer (a bye that did arrive leaves
-  no session to end, which counts as done); only when the master is gone
-  too does it dial once more, bounded to 30 s, and failing that it names
-  the time the host lets the desktop go. In the e2e teardown after the
-  resume, the bye's answer was lost with the session's ssh, the end command
-  over the surviving master found the session already gone, and the CLI
-  exited 0 in 399 ms with one `connecting` line in its whole log. The
-  page's End session button takes the same path: the bridge reports the
-  wish and forwards nothing, the CLI sends bye and falls back to the end
-  command, and only then tells the page `ended`; a socket that closes
-  first leaves the page saying the end is unconfirmed. Errors that stop
-  the CLI after Ready end the desktop the same way. What the CLI acts on
-  crosses the wire as a code, not as wording: the daemon's busy refusal
-  carries `protocol.CodeBusy`, and `robin-agent end` exits
+  run in many under load; the regression test now opens the page first.
+  Redials back off from 1 s to 15 s until the keep window closes. Ctrl+C
+  has to end the session, and a terminal delivers it to ssh as well:
+  OpenSSH's sessions over the master die of it, but the master itself
+  keeps an inherited SIGINT ignore, so the master is started through
+  `sh -c 'trap "" INT; exec ssh ...'` and the CLI runs the agent's end
+  command over it when bye got no answer (a bye that did arrive leaves no
+  session to end, which counts as done); only when the master is gone too
+  does it dial once more, bounded to 30 s, and failing that it names the
+  time the host lets the desktop go. In the e2e teardown after the resume,
+  the bye's answer was lost with the session's ssh, the end command over
+  the surviving master found the session already gone, and the CLI exited
+  0 in 399 ms with one `connecting` line in its whole log. The page's End
+  session button takes the same path: the bridge reports the wish and
+  forwards nothing, the CLI sends bye and falls back to the end command,
+  and only then tells the page `ended`; a socket that closes first leaves
+  the page saying the end is unconfirmed. Errors that stop the CLI after
+  Ready end the desktop the same way. What the CLI acts on crosses the
+  wire as a code, not as wording: the daemon's busy refusal carries
+  `protocol.CodeBusy`, and `robin-agent end` exits
   `protocol.ExitNoSession` when there is nothing left to end.
 - Measured in the `resume` e2e scenario on 2026-10-24: killing the host's
   sshd children drops every connection at once, the page shows
