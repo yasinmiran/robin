@@ -1,0 +1,50 @@
+---
+title: Keys and macros
+description: Send the keys your browser keeps for itself, type the local clipboard as keys, and keep macros of your own, which the CLI stores in one file.
+section: Use
+order: 7
+---
+
+The status tab has a Keys row for what your keyboard cannot get to the desktop: Ctrl+Alt+Delete, Alt+Tab, Alt+F4, Super, Ctrl+W, Ctrl+T, Ctrl+N, Ctrl+Q and Print Screen. Outside full screen the browser or your own system keeps these for itself, so Ctrl+W on the keyboard closes the tab; in full screen Chrome's keyboard lock passes most of them on, and the row covers the rest and the other browsers.
+
+There are no Ctrl+Alt+F keys. On an attached desktop they would switch the host's console away from the session.
+
+## Type clipboard
+
+Type clipboard reads this computer's clipboard when you click it and types the text on the desktop as keys, up to 16 KiB. It is for prompts that take no paste: a lock screen, a VM console, a password dialog. The browser has to hand the clipboard over: Chrome asks once for permission, and Firefox and Safari show a Paste button of their own at each click.
+
+## Your own macros
+
+A macro is a name and a list of steps, each one of:
+
+- a chord, such as Ctrl+Alt+T, with its keys pressed in order and let go in reverse
+- a run of text, typed as it stands
+- a pause, up to 60 seconds
+
+New macro opens the editor. **Record keys** takes chords as you press them, modifiers included, and sends none of them to the desktop until you stop recording. A key the browser keeps for itself never reaches the page, so while recording, click it in the Keys row instead and it goes into the macro. Text and pauses are added below the steps.
+
+<Callout type="note" title="Plain text.">
+The text in a macro is saved as plain text in `macros.json` on this computer, and the editor says so where you type it.
+</Callout>
+
+Click a macro to play it, and click it again to stop it. It plays through the same key and text messages your keyboard sends, holding each chord for 20 ms with 30 ms between steps, and it lets go of every key when it ends. It stops early when the page loses the keyboard or the connection. The desktop is not waited on beyond the pauses you add, so a macro that opens a window needs a pause before it types into it.
+
+## Where macros are kept
+
+The CLI keeps them, not the browser: the page's address is a new port every session, and the browser's storage for it goes with it. They live in one file in your config directory, shared by every session on this computer:
+
+| Client | File |
+|---|---|
+| Linux | `$XDG_CONFIG_HOME/robin/macros.json`, else `~/.config/robin/macros.json` |
+| macOS | `~/Library/Application Support/robin/macros.json` |
+| Windows | `%AppData%\robin\macros.json` |
+
+A macro shows on every host unless you tick **Only on** in its editor, which pins it to the host argument as you typed it: `alice@box` and `box` count as two hosts.
+
+The file is JSON the CLI checks before it reads or writes it: at most 100 macros and 256 KiB, a name of up to 64 bytes, 1 to 100 steps, chords of up to 8 keys, and text of up to 16 KiB a step. A file that does not read, or that breaks these rules, is reported in the terminal and in the page and left as it is; nothing is saved until it reads again. Each write replaces the whole file through a rename, 0600 in a 0700 directory.
+
+## Limits
+
+- Recording only takes the keys the browser hands the page; click the others in the Keys row.
+- Two sessions that change macros at the same moment can lose one of the two changes. Each change reads the file afresh, but there is no lock between CLIs.
+- Type clipboard is tested in Chrome only.
