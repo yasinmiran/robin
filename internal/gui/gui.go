@@ -415,14 +415,27 @@ func dial(ctx context.Context, o Options) (*sshmux.Master, error) {
 // reconnect redials the host with backoff and resumes session id, until it
 // works, ctx ends or the keep window closes at until. The tunnel is
 // forwarded again over the new connection. When ctx ends first it ends the
-// session instead and returns no agent, with the end's error.
+// session instead and returns no agent, with the end's error, unless the
+// last try found the session busy: then another controller holds it, and
+// ending it would take the desktop from under them.
 func (h *host) reconnect(ctx context.Context, path, id string, until time.Time, t *tunnel) (*agentProc, *protocol.Ready, error) {
 	backoff := reconnectFirst
+	busy := false
 	for attempt := 1; ; attempt++ {
 		h.close()
 		ag, ready, err := h.redial(ctx, path, id, until, t)
 		if err == nil {
 			return ag, ready, nil
+		}
+		var agentErr *agentError
+		if errors.As(err, &agentErr) && agentErr.code == protocol.CodeBusy {
+			busy = true
+		} else if ctx.Err() == nil {
+			busy = false
+		}
+		if ctx.Err() != nil && busy {
+			return nil, nil, fmt.Errorf("another robin gui holds session %s on %s, or the host has yet to notice this one's connection is gone, so it was left running; robin end %s %s ends it",
+				id, h.o.Dest, h.o.Dest, id)
 		}
 		if ctx.Err() != nil {
 			// Nothing is connected to send bye to.
