@@ -10,7 +10,7 @@ import (
 )
 
 // ErrUnavailable means this binary was built without the openh264 tag, so it
-// has no encoder. The Makefile builds the agent with it.
+// has no codec. The Makefile builds the agent with it.
 var ErrUnavailable = errors.New("h264: built without openh264 (build with -tags openh264)")
 
 // Encoder is a placeholder in builds without openh264.
@@ -27,3 +27,15 @@ func (*Encoder) SetBitrate(int) error { return ErrUnavailable }
 
 // Close is never reachable since New fails.
 func (*Encoder) Close() error { return nil }
+
+// Decoder is a placeholder in builds without openh264.
+type Decoder struct{}
+
+// NewDecoder always fails in builds without openh264.
+func NewDecoder() (*Decoder, error) { return nil, ErrUnavailable }
+
+// Decode is never reachable since NewDecoder fails.
+func (*Decoder) Decode([]byte) (*Picture, error) { return nil, ErrUnavailable }
+
+// Close is never reachable since NewDecoder fails.
+func (*Decoder) Close() error { return nil }
