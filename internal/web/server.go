@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"golang.org/x/net/netutil"
 )
 
 // static holds the page's own files only: static/test holds its unit tests,
@@ -52,12 +53,25 @@ type Options struct {
 	Addr string
 }
 
+// maxConns bounds the page server's open connections, so another user of
+// this machine, who can connect to any loopback port, cannot run the CLI out
+// of file descriptors through it. A browser opens at most six connections
+// to one host for the page's files, and the websocket is one more.
+const maxConns = 32
+
+// idleTimeout closes a keep-alive connection that carries no request for
+// this long. The page fetches its files within a second of loading and then
+// speaks over the websocket only, so an idle connection is one a reload
+// might reuse, or one held open on purpose, taking one of maxConns.
+const idleTimeout = 30 * time.Second
+
 // Server serves the client page and hands authenticated websockets to Accept.
 type Server struct {
 	ln      net.Listener
 	host    string // "127.0.0.1:PORT", the only Host and Origin host accepted
 	token   string
 	headers http.Header
+	idle    time.Duration
 
 	live     atomic.Bool
 	accept   chan *Browser
@@ -93,6 +107,7 @@ func Listen(o Options) (*Server, error) {
 		host:    host,
 		token:   hex.EncodeToString(b[:]),
 		headers: securityHeaders(host),
+		idle:    idleTimeout,
 		accept:  make(chan *Browser),
 		done:    make(chan struct{}),
 	}, nil
@@ -111,11 +126,12 @@ func (s *Server) Serve(ctx context.Context) error {
 	srv := &http.Server{
 		Handler:           s.handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       s.idle,
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
 	stop := context.AfterFunc(ctx, func() { srv.Close() })
 	defer stop()
-	err := srv.Serve(s.ln)
+	err := srv.Serve(netutil.LimitListener(s.ln, maxConns))
 	if ctx.Err() != nil {
 		return nil
 	}
@@ -211,7 +227,10 @@ func (s *Server) validToken(r *http.Request) bool {
 	return ok == 1
 }
 
+// deny refuses a request and ends its connection, which would otherwise
+// stay open for the next.
 func deny(w http.ResponseWriter, code int) {
+	w.Header().Set("Connection", "close")
 	http.Error(w, http.StatusText(code), code)
 }
 
