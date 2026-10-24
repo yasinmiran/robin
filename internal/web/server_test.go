@@ -197,6 +197,7 @@ func TestStaticContentTypes(t *testing.T) {
 	for path, want := range map[string]string{
 		"/":          "text/html",
 		"/app.js":    "text/javascript",
+		"/bulk.js":   "text/javascript",
 		"/style.css": "text/css",
 		"/icon.svg":  "image/svg+xml",
 	} {
@@ -206,6 +207,15 @@ func TestStaticContentTypes(t *testing.T) {
 		h.ServeHTTP(w, r)
 		if got := w.Header().Get("Content-Type"); !strings.HasPrefix(got, want) {
 			t.Errorf("%s: Content-Type %q, want %s", path, got, want)
+		}
+	}
+	for _, path := range []string{"/package.json", "/test/bulk.test.js", "/test/fakes.js"} {
+		r := httptest.NewRequest("GET", path, nil)
+		r.Host = s.host
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("%s: status %d, want 404: the page's tests are not part of it", path, w.Code)
 		}
 	}
 }
