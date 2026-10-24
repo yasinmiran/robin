@@ -24,7 +24,7 @@ const helperEnv = "ROBIN_AUDIO_TEST_HELPER"
 
 func TestMain(m *testing.M) {
 	if dir := os.Getenv(helperEnv); dir != "" {
-		s, err := startServer(context.Background(), dir)
+		s, err := startServer(context.Background(), dir, false)
 		if err != nil {
 			os.Stdout.WriteString("error: " + err.Error() + "\n")
 			os.Exit(1)
@@ -55,7 +55,7 @@ func serve(t *testing.T) *server {
 	needServer(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	s, err := startServer(ctx, t.TempDir())
+	s, err := startServer(ctx, t.TempDir(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestServerFailureReportsItsLog(t *testing.T) {
 	os.WriteFile(fake, []byte("#!/bin/sh\necho 'E: module-null-sink failed' >&2\nexit 1\n"), 0o755)
 	t.Setenv("PATH", filepath.Dir(fake)+":"+os.Getenv("PATH"))
 	dir := t.TempDir()
-	_, err := startServer(context.Background(), dir)
+	_, err := startServer(context.Background(), dir, false)
 	if err == nil || !strings.Contains(err.Error(), "module-null-sink failed") {
 		t.Fatalf("startServer = %v, want the daemon's log in the error", err)
 	}

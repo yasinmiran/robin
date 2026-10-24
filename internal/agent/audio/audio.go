@@ -29,7 +29,15 @@ type Options struct {
 	// Attached records the user's running sound server instead of starting
 	// one.
 	Attached bool
-	Log      *slog.Logger
+	// Mic gives a spawned desktop's server the browser's microphone as its
+	// default source, for StartMic. The server takes no modules once it
+	// runs, so this has to be known at the start.
+	Mic bool
+	// NoCapture leaves the desktop's sound unrecorded, for a spawned desktop
+	// that needs its server only for the microphone. Packets then carries
+	// nothing.
+	NoCapture bool
+	Log       *slog.Logger
 }
 
 // queued bounds the packets waiting for the session, one second's worth; a
@@ -40,10 +48,11 @@ const queued = 50
 type Source struct {
 	log *slog.Logger
 	srv *server // nil when attached
+	mic bool    // srv has the microphone
 	rec *recorder
 
-	mu      sync.Mutex // guards the fields below against the recorder's callback
-	enc     *opus.Encoder
+	mu      sync.Mutex    // guards the fields below against the recorder's callback
+	enc     *opus.Encoder // nil with NoCapture
 	packets chan []byte
 	closed  bool
 	dropped int
@@ -57,11 +66,12 @@ func Start(ctx context.Context, o Options) (_ *Source, env []string, err error) 
 	if log == nil {
 		log = slog.Default()
 	}
-	enc, err := opus.NewEncoder(opus.Bitrate, opus.Complexity)
-	if err != nil {
-		return nil, nil, err
+	s := &Source{log: log, packets: make(chan []byte, queued)}
+	if !o.NoCapture {
+		if s.enc, err = opus.NewEncoder(opus.Bitrate, opus.Complexity); err != nil {
+			return nil, nil, err
+		}
 	}
-	s := &Source{log: log, enc: enc, packets: make(chan []byte, queued)}
 	defer func() {
 		if err != nil {
 			s.Close()
@@ -76,14 +86,19 @@ func Start(ctx context.Context, o Options) (_ *Source, env []string, err error) 
 			return nil, nil, fmt.Errorf("no sound server for this user at %s", socket)
 		}
 	} else {
-		if s.srv, err = startServer(ctx, o.RunDir); err != nil {
+		if s.srv, err = startServer(ctx, o.RunDir, o.Mic); err != nil {
 			return nil, nil, err
 		}
+		s.mic = o.Mic
 		socket = s.srv.socket
 		if cookie, err = os.ReadFile(s.srv.cookie); err != nil {
 			return nil, nil, err
 		}
 		env = s.srv.Env()
+	}
+	if o.NoCapture {
+		log.Info("sound server up for the microphone alone")
+		return s, env, nil
 	}
 
 	if s.rec, err = record(socket, cookie, s.encode, s.ended); err != nil {
@@ -164,5 +179,7 @@ func (s *Source) finish() {
 	}
 	s.closed = true
 	close(s.packets)
-	s.enc.Close()
+	if s.enc != nil {
+		s.enc.Close()
+	}
 }
