@@ -16,6 +16,7 @@ import (
 
 	"github.com/yasinmiran/robin/internal/agent/desktop"
 	"github.com/yasinmiran/robin/internal/agent/h264"
+	"github.com/yasinmiran/robin/internal/agent/hwenc"
 	"github.com/yasinmiran/robin/internal/agent/peer"
 	"github.com/yasinmiran/robin/internal/agent/vqtest"
 	"github.com/yasinmiran/robin/internal/agent/yuv"
@@ -384,6 +385,30 @@ var variants = []variant{
 	{"maxqp-40", func(c *clipRun) { c.open = paramsEncoder(func(p *h264.Params) { p.MaxQP = 40 }) }},
 	{"maxqp-36", func(c *clipRun) { c.open = paramsEncoder(func(p *h264.Params) { p.MaxQP = 36 }) }},
 	{"max-20mbps", func(c *clipRun) { c.maxKbps = 20_000 }},
+	{"vaapi", func(c *clipRun) { c.open = hardwareEncoder(hwenc.VAAPI) }},
+}
+
+// hardwareEncoder opens a host tool's encoder, as the agent does for
+// --encoder vaapi or nvenc.
+func hardwareEncoder(kind hwenc.Kind) NewEncoderFunc {
+	o := hwenc.NewOpener(kind, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return func(w, h, fps, bps int) (Encoder, error) {
+		e, err := o.Open(w, h, fps, bps)
+		if err != nil {
+			return nil, err
+		}
+		return e, nil
+	}
+}
+
+// needHardware skips unless this host has a working route for kind.
+func needHardware(t *testing.T, kind hwenc.Kind) {
+	t.Helper()
+	e, err := hardwareEncoder(kind)(64, 64, 30, 1_000_000)
+	if err != nil {
+		t.Skip(err)
+	}
+	e.Close()
 }
 
 // TestVideoQualityMatrix streams a longer clip at each matrix size over
@@ -408,6 +433,9 @@ func TestVideoQualityMatrix(t *testing.T) {
 						t.Run(v.name, func(t *testing.T) {
 							if mode != "all" && v.name != "current" {
 								t.Skip("set ROBIN_VQ=all")
+							}
+							if v.name == "vaapi" {
+								needHardware(t, hwenc.VAAPI)
 							}
 							c := clipRun{
 								clip: clip, fps: 30, maxW: size.maxW, maxH: size.maxH, link: link,
