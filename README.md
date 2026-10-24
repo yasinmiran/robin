@@ -816,7 +816,8 @@ verified against a Linux build.
   started sooner has to retry.
 - Reconnecting keeps the desktop, not the picture: the browser builds a
   fresh peer connection each time, so the first second after a reconnect is
-  a new keyframe, and anything held down in the page is released.
+  a new keyframe, anything held down in the page is released, and a
+  microphone or camera that was on is off until switched on again.
 - The clipboard carries plain text, HTML and PNG images, 16 MiB in all at
   a time; anything else on it (RTF, JPEG, a file manager's file list) stays
   behind. An image bigger than that is left out and its text still goes.

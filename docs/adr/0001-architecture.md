@@ -1430,7 +1430,10 @@ then `replaceTrack` on a sender that already exists: no offer, no answer, no
 moment without picture. The e2e tests compare the page's local description
 before and after switching each device on and off, and it never changes.
 Without the flags the page offers what it always has. Switching off also
-stops the track, so the browser's own camera light goes out.
+stops the track, so the browser's own camera light goes out. The senders
+belong to one peer connection, so the one a kept session's reconnect
+builds comes with switches of its own, off, and the old ones are turned
+off with their connection.
 
 **What the agent owes a sender.** Pion's defaults for receiving were never
 in the registry, as the agent only sent. With a device on offer it adds two
