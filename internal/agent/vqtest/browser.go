@@ -306,7 +306,7 @@ func (b *Browser) decode() {
 		})
 		n := len(b.result.Shown) - 1
 		b.mu.Unlock()
-		if ok && b.clip != nil && index < b.clip.Len() {
+		if ok && b.clip != nil && index >= 0 && index < b.clip.Len() {
 			select {
 			case b.scores <- scoreJob{shown: n, clip: index, img: img}:
 			case <-b.done:
