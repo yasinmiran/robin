@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yasinmiran/robin/internal/agent/peer"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
@@ -79,7 +80,28 @@ func TestClipboardBulkFromTheBrowser(t *testing.T) {
 	if err := sink.Commit(); !errors.Is(err, protocol.ErrClip) {
 		t.Errorf("Commit of a malformed payload: %v, want ErrClip", err)
 	}
-	sink.Abort(nil)
+
+	// Only so many at once, each in memory; an end of either kind frees a
+	// place.
+	h = protocol.Bulk{T: protocol.BulkHeader, Kind: protocol.BulkClipboard, Size: 1}
+	var open []peer.BulkSink
+	for range maxClipsIn {
+		sink, err := s.bulk(h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		open = append(open, sink)
+	}
+	if _, err := s.bulk(h); err == nil {
+		t.Errorf("clipboard transfer %d at once was taken", maxClipsIn+1)
+	}
+	open[0].Abort(nil)
+	open[1].Commit()
+	for range maxClipsIn {
+		if _, err := s.bulk(h); err != nil {
+			t.Errorf("after both ended: %v", err)
+		}
+	}
 }
 
 func TestClipboardOfATextOnlyDesktop(t *testing.T) {

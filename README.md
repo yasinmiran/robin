@@ -380,7 +380,8 @@ which leaves the desktop for `--keep`), and move files, within these bounds:
   in the 0700 run directory, which also checks that the caller's uid is
   yours, so the page never names a path on the host and the session reads
   nothing its sender could not. Offers end when `robin-send` exits.
-- **The clipboard**, as text, HTML or a PNG image, up to 16 MiB.
+- **The clipboard**, as text, HTML or a PNG image, up to 16 MiB, held in
+  memory, two transfers at a time.
 
 File names from the host appear in the page as text, never as markup. Words
 from the page that reach a terminal on the host, a refusal's reason printed

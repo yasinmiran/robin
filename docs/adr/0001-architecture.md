@@ -887,7 +887,9 @@ holding each of its formats as a part (a byte of MIME type length, the type,
 four bytes of data length, the data), up to 16 MiB in all, so the far side
 offers them together as one clipboard the way the source did. Plain text
 that fits a control message still goes as one. A newer copy on the host
-cancels the transfer of an older one still under way.
+cancels the transfer of an older one still under way, and the agent takes
+two from the page at once at most, since each waits whole in memory and
+only the newest counts.
 
 Setting the clipboard is the one thing a sink does on the read loop on
 purpose. The page holds the paste key until the transfer's verdict, for up

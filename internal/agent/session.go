@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pion/ice/v4"
@@ -264,7 +265,8 @@ type session struct {
 	cursor       uint32          // current pointer image
 	cursorsShown map[uint32]bool // images the current page already has
 
-	files *fileShare // nil when the session takes no files
+	files   *fileShare   // nil when the session takes no files
+	clipsIn atomic.Int32 // clipboard transfers from the browser under way
 }
 
 // maxCursors bounds the pointer images a session keeps. The X11 desktop

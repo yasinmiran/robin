@@ -46,10 +46,18 @@ func (s *session) setClip(c protocol.Clip) error {
 	return s.desk.SetClipboard(c.Text)
 }
 
+// maxClipsIn bounds the clipboard transfers from the browser under way at
+// once, each held in memory; only the newest matters anyway.
+const maxClipsIn = 2
+
 // acceptClip takes clipboard content the browser sends as a bulk
 // transfer. It is at most protocol.ClipBulkLimit bytes, kept in memory as
 // it arrives rather than reserved for what the header promises.
 func (s *session) acceptClip(protocol.Bulk) (peer.BulkSink, error) {
+	if s.clipsIn.Add(1) > maxClipsIn {
+		s.clipsIn.Add(-1)
+		return nil, fmt.Errorf("%d clipboard transfers already under way", maxClipsIn)
+	}
 	return &clipSink{s: s, buf: new(bytes.Buffer)}, nil
 }
 
@@ -61,6 +69,7 @@ type clipSink struct {
 func (c *clipSink) Write(p []byte) (int, error) { return c.buf.Write(p) }
 
 func (c *clipSink) Commit() error {
+	defer c.s.clipsIn.Add(-1)
 	clip, err := protocol.DecodeClip(c.buf.Bytes())
 	if err != nil {
 		return err
@@ -68,7 +77,7 @@ func (c *clipSink) Commit() error {
 	return c.s.setClip(clip)
 }
 
-func (c *clipSink) Abort(error) {}
+func (c *clipSink) Abort(error) { c.s.clipsIn.Add(-1) }
 
 // forwardClipboard sends the browser what programs on the desktop copy.
 func (s *session) forwardClipboard(ctx context.Context) {
