@@ -26,7 +26,11 @@ type AudioOptions struct {
 	// server to capture; otherwise the agent provides one for the display
 	// it spawns.
 	Attached bool
-	Log      *slog.Logger
+	// Mic readies the sound server the agent provides for the browser's
+	// microphone, and NoCapture leaves the desktop's sound unrecorded, for
+	// a session that wants the server only for the microphone.
+	Mic, NoCapture bool
+	Log            *slog.Logger
 }
 
 // NewAudioFunc starts capturing. env holds variables the spawned desktop's

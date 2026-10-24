@@ -55,7 +55,11 @@ type Options struct {
 	Encoders map[string]NewEncoderFunc
 	// NewAudio captures the desktop's sound; nil when this build has none.
 	NewAudio NewAudioFunc
-	Log      *slog.Logger
+	// NewMic and NewCamera give the host the browser's microphone and
+	// camera; nil when this build has none.
+	NewMic    NewMicFunc
+	NewCamera NewCameraFunc
+	Log       *slog.Logger
 }
 
 // Run serves one session over r and w (the SSH exec channel) until the CLI
@@ -88,12 +92,12 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 	var audio AudioSource
 	var desktopEnv []string
 	var audioErr string
-	if start.Audio {
+	if start.Audio || spawnMic(start) {
 		if o.NewAudio == nil {
 			audioErr = "this agent was built without audio"
 			log.Warn("audio requested but this agent has no audio support")
 		} else if src, env, err := o.NewAudio(ctx, AudioOptions{
-			RunDir: runDir, Attached: start.Attach != "", Log: log,
+			RunDir: runDir, Attached: start.Attach != "", Mic: spawnMic(start), NoCapture: !start.Audio, Log: log,
 		}); err != nil {
 			// Nothing from a failed start may reach the desktop, its env least of
 			// all: it could point programs at a server that is not there.
@@ -128,6 +132,20 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 	defer d.close()
 	log.Info("desktop up", "mode", d.mode, "display", d.name, "session", d.session)
 
+	mic, micReady := startMic(ctx, start, o.NewMic, audio, audioErr, log)
+	if mic != nil {
+		defer mic.Close()
+	}
+	camera, cameraReady := startCamera(ctx, start, o.NewCamera, log)
+	if camera != nil {
+		defer camera.Close()
+	}
+	if !start.Audio {
+		// A server started for the microphone alone has no sound to send;
+		// the deferred Close above still stops it.
+		audio, audioErr = nil, ""
+	}
+
 	w0, h0 := fit(start.Width, start.Height, start.MaxWidth, start.MaxHeight)
 	if w0 > 0 && h0 > 0 {
 		if _, _, err := d.desk.Resize(w0, h0); err != nil && !errors.Is(err, desktop.ErrFixedSize) {
@@ -155,7 +173,7 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 	s := &session{
 		conn: conn, desk: d.desk, start: start, log: log, tcpMux: tcpMux, cert: cert, audio: audio != nil,
 		stream:  newStream(d.desk, start.FPS, start.MaxWidth, start.MaxHeight, newEncoder, log),
-		cursors: map[uint32]protocol.Cursor{},
+		cursors: map[uint32]protocol.Cursor{}, mic: mic, camera: camera,
 	}
 	defer s.closePeer()
 
@@ -164,6 +182,7 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 		Version: protocol.Version, AgentBuild: o.Build, Display: d.name, Session: d.session,
 		Width: width, Height: height, TunnelAddr: ln.Addr().String(),
 		Mode: d.mode, Audio: audio != nil, AudioError: audioErr, Encoder: encoderName, EncoderError: encoderErr,
+		Mic: micReady, Camera: cameraReady,
 	}
 	if mm, ok := d.desk.(desktop.MultiMonitor); ok {
 		ms := mm.MonitorState()
@@ -237,6 +256,8 @@ type session struct {
 	cert   *webrtc.Certificate
 	audio  bool
 	stream *stream
+	mic    Mic    // nil unless the session takes the browser's microphone
+	camera Camera // and its camera
 
 	mu   sync.Mutex
 	peer *peer.Peer
@@ -317,6 +338,7 @@ func (s *session) currentPeer() (*peer.Peer, error) {
 	maxBitrate := max(s.start.MaxKbps*1000, startBitrate)
 	p, err := peer.New(peer.Config{
 		STUN: s.start.STUN, TCPMux: s.tcpMux, IncludeLoopback: true, Certificate: s.cert, Audio: s.audio,
+		Mic: s.mic != nil, Camera: s.camera != nil,
 		MinBitrate: minBitrate, StartBitrate: min(startBitrate, maxBitrate), MaxBitrate: maxBitrate,
 		Log: s.log,
 	}, peer.Handlers{
@@ -327,6 +349,7 @@ func (s *session) currentPeer() (*peer.Peer, error) {
 		},
 		Control: s.control,
 		Bulk:    s.bulk,
+		Track:   s.track,
 		ControlOpen: func() {
 			s.sendCurrentCursor()
 			s.sendMonitors()

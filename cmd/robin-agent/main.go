@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/yasinmiran/robin/internal/agent"
 	"github.com/yasinmiran/robin/internal/agent/audio"
+	"github.com/yasinmiran/robin/internal/agent/camera"
 	"github.com/yasinmiran/robin/internal/agent/h264"
 	"github.com/yasinmiran/robin/internal/agent/hwenc"
 	"github.com/yasinmiran/robin/internal/protocol"
@@ -87,8 +89,10 @@ func serve(args []string) int {
 			protocol.EncoderVAAPI:    hardware(hwenc.NewOpener(hwenc.VAAPI, log)),
 			protocol.EncoderNVENC:    hardware(hwenc.NewOpener(hwenc.NVENC, log)),
 		},
-		NewAudio: newAudio,
-		Log:      log,
+		NewAudio:  newAudio,
+		NewMic:    newMic,
+		NewCamera: newCamera,
+		Log:       log,
 	})
 	if err != nil {
 		log.Error("session ended", "err", err)
@@ -102,12 +106,49 @@ func newEncoder(width, height, fps, bitrate int) (agent.Encoder, error) {
 }
 
 func newAudio(ctx context.Context, o agent.AudioOptions) (agent.AudioSource, []string, error) {
-	src, env, err := audio.Start(ctx, audio.Options{RunDir: o.RunDir, Attached: o.Attached, Log: o.Log})
+	src, env, err := audio.Start(ctx, audio.Options{
+		RunDir: o.RunDir, Attached: o.Attached, Mic: o.Mic, NoCapture: o.NoCapture, Log: o.Log,
+	})
 	if err != nil {
 		return nil, nil, err // not src: a nil *audio.Source would make a non-nil interface
 	}
 	return src, env, nil
 }
+
+func newMic(ctx context.Context, o agent.MicOptions) (agent.Mic, error) {
+	mo := audio.MicOptions{Log: o.Log}
+	if !o.Attached {
+		src, ok := o.Sound.(*audio.Source)
+		if !ok {
+			return nil, errors.New("the microphone needs the sound server this agent starts")
+		}
+		mo.Source = src
+	}
+	m, err := audio.StartMic(ctx, mo)
+	if err != nil {
+		return nil, err
+	}
+	return mic{m}, nil
+}
+
+// mic and camera adapt the device packages to the session's interfaces.
+type mic struct{ *audio.Mic }
+
+func (m mic) Play(r agent.RTPReader) error { return m.Mic.Play(r) }
+func (m mic) Where() string                { return m.Mic.Where }
+
+func newCamera(_ context.Context, o agent.CameraOptions) (agent.Camera, error) {
+	c, err := camera.Start(camera.Options{Device: o.Device, Log: o.Log})
+	if err != nil {
+		return nil, err
+	}
+	return cam{c}, nil
+}
+
+type cam struct{ *camera.Camera }
+
+func (c cam) Play(r agent.RTPReader, keyframe func()) error { return c.Camera.Play(r, keyframe) }
+func (c cam) Where() string                                 { return c.Camera.Where }
 
 func hardware(o *hwenc.Opener) agent.NewEncoderFunc {
 	return func(width, height, fps, bitrate int) (agent.Encoder, error) {
