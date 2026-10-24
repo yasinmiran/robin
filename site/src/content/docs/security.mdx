@@ -22,14 +22,24 @@ Whatever drives the page drives the remote desktop, so it is fenced in on every 
 
 Input from the page is limited to what a keyboard, a pointer and a clipboard can do in that session.
 
+What a page can make the agent hold is bounded too, so even a compromised one cannot wear the host down:
+
+- One control channel at a time; a second closes the first.
+- A file or clipboard channel must send its header within 10 seconds, and no more than 8 may wait for one at once.
+- Media only on the microphone and camera lines the session asked for. The answer turns down every other line the page adds, and what it sends on the agent's own video or sound line is read and dropped.
+- At most 256 ICE candidates per ICE restart. The agent never asks the host's network to resolve a `.local` name and never connects out over TCP, so the most the page can aim at other addresses is ICE's own connectivity checks over UDP.
+
 <Callout type="warning" title="Shared client.">
 One exposure is on the client side. To open your browser, the CLI hands the page URL, token included, to `open` or `xdg-open`, so for that moment another user logged in to the same client machine could read it from the process list. On a shared client, use `--no-browser` and open the printed URL yourself.
 </Callout>
 
 ## On the host
 
-- The agent's ICE-TCP listener binds loopback and only accepts ICE connections carrying the session's credentials. It is reached through the SSH forward, never from the network.
-- A spawned X display is protected by a fresh cookie in a 0600 file.
+- The agent's ICE-TCP listener binds loopback and only accepts ICE connections carrying the session's credentials. It is reached through the SSH forward, never from the network, and it hangs up at once on a connection another user's process opened, which it reads from the kernel's socket table.
+- A spawned X display is protected by a fresh cookie in a 0600 file, which the agent hands only to the Xvfb it started, checked through the socket's peer credentials.
+- The probe counts only `X<digits>` in `/tmp/.X11-unix`, which any user can write, and prints nothing that would span lines, so no file name there can add to what it reports.
+- At most 256 files are on offer from `robin-send` at once, each holding a descriptor open in the agent.
+- `robin-agent end` and the sweep of old run directories take only a process of yours for a session's daemon.
 - A spawned session's sound server listens only on a socket inside the run directory, with its own cookie.
 - The agent's directory and each session's run directory are 0700. The agent is uploaded, verified by SHA-256 on the host and renamed into place.
 - Everything the agent starts dies with it, through process groups, a parent-death signal and a display watchdog, and its run directory is removed.
