@@ -170,6 +170,11 @@ func TestInputScalesFramePixelsToStream(t *testing.T) {
 	if !newInput(&portalSession{devices: devicePointer}, 640, 480).viewOnly {
 		t.Error("pointer alone granted, but input is not view only")
 	}
+	for devices, want := range map[uint32]bool{deviceKeyboard | devicePointer: false, devicePointer: true, 0: true} {
+		if got := (&Desktop{sess: &portalSession{devices: devices}}).ViewOnly(); got != want {
+			t.Errorf("devices %b: ViewOnly() = %v, want %v", devices, got, want)
+		}
+	}
 }
 
 func TestTokenFile(t *testing.T) {

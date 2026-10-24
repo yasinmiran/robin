@@ -67,7 +67,7 @@ func TestAttachConsentThenRestore(t *testing.T) {
 	if len(notices) != 1 || notices[0].Kind != protocol.NoticeConsent || notices[0].Wait < 25 {
 		t.Errorf("first session: notices %+v, want one consent notice with the wait", notices)
 	}
-	if d.in.viewOnly {
+	if d.in.viewOnly || d.ViewOnly() {
 		t.Error("first session is view only though remote interaction was allowed")
 	}
 	fi, err := os.Stat(tokenFile)
@@ -349,6 +349,9 @@ func TestAttachViewOnly(t *testing.T) {
 	}
 	if err := d.Input(protocol.Control{T: protocol.ControlMove, X: 10, Y: 10}); !errors.Is(err, errViewOnly) {
 		t.Errorf("input on a view-only session: %v", err)
+	}
+	if !d.ViewOnly() {
+		t.Error("a view-only session does not say so, so it would take uploads")
 	}
 	if f, _, err := d.Capture(true); err != nil || f.Width != 1280 {
 		t.Errorf("view-only session streams no picture: %v", err)
