@@ -16,6 +16,11 @@ import (
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
+// minBulkChunk is the smallest chunk a paced sender sends. It sizes
+// chunks to a burst of its allowance, so that a chunk does not overflow a
+// shallow bottleneck the way a 64 KiB one would at a few Mbit/s.
+const minBulkChunk = 4 << 10
+
 // closeGrace is how long a failed send waits for the channel to report its
 // close before giving the send error as the reason.
 const closeGrace = 5 * time.Second
@@ -56,7 +61,10 @@ type BulkSink interface {
 // It returns a *BulkRefusedError when the browser refuses, and
 // ErrBulkCancelled when the browser closes the channel first.
 //
-// The transfer goes no faster than the browser's credit allows.
+// The transfer goes no faster than the browser's credit allows, and,
+// since GCC sees none of it, under the congestion target: transfers at
+// once share what the video leaves of the target, and never less than a
+// quarter of it between them.
 func (p *Peer) SendBulk(ctx context.Context, h protocol.Bulk, r io.Reader) error {
 	h.T = protocol.BulkHeader
 	if err := h.CheckHeader(); err != nil {
@@ -66,13 +74,25 @@ func (p *Peer) SendBulk(ctx context.Context, h protocol.Bulk, r io.Reader) error
 	if err != nil {
 		return fmt.Errorf("peer: open bulk channel: %w", err)
 	}
-	return newBulkSender(dc).send(ctx, h, r)
+	s := newBulkSender(dc)
+	if !p.unpaced {
+		s.pace = p.bwe
+	}
+	return s.send(ctx, h, r)
+}
+
+// bulkPace is what paces a bulk sender: how much to send at once, and how
+// long to wait before sending it.
+type bulkPace interface {
+	bulkChunk(minBytes, maxBytes int) int
+	reserveBulk(n int) time.Duration
 }
 
 // bulkSender is the sending end of one transfer. Its channels carry what
 // Pion's callbacks report.
 type bulkSender struct {
 	dc      *webrtc.DataChannel
+	pace    bulkPace // nil sends as fast as the credit allows
 	opened  chan struct{}
 	closed  chan struct{}
 	verdict chan protocol.Bulk
@@ -133,7 +153,11 @@ func (s *bulkSender) send(ctx context.Context, h protocol.Bulk, r io.Reader) err
 	buf := make([]byte, protocol.BulkChunkSize)
 	var sent int64
 	for {
-		n, err := io.ReadFull(src, buf)
+		size := protocol.BulkChunkSize
+		if s.pace != nil {
+			size = s.pace.bulkChunk(minBulkChunk, protocol.BulkChunkSize)
+		}
+		n, err := io.ReadFull(src, buf[:size])
 		if n > 0 {
 			if err := sum.Add(buf[:n]); err != nil {
 				return err
@@ -142,6 +166,11 @@ func (s *bulkSender) send(ctx context.Context, h protocol.Bulk, r io.Reader) err
 			// so cancelling drops at most a window.
 			for sent+int64(n) > s.credit.Load() {
 				if err := s.wait(ctx, s.more); err != nil {
+					return err
+				}
+			}
+			if s.pace != nil {
+				if err := s.sleep(ctx, s.pace.reserveBulk(n)); err != nil {
 					return err
 				}
 			}
@@ -190,6 +219,17 @@ func (s *bulkSender) wait(ctx context.Context, ready <-chan struct{}) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// sleep waits d, or returns why the transfer cannot go on.
+func (s *bulkSender) sleep(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return s.check(ctx)
+	}
+	due := make(chan struct{})
+	t := time.AfterFunc(d, func() { close(due) })
+	defer t.Stop()
+	return s.wait(ctx, due)
 }
 
 // check returns why the transfer cannot go on, without waiting.

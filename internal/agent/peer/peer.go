@@ -69,8 +69,8 @@ type Config struct {
 	Mic, Camera bool
 
 	MinBitrate, StartBitrate, MaxBitrate int // bits per second
-	// Unpaced sends every packet the moment it is written, as a
-	// comparison for measurements; the agent paces.
+	// Unpaced sends every packet and every bulk chunk the moment it is
+	// written, as a comparison for measurements; the agent paces.
 	Unpaced bool
 	// FeedWhileLimited hands GCC the browser's feedback while the agent
 	// sends too little to test the link, as Pion does on its own, and
@@ -106,6 +106,8 @@ type Peer struct {
 	audio *webrtc.TrackLocalStaticSample // nil without Config.Audio
 	h     Handlers
 	log   *slog.Logger
+	// unpaced sends bulk as fast as the browser's credit allows.
+	unpaced bool
 
 	mu      sync.Mutex
 	control *webrtc.DataChannel
@@ -228,7 +230,7 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 		return nil, err
 	}
 	pcRef.Store(pc)
-	p := &Peer{pc: pc, h: h, log: log}
+	p := &Peer{pc: pc, h: h, log: log, unpaced: cfg.Unpaced}
 
 	select {
 	case p.bwe = <-bweReady:

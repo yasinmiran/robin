@@ -54,13 +54,30 @@ func TestCongestionControlAdaptsToLink(t *testing.T) {
 }
 
 // TestBulkSharesTheLinkWithVideo sends a bulk transfer through a shaped link
-// while video streams, and measures what each gets. Bulk is not paced:
-// SCTP's own congestion control fills the queue, and the video's controller
-// answers the delay by lowering its target until the transfer ends.
+// while video streams, and measures what each gets. Unpaced, SCTP's own
+// congestion control filled the queue and GCC answered the delay by
+// lowering the video's target to a quarter of the link until the transfer
+// ended. Paced, bulk gets a quarter of the target while the screen moves
+// and what the video leaves of it while the screen is still, and the
+// target stays where it was.
 func TestBulkSharesTheLinkWithVideo(t *testing.T) {
 	if testing.Short() {
-		t.Skip("takes about 30 s")
+		t.Skip("takes about 70 s")
 	}
+	for _, tc := range []struct {
+		name  string
+		still bool
+		// bulk is the least share of the link bulk must get.
+		bulk float64
+	}{
+		{"moving", false, 0.1},
+		{"still", true, 0.6},
+	} {
+		t.Run(tc.name, func(t *testing.T) { bulkBesideVideo(t, tc.still, tc.bulk) })
+	}
+}
+
+func bulkBesideVideo(t *testing.T, still bool, bulkShare float64) {
 	const link = 3_000_000
 	var disconnects atomic.Int32
 	var failed atomic.Bool
@@ -79,6 +96,7 @@ func TestBulkSharesTheLinkWithVideo(t *testing.T) {
 	}
 	time.Sleep(6 * time.Second)
 	videoBefore, targetBefore := videoRate(2*time.Second), l.target.Load()
+	l.still.Store(still)
 
 	const size = 2 << 20
 	done := make(chan error, 1)
@@ -104,28 +122,26 @@ wait:
 	}
 	took := time.Since(start)
 	videoDuring := int(float64(l.received.Load()-receivedAtStart) * 8 / took.Seconds())
-	// The target climbs back at the controller's own pace.
-	recovered := time.Now()
-	for l.target.Load() < targetBefore*8/10 && time.Since(recovered) < 20*time.Second {
-		time.Sleep(100 * time.Millisecond)
-	}
-	recovery := time.Since(recovered)
+	bulkRate := int(float64(size*8) / took.Seconds())
 
 	t.Logf("%d kbit/s link: video %d kbit/s (target %d) before; %d KiB of bulk took %v, %d kbit/s, "+
-		"while video got %d kbit/s with its target down to %d; target back to 80%% %v after; %d disconnects",
+		"while video got %d kbit/s with its target down to %d; %d disconnects",
 		link/1000, videoBefore/1000, targetBefore/1000, size>>10, took.Round(10*time.Millisecond),
-		int(float64(size*8)/took.Seconds())/1000, videoDuring/1000, lowest/1000, recovery.Round(100*time.Millisecond), disconnects.Load())
+		bulkRate/1000, videoDuring/1000, lowest/1000, disconnects.Load())
 	if err != nil {
 		t.Fatalf("transfer: %v", err)
 	}
 	if failed.Load() {
 		t.Error("the connection failed under the transfer")
 	}
-	if videoDuring < link/10 {
-		t.Errorf("video starved to %d kbit/s during the transfer", videoDuring/1000)
+	if lowest < targetBefore*6/10 {
+		t.Errorf("the video's target fell from %d kbit/s to %d during the transfer", targetBefore/1000, lowest/1000)
 	}
-	if recovery >= 20*time.Second {
-		t.Errorf("video target still %d kbit/s 20 s after the transfer", l.target.Load()/1000)
+	if !still && videoDuring < link/2 {
+		t.Errorf("video got %d kbit/s during the transfer", videoDuring/1000)
+	}
+	if bulkRate < int(bulkShare*link) {
+		t.Errorf("bulk got %d kbit/s of a %d kbit/s link", bulkRate/1000, link/1000)
 	}
 }
 

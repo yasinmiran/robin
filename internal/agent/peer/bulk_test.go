@@ -146,7 +146,9 @@ func newBulkPair(t *testing.T, cfg Config, h Handlers) *bulkPair {
 	if h.Bulk == nil {
 		h.Bulk = sinks(bp.atAgent)
 	}
-	cfg.MinBitrate, cfg.StartBitrate, cfg.MaxBitrate, cfg.IncludeLoopback = 100_000, 1_000_000, 5_000_000, true
+	// No video streams here, so the target stays where it starts, and
+	// bulk from the agent is paced under it.
+	cfg.MinBitrate, cfg.StartBitrate, cfg.MaxBitrate, cfg.IncludeLoopback = 100_000, 200_000_000, 200_000_000, true
 	p, err := New(cfg, h)
 	if err != nil {
 		t.Fatal(err)

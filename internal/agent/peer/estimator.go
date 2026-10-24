@@ -36,7 +36,10 @@ type estimator struct {
 	mu      sync.Mutex
 	alr     alrDetector
 	limited bool
-	target  int // GCC's target, bits per second
+	target  int     // GCC's target, bits per second
+	media   ewma    // what the pacer was given, bytes per second
+	bulk    float64 // bytes bulk may send now; negative when it owes
+	bulkAt  time.Time
 }
 
 // newEstimator builds the congestion controller over pacer, which it
@@ -117,7 +120,9 @@ func (e *estimator) spell(limited bool) bool {
 func (e *estimator) sent(n int) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.spell(e.alr.sent(e.now(), n))
+	now := e.now()
+	e.media.add(now, float64(n))
+	e.spell(e.alr.sent(now, n))
 }
 
 func (e *estimator) setTarget(bps int) {
