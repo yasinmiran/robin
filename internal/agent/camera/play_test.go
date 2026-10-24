@@ -103,6 +103,53 @@ func TestPlayShowsTheBrowsersPictures(t *testing.T) {
 	})
 }
 
+// TestCost reports what the agent spends on each picture of the browser's
+// camera: decoding and fitting it into the device's frame, for a picture
+// of the device's own size and for smaller ones that are scaled.
+func TestCost(t *testing.T) {
+	for _, size := range [][2]int{{1280, 720}, {640, 360}, {640, 480}} {
+		w, h := size[0], size[1]
+		frames := browserCamera(t, w, h, 90)
+		dec, err := h264.NewDecoder()
+		if err != nil {
+			t.Fatal(err)
+		}
+		dst := newFrame()
+		fit := newFitter(w, h)
+		var decode, fitting time.Duration
+		n := 0
+		for _, f := range frames {
+			var au []byte
+			for _, p := range f {
+				var d codecs.H264Packet
+				b, err := d.Unmarshal(p.Payload)
+				if err != nil {
+					t.Fatal(err)
+				}
+				au = append(au, b...)
+			}
+			start := time.Now()
+			pic, err := dec.Decode(au)
+			decode += time.Since(start)
+			if err != nil || pic == nil {
+				continue
+			}
+			start = time.Now()
+			fit.fit(dst, pic)
+			fitting += time.Since(start)
+			n++
+		}
+		dec.Close()
+		if n == 0 {
+			t.Fatalf("%dx%d: nothing decoded", w, h)
+		}
+		per := (decode + fitting) / time.Duration(n)
+		t.Logf("%dx%d: decode %.2f ms, fit %.2f ms a picture; %.1f%% of a core at %d fps",
+			w, h, float64(decode.Microseconds())/float64(n)/1000, float64(fitting.Microseconds())/float64(n)/1000,
+			100*per.Seconds()*FPS, FPS)
+	}
+}
+
 // pacedReader hands its packets out every so often, as a network would.
 type pacedReader struct {
 	packets []*rtp.Packet

@@ -278,11 +278,13 @@ test("microphone: a PipeWire source that hears the page once it is switched on",
   expect(node, "the microphone's node").toMatch(/^robin-mic-\d+$/);
   const mic = page.locator('button.device[data-device="mic"]');
   const micState = () => page.evaluate(() => (window as any).robin.device('mic'));
+  const localSDP = () => page.evaluate(() => ((window as any).robin.pc as RTCPeerConnection).localDescription?.sdp);
   await page.mouse.move(640, 5); // brings the tucked HUD back
   await expect(mic, 'the microphone switch').toBeVisible({ timeout: 10_000 });
   await expect(mic).toHaveAttribute('data-state', 'off');
   expect(toneOf(pcm(await wl.recordSource(node, 1.5))).loud, 'the desktop hears nothing before the switch').toBeLessThan(0.05);
 
+  const offered = await localSDP();
   await mic.click();
   await expect.poll(micState, { message: 'the switch turns on' }).toBe('on');
   let heard = { hz: 0, loud: 0 };
@@ -299,6 +301,7 @@ test("microphone: a PipeWire source that hears the page once it is switched on",
   await page.mouse.move(640, 5);
   await mic.click();
   await expect.poll(micState, { message: 'the switch turns off' }).toBe('off');
+  expect(await localSDP(), 'switching the microphone on and off renegotiated nothing').toBe(offered);
 });
 
 test('camera: a PipeWire camera that shows black, then the page, then black again', async ({}, testInfo) => {
@@ -308,6 +311,7 @@ test('camera: a PipeWire camera that shows black, then the page, then black agai
   expect(node, "the camera's node").toMatch(/^robin-camera-\d+$/);
   const camera = page.locator('button.device[data-device="camera"]');
   const cameraState = () => page.evaluate(() => (window as any).robin.device('camera'));
+  const localSDP = () => page.evaluate(() => ((window as any).robin.pc as RTCPeerConnection).localDescription?.sdp);
   const middle = async () => pixel(await wl.cameraFrame(node), 1280, 720, 640, 400);
   await page.mouse.move(640, 5);
   await expect(camera, 'the camera switch').toBeVisible({ timeout: 10_000 });
@@ -315,6 +319,7 @@ test('camera: a PipeWire camera that shows black, then the page, then black agai
   let seen = await middle();
   expect(seen.y, 'black before the switch').toBeLessThan(30);
 
+  const offered = await localSDP();
   await camera.click();
   await expect.poll(cameraState, { message: 'the switch turns on' }).toBe('on');
   await expect
@@ -331,6 +336,7 @@ test('camera: a PipeWire camera that shows black, then the page, then black agai
   await page.mouse.move(640, 5);
   await camera.click();
   await expect.poll(cameraState, { message: 'the switch turns off' }).toBe('off');
+  expect(await localSDP(), 'switching the camera on and off renegotiated nothing').toBe(offered);
   await expect
     .poll(async () => (await middle()).y, { message: 'black again, not the last picture', timeout: 15_000, intervals: [500] })
     .toBeLessThan(30);

@@ -385,11 +385,13 @@ test("microphone: off until switched on, then the desktop's default source hears
   expect(cli!.stderrTail(Infinity)).toContain('your microphone can reach robinhost as Robin microphone (the private pulseaudio)');
   const mic = page.locator('button.device[data-device="mic"]');
   const micState = () => page.evaluate(() => (window as any).robin.device('mic'));
+  const localSDP = () => page.evaluate(() => ((window as any).robin.pc as RTCPeerConnection).localDescription?.sdp);
   await page.mouse.move(640, 5); // brings the tucked HUD back
   await expect(mic, 'the microphone switch').toBeVisible({ timeout: 10_000 });
   await expect(mic).toHaveAttribute('data-state', 'off');
   expect(toneOf(pcm(await host.recordMicrophone(1.5))).loud, 'the host hears nothing before the switch').toBeLessThan(0.05);
 
+  const offered = await localSDP();
   await mic.click();
   await expect.poll(micState, { message: 'the switch turns on' }).toBe('on');
   let heard = { hz: 0, loud: 0 };
@@ -403,6 +405,7 @@ test("microphone: off until switched on, then the desktop's default source hears
   await page.mouse.move(640, 5);
   await mic.click();
   await expect.poll(micState, { message: 'the switch turns off' }).toBe('off');
+  expect(await localSDP(), 'switching the microphone on and off renegotiated nothing').toBe(offered);
   await expect
     .poll(async () => toneOf(pcm(await host.recordMicrophone(1.5))).loud, { message: 'silence on the host again', timeout: 15_000, intervals: [0] })
     .toBeLessThan(0.05);
