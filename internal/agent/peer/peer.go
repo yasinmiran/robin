@@ -133,16 +133,21 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 		// the target falls drains for seconds and the delay that adds keeps
 		// the target at its floor. The encoder holds the rate; the pacer
 		// only spreads bursts, keyframes above all.
-		var p gcc.Pacer = newPacer(cfg.StartBitrate)
-		if cfg.Unpaced {
-			p = gcc.NewNoOpPacer()
+		var p gcc.Pacer = gcc.NewNoOpPacer()
+		if !cfg.Unpaced {
+			p = newPacer(cfg.StartBitrate)
 		}
-		return gcc.NewSendSideBWE(
+		e, err := gcc.NewSendSideBWE(
 			gcc.SendSideBWEPacer(p),
 			gcc.SendSideBWEInitialBitrate(cfg.StartBitrate),
 			gcc.SendSideBWEMinBitrate(cfg.MinBitrate),
 			gcc.SendSideBWEMaxBitrate(cfg.MaxBitrate),
 		)
+		if err != nil {
+			p.Close()
+			return nil, err
+		}
+		return e, nil
 	})
 	if err != nil {
 		return nil, err
@@ -163,7 +168,7 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 			return cfg.StartBitrate
 		},
 		lost: func() {
-			log.Info("keyframe requested", "by", "a NACK for a packet too old to resend")
+			log.Info("keyframe requested", "by", "nack-unrecoverable")
 			if h.Keyframe != nil {
 				h.Keyframe()
 			}

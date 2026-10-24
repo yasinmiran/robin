@@ -115,8 +115,11 @@ func TestNackReportsWhatItCannotResend(t *testing.T) {
 		now = now.Add(nackBurst)
 		r.resend(nackFor(nackHistory+5), now)
 	}
-	if lost != 0 || len(out.take()) != nackMaxResends {
+	if lost != 0 {
 		t.Fatalf("lost reported %d times for a packet it still holds", lost)
+	}
+	if got := len(out.take()); got != nackMaxResends {
+		t.Fatalf("got %d resends, want %d", got, nackMaxResends)
 	}
 	r.resend(nackFor(3), now) // overwritten by a newer packet
 	if lost != 1 {
