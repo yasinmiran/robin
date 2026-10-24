@@ -143,9 +143,9 @@ func (p *page) closed() {
 	}
 }
 
-// testBridge serves pages to a bridge whose first agent connection is
-// first, as Run makes it, so a page that connects before run begins has an
-// agent to signal.
+// testBridge serves pages to a bridge built with first as its agent
+// connection, as Run builds it, so a page that connects before run begins
+// has an agent to signal.
 func testBridge(t *testing.T, first signaling) (*bridge, *web.Server, context.Context) {
 	t.Helper()
 	s, ctx := testServer(t)

@@ -493,7 +493,8 @@ func resumeMessage(o Options, id string) protocol.Resume {
 // pickSession decides which kept session, if any, robin gui resumes.
 func pickSession(o Options, r *probe.Report, agentName string) (string, error) {
 	if o.Attach != "" && o.Resume == "" {
-		// An attached desktop is never kept; nothing to resume.
+		// A new attach starts a session; a kept attached desktop is
+		// resumed only by --id.
 		return "", nil
 	}
 	var kept []protocol.Session
