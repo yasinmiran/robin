@@ -97,14 +97,18 @@ func TestClipboard(t *testing.T) {
 	// INCR.
 	for _, n := range []int{700_000, 1 << 20, MaxClipboard} {
 		big := strings.Repeat("0123456789abcdeø", n/17) + strings.Repeat("x", n%17)
+		start := time.Now()
 		xclip(t, tx, big, "-i")
 		expectClipboard(t, c, big)
+		in := time.Since(start)
 		if err := c.SetClipboard(big); err != nil {
 			t.Fatal(err)
 		}
+		start = time.Now()
 		if got := xclip(t, tx, "", "-o"); got != big {
 			t.Errorf("xclip -o of %d bytes returned %d bytes", len(big), len(got))
 		}
+		t.Logf("%d bytes: in from xclip %v, out to xclip %v", n, in.Round(time.Millisecond), time.Since(start).Round(time.Millisecond))
 	}
 
 	// Over the cap: refused outbound, dropped inbound.
