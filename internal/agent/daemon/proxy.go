@@ -72,9 +72,7 @@ func tailLog(ctx context.Context, path string, w io.Writer, fromStart bool) {
 		}
 	}()
 	buf := make([]byte, 16<<10)
-	t := time.NewTicker(tailEvery)
-	defer t.Stop()
-	for {
+	drain := func() {
 		if f == nil {
 			if g, err := os.Open(path); err == nil {
 				f = g
@@ -92,8 +90,15 @@ func tailLog(ctx context.Context, path string, w io.Writer, fromStart bool) {
 				break
 			}
 		}
+	}
+	t := time.NewTicker(tailEvery)
+	defer t.Stop()
+	for {
+		drain()
 		select {
 		case <-ctx.Done():
+			// What the daemon wrote since the last tick still counts.
+			drain()
 			return
 		case <-t.C:
 		}
