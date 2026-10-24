@@ -471,6 +471,8 @@ to print the comparison the ADR quotes.
   by design (text stays legible rather than the frame rate high), and
   congestion control can still overshoot the link during video, which
   costs a freeze of up to about a second before a keyframe repairs it.
+- Sound is paced with the picture, so a keyframe on a slow link can hold
+  it back by up to half a second.
 - Hardware encoding stays at Constrained Baseline, which every browser
   decodes; High profile measured at most 5% smaller on an Intel iGPU.
 - Through the SSH tunnel video is TCP inside TCP, so a lossy link shows

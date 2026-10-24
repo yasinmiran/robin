@@ -838,7 +838,9 @@ Three changes:
   unrepaired and keyframes still overflowing, 1 s held scrolling back by
   0.76 s on average, and 500 ms left 8 with the longest freeze 0.33 s.
   This replaces the decision to send unpaced: what Pion's pacer did wrong
-  was the unbounded queue, and this one has a bound.
+  was the unbounded queue, and this one has a bound. Opus packets share
+  the queue, so a keyframe can hold sound back by as much; nobody has
+  listened for it yet.
 - The NACK history held 512 packets, half a second at 10 Mbit/s, while
   Chrome asks for a packet for about a second; it holds 4096.
 - When a NACK names a packet the responder no longer holds or that is

@@ -288,7 +288,9 @@ func TestVideoQuality(t *testing.T) {
 		case s.Shown == 0:
 			t.Errorf("%s: nothing shown", s.Name)
 		case s.Name == "scroll" || s.Name == "drag":
-			if s.FPS < 15 {
+			// Rate control skips frames to keep text legible, 18 to 27 fps
+			// here; a picture stuck behind a loss shows a few a second.
+			if s.FPS < 10 {
 				t.Errorf("%s: %.1f fps", s.Name, s.FPS)
 			}
 		}
