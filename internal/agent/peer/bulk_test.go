@@ -611,6 +611,7 @@ func TestBulkLeavesControlLiveBehindAStalledSink(t *testing.T) {
 	check := func(t *testing.T, send func(i int) error, got <-chan protocol.Control) {
 		t.Helper()
 		time.Sleep(time.Second) // what the transfer can send, it has
+		var worst time.Duration
 		for i := range 5 {
 			sent := time.Now()
 			if err := send(i); err != nil {
@@ -618,13 +619,16 @@ func TestBulkLeavesControlLiveBehindAStalledSink(t *testing.T) {
 			}
 			select {
 			case m := <-got:
-				if lag := time.Since(sent); lag > 500*time.Millisecond || m.Text != fmt.Sprint(i) {
+				lag := time.Since(sent)
+				worst = max(worst, lag)
+				if lag > 500*time.Millisecond || m.Text != fmt.Sprint(i) {
 					t.Errorf("control message %q arrived %v after it was sent", m.Text, lag.Round(time.Millisecond))
 				}
 			case <-time.After(3 * time.Second):
 				t.Fatalf("control message %d held back behind the stalled transfer", i)
 			}
 		}
+		t.Logf("control messages beside a stalled transfer took %v at most", worst.Round(100*time.Microsecond))
 	}
 	t.Run("browser to agent", func(t *testing.T) {
 		dc, err := bp.browser.pc.CreateDataChannel(protocol.BulkChannel, nil)

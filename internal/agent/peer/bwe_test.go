@@ -178,6 +178,43 @@ func TestCongestionControlHoldsThroughAStillScreen(t *testing.T) {
 	}
 }
 
+// TestCongestionControlProbesOnTheWayOut narrows the link to a third while
+// the screen is still. The motion after the spell goes out at the target
+// from before it, and its own feedback must bring the target down to the
+// narrower link soon after.
+func TestCongestionControlProbesOnTheWayOut(t *testing.T) {
+	if testing.Short() {
+		t.Skip("takes about 25 s")
+	}
+	const link, narrow = 3_000_000, 1_000_000
+	l := newShapedLink(t, Config{StartBitrate: 2_000_000}, link, Handlers{})
+	time.Sleep(8 * time.Second)
+	before := int(l.target.Load())
+	l.still.Store(true)
+	time.Sleep(3 * time.Second)
+	l.tbf.SetRate(narrow)
+	time.Sleep(5 * time.Second)
+	held := int(l.target.Load())
+	l.still.Store(false)
+	start := time.Now()
+	for l.target.Load() > narrow*13/10 && time.Since(start) < 10*time.Second {
+		time.Sleep(10 * time.Millisecond)
+	}
+	took := time.Since(start)
+	time.Sleep(4 * time.Second)
+	received := l.received.Load()
+	time.Sleep(2 * time.Second)
+	delivered := int(l.received.Load()-received) * 8 / 2
+	t.Logf("link from %d to %d kbit/s during the still: target %d kbit/s before, %d held, down to %d kbit/s %v into the motion; %d kbit/s delivered 4 s later",
+		link/1000, narrow/1000, before/1000, held/1000, l.target.Load()/1000, took.Round(10*time.Millisecond), delivered/1000)
+	if took >= 3*time.Second {
+		t.Errorf("the target took %v to come down to the narrowed link", took)
+	}
+	if delivered < narrow/2 {
+		t.Errorf("%d kbit/s delivered on a %d kbit/s link", delivered/1000, narrow/1000)
+	}
+}
+
 // streamOverShapedLink runs a peer over a virtual link of linkBps for 14 s and
 // returns the controller's final target and the rate delivered over the last
 // 4 s.
