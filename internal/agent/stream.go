@@ -32,6 +32,13 @@ type NewEncoderFunc func(width, height, fps, bitrate int) (Encoder, error)
 // the loss.
 const minKeyframeGap = 300 * time.Millisecond
 
+// refreshEvery is how long a still screen goes without a frame. Chrome asks
+// for a keyframe after 3 s without one, and each such keyframe resets the
+// picture to whatever quality rate control gave it; encoding the unchanged
+// picture again instead costs a few hundred bytes and lets rate control
+// spend what it has spare sharpening it.
+const refreshEvery = 500 * time.Millisecond
+
 // stream captures, encodes and sends frames at up to fps while a peer is
 // attached. An idle screen costs one cheap DAMAGE check per tick.
 type stream struct {
@@ -42,6 +49,9 @@ type stream struct {
 	maxW, maxH int
 	newEncoder NewEncoderFunc
 	log        *slog.Logger
+	// refresh is refreshEvery, or 0 to send nothing while the screen is
+	// still.
+	refresh time.Duration
 
 	peer     atomic.Pointer[peer.Peer]
 	keyframe atomic.Bool
@@ -67,7 +77,7 @@ func (s *stream) toDesktop(m protocol.Control) protocol.Control {
 }
 
 func newStream(desk desktop.Desktop, fps, maxW, maxH int, newEncoder NewEncoderFunc, log *slog.Logger) *stream {
-	s := &stream{desk: desk, fps: fps, maxW: maxW, maxH: maxH, newEncoder: newEncoder, log: log}
+	s := &stream{desk: desk, fps: fps, maxW: maxW, maxH: maxH, newEncoder: newEncoder, log: log, refresh: refreshEvery}
 	s.bitrate.Store(startBitrate)
 	return s
 }
@@ -119,12 +129,13 @@ func (s *stream) run(ctx context.Context) {
 		}
 		now := time.Now()
 		force := enc == nil || (s.keyframe.Load() && now.Sub(lastKey) >= minKeyframeGap)
-		f, changed, err := s.desk.Capture(force || stale)
+		refresh := s.refresh > 0 && !lastWrite.IsZero() && now.Sub(lastWrite) >= s.refresh
+		f, changed, err := s.desk.Capture(force || stale || refresh)
 		if err != nil {
 			s.log.Warn("capture", "err", err)
 			continue
 		}
-		if !changed && !force && !stale {
+		if !changed && !force && !stale && !refresh {
 			continue
 		}
 		w, h := f.Width&^1, f.Height&^1
