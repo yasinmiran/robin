@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { BulkRefused, Inbound, acceptBulk, onBulk, sendBulk } from '../bulk.js';
 import { CHUNK_SIZE, Sum, registerKind } from '../bulkframe.js';
-import { FakeChannel, FakePeer } from './fakes.js';
+import { FakeChannel, FakePeer, fromAgent, until } from './fakes.js';
 
 registerKind('test', 16 * 1024 * 1024);
 
@@ -250,33 +250,20 @@ onBulk('capped', (h) => {
   return sink;
 }, { inbound: 2 });
 
-// fromAgent opens a channel to the page as the agent would and sends the
-// header of an empty transfer on it; verdict resolves with the page's
-// answer.
-function fromAgent(header) {
-  const page = new FakeChannel('bulk');
-  const agent = new FakeChannel('bulk');
-  page.peer = agent;
-  agent.peer = page;
-  page.readyState = agent.readyState = 'open';
-  const verdict = new Promise((resolve) => agent.addEventListener('message', (e) => resolve(JSON.parse(e.data)), { once: true }));
-  acceptBulk(page);
-  agent.send(JSON.stringify({ t: 'header', size: 0, ...header }));
-  return { agent, verdict, end: () => agent.send(JSON.stringify(new Sum(0).end())) };
+// emptyFromAgent sends the agent's header of an empty transfer; end
+// finishes it.
+function emptyFromAgent(header) {
+  const t = fromAgent({ size: 0, ...header });
+  return { ...t, end: () => t.agent.send(JSON.stringify(new Sum(0).end())) };
 }
 
 const within = (p, ms = 2000) => Promise.race([p, new Promise((resolve) => setTimeout(() => resolve('no verdict'), ms))]);
 
-async function until(what, cond) {
-  for (let i = 0; i < 100 && !cond(); i++) await later();
-  assert.ok(cond(), what);
-}
-
 test('a third transfer of a kind that takes two at once is refused on its header', async () => {
-  const first = fromAgent({ kind: 'capped', id: '1' });
-  const second = fromAgent({ kind: 'capped', id: '2' });
+  const first = emptyFromAgent({ kind: 'capped', id: '1' });
+  const second = emptyFromAgent({ kind: 'capped', id: '2' });
   await until('two sinks', () => capped.length === 2);
-  const refused = await within(fromAgent({ kind: 'capped', id: '3' }).verdict);
+  const refused = await within(emptyFromAgent({ kind: 'capped', id: '3' }).verdict);
   assert.equal(refused.t, 'error', `the third transfer: ${JSON.stringify(refused)}`);
   assert.match(refused.error, /too many capped transfers under way: the page takes 2 at once/);
   assert.equal(capped.length, 2, 'the third transfer got a sink');
@@ -286,12 +273,12 @@ test('a third transfer of a kind that takes two at once is refused on its header
   first.end();
   assert.deepEqual(await first.verdict, { t: 'done' });
   assert.deepEqual(await capped[0].ended, { ok: true });
-  const fourth = fromAgent({ kind: 'capped', id: '4' });
+  const fourth = emptyFromAgent({ kind: 'capped', id: '4' });
   await until('a fourth sink once the first finished', () => capped.length === 3);
   second.agent.close();
   assert.equal((await capped[1].ended).ok, false);
-  assert.match((await fromAgent({ kind: 'capped', id: 'no' }).verdict).error, /not this one/);
-  const fifth = fromAgent({ kind: 'capped', id: '5' });
+  assert.match((await emptyFromAgent({ kind: 'capped', id: 'no' }).verdict).error, /not this one/);
+  const fifth = emptyFromAgent({ kind: 'capped', id: '5' });
   await until('a fifth sink once the second closed', () => capped.length === 4);
   fourth.end();
   fifth.end();
@@ -310,9 +297,9 @@ onBulk('slow', async () => {
 }, { inbound: 2 });
 
 test('a place is taken before accept runs, so two headers cannot both take the last one while it waits', async () => {
-  const first = fromAgent({ kind: 'slow', id: '1' });
-  const second = fromAgent({ kind: 'slow', id: '2' });
-  const refused = await within(fromAgent({ kind: 'slow', id: '3' }).verdict);
+  const first = emptyFromAgent({ kind: 'slow', id: '1' });
+  const second = emptyFromAgent({ kind: 'slow', id: '2' });
+  const refused = await within(emptyFromAgent({ kind: 'slow', id: '3' }).verdict);
   assert.equal(refused.t, 'error', `the third transfer: ${JSON.stringify(refused)}`);
   assert.match(refused.error, /too many slow transfers under way: the page takes 2 at once/);
   assert.equal(accepted, 2, 'accept ran for the third');

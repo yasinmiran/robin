@@ -1,11 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { acceptBulk } from '../bulk.js';
 import { Sum } from '../bulkframe.js';
 import { CLIP_KIND, CLIP_LIMIT, MAX_CLIP, encodeClip } from '../clip.js';
 import { Clipboard } from '../clipboard.js';
 import { dispatchControl } from '../control.js';
-import { FakeChannel } from './fakes.js';
+import { fromAgent, until } from './fakes.js';
 
 const later = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -30,24 +29,14 @@ const clipboard = new Clipboard({
   propose: (files) => proposed.push(...files),
 });
 
-// fromAgent opens a clipboard transfer to the page as the agent would and
-// sends its header; verdict resolves with the page's answer.
-function fromAgent(size) {
-  const page = new FakeChannel('bulk');
-  const agent = new FakeChannel('bulk');
-  page.peer = agent;
-  agent.peer = page;
-  page.readyState = agent.readyState = 'open';
-  const verdict = new Promise((resolve) => agent.addEventListener('message', (e) => resolve(JSON.parse(e.data)), { once: true }));
-  acceptBulk(page);
-  agent.send(JSON.stringify({ t: 'header', kind: CLIP_KIND, size }));
-  return { agent, verdict };
-}
+// clipFromAgent opens a clipboard transfer of size bytes to the page as
+// the agent would and sends its header.
+const clipFromAgent = (size) => fromAgent({ kind: CLIP_KIND, size });
 
 test('what the host copied reaches the browser in chunks', async () => {
   const html = `<p>${'robin '.repeat(20000)}</p>`;
   const bytes = encodeClip({ text: 'robin', html });
-  const t = fromAgent(bytes.length);
+  const t = clipFromAgent(bytes.length);
   const sum = new Sum(bytes.length);
   for (let at = 0; at < bytes.length; at += 64 * 1024) {
     const chunk = bytes.slice(at, at + 64 * 1024);
@@ -62,17 +51,18 @@ test('what the host copied reaches the browser in chunks', async () => {
 
 test('headers alone reserve no memory, and a third transfer at once is refused', async () => {
   const before = process.memoryUsage().arrayBuffers;
-  const held = [fromAgent(CLIP_LIMIT), fromAgent(CLIP_LIMIT)];
-  for (let i = 0; i < 20; i++) await later();
+  const held = [clipFromAgent(CLIP_LIMIT), clipFromAgent(CLIP_LIMIT)];
+  // The third is refused only once the two before it hold their places,
+  // so by then their sinks are what they are.
+  const third = await clipFromAgent(CLIP_LIMIT).verdict;
+  assert.equal(third.t, 'error');
+  assert.match(third.error, /too many clipboard transfers under way/);
   const grew = process.memoryUsage().arrayBuffers - before;
   assert.ok(grew < 1024 * 1024, `two headers took ${grew} bytes`);
 
-  const third = await fromAgent(CLIP_LIMIT).verdict;
-  assert.equal(third.t, 'error');
-  assert.match(third.error, /too many clipboard transfers under way/);
   for (const t of held) t.agent.close();
-  for (let i = 0; i < 20; i++) await later();
-  const empty = fromAgent(0);
+  await until('both channels closed at the page', () => held.every((t) => t.page.readyState === 'closed'));
+  const empty = clipFromAgent(0);
   empty.agent.send(JSON.stringify(new Sum(0).end()));
   assert.deepEqual(await empty.verdict, { t: 'done' });
 });
@@ -134,7 +124,7 @@ test('a host copy reaches the browser as text where rich content cannot go', asy
 // copyFromHost sends clip to the page as the agent sends a host copy.
 async function copyFromHost(clip) {
   const bytes = encodeClip(clip);
-  const t = fromAgent(bytes.length);
+  const t = clipFromAgent(bytes.length);
   const sum = new Sum(bytes.length);
   sum.add(bytes);
   t.agent.send(bytes);
