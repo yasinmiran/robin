@@ -259,6 +259,39 @@ body:has(#hud[data-state="reconnecting"]) #wire { opacity: 1; }
 .section { margin-top: 6px; }
 .section:empty { display: none; }
 
+/* The microphone and camera switches. Off they sit back like the other
+   icons; on they say so in ink with a red dot, the sign of a live device. */
+.devices { display: flex; gap: 6px; margin-left: -6px; }
+.device {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px 0 7px;
+  color: var(--ink-soft);
+  background: none;
+  border: 1px solid var(--veil-edge);
+  border-radius: 7px;
+  font: inherit;
+  cursor: pointer;
+}
+.device:hover { color: var(--ink); background: var(--veil-edge); }
+.device:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.device svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.device .live { display: none; width: 6px; height: 6px; border-radius: 50%; background: var(--down); }
+.device[data-state="on"] { color: var(--ink); }
+.device[data-state="on"] .live { display: block; }
+.device[data-state="starting"] { color: var(--wait); }
+.device[data-state="blocked"] { color: var(--down); }
+
 .notice {
   max-width: 42ch;
   margin: 6px 0 4px;
