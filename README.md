@@ -240,8 +240,9 @@ OpenSSH and a browser that decodes H.264 in WebRTC, on one of:
   (`ssh.exe` on `PATH`). It has no ControlMaster, so the CLI runs the probe,
   the upload, the agent and the tunnel as an ssh each, and each logs in on
   its own: with a key or `ssh-agent` that goes unnoticed, while a password or
-  2FA prompt comes three times a session, five when the agent is uploaded. The tunnel listens on a loopback TCP
-  port, as Windows' OpenSSH forwards no unix sockets. `make dist` builds
+  2FA prompt comes three times a session, five when the agent is uploaded.
+  The tunnel's forward listens on a loopback TCP port, as Windows' OpenSSH
+  forwards no unix sockets. `make dist` builds
   `robin-windows-amd64.exe` and `robin-windows-arm64.exe`; the page opens in
   the default browser.
 - **Android**, in [Termux](https://termux.dev) with its `openssh` package:
@@ -322,22 +323,28 @@ Input from the page is limited to what a keyboard, a pointer and a clipboard
 can do in that session. Text from an input method or a soft keyboard types
 what keys could type: through spare keycodes on X11 and, on Wayland, as
 keysyms for ASCII and as a paste for the rest. That paste puts the text on
-the desktop's clipboard for about a second, where any program on the desktop
-can read it and a clipboard manager there keeps it in its history, before
-the clipboard gets back the text it held. The agent also listens for bulk transfers from the
-page, but takes only kinds a feature has registered, and no feature has yet,
-so it refuses every one.
+the desktop's clipboard for about a second, where any program on the
+desktop can read it, before the clipboard gets back your text, or empty
+text where it held none (an image, or nothing); a clipboard manager there
+reads the paste as it would any copy and keeps it in its history. The
+agent also listens for bulk transfers from the page, but takes only kinds a
+feature has registered, and no feature has yet, so it refuses every one.
 
 One exposure is on the client side: to open your browser the CLI hands the
 page URL, token included, to `open`, `xdg-open`, `rundll32` on Windows or
 `termux-open-url` on Android, so for that moment another user logged in to
 the same client machine could read it from the process list. On a shared
-client, use `--no-browser` and open the printed URL yourself. Without
-ControlMaster (Windows, or `--ssh-mux=false`) the ICE-TCP tunnel's client end
-is a loopback TCP port rather than a socket in a private directory, so
-another user of the client machine can connect to it; what answers is the
-agent's ICE-TCP listener, which takes nothing without the session's ICE
-credentials, and the DTLS fingerprint is pinned as before.
+client, use `--no-browser` and open the printed URL yourself. The ICE-TCP
+tunnel's client end, where the browser connects, is a loopback TCP port in
+every mode, so another user of the client machine can connect to it too;
+what answers is the agent's ICE-TCP listener through SSH, which takes
+nothing without the session's ICE credentials, and the DTLS fingerprint is
+pinned as before. Behind that port the SSH forward is a unix socket in a
+private directory, with ControlMaster or without, except on Windows, whose
+OpenSSH forwards no unix sockets: there it is a second loopback port, which
+ssh binds only once it has logged in. The CLI uses it only once the
+system's table of listeners shows ssh holding it, so another user who
+takes the port first gets the tunnel refused, not connected to them.
 
 ## Testing
 
@@ -512,7 +519,9 @@ to print the comparison the ADR quotes.
   keyboard has no Ctrl, Alt, Esc or arrow keys to send.
 - The Android client has been checked in Chrome's phone emulation only, and
   the Windows client in cross-builds, `go vet` and the `nomux` scenario's
-  forced mode on Linux. Neither has run on the real thing.
+  forced mode on Linux. Neither has run on the real thing; in particular
+  the check that ssh holds the forward's port on Windows has run only in
+  its Linux form, against `/proc`.
 - Without ControlMaster a dropped network ends the session when the agent's
   connection goes quiet for its idle timeout, not at once, and every
   `LocalForward` in your ssh config for that host comes up with the
