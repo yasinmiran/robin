@@ -73,9 +73,7 @@ type Options struct {
 // Camera is the browser's camera as a device on the host. It is there,
 // black, from Start until Close; Play shows the browser's pictures on it.
 type Camera struct {
-	// Where says which device it is: the v4l2loopback path, or PipeWire.
-	Where string
-
+	where  string
 	log    *slog.Logger
 	sink   frameWriter
 	frames chan frame // fitted, for the writer
@@ -124,11 +122,9 @@ func Start(o Options) (*Camera, error) {
 			return nil, err
 		}
 	}
-	dec, err := h264.NewDecoder()
-	if err != nil {
+	if err := haveDecoder(); err != nil {
 		return nil, err
 	}
-	dec.Close()
 	where := o.Device
 	if where == "" {
 		where = "PipeWire"
@@ -142,9 +138,19 @@ func Start(o Options) (*Camera, error) {
 	return c, nil
 }
 
+// haveDecoder fails when this build has no openh264, before a child is
+// started for a camera that could show nothing.
+func haveDecoder() error {
+	d, err := h264.NewDecoder()
+	if err == nil {
+		d.Close()
+	}
+	return err
+}
+
 func newCamera(sink frameWriter, where string, log *slog.Logger) *Camera {
 	c := &Camera{
-		Where: where, log: log, sink: sink,
+		where: where, log: log, sink: sink,
 		frames: make(chan frame, 1), free: make(chan frame, 3),
 		stop: make(chan struct{}), done: make(chan struct{}),
 	}
@@ -154,6 +160,10 @@ func newCamera(sink frameWriter, where string, log *slog.Logger) *Camera {
 	go c.write()
 	return c
 }
+
+// Where names what carries the camera on the host, for Ready: the
+// v4l2loopback device's path, or PipeWire.
+func (c *Camera) Where() string { return c.where }
 
 // write hands frames to the device, and black while there are none.
 func (c *Camera) write() {

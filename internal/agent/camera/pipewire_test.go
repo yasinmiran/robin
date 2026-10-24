@@ -27,7 +27,7 @@ func TestMain(m *testing.M) {
 			os.Stdout.WriteString("error: " + err.Error() + "\n")
 			os.Exit(1)
 		}
-		os.Stdout.WriteString("ready " + c.Where + "\n")
+		os.Stdout.WriteString("ready " + c.Where() + "\n")
 		select {}
 	}
 	os.Exit(m.Run())

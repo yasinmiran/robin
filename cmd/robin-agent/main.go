@@ -147,7 +147,6 @@ func newCamera(_ context.Context, o agent.CameraOptions) (agent.Camera, error) {
 type cam struct{ *camera.Camera }
 
 func (c cam) Play(r agent.RTPReader, keyframe func()) error { return c.Camera.Play(r, keyframe) }
-func (c cam) Where() string                                 { return c.Camera.Where }
 
 func hardware(o *hwenc.Opener) agent.NewEncoderFunc {
 	return func(width, height, fps, bitrate int) (agent.Encoder, error) {

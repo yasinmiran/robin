@@ -209,8 +209,8 @@ func TestStartRunsThePipeline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Where != "/dev/video42" {
-		t.Errorf("Where = %q", c.Where)
+	if c.Where() != "/dev/video42" {
+		t.Errorf("Where = %q", c.Where())
 	}
 	waitFor(t, "a black frame", func() bool {
 		fi, err := os.Stat(filepath.Join(dir, "frames"))
@@ -234,7 +234,7 @@ func TestStartRunsThePipeline(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	if c.Where != "PipeWire" {
-		t.Errorf("Where = %q", c.Where)
+	if c.Where() != "PipeWire" {
+		t.Errorf("Where = %q", c.Where())
 	}
 }
