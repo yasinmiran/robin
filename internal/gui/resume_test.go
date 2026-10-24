@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -85,6 +86,7 @@ func TestServeArgs(t *testing.T) {
 		{serveArgs{verbose: true, keep: 8 * time.Hour, detach: "setsid"}, "/a serve -v -keep 8h0m0s"},
 		{serveArgs{keep: time.Minute, detach: "systemd-run"}, "/a serve -keep 1m0s -detach systemd-run"},
 		{serveArgs{verbose: true, keep: time.Hour, resume: "ab12"}, "/a serve -v -resume ab12"},
+		{serveArgs{detach: "systemd-run"}, "/a serve"},
 	} {
 		if got := strings.Join(tc.a.list("/a"), " "); got != tc.want {
 			t.Errorf("%+v: %q, want %q", tc.a, got, tc.want)
@@ -138,10 +140,12 @@ func TestSessionNotes(t *testing.T) {
 	}
 }
 
-// fakeHostAgent is the agent's end of the proxy's pipes.
+// fakeHostAgent is the agent's end of the proxy's pipes. exit stands for
+// the proxy process going away.
 type fakeHostAgent struct {
 	conn  *protocol.Conn
 	outW  io.Closer
+	exit  func()
 	calls chan protocol.Message
 }
 
@@ -149,11 +153,14 @@ func agentOverPipes(t *testing.T) (*agentProc, *fakeHostAgent) {
 	t.Helper()
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
+	exited := make(chan struct{})
+	var exitOnce sync.Once
+	exit := func() { exitOnce.Do(func() { close(exited) }) }
 	a := &agentProc{
 		conn:  protocol.NewConn(outR, inW, 0, 0),
-		stdin: inW, wait: func() error { return nil }, log: &tail.Buffer{Max: 1024},
+		stdin: inW, exited: exited, log: &tail.Buffer{Max: 1024},
 	}
-	f := &fakeHostAgent{conn: protocol.NewConn(inR, outW, 0, 0), outW: outW, calls: make(chan protocol.Message, 8)}
+	f := &fakeHostAgent{conn: protocol.NewConn(inR, outW, 0, 0), outW: outW, exit: exit, calls: make(chan protocol.Message, 8)}
 	go func() {
 		for {
 			m, err := f.conn.Recv(context.Background())
@@ -166,6 +173,7 @@ func agentOverPipes(t *testing.T) (*agentProc, *fakeHostAgent) {
 	t.Cleanup(func() {
 		inW.Close()
 		outW.Close()
+		exit()
 	})
 	return a, f
 }
@@ -219,6 +227,17 @@ func TestAgentBye(t *testing.T) {
 	dead.stdin.Close()
 	if dead.bye() {
 		t.Fatal("bye confirmed on a dead connection")
+	}
+	// A proxy whose pipe took the bye but which then dies is not waited
+	// out: the wait ends with the process.
+	dying, dyingHost := agentOverPipes(t)
+	go func() {
+		<-dyingHost.calls
+		dyingHost.exit()
+	}()
+	start := time.Now()
+	if dying.bye() || time.Since(start) > 3*time.Second {
+		t.Fatalf("bye on a dying proxy: confirmed or waited %s", time.Since(start))
 	}
 	var none *agentProc
 	if none.bye() {

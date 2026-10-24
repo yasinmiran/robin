@@ -121,7 +121,7 @@ func (p *page) closed() {
 func testBridge(t *testing.T) (*bridge, *web.Server, context.Context) {
 	t.Helper()
 	s, ctx := testServer(t)
-	b := newBridge(relay.New(relay.Policy{Transport: relay.Direct}),
+	b := newBridge(nil, relay.New(relay.Policy{Transport: relay.Direct}),
 		protocol.Config{ICEServers: []protocol.ICEServer{}, Keep: 60}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	go b.accept(ctx, s)
 	t.Cleanup(b.close)

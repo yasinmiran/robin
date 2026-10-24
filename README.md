@@ -260,7 +260,9 @@ The measurements and the reasons behind the design are in the
 ## What the client needs
 
 macOS or Linux with OpenSSH (ControlMaster support, so not the Windows
-build), and a browser that decodes H.264 in WebRTC. What the end-to-end
+build) and `/bin/sh`, which starts the ssh master with Ctrl+C ignored so the
+keystroke ends the session through Robin rather than by cutting the
+connection, and a browser that decodes H.264 in WebRTC. What the end-to-end
 tests prove for each:
 
 - **Chrome** runs every scenario: picture, input, latency, sound,

@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/yasinmiran/robin/internal/gui"
 	"github.com/yasinmiran/robin/internal/protocol"
@@ -76,7 +77,7 @@ func runGUI(args []string) int {
 	hidpi := fs.Bool("hidpi", false, "size the remote display in device pixels: sharper on HiDPI screens, more to encode (raise --max-size to go native)")
 	encoder := fs.String("encoder", protocol.EncoderAuto, "video encoder on the host: auto (the GPU where the host has one and it pays, else software), software, vaapi or nvenc")
 	stun := fs.String("stun", defaultSTUN, `comma-separated STUN servers for NAT traversal, or "none"`)
-	keep := fs.Duration("keep", gui.KeepDefault, fmt.Sprintf("how long the host keeps a desktop after the connection drops or the page detaches, for robin gui to resume (default %s for a desktop robin started, 0 with --attach)", protocol.DefaultKeep))
+	keep := fs.String("keep", "", fmt.Sprintf("how long the host keeps a desktop after the connection drops or the page detaches, for robin gui to resume: a duration such as 8h, or 0 (default %s for a desktop robin started, 0 with --attach)", protocol.DefaultKeep))
 	resume := fs.String("id", "", "resume the kept session with this id (default: the one kept session, when there is one)")
 	fresh := fs.Bool("new", false, "start a new desktop even when a kept session could be resumed")
 	listen := fs.String("listen", "127.0.0.1:0", "loopback address for the browser page")
@@ -116,8 +117,9 @@ func runGUI(args []string) int {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-	if *keep < 0 && *keep != gui.KeepDefault {
-		return fail(fmt.Errorf("bad --keep %s: want a duration such as 8h, or 0", *keep))
+	keepFor, err := parseKeep(*keep)
+	if err != nil {
+		return fail(err)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
@@ -125,7 +127,7 @@ func runGUI(args []string) int {
 		Dest: dest, SSHPath: *sshPath, SSHArgs: sshArgs,
 		Transport: t, MaxWidth: w, MaxHeight: h, FPS: *fps, MaxKbps: *maxKbps,
 		Session: *session, Attach: *attach, Monitor: *monitor, Audio: *audio, Encoder: *encoder, HiDPI: *hidpi, STUN: parseSTUN(*stun),
-		Keep: *keep, Resume: *resume, New: *fresh,
+		Keep: keepFor, Resume: *resume, New: *fresh,
 		Listen: *listen, NoBrowser: *noBrowser, Verbose: *verbose,
 		Stdout: os.Stdout, Stderr: os.Stderr, Log: log,
 	})
@@ -193,6 +195,18 @@ func parseSize(s string) (int, int, error) {
 		return 0, 0, fmt.Errorf("bad size %q, want WxH such as 1920x1080", s)
 	}
 	return w, h, nil
+}
+
+// parseKeep reads --keep: empty leaves the choice to the desktop's mode.
+func parseKeep(s string) (time.Duration, error) {
+	if s == "" {
+		return gui.KeepDefault, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("bad --keep %q: want a duration such as 8h, or 0", s)
+	}
+	return d, nil
 }
 
 func parseSTUN(s string) []string {

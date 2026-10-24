@@ -61,8 +61,10 @@ type bridge struct {
 	events chan error
 }
 
-func newBridge(r *relay.Relay, config protocol.Config, log *slog.Logger) *bridge {
-	return &bridge{relay: r, config: config, log: log, events: make(chan error, 2)}
+// newBridge makes a bridge whose first agent connection is agent, so a page
+// that connects before run begins is not left without one.
+func newBridge(agent signaling, r *relay.Relay, config protocol.Config, log *slog.Logger) *bridge {
+	return &bridge{agent: agent, relay: r, config: config, log: log, events: make(chan error, 2)}
 }
 
 // accept takes pages as they connect, one at a time, for the life of ctx.

@@ -191,7 +191,7 @@ func Run(ctx context.Context, o Options) (err error) {
 	}
 	fmt.Fprintf(o.Stderr, "robin: %s; press Ctrl+C to end the session\n", sessionNote(o.Dest, ready))
 
-	b := newBridge(relay.New(relay.Policy{Transport: o.Transport, TunnelPort: t.Port()}),
+	b := newBridge(ag.conn, relay.New(relay.Policy{Transport: o.Transport, TunnelPort: t.Port()}),
 		protocol.Config{ICEServers: iceServers(start.STUN), HiDPI: o.HiDPI, Keep: ready.Keep}, log)
 	go b.accept(ctx, srv)
 	defer b.close()
@@ -318,13 +318,17 @@ func (h *host) end(ag *agentProc, ready *protocol.Ready, path string, o Options)
 	} else {
 		err = errors.New("the connection is gone")
 	}
-	if err != nil {
+	if err != nil && !errors.Is(err, errNoSession) {
 		h.close()
 		var m *sshmux.Master
 		if m, err = sshmux.Dial(ctx, o.Dest, sshmux.Options{SSHPath: o.SSHPath, Args: o.SSHArgs, Stderr: o.Stderr}); err == nil {
 			h.m = m
 			err = endSession(ctx, m, path, ready.ID)
 		}
+	}
+	if errors.Is(err, errNoSession) {
+		// The bye got through after all, and the session is gone.
+		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("could not end session %s on %s: %w\nit ends by itself at %s; robin end %s ends it sooner",
@@ -569,9 +573,10 @@ func iceServers(stun []string) []protocol.ICEServer {
 type agentProc struct {
 	conn  *protocol.Conn
 	stdin io.WriteCloser
-	wait  func() error
-	log   *tail.Buffer // the end of the agent's stderr
-	once  sync.Once
+	// exited closes when the proxy's ssh process is gone.
+	exited <-chan struct{}
+	log    *tail.Buffer // the end of the agent's stderr
+	once   sync.Once
 }
 
 // serveArgs are the flags of robin-agent serve.
@@ -590,9 +595,13 @@ func (a serveArgs) list(path string) []string {
 	if a.resume != "" {
 		return append(args, "-resume", a.resume)
 	}
-	if a.keep > 0 {
-		args = append(args, "-keep", a.keep.String())
+	if a.keep <= 0 {
+		// A session that ends with its controller needs no way out of the
+		// login session, and systemd-run would cost it the login's
+		// environment, which attaching to a desktop lives on.
+		return args
 	}
+	args = append(args, "-keep", a.keep.String())
 	if a.detach != "" && a.detach != "setsid" {
 		args = append(args, "-detach", a.detach)
 	}
@@ -618,9 +627,14 @@ func startAgent(ctx context.Context, m *sshmux.Master, path string, args serveAr
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start agent: %w", err)
 	}
+	exited := make(chan struct{})
+	go func() {
+		cmd.Wait()
+		close(exited)
+	}()
 	return &agentProc{
 		conn:  protocol.NewConn(stdout, stdin, protocol.DefaultPingInterval, protocol.DefaultIdleTimeout),
-		stdin: stdin, wait: cmd.Wait, log: logTail,
+		stdin: stdin, exited: exited, log: logTail,
 	}, nil
 }
 
@@ -701,7 +715,8 @@ func readyWait(start, now time.Time, secs int) time.Duration {
 
 // bye ends the session over the live connection and reports whether the
 // agent confirmed before the connection went: a bye that reached the host
-// needs no second trip.
+// needs no second trip. The wait ends with the proxy process, since a
+// write into a dying ssh's pipe can succeed and never arrive.
 func (a *agentProc) bye() bool {
 	if a == nil {
 		return false
@@ -712,6 +727,13 @@ func (a *agentProc) bye() bool {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	go func() {
+		select {
+		case <-a.exited:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
 	ended := false
 	for !ended {
 		m, err := a.conn.Recv(ctx)
@@ -732,10 +754,8 @@ func (a *agentProc) stop() {
 	}
 	a.once.Do(func() {
 		a.stdin.Close()
-		done := make(chan struct{})
-		go func() { a.wait(); close(done) }()
 		select {
-		case <-done:
+		case <-a.exited:
 		case <-time.After(5 * time.Second):
 		}
 		a.conn.Close()
@@ -754,13 +774,17 @@ func (a *agentProc) explain(err error) error {
 	return err
 }
 
+// errNoSession is endSession's answer when the host has no such session
+// any more.
+var errNoSession = errors.New("no such session on the host")
+
 // endSession runs the agent's end command for session id over m.
 func endSession(ctx context.Context, m *sshmux.Master, path, id string) error {
-	out, err := m.Output(ctx, sshmux.Quote(path, "end", id), nil)
-	if err != nil {
-		return fmt.Errorf("%w%s", err, strings.TrimSpace(string(out)))
+	_, err := m.Output(ctx, sshmux.Quote(path, "end", id), nil)
+	if err != nil && strings.Contains(err.Error(), "no session") {
+		return fmt.Errorf("%w: %v", errNoSession, err)
 	}
-	return nil
+	return err
 }
 
 // tunnel is the client end of the ICE-TCP fallback: a loopback TCP listener

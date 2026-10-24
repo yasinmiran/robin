@@ -743,8 +743,8 @@ keeps the reflex and moves it one process out.
   its stderr, so the CLI's "agent log:" on an error reads as before.
 - Leaving the SSH session: the daemon is started with `setsid`, stdio on
   `/dev/null` and SIGHUP ignored, which is enough wherever logind leaves
-  user processes alone on logout, the upstream default and that of every
-  distribution the probe fixtures cover. `KillUserProcesses=yes` kills the
+  user processes alone on logout, the upstream default (`logind.conf(5)`:
+  "Defaults to no"). `KillUserProcesses=yes` kills the
   whole session scope regardless of process sessions, so there the probe
   (busctl's live answer, else the last `logind.conf` setting read) makes
   the CLI ask for `systemd-run --user`, a transient unit outside the scope.
@@ -789,9 +789,13 @@ keeps the reflex and moves it one process out.
   to ssh as well: OpenSSH's sessions over the master die of it, but the
   master itself keeps an inherited SIGINT ignore, so the master is started
   through `sh -c 'trap "" INT; exec ssh ...'` and the CLI runs the agent's
-  end command over it when bye got no answer; only when the master is gone
+  end command over it when bye got no answer (a bye that did arrive leaves
+  no session to end, which counts as done); only when the master is gone
   too does it dial once more, bounded to 30 s, and failing that it names
-  the time the host lets the desktop go.
+  the time the host lets the desktop go. In the e2e teardown after the
+  resume, the bye's answer was lost with the session's ssh, the end command
+  over the surviving master found the session already gone, and the CLI
+  exited 0 in 399 ms with one `connecting` line in its whole log.
 - Measured in the `resume` e2e scenario on 2026-10-24: killing the host's
   sshd children drops every connection at once, the page shows
   Reconnecting 5 ms later and is connected again 263 ms after the cut on
@@ -799,7 +803,8 @@ keeps the reflex and moves it one process out.
   changed against the frame saved before the cut. The `rejoin` scenario
   kills the CLI outright, resumes from a new `robin gui`, detaches from the
   page and ends with `robin end`, leaving no process or directory behind.
-  In test-x the daemon ends 4.0 to 4.4 s after a 4 s keep window opened.
+  In test-x a session with a 2 s keep window was gone, run directory and
+  Xvfb included, 2.10 s after its controller left.
 
 ## Verification parked
 

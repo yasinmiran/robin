@@ -3,6 +3,9 @@ package main
 import (
 	"slices"
 	"testing"
+	"time"
+
+	"github.com/yasinmiran/robin/internal/gui"
 )
 
 func TestParseSize(t *testing.T) {
@@ -20,6 +23,23 @@ func TestParseSize(t *testing.T) {
 				t.Errorf("%q accepted", bad)
 			}
 		})
+	}
+}
+
+func TestParseKeep(t *testing.T) {
+	if d, err := parseKeep(""); err != nil || d != gui.KeepDefault {
+		t.Errorf("empty: %v, %v", d, err)
+	}
+	if d, err := parseKeep("90m"); err != nil || d != 90*time.Minute {
+		t.Errorf("90m: %v, %v", d, err)
+	}
+	if d, err := parseKeep("0"); err != nil || d != 0 {
+		t.Errorf("0: %v, %v", d, err)
+	}
+	for _, bad := range []string{"-1h", "soon", "8"} {
+		if _, err := parseKeep(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
 	}
 }
 

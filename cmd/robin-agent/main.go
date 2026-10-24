@@ -113,11 +113,12 @@ func serve(args []string) int {
 	return 0
 }
 
-// daemonEnv is what a daemon under systemd-run needs from this environment:
-// where tools are, and where a coverage build writes.
+// daemonEnv is what a daemon under systemd-run needs from this environment,
+// which its unit does not inherit: where tools, the home and the runtime
+// directory are, the locale, and where a coverage build writes.
 func daemonEnv() []string {
 	var env []string
-	for _, name := range []string{"PATH", "GOCOVERDIR"} {
+	for _, name := range []string{"PATH", "HOME", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "LANG", "GOCOVERDIR"} {
 		if v, ok := os.LookupEnv(name); ok {
 			env = append(env, name+"="+v)
 		}
