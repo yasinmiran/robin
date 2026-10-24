@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jezek/xgb/xproto"
+
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
@@ -285,4 +287,86 @@ func TestClipboardRichContent(t *testing.T) {
 	}
 	xclip(t, tx, "after the big one", "-i")
 	expectContent(t, c, protocol.Clip{Text: "after the big one"})
+}
+
+// peerAtom interns name on the test's own connection.
+func peerAtom(t *testing.T, tx *testX, name string) xproto.Atom {
+	t.Helper()
+	r, err := xproto.InternAtom(tx.peer, false, uint16(len(name)), name).Reply()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r.Atom
+}
+
+// askClipboard asks for CLIPBOARD as target, at time at, from a window of
+// the test's own, and returns the property the owner answered in: 0 for a
+// refusal.
+func askClipboard(t *testing.T, tx *testX, target xproto.Atom, at xproto.Timestamp) xproto.Atom {
+	t.Helper()
+	win, err := xproto.NewWindowId(tx.peer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := xproto.CreateWindowChecked(tx.peer, 0, win, tx.root, 0, 0, 1, 1, 0, xproto.WindowClassInputOnly, 0, 0, nil).Check(); err != nil {
+		t.Fatal(err)
+	}
+	defer xproto.DestroyWindow(tx.peer, win)
+	xproto.ConvertSelection(tx.peer, win, peerAtom(t, tx, "CLIPBOARD"), target, peerAtom(t, tx, "_ROBIN_TEST_PASTE"), at)
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case ev := <-tx.events:
+			if n, ok := ev.(xproto.SelectionNotifyEvent); ok && n.Requestor == win {
+				return n.Property
+			}
+		case <-deadline:
+			t.Fatal("the clipboard owner never answered")
+			return 0
+		}
+	}
+}
+
+// ICCCM asks an owner to refuse a request older than its ownership. And a
+// request from the agent's own window, as a read of a host copy makes when
+// the page's paste lands first, must not start an INCR transfer to that
+// window: nothing moves it on, and once it expires the window hears no
+// property changes, so every later paste from the page fails.
+func TestClipboardRefusesStaleAndOwnRequests(t *testing.T) {
+	if _, err := exec.LookPath("xclip"); err != nil {
+		t.Skip("no xclip")
+	}
+	// Set before the event loop starts, put back after it ends.
+	incrTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { incrTimeout = 30 * time.Second })
+	tx := startX(t, "sleep 1000")
+	c := tx.c
+	clip := protocol.Clip{Text: "served", PNG: pngLike(3 << 20)} // INCR, as in TestClipboardRichContent
+	if err := c.SetClipboardContent(clip); err != nil {
+		t.Fatal(err)
+	}
+	text := peerAtom(t, tx, "UTF8_STRING")
+	c.clip.mu.Lock()
+	since := c.clip.since
+	c.clip.mu.Unlock()
+	if prop := askClipboard(t, tx, text, since-1000); prop != 0 {
+		t.Error("a request from before the agent took the clipboard was answered")
+	}
+	if prop := askClipboard(t, tx, text, xproto.TimeCurrentTime); prop == 0 {
+		t.Error("a request at CurrentTime was refused")
+	}
+
+	xproto.ConvertSelection(tx.peer, c.clip.win, peerAtom(t, tx, "CLIPBOARD"), peerAtom(t, tx, protocol.MIMEPNG),
+		peerAtom(t, tx, "_ROBIN_TEST_SELF"), xproto.TimeCurrentTime)
+	time.Sleep(3 * incrTimeout)
+	// A big paste elsewhere drops the transfers that expired meanwhile.
+	if out, err := xclipCmd(tx, "-o", "-t", "image/png").Output(); err != nil || !bytes.Equal(out, clip.PNG) {
+		t.Errorf("image/png = %d bytes (%v), want %d", len(out), err, len(clip.PNG))
+	}
+	if err := c.SetClipboardContent(protocol.Clip{Text: "after"}); err != nil {
+		t.Fatalf("setting the clipboard once the agent asked itself: %v", err)
+	}
+	if got := xclip(t, tx, "", "-o"); got != "after" {
+		t.Errorf("xclip -o = %q, want %q", got, "after")
+	}
 }

@@ -5,6 +5,7 @@ package x11
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -26,12 +27,14 @@ const (
 	// handOffTimeout bounds how long Close waits for a clipboard manager to
 	// copy what we hold.
 	handOffTimeout = time.Second
-	// incrTimeout is how long an INCR transfer to another client may wait
-	// for it to take the next chunk before it is dropped as abandoned.
-	incrTimeout = 30 * time.Second
 	// maxIncr bounds the INCR transfers in flight at once.
 	maxIncr = 16
 )
+
+// incrTimeout is how long an INCR transfer to another client may wait for
+// it to take the next chunk before it is dropped as abandoned. A variable
+// so that a test can set it before a connection's event loop starts.
+var incrTimeout = 30 * time.Second
 
 // clipboard owns CLIPBOARD from a hidden window when the browser sets it, and
 // reads it whenever another client becomes the owner. The event loop calls
@@ -238,10 +241,22 @@ func (cb *clipboard) onProperty(e xproto.PropertyNotifyEvent) {
 		default:
 		}
 	case cb.a.data:
-		if cb.reading != nil && cb.reading.incr != nil {
-			cb.readChunk(cb.reading)
+		if r := cb.current(); r != nil && r.incr != nil {
+			cb.readChunk(r)
 		}
 	}
+}
+
+// current is the copy being read, unless the agent has taken the clipboard
+// since, which leaves that copy stale and drops it.
+func (cb *clipboard) current() *reading {
+	cb.mu.Lock()
+	owned := cb.owned
+	cb.mu.Unlock()
+	if owned {
+		cb.reading = nil
+	}
+	return cb.reading
 }
 
 func (cb *clipboard) onClear(e xproto.SelectionClearEvent) {
@@ -291,23 +306,15 @@ func (cb *clipboard) next(r *reading) {
 // its text targets, HTML and PNG. TEXT is left out, since it may come as
 // COMPOUND_TEXT.
 func (cb *clipboard) wanted(offered []xproto.Atom) []xproto.Atom {
-	has := func(a xproto.Atom) bool {
-		for _, o := range offered {
-			if o == a {
-				return true
-			}
-		}
-		return false
-	}
 	var out []xproto.Atom
 	for _, a := range []xproto.Atom{cb.a.utf8, cb.a.plain, xproto.AtomString} {
-		if has(a) {
+		if slices.Contains(offered, a) {
 			out = append(out, a)
 			break
 		}
 	}
 	for _, a := range []xproto.Atom{cb.a.html, cb.a.png} {
-		if has(a) {
+		if slices.Contains(offered, a) {
 			out = append(out, a)
 		}
 	}
@@ -341,8 +348,11 @@ func (cb *clipboard) onNotify(e xproto.SelectionNotifyEvent) {
 		}
 		return
 	}
-	r := cb.reading
-	if e.Requestor != cb.win || e.Selection != cb.a.clipboard || r == nil || e.Target != r.target {
+	if e.Requestor != cb.win || e.Selection != cb.a.clipboard {
+		return
+	}
+	r := cb.current()
+	if r == nil || e.Target != r.target {
 		return
 	}
 	if e.Property == 0 {
@@ -354,7 +364,7 @@ func (cb *clipboard) onNotify(e xproto.SelectionNotifyEvent) {
 		cb.next(r)
 		return
 	}
-	reply, err := xproto.GetProperty(cb.x, true, cb.win, cb.a.data, xproto.GetPropertyTypeAny, 0, uint32(MaxClipboard-r.size)/4+1).Reply()
+	reply, err := xproto.GetProperty(cb.x, true, cb.win, cb.a.data, xproto.GetPropertyTypeAny, 0, uint32(max(0, MaxClipboard-r.size))/4+1).Reply()
 	if err != nil {
 		cb.reading = nil
 		return
@@ -439,16 +449,22 @@ func (cb *clipboard) targetsOf(clip protocol.Clip) []xproto.Atom {
 	return list
 }
 
-// onRequest serves what we hold to another client.
+// onRequest serves what we hold to another client. It refuses, as ICCCM
+// asks, a request from before we took the selection, and one from our own
+// window: that is a read of a foreign copy our own content overtook, and
+// served by INCR it would stall, since only another window's deletes move
+// a transfer on.
 func (cb *clipboard) onRequest(e xproto.SelectionRequestEvent) {
 	prop := e.Property
 	if prop == 0 { // pre-ICCCM requestor
 		prop = e.Target
 	}
 	cb.mu.Lock()
-	owned, content := cb.owned, cb.content
+	owned, since, content := cb.owned, cb.since, cb.content
 	cb.mu.Unlock()
-	if e.Selection != cb.a.clipboard || e.Owner != cb.win || !owned || !cb.answer(e, prop, content) {
+	stale := e.Time != xproto.TimeCurrentTime && int32(e.Time-since) < 0
+	if e.Selection != cb.a.clipboard || e.Owner != cb.win || e.Requestor == cb.win || !owned || stale ||
+		!cb.answer(e, prop, content) {
 		prop = 0 // refusal
 	}
 	ev := xproto.SelectionNotifyEvent{
@@ -527,9 +543,13 @@ func (cb *clipboard) sendChunk(k incrKey) {
 }
 
 // dropIncr forgets an INCR transfer, and stops listening to its window's
-// properties when no other transfer goes there.
+// properties when no other transfer goes there. Our own window keeps
+// listening whatever happens: its timestamps and reads depend on it.
 func (cb *clipboard) dropIncr(k incrKey) {
 	delete(cb.sending, k)
+	if k.win == cb.win {
+		return
+	}
 	for other := range cb.sending {
 		if other.win == k.win {
 			return
