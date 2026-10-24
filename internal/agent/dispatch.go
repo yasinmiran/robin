@@ -3,6 +3,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/yasinmiran/robin/internal/agent/peer"
@@ -57,10 +58,15 @@ func init() {
 }
 
 // control applies one message from the browser; types nobody handles are
-// ignored, as from a newer page.
+// ignored, as from a newer page. Input waits behind text being typed.
 func (s *session) control(m protocol.Control) {
-	if h := controlHandlers[m.T]; h != nil {
+	h := controlHandlers[m.T]
+	switch {
+	case h == nil:
+	case !afterText[m.T]:
 		h(s, m)
+	case !s.typing.do(func(context.Context) { h(s, m) }, false):
+		s.log.Warn("input dropped: typing has fallen behind", "type", m.T)
 	}
 }
 

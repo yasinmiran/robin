@@ -237,6 +237,7 @@ type session struct {
 	cert   *webrtc.Certificate
 	audio  bool
 	stream *stream
+	typing lane
 
 	mu   sync.Mutex
 	peer *peer.Peer
@@ -357,7 +358,9 @@ func (s *session) closePeer() {
 		return
 	}
 	s.stream.setPeer(nil)
-	// Whatever the departing browser held down must not stay pressed.
+	// Whatever the departing browser held down must not stay pressed, nor
+	// what it typed last go on typing.
+	s.typing.discard()
 	s.desk.Input(protocol.Control{T: protocol.ControlRelease})
 	p.Close()
 }
