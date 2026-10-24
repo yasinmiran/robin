@@ -93,7 +93,8 @@ The X11 scenarios of `tests/gui.spec.ts` also check, in this order:
    noise played on the host with `paplay` through the session's sound server
    raises Chrome's `totalAudioEnergy`. Nothing wrote to `~/.config/pulse`.
 9. **Transport**: per the table above, from `robin.stats()`.
-10. **Input method** (Chrome only): with the xterm clicked, `echo `, then what
+10. **Input method** (Chrome only; in `restart` it runs before the transport
+   check): with the xterm clicked, `echo `, then what
    Chrome sends for an input method (a `Process` key, a composition that the
    page shows under its status tab, and the committed `日本語ü`), then
    ` > /tmp/robin-e2e-ime-<scenario>` and Enter, writes `日本語ü` to that
