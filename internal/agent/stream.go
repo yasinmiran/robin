@@ -64,6 +64,8 @@ type stream struct {
 	// scale is how frames are shrunk on their way out, nil while they go
 	// out at desktop size.
 	scale atomic.Pointer[scale]
+	// tiles is what the page asked for in its latest ControlTiles.
+	tiles atomic.Bool
 }
 
 // scale is a desktop size and the smaller one its frames are encoded at.
@@ -88,9 +90,13 @@ func newStream(desk desktop.Desktop, fps, maxW, maxH int, newEncoder NewEncoderF
 }
 
 func (s *stream) setPeer(p *peer.Peer) {
+	s.tiles.Store(false)
 	s.peer.Store(p)
 	s.keyframe.Store(true)
 }
+
+// wantTiles applies the page's ControlTiles.
+func (s *stream) wantTiles(on bool) { s.tiles.Store(on) }
 
 func (s *stream) requestKeyframe() { s.keyframe.Store(true) }
 
@@ -112,6 +118,8 @@ func (s *stream) run(ctx context.Context) {
 		began          = time.Now()
 		lastWrite      time.Time
 		lastKey        time.Time
+		sharp          = newTiles(s.log)
+		sharpFor       sharpState
 	)
 	closeEncoder := func() {
 		if enc != nil {
@@ -120,6 +128,7 @@ func (s *stream) run(ctx context.Context) {
 		}
 	}
 	defer closeEncoder()
+	defer sharp.close()
 
 	for {
 		select {
@@ -140,8 +149,15 @@ func (s *stream) run(ctx context.Context) {
 			s.log.Warn("capture", "err", err)
 			continue
 		}
+		tiles := sharpFor.apply(sharp, p, s.tiles.Load(), f)
 		if !changed && !force && !stale && !refresh {
+			if tiles {
+				sharp.cut(p, now)
+			}
 			continue
+		}
+		if tiles {
+			sharp.update(f, now)
 		}
 		w, h := f.Width&^1, f.Height&^1
 		// An I420 desktop already delivers frames at the size it was asked for.
@@ -206,9 +222,55 @@ func (s *stream) run(ctx context.Context) {
 		if !lastWrite.IsZero() {
 			d = min(max(now.Sub(lastWrite), interval/2), time.Second)
 		}
+		rtp, manifest := uint32(0), false
+		if tiles {
+			if rtp, manifest = p.NextFrameRTP(); manifest {
+				if err := p.SendControl(sharp.manifest(rtp)); err != nil {
+					// The page must never see a later manifest without
+					// this one: a new grid drops whatever it holds.
+					s.log.Debug("tile manifest", "err", err)
+					sharp.reset()
+					manifest = false
+				}
+			}
+		}
 		if err := p.WriteFrame(au, d); err != nil {
 			s.log.Debug("write frame", "err", err)
 		}
 		lastWrite = now
+		if manifest {
+			sharp.wrote(rtp)
+			sharp.cut(p, now)
+		}
 	}
+}
+
+// sharpState is what the stream's tiles were last set up for: the peer,
+// whether that page asked for them, and whether it has been answered.
+type sharpState struct {
+	peer     *peer.Peer
+	on       bool
+	answered bool
+}
+
+// apply follows the page's request for tiles: any change of peer or of
+// request starts the tiles afresh, and the page hears once whether this
+// desktop can have them. It reports whether f gets tiles.
+func (st *sharpState) apply(t *tiles, p *peer.Peer, want bool, f *desktop.Frame) bool {
+	if p != st.peer || want != st.on {
+		t.reset()
+		*st = sharpState{peer: p, on: want}
+	}
+	if !st.on || f == nil {
+		return false
+	}
+	ok := f.Format == desktop.BGRX
+	if !st.answered {
+		answer := protocol.Tiles{On: ok}
+		if !ok {
+			answer.Unsupported = errNoTiles
+		}
+		st.answered = p.SendControl(protocol.Control{T: protocol.ControlTiles, Tiles: &answer}) == nil
+	}
+	return ok
 }
