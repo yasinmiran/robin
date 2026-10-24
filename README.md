@@ -322,6 +322,8 @@ last run, which only main does. `make cover-unit cover-report` gives a quick
 look without containers. A suite that fails still hands in what it
 covered, and `make cover` fails after the report.
 
+The docs website in `site/` builds and tests apart from these, with Node and npm: see [site/README.md](site/README.md).
+
 `make test-wayland` boots three desktops, each in its own container with a
 virtual monitor, PipeWire and the desktop's own portal: mutter 46 on Ubuntu
 24.04, mutter 49 on Fedora 43, and kwin_wayland 6.7 with
