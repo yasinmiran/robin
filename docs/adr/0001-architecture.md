@@ -691,7 +691,9 @@ Flow control is the WebRTC kind on both sides. A sender stops queuing at
 1 MiB of `bufferedAmount` and goes on at 256 KiB, on `bufferedamountlow`,
 and it wakes on a close or a cancel as well: Pion drops the low-water
 callback once a channel is closing, so a sender that waited for that alone
-would hang (`TestBulkCancelWhileBlocked` closes the far end mid-wait). The page hashes as it goes with its own
+would hang (`TestBulkCancelWhileBlocked` closes the far end mid-wait). A
+credit window from the receiver has since replaced these marks; see
+[Transport](#transport-the-target-held-through-a-still-screen-sound-first-bulk-under-the-target). The page hashes as it goes with its own
 SHA-256, because Web Crypto digests a whole buffer at once and a file can be
 bigger than the page can hold. That code is checked against `node:crypto`
 at every length across the padding boundaries and in random pieces, and
@@ -713,7 +715,10 @@ knowing: Pion gives an association one receive window for all its channels,
 so a sink on the agent that stopped reading held a control message back for
 as long as the probe waited, 3 s, and a sink has to keep up or fail the
 transfer rather than stall it. Its commit and abort run on the same read
-loop and stall everything the same way.
+loop and stall everything the same way. Both couplings are gone: bulk from
+the agent is paced under the target, and every transfer has a credit
+window that keeps a stalled one from filling the association; see
+[Transport](#transport-the-target-held-through-a-still-screen-sound-first-bulk-under-the-target).
 
 ### Features register what they handle
 
@@ -1329,9 +1334,9 @@ Three changes:
   unrepaired and keyframes still overflowing, 1 s held scrolling back by
   0.76 s on average, and 500 ms left 8 with the longest freeze 0.33 s.
   This replaces the decision to send unpaced: what Pion's pacer did wrong
-  was the unbounded queue, and this one has a bound. Opus packets share
-  the queue, so a keyframe can hold sound back by as much; nobody has
-  listened for it yet.
+  was the unbounded queue, and this one has a bound. Opus packets shared
+  the queue, so a keyframe could hold sound back by as much; they now go
+  ahead of it, see [Transport](#transport-the-target-held-through-a-still-screen-sound-first-bulk-under-the-target).
 - The NACK history held 512 packets, half a second at 10 Mbit/s, while
   Chrome asks for a packet for about a second; it holds 4096.
 - When a NACK names a packet the responder no longer holds or that is
@@ -1410,8 +1415,8 @@ kbit/s. In some runs a still stretch with a little jitter took the target
 from about 3 Mbit/s to 1.2, or on the lossy link to 0.3, so the first
 seconds of motion after a pause came at that rate until the target climbed
 back. The 1080p lossy run above is one. Pion has no notion of being
-limited by the application, and the agent does not pad; it is in the
-README's Known limits.
+limited by the application, and the agent does not pad. The agent now
+holds the target through such spells; see [Transport](#transport-the-target-held-through-a-still-screen-sound-first-bulk-under-the-target).
 
 ### Microphone and camera: the browser's devices as the host's own
 
@@ -1668,6 +1673,210 @@ The switches change on a goroutine of their own. Control messages arrive on
 Pion's read loop, and loading a module or waiting for `pw-record`'s output
 to appear takes up to a few hundred milliseconds that every data channel
 would otherwise wait out.
+
+### Transport: the target held through a still screen, sound first, bulk under the target
+
+[Video in motion](#video-in-motion-measured-against-a-stand-in-for-chrome)
+left three things to the transport: the first motion after a still screen
+came at a fraction of the link, sound waited behind keyframes in the pacer,
+and bulk ran unpaced beside the video. A fourth, the hardware encoders, had
+never been through its harness.
+
+**The after-still clip.** `TestVideoQualityAfterStill` scrolls at 1080p
+for 8 s, until congestion control has settled, sits still and scrolls again,
+with sound (240-byte packets every 20 ms, Opus at its 96 kbit/s) playing
+throughout, and compares the first second of the second scroll with the
+last 4 s of the first. The stand-in browser now takes a sound track too and
+records when each packet arrives. `make test` runs it over the tight link
+with 20 s still; `TestVideoQualityAfterStillMatrix` (`ROBIN_VQ=1`) runs a
+minute still over every link, as the agent does now and as it did before
+each change below.
+
+It found two failures where the report had one. Pion's rate controller
+raises its target 8% a second whenever it hears no overuse, and caps the
+rise at 1.5 times the received rate only while that rate is above the
+target, so over a still screen the target climbed to the 10 Mbit/s ceiling
+within 20 s. On the tight link the first second of motion then showed
+almost nothing: 0 of 30 pictures in a run without sound and 2 of 30 with
+it, sent against targets of 6.7 and 7.2 Mbit/s on a 4 Mbit/s link. On the
+fast and lossy links the same climb happened not to hurt. The collapse of
+the report came in the other runs, where GCC answered a hint of overuse by
+dropping to 0.85 times a received rate that a sender with nothing to send
+had set: with sound playing, Pion's rate window holds the sound's
+100 kbit/s and the refreshes, a few hundred kbit/s, the size of the 0.3 to
+1.2 Mbit/s targets the report saw.
+
+**Held, and probed by the next frames.** libwebrtc tells such spells
+apart with its AlrDetector: a budget fills at 65% of the target over a
+500 ms window, every byte sent spends from it, and the sender is
+application limited while more than 80% of it is unspent, until less than
+50% is. Pion has nothing like it, and no way to hand its estimator a
+probe's result, which is how libwebrtc corrects an estimate when a spell
+ends. The agent has the detector, over every packet its pacer is given,
+and keeps the browser's feedback from GCC for as long as a spell lasts
+(`internal/agent/peer/estimator.go`). GCC then hears nothing it could
+mislead itself with, and its whole state, target, delay filter and loss
+average, stays where the spell found it. When the screen moves again the
+frames go out at that target, and once the spell has ended their feedback
+reaches GCC, which answers an overflow at once and from a rate a full
+sender delivered: the probe on the way out is the motion itself. Padding
+probes were the other way, as libwebrtc's periodic ALR probes for screen
+share do; they cost the link all along a still screen, and Pion would have
+read them through the same rate window that misled it.
+
+The detector differs from libwebrtc's in two places, both found by the
+clip. libwebrtc's budget goes as far below empty as above, so a sender that
+filled the target is limited 0.9 s after it goes quiet, and in that time GCC
+held the target 16% above where the scroll had settled in one run over the
+tight link, which the motion after the spell then overflowed; the agent's
+budget stops at empty, and a quiet sender is limited 0.4 s later. And at a
+low target one refresh of the still picture empties the budget, which
+ended the spell and let that burst's feedback in: in one run the target
+moved four times over a still screen, from 1.09 to 0.93 Mbit/s. A spell
+now ends only once the budget has stayed under half for 0.3 s, longer than
+a single burst can hold it there (it refills past half within 0.25 s), so
+motion ends a spell 0.76 s after it starts.
+
+Over a shaped 3 Mbit/s link
+(`TestCongestionControlHoldsThroughAStillScreen`), 20 s of a still screen
+with a 20 KB refresh every 500 ms took the target from 2.69 to 8 Mbit/s
+before, and from 2.67 to 2.72 now; the first second of motion delivered
+2.70 Mbit/s. Narrowed from 3 to 1 Mbit/s while the screen
+was still (`TestCongestionControlProbesOnTheWayOut`), the motion after the
+spell went out at the held 2.77 Mbit/s and the target was down to 0.88
+1.1 s into it: that second is what a link that shrank under a still screen
+costs. The minute-still matrix, first second of the second scroll against
+the settled end of the first (pictures shown of 30, target, PSNR):
+
+| link | before: first second | now: first second | now: settled |
+|---|---|---|---|
+| fast | 30, 10 Mbit/s, 51.5 dB | 30, 3.8 Mbit/s, 51.4 dB | 30, 3.2 Mbit/s, 50.6 dB |
+| lossy | 30, 8.2 Mbit/s, 51.4 dB | 30, 3.4 Mbit/s, 50.6 dB | 30, 3.1 Mbit/s, 50.4 dB |
+| tight | 2, 7.2 Mbit/s, 45.7 dB | 21, 4.0 Mbit/s, 47.7 dB | 30, 3.6 Mbit/s, 47.5 dB |
+
+Over the tight link the spell began at 4.0 Mbit/s, above the settled 3.6
+and, with sound beside it, above the link: the motion found that out, at
+the cost of 9 of its first 30 frames.
+
+Two things in that second are not the transport's. GCC's target saws by
+15% at a time on a link it fills, so a spell can begin at a low of the
+saw. And after some spells openh264's rate control skips every other frame
+for about a second, at QP 35 where the settled scroll had QP 18, at about
+the same target; in three of eight 20 s runs over the tight link. The
+check in `make test` allows for both: it fails under a third of the settled
+frame rate or half the settled target.
+
+**Sound ahead of video.** The pacer sent everything in the order it was
+given, so an Opus packet waited behind a queued keyframe for up to the
+pacer's bound. Sound now goes out at once and is charged to the burst
+allowance, so the queue behind it waits that much longer. One-way delay of
+the sound over the minute-still clip, median, 99th percentile and longest,
+with sound queued behind the video and then ahead of it:
+
+| link | behind the video | ahead of it |
+|---|---|---|
+| fast | 17, 149, 517 ms | 17, 19, 20 ms |
+| lossy | 23, 157, 555 ms | 23, 28, 29 ms |
+| tight | 31, 299, 623 ms | 31, 125, 131 ms |
+
+Over the tight link what is left is the link's own 100 ms buffer, which
+the pacer cannot jump. The first try sent sound ahead and did nothing else,
+and GCC's loss estimate averaged 40 to 57% on the fast link, which loses
+0.1%, and its target fell from 2 to 0.25 Mbit/s within seconds. The
+transport-wide sequence numbers are stamped before the pacer, so a sound
+packet sent ahead of a keyframe arrived numbered above packets still to
+come, and the browser's feedback reports a number that arrives after a
+higher one as lost. libwebrtc numbers packets as the pacer sends them; the
+agent's pacer now hands out the numbers it was given, smallest first, as
+packets leave (`transportSeqs`), and the loss went back to what the link
+lost.
+
+**Bulk: a credit window, and paced under the target.** Every bulk channel
+shares one SCTP association with the control channel. A sink that stopped
+taking chunks let its transfer fill the association's receive buffer, and
+everything else, the keyboard included, waited on that sink.
+`TestBulkLeavesControlLiveBehindAStalledSink` stalls a 16 MiB transfer's
+sink each way and sends control messages beside it: without a window none
+arrived within 3 s, either way. Now the receiver grants credit as its sink
+takes chunks, a window of 512 KiB past what it took, granted again each
+time half of it has been taken, and the sender sends nothing past the
+latest credit; the messages arrived in 0.2 to 0.3 ms. The page also fails a
+transfer that runs past its credit, which it would otherwise have to hold
+in memory, since a page cannot stop a data channel reading. The agent's
+receive buffer was raised from Pion's 1 MiB, two stalled windows, to eight
+of them and room for control. The window bounds a transfer to its size per
+round trip, about 40 Mbit/s over 100 ms, which the paced direction reaches
+only above a 40 Mbit/s target and the unpaced one, uploads, only on fast
+long paths. With the credit bounding what waits in a channel, the
+buffered-amount waits went. In process, 8 MiB from the browser's side to
+the agent's took 189 ms with the window (115 to 150 ms before), and 5 MiB
+from Chrome 150 ms (170 to 360 before), CPU bound either way.
+
+GCC sees RTP only, and SCTP's own congestion control fills a bottleneck's
+queue, which GCC reads as congestion. Before, over the shaped 3 Mbit/s link
+(`TestBulkSharesTheLinkWithVideo`), a 2 MiB transfer took 8.9 s at
+1.89 Mbit/s while the video got 0.94 Mbit/s, its target fell to 0.74 and
+needed 13 s to get back to 80%. Bulk from the agent now takes what the
+media leaves of the target, by a 500 ms average of what the pacer was
+given, and never less than a quarter of the target, so a transfer moves
+while the screen fills the link; transfers at once share that allowance in
+the order they ask. A chunk is 20 ms of it, from 4 to 64 KiB: at 3 Mbit/s a
+64 KiB chunk sent at once is 175 ms of the link, more than the tight link
+buffers. Now, with the screen moving, the same transfer took 29.6 s at
+0.57 Mbit/s and the video kept 2.27 Mbit/s, its target never under 2.0; with
+the screen still it took 7.2 s at 2.35 Mbit/s and the target did not move.
+A quarter is a judgment: on a remote desktop the picture moving under your
+hand comes first, and a transfer still finishes. The cost is that bulk
+cannot learn the link beyond the target: with the target held on a still
+screen, a download that starts before anything has moved goes at the
+2 Mbit/s the session started with, and none goes past the `--max-kbps`
+ceiling on a faster link. Uploads stay unpaced, since the page has no
+target to go by; they are bounded by the window only. In `make e2e`, keys
+typed in the direct and attach scenarios while a 256 MiB upload moved showed
+in 22 to 36 and 7 to 18 ms, against 8 to 31 and 13 to 36 ms for the
+still-screen latency test of the same runs. That check passes without the
+window too, since the host's sink keeps up; the stalled-sink test is the
+one that failed.
+
+**The hardware encoders in the matrix.** The `vaapi` variant of
+`ROBIN_VQ=all` streams every cell of the matrix through the host's VA-API
+route, as `--encoder vaapi` does; on this workstation's iGPU that is
+`vaapih264enc` through GStreamer 1.20, on its render node, which needs no
+display. It encoded every frame, 30 fps through scrolling, dragging and
+video where openh264 managed 3 to 30, but spent a third of its target:
+662 to 670 kbit/s in every cell against 2 to 2.6 Mbit/s, where openh264
+spent 1.1 to 1.5 Mbit/s. VBR at 70% of the peak is what the hardware is
+asked for (above); on screen content this iGPU delivers far less. The
+picture paid, over the whole clip:
+
+| | openh264 | `vaapih264enc` |
+|---|---|---|
+| 1080p, fast, lossy, tight | 45.4, 43.9, 41.7 dB | 37.2, 37.2, 36.8 dB |
+| 1440p shown at 1080p | 26.3, 26.3, 26.2 dB | 26.0 dB on every link |
+| 1440p | 43.6, 38.8, 39.0 dB | 32.4, 32.6, 32.6 dB |
+| worst tile during video, 1080p and 1440p | 0.41 to 0.52 | 0.06 to 0.16 |
+
+A still screen stays at the hardware's first picture, 34 dB at 1080p
+against openh264's 52, since its refreshes do not sharpen it. The numbers
+back what `auto` does: it keeps 1080p and 1440p in software where the CPU
+can afford it, and takes the GPU only where openh264 cannot keep up, for
+frame rate at the cost of sharpness. A higher VBR average, or CBR held
+under the frame budget, is worth running through the same variant before
+`auto` reaches for the GPU more often. NVENC has no hardware here (see
+Verification parked).
+
+**What is left.** Bulk from the agent cannot find capacity beyond the
+video's target, as GCC cannot see it; counting it as sent would have let
+the target grow under a transfer, but GCC's next decrease would then come
+from the RTP alone, a fraction of what the link carried. libwebrtc probes
+the link when a call starts and Pion does not, so a session starts at
+2 Mbit/s and its target grows only while the screen moves, 8% a second.
+Over the still seconds a session starts with, GCC used to climb toward the
+ceiling, which helped on a fast link and overflowed a slow one; now the
+first motion of a session goes at 2 Mbit/s, which in the matrix's 1440p
+cell over the fast link was a scroll at 11 fps. A link that narrows under a still screen is overflowed for
+about a second when motion resumes. And the first second after some
+spells is openh264's rate control at half the frame rate.
 
 ## Verification parked
 
