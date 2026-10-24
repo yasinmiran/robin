@@ -21,15 +21,20 @@ import (
 
 // fakeSink records what a Mic writes, and can be held up to fill the queue.
 type fakeSink struct {
-	mu     sync.Mutex
-	writes [][]byte
-	hold   chan struct{} // writes wait for it to close, when set
-	fail   error
-	closed bool
+	mu      sync.Mutex
+	writes  [][]byte
+	hold    chan struct{} // writes wait for it to close, when set
+	holding chan struct{} // gets one value for each write that waits
+	fail    error
+	closed  bool
 }
 
 func (s *fakeSink) write(b []byte) error {
 	if s.hold != nil {
+		select {
+		case s.holding <- struct{}{}:
+		default:
+		}
 		<-s.hold
 	}
 	s.mu.Lock()
@@ -52,9 +57,11 @@ func (s *fakeSink) count() int {
 }
 
 func TestMicQueueDropsWhenTheServerIsBehind(t *testing.T) {
-	sink := &fakeSink{hold: make(chan struct{})}
+	sink := &fakeSink{hold: make(chan struct{}), holding: make(chan struct{}, 1)}
 	m := newMic(sink, "test", quiet())
-	for i := range micQueue + 5 {
+	m.enqueue([]int16{0, -1})
+	<-sink.holding
+	for i := 1; i < micQueue+5; i++ {
 		m.enqueue([]int16{int16(i), -1})
 	}
 	// One piece is with the held writer, micQueue wait, the rest are gone.
