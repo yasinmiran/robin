@@ -1,0 +1,20 @@
+#!/bin/bash
+# What the room in front of robin's own desktop (robin-live) sees and hears:
+#   robin-room brightness   the brightness xrandr reads off its screen's gamma: 0.0 is black
+#   robin-room loudness     the RMS of a second of what its speakers, the sink desk, play
+set -eu
+
+DISPLAY=$(<"$HOME/.robin-live/display")
+export DISPLAY XAUTHORITY=$HOME/.Xauthority XDG_RUNTIME_DIR=/run/user/$(id -u)
+case ${1:-} in
+  brightness) xrandr --verbose | sed -n 's/^[[:space:]]*Brightness: *//p' | head -n1 ;;
+  loudness)
+    # head ends parec early, which is the point; its SIGPIPE is not a failure.
+    { parec --raw --format=s16le --rate=8000 --channels=1 --device=desk.monitor 2>/dev/null || true; } | head -c 16000 |
+      od -An -v -td2 | awk '{ for (i = 1; i <= NF; i++) { s += $i * $i; n++ } } END { print int(sqrt(s / (n ? n : 1))) }'
+    ;;
+  *)
+    echo "usage: robin-room brightness|loudness" >&2
+    exit 2
+    ;;
+esac

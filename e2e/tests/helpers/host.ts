@@ -91,7 +91,7 @@ export async function setClipboard(text: string): Promise<void> {
 // leftovers lists session processes still running as robin. The bracketed
 // patterns keep pgrep from matching the remote shell that carries them.
 export async function leftovers(): Promise<string> {
-  const r = await sshRaw(`pgrep -u robin -fa '[X]vfb|[r]emotejump-agent|[o]penbox|[x]term|[p]ulseaudio'`);
+  const r = await sshRaw(`pgrep -u robin -fa '[X]vfb|[r]obin-agent|[o]penbox|[x]term|[p]ulseaudio'`);
   if (r.code > 1) throw new Error(`pgrep: exit ${r.code}: ${r.stderr.trim()}`);
   return r.stdout.trim();
 }
@@ -99,15 +99,23 @@ export async function leftovers(): Promise<string> {
 export const blockUdp = () => ssh('robin-block-udp');
 
 // liveState describes robin's own desktop (host/robin-live): its processes,
-// autorepeat and keymaps. liveBefore is the same, saved before the CLI ran.
+// autorepeat, keymaps, gamma and sinks. liveBefore is the same, saved before the CLI ran.
 export const liveState = () => ssh('robin-live state');
 export const liveBefore = () => ssh('robin-live before');
 
 // agentLeftovers lists agents still running as robin, and run dirs they left.
 export async function agentLeftovers(): Promise<string> {
-  const r = await sshRaw(`pgrep -u robin -fa '[r]emotejump-agent'; find ~/.cache/robin/run -mindepth 1 -maxdepth 1 2>/dev/null`);
+  const r = await sshRaw(`pgrep -u robin -fa '[r]obin-agent'; find ~/.cache/robin/run -mindepth 1 -maxdepth 1 2>/dev/null`);
   return r.stdout.trim();
 }
+
+// roomBrightness is the brightness of robin's own desktop's screen gamma as
+// xrandr reads it (host/robin-room): 0 is black, about 1 is lit.
+export const roomBrightness = async () => Number(await ssh('robin-room brightness'));
+
+// roomLoudness is the RMS of a second of what robin's own desktop's
+// speakers play.
+export const roomLoudness = async () => Number(await ssh('robin-room loudness'));
 
 // playNoise plays seconds of white noise into the session's sound server,
 // as a program on the remote desktop would, and resolves when it ends.

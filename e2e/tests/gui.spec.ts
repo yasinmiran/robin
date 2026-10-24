@@ -498,6 +498,65 @@ if (SCENARIO === 'attach') {
     await pointerLands(100, 100, { x: 100, y: 100 });
   });
 
+  test('private: the CLI tells the user the room sees the session, and how to stop that', async () => {
+    expect(cli!.stderrTail()).toContain('--curtain blacks out the screen and --silent keeps the speakers quiet');
+  });
+
+  // flip clicks a private session switch in the status tab and waits for
+  // the agent to report it switched.
+  const flip = async (key: 'curtain' | 'silent', on: boolean) => {
+    await page.mouse.move(300, 4); // near the top edge, where the status tab comes out
+    const sw = page.locator(`[data-switch="${key}"]`);
+    await expect(sw, `the ${key} switch`).toBeVisible();
+    await sw.click();
+    await expect(sw, `the ${key} switch, as the agent reports it`).toHaveAttribute('aria-checked', String(on), { timeout: 10_000 });
+    await expect(sw).toHaveAttribute('aria-busy', 'false');
+    await expect(page.locator('.switch-error'), 'an error under the switches').toHaveCount(0);
+  };
+
+  test('private: the curtain blacks out the host screen while the page still shows it', async () => {
+    await expect
+      .poll(() => page.evaluate(() => (window as any).robin.private), { message: 'the page was told the private session' })
+      .toEqual({ curtain: {}, silent: {} });
+    expect(await host.roomBrightness(), 'the host screen before').toBeGreaterThan(0.5);
+    await flip('curtain', true);
+    await expect.poll(host.roomBrightness, { message: 'the host screen with the curtain drawn' }).toBe(0);
+    if (PICTURE) {
+      await host.retitleTerminal(); // something new to draw, past the curtain
+      await expect.poll(async () => isNonBlack(await sampleFrame(page, SCREEN)), { message: 'the picture in the page' }).toBe(true);
+    }
+    await flip('curtain', false);
+    await expect.poll(host.roomBrightness, { message: 'the host screen once lifted' }).toBeGreaterThan(0.5);
+  });
+
+  test('private: the silent room keeps the host speakers quiet while the page still plays the sound', async ({}, testInfo) => {
+    const energy = () =>
+      page.evaluate(async () => {
+        let e = 0;
+        (await ((window as any).robin.pc as RTCPeerConnection).getStats()).forEach((s: any) => {
+          if (s.type === 'inbound-rtp' && s.kind === 'audio') e = s.totalAudioEnergy ?? 0;
+        });
+        return e;
+      });
+    expect(await page.evaluate(() => (window as any).robin.muted), 'the speaker, on since the sound test').toBe(false);
+    await flip('silent', true);
+    const before = await energy();
+    const playing = host.playNoise(12);
+    await expect.poll(energy, { message: 'totalAudioEnergy grows while the host plays noise', timeout: 15_000 }).toBeGreaterThan(before);
+    const quiet = await host.roomLoudness();
+    await flip('silent', false);
+    const loud = await host.roomLoudness();
+    testInfo.annotations.push({ type: 'room RMS', description: `silent ${quiet}, after ${loud}` });
+    expect(quiet, 'the host speakers while silent').toBeLessThan(50);
+    expect(loud, 'the host speakers once the room is no longer silent').toBeGreaterThan(1000);
+    await playing;
+    // Both on for the teardown below, which must give the room its screen
+    // and speakers back.
+    await flip('curtain', true);
+    await flip('silent', true);
+    expect(await host.roomBrightness(), 'the host screen before teardown').toBe(0);
+  });
+
   test('teardown: SIGINT ends the CLI and leaves the attached desktop as it found it', async ({}, testInfo) => {
     expect(await host.agentLeftovers(), 'the agent is visible before teardown').not.toBe('');
     const stop = await cli!.stop(10_000);
@@ -507,7 +566,7 @@ if (SCENARIO === 'attach') {
 
     const left = Math.max(1_000, 10_000 - stop.afterMs);
     await expect.poll(host.agentLeftovers, { message: 'agent processes and run dirs on the host', timeout: left }).toBe('');
-    // Same Xvfb, openbox and xterm, same size, autorepeat and keymaps.
+    // Same Xvfb, openbox and xterm, same size, autorepeat, keymaps, gamma and sinks.
     expect(await host.liveState()).toBe(await host.liveBefore());
     expect(cli!.extraStdout, 'stdout carries only the URL').toEqual([]);
   });
