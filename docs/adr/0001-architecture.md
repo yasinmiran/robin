@@ -716,11 +716,116 @@ remote media tracks to `Handlers.Track`, unset until the microphone and
 camera arrive. Protocol version 2 marks the change, so a CLI and an agent
 from either side of it refuse each other.
 
+### A private session: zero gamma, a silent output, and a keeper
+
+An attached desktop shows the session to whoever sits at it. `--curtain`
+and `--silent`, and the matching switches in the page, hide the picture and
+the sound from that room while the stream keeps both. Neither is on unless
+asked for, and neither exists for a spawned desktop.
+
+| Curtain | Verdict |
+|---|---|
+| A black window over every monitor | Capture reads the framebuffer, so the stream would be black as well. Rejected. |
+| DPMS off | Any input wakes the monitor, the session's own XTest events included, and no Wayland compositor lets a client switch it. Rejected. |
+| A gamma ramp of zeros on every CRTC | The CRTC applies gamma on the way to the monitor, after the framebuffer capture reads. RandR does it on X11, mutter's DisplayConfig on GNOME. **Chosen.** |
+
+The first step was to find an X server in podman that keeps ramps at all.
+Xvfb 21.1 on Ubuntu 24.04 does: RandR 1.5, one CRTC with a 256-entry ramp,
+RRSetCrtcGamma accepted and read back unchanged, so Xorg's dummy driver was
+never needed. Its ramps start as all zeros, which looks exactly like a drawn
+curtain, so every test and the e2e desktop set a lit ramp first. Nothing in
+a container shows a ramp on glass, though, and what real hardware does with
+it is in the parked list below.
+
+RandR sends no event when a ramp changes, and night light or a colour
+profile rewrites ramps whenever it likes. A drawn curtain reads every
+CRTC's ramp once a second, one round trip each, and darkens any that are not
+zero; a lit ramp it finds then becomes the one lifting restores, so the
+screen comes back with night light's newest colour rather than the one from
+before the session. The curtain has an X connection of its own and joins
+RandR on it by opcode only. `randr.Init` also rewrites xgb's global event and
+error tables, which the session's own connection reads on every event, and
+Go maps read and written at once can crash the process, not only fail a race
+test. The keeper, a process with one connection, runs the full Init.
+
+On GNOME under Wayland the same calls exist in mutter: GetCrtcGamma and
+SetCrtcGamma on `org.gnome.Mutter.DisplayConfig`, present in mutter 46.2 and
+49.8, the interface gnome-settings-daemon drove night light through. The
+attach decision above rejected mutter's own API because it takes the screen
+without asking. Gamma takes nothing, no portal offers it, and a black screen
+at the host is itself the notice that something is going on there, including
+the portal's sharing indicator, which goes black with the rest. Headless
+mutter lists no CRTCs at all, so test-wayland can only show the interface's
+shape and the "no screen" answer; the curtain's calls run against a stand-in
+on a private bus with mutter's signatures, refusing stale serials as mutter
+does. KWin 6.7 has nothing of the kind, and there the agent reports the
+curtain unavailable.
+
+| Silent room | Verdict |
+|---|---|
+| Mute the default output | Its monitor falls silent with it, and the mute is saved in the user's settings. Rejected. |
+| Make another output the default | The default is the user's configuration, and changing it is saved too. Rejected. |
+| An output of the agent's own, with every playback stream moved into it as it appears | The default never changes, and the session records the new output's monitor. **Chosen.** |
+
+The plan wanted the output owned by a child, `pipewiresrc mode=provide`, so
+that it disappears with the agent whatever happens. pipewiresrc has no `mode`
+property in PipeWire 1.0.5 (Ubuntu 24.04) or 1.4.11 (Fedora 43); only
+pipewiresink does. `pw-record` with `media.class=Audio/Sink` in its
+properties, writing to `/dev/null`, makes an output that pipewire-pulse lists
+with a monitor, and when the process is killed WirePlumber moves its streams
+back to the default output by itself. That is the owner where the host has
+`pw-record`. Elsewhere, PulseAudio or a PipeWire without PipeWire's tools
+(the Fedora test images), the output is a `module-null-sink` loaded over the
+protocol the agent already speaks, which pipewire-pulse accepts too and keeps
+after the loading client disconnects. On PulseAudio it gets `norewinds=1`,
+for the reason the private server does.
+
+Moves are remembered, and that decided how they are undone. WirePlumber
+0.4.17 writes `target=<output>` for the program into
+`~/.local/state/wireplumber/restore-stream` on every move, and deletes the
+entry when the stream moves to the default output; 0.5.14 wrote nothing.
+PulseAudio's `module-stream-restore` behaves like 0.4: after a move back to
+the default a program follows the default again
+(`TestSilentRoomLeavesPulseAudioNoPreference`). So the undo moves each stream
+back to the output it came from, by name, before the silent output goes,
+since letting the server rescue the streams would leave the silent output as
+each program's remembered choice. The session's own recording follows the
+silent output by opening a new record stream there and dropping the old one,
+not by moving itself: the PipeWire test caught a moved recording leaving a
+WirePlumber entry for robin. Streams moved out again from the host's sound
+settings are taken back, as the curtain takes back its ramps.
+
+A new stream is moved 81 to 85 ms after paplay starts on PulseAudio 16 and
+with `pw-record` on GNOME 46, and 173 ms through the module on PipeWire.
+The room's output heard silence throughout (RMS 0 in every run), since paplay
+has not been mixed yet by then; e2e measured RMS 0 at the room's speakers
+while silent and 4911 after the switch went off.
+
+Both changes have to come undone even when the agent is killed with
+SIGKILL, which runs no deferred cleanup. So a keeper, `robin-agent keeper`,
+runs as the agent's child in its own process group with SIGTERM as its
+parent-death signal and its stdin from the agent. Before each change the
+agent sends it a JSON line saying how to undo it (an id, a kind, the data:
+the ramps as found, the streams and where they came from), and after undoing
+a change itself it sends the id alone. When stdin closes or a signal comes,
+the keeper reads for 250 ms more, for a line written just before the agent
+died, then undoes what it still holds, newest first, each undo bounded by
+5 s. It starts with the first change, so a session that only watches runs
+none, and if it dies it is started again and handed everything held. That
+amends the rule that anything the agent starts dies with it: the keeper
+outlives the agent by as long as its undo takes.
+
+The switches change on a goroutine of their own. Control messages arrive on
+Pion's read loop, and loading a module or waiting for `pw-record`'s output
+to appear takes up to a few hundred milliseconds that every data channel
+would otherwise wait out.
+
 ## Verification parked
 
 Two checks were parked by decision on 2026-10-18. Both needed hardware the
 test workstation cannot offer without changes the owner chose to leave for
-later; the second has since been closed by hand.
+later; the second has since been closed by hand. A third, the curtain on a
+real screen, cannot run anywhere but at a screen someone is looking at.
 
 - NVENC on NVIDIA hardware. The workstation has an NVIDIA GPU and the 535
   driver's userspace, but no kernel module for its running kernel, and
@@ -736,3 +841,19 @@ later; the second has since been closed by hand.
   e2e suite still cannot check Safari's picture, because Playwright's Linux
   WebKit renders no remote WebRTC video, so a change to the page's video or
   input path needs this hand check again.
+- The curtain on real screens, parked by the plan on 2026-10-24. It is
+  verified on Xvfb, which keeps ramps but shows nothing, and against a
+  stand-in for mutter, since headless mutter has no CRTCs. Unknown: whether a
+  hardware cursor plane escapes the ramp and leaves the pointer visible,
+  whether night light visibly fights the once-a-second check, and whether
+  mutter applies SetCrtcGamma on real outputs at all. Only the owner checks
+  it, on his own screen, when he chooses to: from another machine, `robin gui
+  --attach auto --curtain workstation`, then look at every monitor, pointer
+  included; switch night light on while the curtain is drawn and watch for
+  flashes; lift the curtain from the page and check the colour returns;
+  draw it again, kill the agent on the workstation with `pkill -KILL -f
+  'robin-agent-.* serve'` and check the screens come back within a second.
+  The same with `--attach wayland` in a GNOME session, and with `--silent`
+  while something plays: the speakers stay quiet, the page plays it, and
+  afterwards `pactl get-default-sink` is unchanged and the program is back on
+  its output.
