@@ -497,3 +497,21 @@ func TestPrivateLeavesTheKeeperWhatItCannotUndo(t *testing.T) {
 		t.Fatalf("the keeper undid %q, want the curtain", u)
 	}
 }
+
+// A controller that resumes is told the private session as it is, not as
+// it was when the session began.
+func TestResumedReadyCarriesThePrivateSessionNow(t *testing.T) {
+	s := &session{private: &private{}}
+	ready := &protocol.Ready{ID: "ab12", Private: s.private.snapshot()}
+	s.private.state.Curtain.On = true
+	got := s.resumedReady(ready)
+	if !got.Resumed || got.ID != "ab12" || got.Private == nil || !got.Private.Curtain.On {
+		t.Errorf("resumed ready %+v, private %+v; want resumed with the curtain on", got, got.Private)
+	}
+	if ready.Resumed || ready.Private.Curtain.On {
+		t.Error("resuming changed the first Ready")
+	}
+	if got := (&session{}).resumedReady(ready); got.Private != nil {
+		t.Errorf("a spawned desktop's resumed ready has private %+v", got.Private)
+	}
+}

@@ -155,6 +155,16 @@ func (s *session) relay(ctx context.Context, conn *protocol.Conn, desktopDone <-
 	}
 }
 
+// resumedReady is ready as a controller that resumes gets it: marked
+// resumed, and with the private session as it is now, which the page may
+// have switched since the start.
+func (s *session) resumedReady(ready *protocol.Ready) *protocol.Ready {
+	r := *ready
+	r.Resumed = true
+	r.Private = s.private.snapshot()
+	return &r
+}
+
 // errKeepRanOut is linger's answer when the keep window closed with no
 // controller back.
 var errKeepRanOut = errors.New("agent: the keep window ran out")
@@ -213,9 +223,7 @@ func (s *session) linger(ctx context.Context, cs Controllers, ready *protocol.Re
 				continue
 			}
 			s.conn.cur.Store(a.conn)
-			resumed := *ready
-			resumed.Resumed = true
-			if err := a.conn.Send(protocol.Message{Type: protocol.TypeReady, Ready: &resumed}); err != nil {
+			if err := a.conn.Send(protocol.Message{Type: protocol.TypeReady, Ready: s.resumedReady(ready)}); err != nil {
 				return nil, err
 			}
 			s.log.Info("controller resumed the session")
