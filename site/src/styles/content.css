@@ -230,6 +230,10 @@
   .table-scroll {
     overflow-x: auto;
   }
+  /* Once scrolled, cells slide under the sticky first column: give it an edge. */
+  .table-wrap[data-scrolled] :is(th, td):first-child {
+    box-shadow: inset -1px 0 0 var(--border);
+  }
 
   /* Flag reference: a man page OPTIONS section, not a table. */
   .flags {

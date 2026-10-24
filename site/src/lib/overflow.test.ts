@@ -28,10 +28,12 @@ describe("watchOverflow", () => {
     const scroller = sized(document.createElement("pre"), { scrollWidth: 500 });
     const stop = watchOverflow(wrapper, scroller);
     expect(wrapper.dataset.overflow).toBe("more");
+    expect(wrapper.hasAttribute("data-scrolled")).toBe(false);
 
     scroller.scrollLeft = 200;
     scroller.dispatchEvent(new Event("scroll"));
     expect(wrapper.dataset.overflow).toBe("none");
+    expect(wrapper.hasAttribute("data-scrolled")).toBe(true);
 
     stop();
     scroller.scrollLeft = 0;
