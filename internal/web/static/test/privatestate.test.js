@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { request, settle, view } from '../privatestate.js';
+import { next, request, settle, view } from '../privatestate.js';
 
 test('a spawned desktop shows no switches', () => {
   assert.deepEqual(view(undefined), []);
@@ -43,4 +43,13 @@ test('a switch waits for the agent, and an answer or a failure ends the wait', (
 test('a request names the switch and the position', () => {
   assert.deepEqual(request('curtain', true), { t: 'curtain', on: true });
   assert.deepEqual(request('silent', undefined), { t: 'silent', on: false });
+});
+
+test('a click asks for the opposite of the last request, or of the agent', () => {
+  assert.equal(next('curtain', { curtain: {} }), true);
+  assert.equal(next('curtain', { curtain: { on: true } }), false);
+  assert.equal(next('curtain', null), true);
+  assert.equal(next('curtain', { curtain: {} }, { curtain: true }), false, 'a second click takes back the first');
+  assert.equal(next('curtain', { curtain: { on: true } }, { curtain: true }), false);
+  assert.equal(next('silent', { silent: { on: true } }, { curtain: true }), false, 'the other switch waits on its own');
 });

@@ -34,6 +34,13 @@ export function view(state, pending = {}) {
   });
 }
 
+// next is the position a click on a switch asks for: the opposite of the
+// one asked for last while the agent has yet to answer it, so a second click
+// takes back the first, and otherwise the opposite of the agent's.
+export function next(key, state, pending = {}) {
+  return !(key in pending ? pending[key] : Boolean(state?.[key]?.on));
+}
+
 // request is the control message that asks the agent for a switch.
 export function request(key, on) {
   return { t: key, on: Boolean(on) };

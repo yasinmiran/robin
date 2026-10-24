@@ -4,7 +4,7 @@
 // what was clicked.
 
 import { onControl } from './control.js';
-import { request, settle, view } from './privatestate.js';
+import { next, request, settle, view } from './privatestate.js';
 
 export class PrivateSwitches {
   #overlay;
@@ -32,7 +32,7 @@ export class PrivateSwitches {
   }
 
   #toggle(key) {
-    const on = !this.#state?.[key]?.on;
+    const on = next(key, this.#state, this.#pending);
     this.#pending[key] = on;
     this.#send(request(key, on));
     this.#render();
