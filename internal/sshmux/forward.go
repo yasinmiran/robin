@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"os/exec"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -41,8 +43,8 @@ func (f *Forward) Dial() (net.Conn, error) {
 // sockets, that ssh listens on a loopback TCP port instead, which any user
 // of this machine can connect to.
 func (m *Master) Forward(ctx context.Context, remote string) (*Forward, error) {
-	if remote == "" {
-		return nil, errors.New("sshmux: empty forward target")
+	if err := checkTarget(remote); err != nil {
+		return nil, err
 	}
 	if !m.mux {
 		return m.forwardOwn(ctx, remote)
@@ -52,6 +54,58 @@ func (m *Master) Forward(ctx context.Context, remote string) (*Forward, error) {
 		return nil, err
 	}
 	return &Forward{network: "unix", addr: sock}, nil
+}
+
+// checkTarget refuses a forward target that is neither host:port, with a
+// port of 1 to 65535 and brackets only around an IPv6 address, nor an
+// absolute unix socket path. ssh splits the -L spec at colons and takes
+// brackets and backslashes as quoting, so anything else would land in other
+// fields of the spec than the target's.
+func checkTarget(remote string) error {
+	malformed := fmt.Errorf("sshmux: malformed forward target %q: want host:port or an absolute socket path", remote)
+	if strings.HasPrefix(remote, "/") {
+		if strings.ContainsAny(remote, `:\`) {
+			return malformed
+		}
+		return nil
+	}
+	host, port, err := net.SplitHostPort(remote)
+	if err != nil {
+		return malformed
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 || strconv.Itoa(n) != port {
+		return malformed
+	}
+	if ip, err := netip.ParseAddr(host); err == nil {
+		if ip.Zone() != "" {
+			return malformed
+		}
+	} else if !hostname(host) {
+		return malformed
+	}
+	if net.JoinHostPort(host, port) != remote {
+		return malformed
+	}
+	return nil
+}
+
+// hostname reports whether s is made of DNS labels: letters, digits and
+// inner hyphens, joined by dots.
+func hostname(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, label := range strings.Split(s, ".") {
+		if label == "" || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, r := range label {
+			if !('a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9' || r == '-') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // ownArgs start an ssh that connects by itself, without a master. It reads

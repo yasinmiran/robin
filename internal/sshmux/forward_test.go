@@ -479,6 +479,46 @@ func TestForwardOverMaster(t *testing.T) {
 	}
 }
 
+// TestForwardRefusesAMalformedTarget: the target comes from the host, and
+// anything but host:port or an absolute socket path would be split by ssh
+// into other fields of the -L spec. It is refused before ssh runs, with a
+// master or without.
+func TestForwardRefusesAMalformedTarget(t *testing.T) {
+	dir := t.TempDir()
+	ran := filepath.Join(dir, "ran")
+	tripwire := filepath.Join(dir, "ssh")
+	if err := os.WriteFile(tripwire, []byte("#!/bin/sh\ntouch "+ran+"\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	masters := map[string]*Master{
+		"master":    {ssh: tripwire, dest: "host", dir: dir, ctl: filepath.Join(dir, "ctl"), mux: true},
+		"no master": {ssh: tripwire, dest: "host", dir: dir, freeAddr: freeLoopbackAddr, done: make(chan struct{})},
+	}
+	for name, m := range masters {
+		for _, remote := range []string{
+			"", "a:b:c", "/run/x:1", "[::1]:22:3", "host:0", "127.0.0.1:70000", "127.0.0.1:022",
+			"[127.0.0.1]:1", "127.0.0.1:", ":22", "relative/x.sock", `/run/back\slash`, "[fe80::1%eth0]:22",
+			"-oProxyCommand=x:22", "host name:22", `h\ost:22`, "127.0.0.1:22 ",
+		} {
+			_, err := m.Forward(t.Context(), remote)
+			if err == nil || !strings.Contains(err.Error(), "malformed forward target") {
+				t.Errorf("%s: Forward(%q) = %v, want it refused as malformed", name, remote, err)
+			}
+		}
+	}
+	if _, err := os.Stat(ran); err == nil {
+		t.Error("ssh ran for a malformed target")
+	}
+}
+
+func TestCheckTargetTakesWhatTheAgentSends(t *testing.T) {
+	for _, remote := range []string{"127.0.0.1:41234", "[::1]:22", "localhost:22", "lab-node.example:65535", "/run/user/1000/robin/ice.sock"} {
+		if err := checkTarget(remote); err != nil {
+			t.Errorf("checkTarget(%q): %v", remote, err)
+		}
+	}
+}
+
 func TestForwardLocalNeedsMaster(t *testing.T) {
 	m := &Master{dest: "host"}
 	if err := m.forwardLocal(t.Context(), "/tmp/x.sock", "127.0.0.1:1"); err == nil {
