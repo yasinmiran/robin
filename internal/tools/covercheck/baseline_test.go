@@ -2,11 +2,24 @@ package main
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"testing/iotest"
 )
+
+func TestCommittedBaselineParses(t *testing.T) {
+	f, err := os.Open(filepath.Join("..", "..", "..", "coverage-baseline.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := readBaseline(f, f.Name()); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestBaselineRoundTrip(t *testing.T) {
 	packages := map[string]total{
