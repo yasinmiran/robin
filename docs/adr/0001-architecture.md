@@ -1831,12 +1831,13 @@ cannot learn the link beyond the target: with the target held on a still
 screen, a download that starts before anything has moved goes at the
 2 Mbit/s the session started with, and none goes past the `--max-kbps`
 ceiling on a faster link. Uploads stay unpaced, since the page has no
-target to go by; they are bounded by the window only. In `make e2e`, keys
-typed in the direct and attach scenarios while a 256 MiB upload moved showed
-in 22 to 36 and 7 to 18 ms, against 8 to 31 and 13 to 36 ms for the
-still-screen latency test of the same runs. That check passes without the
-window too, since the host's sink keeps up; the stalled-sink test is the
-one that failed.
+target to go by; they are bounded by the window only. In `make e2e`,
+timed from each keydown to the frame that shows its echo, keys typed in the
+direct and attach scenarios while a 256 MiB upload moved showed in 5 to 19
+and 13 to 29 ms, against 7 to 41 and 6 to 30 ms for the still-screen
+latency test of the same runs, with about 24 MB of the upload sent by the
+last key. That check passes without the window too, since the host's sink
+keeps up; the stalled-sink test is the one that failed.
 
 **The hardware encoders in the matrix.** The `vaapi` variant of
 `ROBIN_VQ=all` streams every cell of the matrix through the host's VA-API
