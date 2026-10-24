@@ -1684,10 +1684,12 @@ go before it ends, so it never leaves a key down.
 
 A chord is held 20 ms and steps are 30 ms apart, so the desktop sees each
 chord pressed and let go; the macro does not wait for the desktop beyond
-the pauses in it. In the direct e2e scenario a recorded macro of 30 steps
-(a text step, 28 chords and Enter) had its file on the host 1.7 s after the
-click, against the 1.45 s its holds and gaps add up to, and Type clipboard
-of 250 characters, one `ControlText`, had its file there in 0.2 s.
+the pauses in it. In the direct e2e scenario a recorded macro of two
+steps, a text step and Enter, had its file on the host 0.38 s after the
+click. Recorded one chord per letter, as it was at first, the same line
+took 30 steps and 1.7 s, against the 1.45 s their holds and gaps add up
+to. Type clipboard of 250 characters, one `ControlText`, had its file
+there in 0.2 s.
 
 The CLI keeps the macros because the page cannot: its origin is
 `http://127.0.0.1:PORT` with a new port every session, and browser storage
