@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -35,6 +36,7 @@ type memSink struct {
 	h         protocol.Bulk
 	buf       bytes.Buffer
 	block     chan struct{} // when set, Write waits until it is closed
+	slowAbort chan struct{} // when set, Abort waits until it is closed
 	writeErr  error
 	commitErr error
 	ends      atomic.Int32
@@ -58,6 +60,9 @@ func (m *memSink) Commit() error {
 }
 
 func (m *memSink) Abort(err error) {
+	if m.slowAbort != nil {
+		<-m.slowAbort
+	}
 	m.ends.Add(1)
 	m.result <- err
 }
@@ -74,6 +79,19 @@ func (m *memSink) end(t *testing.T) error {
 	}
 }
 
+// onlyEnd is end for a transfer that is over: a second Commit or Abort soon
+// after the first fails the test.
+func (m *memSink) onlyEnd(t *testing.T) error {
+	t.Helper()
+	err := m.end(t)
+	select {
+	case again := <-m.result:
+		t.Errorf("transfer %q ended twice: with %v, then %v", m.h.ID, err, again)
+	case <-time.After(200 * time.Millisecond):
+	}
+	return err
+}
+
 // sinks hands out a memSink per header, shaped by its ID, and reports each
 // one on the channel.
 func sinks(out chan<- *memSink) func(protocol.Bulk) (BulkSink, error) {
@@ -88,6 +106,8 @@ func sinks(out chan<- *memSink) func(protocol.Bulk) (BulkSink, error) {
 			s.commitErr = errors.New("rename failed")
 		case "block":
 			s.block = make(chan struct{})
+		case "slow-abort":
+			s.slowAbort = make(chan struct{})
 		}
 		out <- s
 		return s, nil
@@ -381,7 +401,7 @@ func TestBulkReceiveRefuses(t *testing.T) {
 				return
 			}
 			s := receive(t, bp.atAgent)
-			err := s.end(t)
+			err := s.onlyEnd(t)
 			if err == nil || (tc.abort != nil && !errors.Is(err, tc.abort)) {
 				t.Errorf("sink ended with %v, want an abort with %v", err, tc.abort)
 			}
@@ -394,9 +414,34 @@ func TestBulkReceiveRefuses(t *testing.T) {
 		if !errors.As(err, &refused) || refused.Reason != "rename failed" {
 			t.Fatalf("upload: %v, want refused with the commit error", err)
 		}
+		if err := receive(t, bp.atAgent).onlyEnd(t); err != nil {
+			t.Fatalf("sink: %v, want a commit", err)
+		}
+	})
+
+	// The verdict goes out before the sink's abort, which may take a while.
+	t.Run("verdict before a slow abort", func(t *testing.T) {
+		dc, frames, _ := bp.rawBulk(t)
+		sendJSON(t, dc, header("slow-abort", 100))
+		dc.Send(hundred)
+		sendJSON(t, dc, protocol.Bulk{T: protocol.BulkEnd, SHA256: sumOf(hundred[1:])})
 		s := receive(t, bp.atAgent)
-		if err := s.end(t); err != nil || s.ends.Load() != 1 {
-			t.Fatalf("sink: %v after %d ends, want one commit", err, s.ends.Load())
+		release := sync.OnceFunc(func() { close(s.slowAbort) })
+		defer release()
+		select {
+		case v := <-frames:
+			if v.T != protocol.BulkError || !strings.Contains(v.Error, "SHA-256 mismatch") {
+				t.Errorf("verdict %+v, want the hash mismatch", v)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("no verdict while the sink was still aborting")
+		}
+		if n := s.ends.Load(); n != 0 {
+			t.Fatalf("sink ended %d times before its abort was let go", n)
+		}
+		release()
+		if err := s.onlyEnd(t); !errors.Is(err, protocol.ErrBulkHash) {
+			t.Fatalf("sink ended with %v, want ErrBulkHash", err)
 		}
 	})
 
@@ -406,7 +451,7 @@ func TestBulkReceiveRefuses(t *testing.T) {
 		dc.Send(hundred[:50])
 		s := receive(t, bp.atAgent)
 		dc.Close()
-		if err := s.end(t); !errors.Is(err, ErrBulkCancelled) {
+		if err := s.onlyEnd(t); !errors.Is(err, ErrBulkCancelled) {
 			t.Fatalf("sink ended with %v, want ErrBulkCancelled", err)
 		}
 	})

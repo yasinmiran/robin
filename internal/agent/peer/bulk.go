@@ -42,13 +42,15 @@ type BulkRefusedError struct{ Reason string }
 func (e *BulkRefusedError) Error() string { return "peer: bulk transfer refused: " + e.Reason }
 
 // BulkSink takes the payload of one transfer from the browser. Write gets
-// the chunks in order. A Write that blocks holds the browser back, and on
-// every channel at once, control included, since SCTP has one receive
-// window for them all: a sink that can stall for long must buffer or fail
-// instead. Exactly one of Commit and Abort follows: Commit once every byte
-// has arrived and the SHA-256 matched, its error refusing the transfer
-// after all, or Abort with the reason the transfer failed or was cancelled.
-// A Write error fails the transfer, and Abort follows it.
+// the chunks in order. Exactly one of Commit and Abort follows: Commit once
+// every byte has arrived and the SHA-256 matched, its error refusing the
+// transfer after all, or Abort with the reason the transfer failed or was
+// cancelled. A Write error fails the transfer, and Abort follows it.
+//
+// Write, Commit and Abort all run on the channel's read loop, and any of
+// them that blocks holds the browser back on every channel at once, control
+// included, since SCTP has one receive window for them all. A sink that can
+// stall for long must buffer or fail instead.
 type BulkSink interface {
 	io.Writer
 	Commit() error
@@ -311,7 +313,6 @@ func (r *bulkReceiver) message(m webrtc.DataChannelMessage) {
 	}
 }
 
-// open reads the header and asks accept for a sink.
 func (r *bulkReceiver) open(m webrtc.DataChannelMessage) error {
 	if !m.IsString {
 		return fmt.Errorf("%w: data before the header", protocol.ErrBulkFrame)
@@ -334,20 +335,23 @@ func (r *bulkReceiver) open(m webrtc.DataChannelMessage) error {
 	return nil
 }
 
-// fail aborts the transfer and tells the sender why.
+// fail sends the verdict before it aborts the sink, so the sender learns
+// it was refused without waiting out the sink's cleanup.
 func (r *bulkReceiver) fail(err error) {
 	r.log.Info("bulk transfer failed", "err", err)
+	r.reply(protocol.Bulk{T: protocol.BulkError, Error: reason(err)})
 	if r.sink != nil {
 		r.sink.Abort(err)
 	}
-	r.reply(protocol.Bulk{T: protocol.BulkError, Error: reason(err)})
 }
 
 // reply sends the verdict and closes the channel, which ends the transfer.
+// A send fails only once the channel is closing, and the sender learns from
+// the close instead.
 func (r *bulkReceiver) reply(v protocol.Bulk) {
 	r.over = true
 	if b, err := json.Marshal(v); err == nil {
-		r.dc.SendText(string(b))
+		_ = r.dc.SendText(string(b))
 	}
 	r.dc.Close()
 }
