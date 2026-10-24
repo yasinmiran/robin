@@ -195,12 +195,14 @@ func TestRateControl(t *testing.T) {
 	}
 }
 
+// legibleQP is the highest quantiser at which small text stays legible.
+const legibleQP = 40
+
 // TestQPCeilingTradesFramesForLegibility checks the trade the defaults
 // make on a link too slow for the content: frames are skipped rather than
-// encoded past the QP ceiling.
+// encoded past the QP at which text breaks up.
 func TestQPCeilingTradesFramesForLegibility(t *testing.T) {
-	p := Defaults(tw, th, tfps, 800_000)
-	enc, err := Open(p)
+	enc, err := Open(Defaults(tw, th, tfps, 800_000))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,15 +223,22 @@ func TestQPCeilingTradesFramesForLegibility(t *testing.T) {
 		worst = max(worst, enc.QP())
 	}
 	t.Logf("scrolling at 800 kbit/s: %d frames sent, %d skipped, worst QP %d", sent, skipped, worst)
-	if worst > p.MaxQP {
-		t.Errorf("a frame went out at QP %d, over the ceiling of %d", worst, p.MaxQP)
+	if worst > legibleQP {
+		t.Errorf("a frame went out at QP %d, past the legible %d", worst, legibleQP)
 	}
 	if skipped == 0 {
 		t.Error("nothing skipped: the ceiling was never reached")
 	}
+}
+
+func TestClosedEncoderReportsNoQP(t *testing.T) {
+	enc, err := New(tw, th, tfps, 1_000_000)
+	if err != nil {
+		t.Fatal(err)
+	}
 	enc.Close()
-	if enc.QP() != -1 {
-		t.Error("a closed encoder reports a QP")
+	if qp := enc.QP(); qp != -1 {
+		t.Errorf("a closed encoder reports QP %d", qp)
 	}
 }
 
