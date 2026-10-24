@@ -81,6 +81,13 @@ while it is muted, so the page opens silent and the status tab shows a
 speaker: click it to hear the session, and again after a reload. When the
 host cannot provide sound the session runs without it, and the CLI says why.
 
+`--mic` and `--camera` offer your microphone and camera to the host's
+programs, as Robin microphone and Robin camera (see
+[Microphone and camera](#microphone-and-camera)). Both start off. The status
+tab gets a switch for each the host could take; switching one on asks the
+browser for the device, and a red dot shows while it is sent. The CLI says
+once, at the start, where each went on the host or why it could not.
+
 | Flag | Default | |
 |---|---|---|
 | `--transport` | `auto` | `direct` for UDP only, `tunnel` to force the SSH path |
@@ -93,6 +100,8 @@ host cannot provide sound the session runs without it, and the CLI says why.
 | `--attach` | | stream a desktop already running on the host: `auto`, `wayland` for your Wayland session, or an X display such as `:1` |
 | `--monitor` | `primary` | the monitor of an attached X11 desktop to show first: a name such as `DP-2`, its number, or `all`; the page switches between them. Wayland shows the monitor picked in its sharing dialog |
 | `--audio` | `true` | stream the desktop's sound; `--audio=false` leaves it out |
+| `--mic` | off | offer your microphone to the host's programs; it stays off until you switch it on in the page |
+| `--camera` | off | offer your camera to the host's programs, through PipeWire or a v4l2loopback device; off until switched on |
 | `--stun` | Google's public server | STUN servers for NAT traversal, comma-separated, or `none` |
 | `--no-browser` | | print the page URL on stdout instead of opening a browser |
 | `--listen` | `127.0.0.1:0` | address for the local page; loopback only |
@@ -170,6 +179,43 @@ Streaming a fully animated 1280x720 screen at 30 fps costs `gst-launch-1.0`
 about 6% of one core, on top of the encoder. An idle screen costs next to
 nothing: repeated frames are not encoded.
 
+## Microphone and camera
+
+`robin gui --mic --camera host` lets the host's programs, a video call in
+the remote desktop say, use the microphone and camera of the machine you
+sit at. Nothing is sent until you switch a device on in the status tab, and
+the browser asks for permission the first time. Switching off stops the
+device, so the browser's own camera light goes out too.
+
+Where they appear on the host:
+
+| Desktop | Microphone | Camera |
+|---|---|---|
+| spawned | the default source of the session's private pulseaudio, "Robin microphone" | a v4l2loopback device, when you have one |
+| attached, PipeWire | a PipeWire source, "Robin microphone", that goes when the session ends | a PipeWire camera, "Robin camera", or a v4l2loopback device when you have one |
+| attached, PulseAudio | a source, "Robin microphone", on your PulseAudio, unloaded when the session ends | a v4l2loopback device |
+
+The microphone needs what sound needs (`pulseaudio` for a spawned desktop),
+and on PipeWire also `gst-launch-1.0` with GStreamer's PipeWire plugin, as
+Wayland attach does. Attached, the microphone is one more source to pick
+in a program's settings; robin does not make it your default. The camera
+is 1280x720 whatever your camera sends: a picture of another shape is
+centred on black. While it is off, or the browser sends nothing, it shows
+black, so the last picture never stays on the host's screen.
+
+A PipeWire camera is seen by programs that use PipeWire for cameras, such
+as GNOME Snapshot, OBS and browsers set to use the camera portal. Others
+open `/dev/video*` and need v4l2loopback, which is also the only way to give
+a spawned desktop a camera:
+
+```
+sudo apt install v4l2loopback-dkms
+sudo modprobe v4l2loopback card_label="Robin camera" exclusive_caps=1
+```
+
+The probe finds the loopback devices you can write and the camera takes the
+one labelled Robin, else the first, in preference to PipeWire.
+
 ## Hardware encoding
 
 ```sh
@@ -232,7 +278,8 @@ build), and a browser that decodes H.264 in WebRTC. What the end-to-end
 tests prove for each:
 
 - **Chrome** runs every scenario: picture, input, latency, sound,
-  clipboard, resize, transports, attach and Wayland. Edge shares its engine.
+  microphone and camera, clipboard, resize, transports, attach and Wayland.
+  Edge shares its engine.
 - **Firefox** passes every check of the direct scenario, latency and sound
   included, given Cisco's OpenH264 plugin. Firefox downloads it by itself
   on first use (it shows under Add-ons and themes, Plugins); a Firefox that
@@ -263,7 +310,10 @@ tests prove for each:
    through the host's ffmpeg or GStreamer where the probe finds that it
    pays, and sent over a Pion peer connection. Sound comes from the monitor of a
    PulseAudio or PipeWire sink, read over the PulseAudio protocol in Go, and
-   goes out as Opus from libopus. Keyboard, pointer, clipboard and resize
+   goes out as Opus from libopus. The browser's microphone comes back as
+   Opus, decoded with libopus into a source on that server or PipeWire,
+   and its camera as H.264, decoded with openh264 into a PipeWire node or a
+   v4l2loopback device. Keyboard, pointer, clipboard and resize
    come back over a data channel and go in through XTest and RandR, or the
    portal on Wayland. Payloads too big for that channel have a transfer
    layer of their own, a data channel each and a SHA-256 checked at the far
@@ -287,9 +337,16 @@ connections carrying the session's credentials; the X display is protected by
 a fresh cookie in a 0600 file; the session's sound server listens only on a
 socket inside the run directory; the agent and its run directory are 0700.
 Input from the page is limited to what a keyboard, a pointer and a clipboard
-can do in that session. The agent also listens for bulk transfers from the
+can do in that session, plus, with `--mic` or `--camera`, the sound and
+picture of devices you switched on. The agent also listens for bulk transfers from the
 page, but takes only kinds a feature has registered, and no feature has yet,
 so it refuses every one.
+
+The microphone and camera reach every program that can record on the host
+as you: your sound server and PipeWire are yours alone, but a v4l2loopback
+device is readable by whoever its permissions admit, usually the `video`
+group, so on a shared host the camera's pictures go to them too. Nothing
+leaves the browser while a switch is off, and the agent never turns one on.
 
 One exposure is on the client side: to open your browser the CLI hands the
 page URL, token included, to `open` or `xdg-open`, so for that moment another
@@ -334,7 +391,13 @@ that frames arrive and change, pointer, keys and held-key repeat, the
 clipboard both ways, view-only grants (GNOME only; KDE has none), and that
 no `gst-launch-1.0` or portal session outlives the agent, whether it closes
 or is killed. A tone played into each session's PipeWire must come out of
-the agent's capture through `pipewire-pulse`. KWin screencasts only when it
+the agent's capture through `pipewire-pulse`, and the other way, a tone the
+browser's microphone sends must be recorded from the agent's PipeWire
+source, and pictures sent as the camera must be read from its node, twice
+over, with both nodes gone when the agent closes or is killed. `make
+test-x` does the same for the microphone on a spawned desktop's pulseaudio
+and on a PulseAudio of the user's own, where a dead agent's leftovers must
+be swept. KWin screencasts only when it
 composites with OpenGL, so the KDE container borrows the host's GPU render
 node, and is skipped, with a line saying so, on a machine without one.
 
@@ -355,7 +418,12 @@ runs the same CLI and browser against the headless GNOME session of
 the harness answers the consent dialog, and Chrome then has to show the
 monitor with the remote pointer drawn in, land motion, clicks and typed text
 in a probe window, pass the clipboard both ways through the portal, play the
-session's PipeWire sound, and meet the same 400 ms latency bound. SIGINT
+session's PipeWire sound, and meet the same 400 ms latency bound. In
+`direct` and `wayland` the CLI offers the microphone and camera, and Chrome
+plays a tone and a picture of one colour as its fake devices: off, the host
+hears and sees nothing; switched on, the session's default source or its
+PipeWire source carries the tone and its camera node the colour; switched
+off, silence and black again, and no new offer in between. SIGINT
 must leave no agent, `gst-launch-1.0` or portal session and a 0600 restore
 token, and a second run must start without asking. The `firefox` and
 `webkit` scenarios repeat the direct one in Playwright's own Firefox and
@@ -429,7 +497,25 @@ to print the comparison the ADR quotes.
   are silent.
 - The page starts muted, because browsers autoplay only silent video: one
   click on the speaker, again after each reload.
-- Sound goes one way; there is no microphone.
+- A PipeWire camera is invisible to programs that open `/dev/video*`
+  themselves, which is most of those not sandboxed; they need v4l2loopback.
+  A spawned desktop has no camera without v4l2loopback, which rootless
+  containers cannot load, so that route is tested only as far as the probe
+  and the pipeline it builds.
+- The microphone and camera are tested in Chrome only. Firefox and Safari
+  should work the same way through the same page, but nothing checks them.
+- Attached to a plain PulseAudio, an agent killed outright leaves its
+  microphone loaded until the next robin session of yours sweeps it, and a
+  PulseAudio with no default source you chose, on a host with no
+  microphone of its own, takes Robin microphone as its default while it is
+  there.
+- GStreamer's `pipewiresink` in PipeWire 1.4 quits when the last program
+  reading the camera lets go. The agent starts it again; the camera is gone
+  for under a second meanwhile, and a program that lists cameras in that
+  moment misses it.
+- The camera is always 1280x720 at 30 fps. The browser lowers its own
+  resolution when the link or its CPU are short, and the host then sees a
+  softer picture of the same size.
 - In-band FEC protects speech only. Opus sends speech in hybrid mode, whose
   SILK layer repeats the previous frame at low rate; music stays in CELT,
   which has no such redundancy, so a lost music packet is concealed by the
