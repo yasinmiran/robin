@@ -5,6 +5,7 @@ import { RemoteCursor } from './cursor.js';
 import { dispatchControl, onControl } from './control.js';
 import { acceptBulk, onBulk, sendBulk } from './bulk.js';
 import { BULK_CHANNEL, registerKind } from './bulkframe.js';
+import { PrivateSwitches } from './private.js';
 
 const CONTROL_CHANNEL = 'control';
 const ICE_GRACE_MS = 2000;
@@ -20,6 +21,7 @@ const overlay = new Overlay();
 const sampler = new StatsSampler();
 const input = new Input(video, sendControl, () => channel?.readyState === 'open');
 const cursor = new RemoteCursor(video);
+const privateSwitches = new PrivateSwitches(overlay, sendControl);
 
 let ws = null;
 let pc = null;
@@ -45,6 +47,7 @@ window.robin = {
   get muted() { return video.muted; },
   get monitors() { return monitors; },
   showMonitor: (name) => showMonitor(name),
+  get private() { return privateSwitches.state; },
   addSection: (name) => overlay.addSection(name),
   bulk: {
     registerKind,

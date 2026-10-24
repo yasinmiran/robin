@@ -259,6 +259,60 @@ body:has(#hud[data-state="reconnecting"]) #wire { opacity: 1; }
 .section { margin-top: 6px; }
 .section:empty { display: none; }
 
+/* The private session's switches: a small track that fills when on. */
+.switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+}
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  margin: 0 -6px;
+  padding: 0 6px;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  border-radius: 7px;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.switch:hover { background: var(--veil-edge); }
+.switch:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.switch[aria-busy="true"] { cursor: progress; }
+.switch .track {
+  position: relative;
+  width: 24px;
+  height: 14px;
+  border-radius: 7px;
+  background: var(--veil-edge);
+  box-shadow: inset 0 0 0 1px var(--ink-soft);
+  transition: background 160ms;
+}
+.switch .track::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink-soft);
+  transition: translate 160ms;
+}
+.switch[aria-checked="true"] .track { background: var(--ok); box-shadow: none; }
+.switch[aria-checked="true"] .track::after { translate: 10px 0; background: var(--veil); }
+.switch[aria-busy="true"] .track { opacity: 0.55; }
+.switch-error {
+  max-width: 42ch;
+  margin: 2px 0 0;
+  color: var(--down);
+  font-weight: 400;
+}
+
 .notice {
   max-width: 42ch;
   margin: 6px 0 4px;
@@ -269,7 +323,9 @@ body:has(#hud[data-state="reconnecting"]) #wire { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  #hud { transition: none; }
+  #hud,
+  .switch .track,
+  .switch .track::after { transition: none; }
   #wire::after {
     animation: none;
     width: 100%;
