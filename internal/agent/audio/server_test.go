@@ -32,6 +32,9 @@ func TestMain(m *testing.M) {
 		os.Stdout.WriteString("ready " + strconv.Itoa(s.cmd.Process.Pid) + "\n")
 		select {}
 	}
+	if os.Getenv(micHelperEnv) != "" {
+		runMicHelper()
+	}
 	os.Exit(m.Run())
 }
 

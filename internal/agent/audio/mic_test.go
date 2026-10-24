@@ -233,3 +233,18 @@ func listenUnix(t *testing.T, path string) net.Listener {
 func quiet() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 }
+
+// micHelperEnv makes the test binary act as an agent that puts the
+// microphone on the user's sound server and waits to be killed; see
+// TestPipeWireMicDiesWithTheAgent.
+const micHelperEnv = "ROBIN_MIC_TEST_HELPER"
+
+func runMicHelper() {
+	m, err := StartMic(context.Background(), MicOptions{})
+	if err != nil {
+		os.Stdout.WriteString("error: " + err.Error() + "\n")
+		os.Exit(1)
+	}
+	os.Stdout.WriteString("ready " + m.Where + "\n")
+	select {}
+}

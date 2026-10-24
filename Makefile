@@ -16,7 +16,7 @@ GOSRC    := $(shell find cmd internal -type f -not -path "*/node_modules/*" -not
 MODULE   := $(shell $(GO) list -m)
 COVER    ?= $(CURDIR)/.cache/cover
 # The packages tested against the real openh264 and libopus.
-CGO_TESTS := ./internal/agent/h264/ ./internal/agent/opus/ ./internal/agent/audio/
+CGO_TESTS := ./internal/agent/h264/ ./internal/agent/opus/ ./internal/agent/audio/ ./internal/agent/camera/
 
 target_amd64 := x86_64-linux-musl
 target_arm64 := aarch64-linux-musl

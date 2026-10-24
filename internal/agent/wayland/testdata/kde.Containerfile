@@ -4,7 +4,7 @@ FROM docker.io/library/fedora:43
 RUN dnf -y install --setopt=install_weak_deps=False \
     kwin-wayland xdg-desktop-portal xdg-desktop-portal-kde kf6-frameworkintegration breeze-icon-theme \
     at-spi2-core \
-    pipewire pipewire-pulseaudio pulseaudio-utils wireplumber pipewire-gstreamer \
+    pipewire pipewire-pulseaudio pipewire-utils pulseaudio-utils wireplumber pipewire-gstreamer \
     gstreamer1 gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugins-bad-free \
     dbus-daemon dbus-tools glib2 mesa-dri-drivers mesa-libEGL \
     python3-gobject python3-cairo gobject-introspection gtk4 \

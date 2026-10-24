@@ -3,6 +3,7 @@
 package audio
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/binary"
@@ -367,6 +368,40 @@ func TestMicDecodesWhatArrives(t *testing.T) {
 	for i, b := range sink.writes {
 		if len(b) != micFrameBytes {
 			t.Errorf("piece %d is %d bytes, want %d", i, len(b), micFrameBytes)
+		}
+	}
+}
+
+// TestPipeWireMicDiesWithTheAgent kills an agent with SIGKILL, which runs no
+// cleanup, and checks its microphone's node goes with it.
+func TestPipeWireMicDiesWithTheAgent(t *testing.T) {
+	if os.Getenv("ROBIN_PIPEWIRE_PULSE") == "" {
+		t.Skip("needs the user's PipeWire with pipewire-pulse; run internal/agent/wayland/testdata/wltest.sh")
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	cmd.Env = append(os.Environ(), micHelperEnv+"=1")
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	line, err := bufio.NewReader(out).ReadString('\n')
+	if err != nil || line != "ready PipeWire\n" {
+		cmd.Process.Kill()
+		t.Fatalf("helper said %q: %v", line, err)
+	}
+	name := micSourcePrefix + strconv.Itoa(cmd.Process.Pid)
+	if !strings.Contains(pactl(t, nil, "list", "short", "sources"), name) {
+		cmd.Process.Kill()
+		t.Fatalf("the helper's microphone %s is not there", name)
+	}
+	cmd.Process.Kill()
+	cmd.Wait()
+	for deadline := time.Now().Add(3 * time.Second); strings.Contains(pactl(t, nil, "list", "short", "sources"), name); time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the microphone %s outlived its agent", name)
 		}
 	}
 }
