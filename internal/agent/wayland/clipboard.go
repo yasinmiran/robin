@@ -78,15 +78,19 @@ func mimesOf(content protocol.Clip) []string {
 
 // dataFor is content as mime, or nil when it has none.
 func dataFor(content protocol.Clip, mime string) []byte {
+	var data []byte
 	switch {
 	case mime == protocol.MIMEHTML:
-		return []byte(content.HTML)
+		data = []byte(content.HTML)
 	case mime == protocol.MIMEPNG:
-		return content.PNG
+		data = content.PNG
 	case slices.Contains(textMimes, mime):
-		return []byte(content.Text)
+		data = []byte(content.Text)
 	}
-	return nil
+	if len(data) == 0 {
+		return nil
+	}
+	return data
 }
 
 // set offers content to the desktop as its clipboard.

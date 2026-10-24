@@ -132,6 +132,13 @@ func TestClipboardMimes(t *testing.T) {
 	if dataFor(all, "image/jpeg") != nil {
 		t.Error("dataFor a type it lacks is not nil")
 	}
+	// A format the content lacks is nil too, so a paste of it fails rather
+	// than succeed with nothing.
+	for _, mime := range []string{"text/plain", "text/html", "image/png"} {
+		if got := dataFor(protocol.Clip{}, mime); got != nil {
+			t.Errorf("dataFor(nothing, %s) = %q, want nil", mime, got)
+		}
+	}
 }
 
 func TestWheelSteps(t *testing.T) {
