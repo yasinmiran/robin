@@ -22,20 +22,12 @@ const { name, arg, def, id = flagId(name) } = Astro.props;
         aria-label={`Link to ${name}`}>#</a
       ></span
     >
+    {/* Keep the default's markup on one line: a line break between tags is a space on the page. */}
     {
       def && (
-        <span class="flag-default">
-          default{" "}
-          {codeSegments(def).map((segment) =>
-            segment.code ? (
-              <code>
-                {segment.text.split(/(?<=:)/).map((part, index) => (index > 0 ? [<wbr />, part] : part))}
-              </code>
-            ) : (
-              segment.text
-            ),
-          )}
-        </span>
+        <span class="flag-default">default {codeSegments(def).map((segment) =>
+            segment.code ? <code>{segment.text.split(/(?<=:)/).map((part, index) => (index > 0 ? [<wbr />, part] : part))}</code> : segment.text,
+          )}</span>
       )
     }
   </dt>

@@ -72,6 +72,15 @@ test("each flag has an anchor", async ({ page }) => {
   await expect(page.locator("#flag-max-size")).toContainText("default 1920x1080");
 });
 
+test("flag defaults read without stray spaces", async ({ page }) => {
+  await page.goto("/flags");
+  // Raw textContent: toHaveText would collapse the whitespace this looks for.
+  const defaults = await page.locator(".flag-default").evaluateAll((spans) => spans.map((span) => span.textContent));
+  expect(defaults.length).toBeGreaterThan(10);
+  expect(defaults).toContain("default 1920x1080, or 1280x720 on hosts with 2 cores or fewer");
+  for (const text of defaults) expect(text).not.toMatch(/^\s|\s$|\s[,.;)]|\s{2}/);
+});
+
 test("the theme toggle switches and remembers the theme", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "light" });
   await page.goto("/install");
