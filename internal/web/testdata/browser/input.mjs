@@ -149,9 +149,11 @@ async function phone() {
   // A tap clicks.
   await touch(cdp, 'touchStart', [[100, 200]]);
   await touch(cdp, 'touchEnd', []);
-  // A long press right clicks.
+  // A long press right clicks. The finger lifts once the page has seen it
+  // held, however slowly its timer ran.
   await touch(cdp, 'touchStart', [[300, 300]]);
-  await page.waitForTimeout(700);
+  await page.waitForFunction(() => window.robin.gesture === 'held', null, { timeout: 5000 })
+    .then(() => check(true, 'phone: a finger held still is a long press'), () => check(false, 'phone: a finger held still is a long press'));
   await touch(cdp, 'touchEnd', []);
   // Two fingers moving up together scroll down.
   await touch(cdp, 'touchStart', [[500, 400], [600, 400]]);

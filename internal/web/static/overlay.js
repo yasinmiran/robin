@@ -2,7 +2,7 @@
 // session is healthy and comes back when the pointer nears the top. Where
 // the pointer is a finger, which hovers nowhere, it stays out.
 
-import { touchFirst } from './input.js';
+import { touchFirst } from './device.js';
 
 const TUCK_AFTER_MS = 2500;
 const REVEAL_ZONE_PX = 48;

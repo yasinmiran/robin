@@ -1,6 +1,7 @@
 // Turns local pointer, touch, keyboard, clipboard and viewport events into
 // Control messages for the remote desktop.
 
+import { touchFirst } from './device.js';
 import { Gestures } from './gesture.js';
 import { fromComposition, fromInput, imeOwns } from './ime.js';
 import { View, remotePoint } from './view.js';
@@ -11,10 +12,6 @@ const RESIZE_DEBOUNCE_MS = 250;
 const MODIFIERS = new Set(['Shift', 'Control', 'Alt', 'AltGraph', 'Meta', 'OS']);
 
 export const isMac = /Mac|iPhone|iPad/.test(navigator.userAgentData?.platform ?? navigator.platform);
-
-// touchFirst means the main pointer is a finger. The text box then takes the
-// focus only when asked to, since focusing it raises the soft keyboard.
-export const touchFirst = matchMedia('(pointer: coarse)').matches;
 
 export class Input {
   #video;
@@ -50,6 +47,11 @@ export class Input {
 
   get view() {
     return this.#view;
+  }
+
+  // gesture is what the fingers on the picture are doing, as Gestures.mode.
+  get gesture() {
+    return this.#gestures.mode;
   }
 
   attach() {

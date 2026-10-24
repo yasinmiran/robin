@@ -1,3 +1,4 @@
+import { hasTouch } from './device.js';
 import { Input } from './input.js';
 import { Overlay } from './overlay.js';
 import { StatsSampler } from './stats.js';
@@ -51,6 +52,7 @@ window.robin = {
     const v = input.view;
     return { scale: v.scale, x: v.x, y: v.y };
   },
+  get gesture() { return input.gesture; },
   addSection: (name) => overlay.addSection(name),
   bulk: {
     registerKind,
@@ -75,7 +77,7 @@ onControl('clipboard', (c) => {
 
 input.attach();
 // A touch screen has no keys of its own: the button raises the soft one.
-if (navigator.maxTouchPoints > 0) overlay.showKeyboard(typing, () => input.toggleKeyboard());
+if (hasTouch) overlay.showKeyboard(typing, () => input.toggleKeyboard());
 connect(takeToken());
 
 // takeToken reads the token from the fragment and moves it out of the address
