@@ -1,6 +1,7 @@
 // Package peer is the agent's side of one WebRTC session with a browser: an
-// H.264 video track out, the control data channel both ways, and the
-// congestion controller that tells the encoder how fast it may go.
+// H.264 video track out, the control data channel and bulk transfers both
+// ways, and the congestion controller that tells the encoder how fast it
+// may go.
 package peer
 
 import (
@@ -71,6 +72,12 @@ type Handlers struct {
 	Keyframe    func()        // the browser lost a picture or just connected
 	Bitrate     func(bps int) // new congestion-control target
 	State       func(state webrtc.PeerConnectionState)
+	// Bulk is asked about each transfer the browser opens; see BulkSink.
+	// Without it every transfer is refused.
+	Bulk func(protocol.Bulk) (BulkSink, error)
+	// Track receives each media track the browser sends. Without it the
+	// tracks are left unread.
+	Track func(*webrtc.TrackRemote, *webrtc.RTPReceiver)
 }
 
 // Peer is one browser session.
@@ -258,7 +265,13 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 	pc.OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) {
 		log.Info("ice connection", "state", s.String())
 	})
-	pc.OnDataChannel(p.attachControl)
+	pc.OnTrack(func(tr *webrtc.TrackRemote, r *webrtc.RTPReceiver) {
+		log.Info("remote track", "kind", tr.Kind().String(), "codec", tr.Codec().MimeType)
+		if h.Track != nil {
+			h.Track(tr, r)
+		}
+	})
+	pc.OnDataChannel(p.route)
 	return p, nil
 }
 
@@ -325,12 +338,20 @@ func (p *Peer) Bitrate() int { return p.bwe.GetTargetBitrate() }
 // Close tears the peer connection down.
 func (p *Peer) Close() error { return p.pc.Close() }
 
-func (p *Peer) attachControl(dc *webrtc.DataChannel) {
-	if dc.Label() != protocol.ControlChannel {
+// route hands each data channel the browser opens to what its label is for.
+func (p *Peer) route(dc *webrtc.DataChannel) {
+	switch dc.Label() {
+	case protocol.ControlChannel:
+		p.attachControl(dc)
+	case protocol.BulkChannel:
+		receiveBulk(dc, p.h.Bulk, p.log)
+	default:
 		p.log.Warn("ignoring unexpected data channel", "label", dc.Label())
 		dc.Close()
-		return
 	}
+}
+
+func (p *Peer) attachControl(dc *webrtc.DataChannel) {
 	p.mu.Lock()
 	p.control = dc
 	p.mu.Unlock()
