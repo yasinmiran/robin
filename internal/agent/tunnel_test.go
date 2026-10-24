@@ -130,4 +130,24 @@ func TestConnUIDIsTheDialer(t *testing.T) {
 	if _, err := connUID(&net.UnixConn{}); err == nil {
 		t.Error("connUID of a unix connection succeeded")
 	}
+	gone := addrConn{
+		local:  &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: ln.Addr().(*net.TCPAddr).Port},
+		remote: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
+	}
+	if _, err := connUID(gone); err == nil {
+		t.Error("connUID found the other end of a connection that does not exist")
+	}
+	v6 := addrConn{local: &net.TCPAddr{IP: net.IPv6loopback, Port: 1}, remote: &net.TCPAddr{IP: net.IPv6loopback, Port: 2}}
+	if _, err := connUID(v6); err == nil {
+		t.Error("connUID took a connection over IPv6")
+	}
 }
+
+// addrConn is a connection that is nothing but its two addresses.
+type addrConn struct {
+	net.Conn
+	local, remote net.Addr
+}
+
+func (c addrConn) LocalAddr() net.Addr  { return c.local }
+func (c addrConn) RemoteAddr() net.Addr { return c.remote }
