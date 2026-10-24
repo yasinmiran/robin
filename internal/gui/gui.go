@@ -144,7 +144,7 @@ func Run(ctx context.Context, o Options) (err error) {
 		}
 	}
 
-	ag, err := startAgent(ctx, h.m, path, serveArgs{verbose: o.Verbose, keep: keep, resume: resume, detach: detachMode(report)}, o.Stderr)
+	ag, err := startAgent(h.m, path, serveArgs{verbose: o.Verbose, keep: keep, resume: resume, detach: detachMode(report)}, o.Stderr)
 	if err != nil {
 		return err
 	}
@@ -444,7 +444,7 @@ func (h *host) redial(ctx context.Context, path, id string, until time.Time, t *
 		return nil, nil, err
 	}
 	h.m = m
-	ag, err := startAgent(ctx, m, path, serveArgs{verbose: h.o.Verbose, resume: id}, h.o.Stderr)
+	ag, err := startAgent(m, path, serveArgs{verbose: h.o.Verbose, resume: id}, h.o.Stderr)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -666,7 +666,8 @@ func iceServers(stun []string) []protocol.ICEServer {
 type agentProc struct {
 	conn  *protocol.Conn
 	stdin io.WriteCloser
-	// exited closes when the proxy's ssh process is gone.
+	// proc is the proxy's ssh process, and exited closes once it is gone.
+	proc   *os.Process
 	exited <-chan struct{}
 	log    *tail.Buffer // the end of the agent's stderr
 	once   sync.Once
@@ -701,8 +702,11 @@ func (a serveArgs) list(path string) []string {
 	return args
 }
 
-func startAgent(ctx context.Context, m *sshmux.Master, path string, args serveArgs, stderr io.Writer) (*agentProc, error) {
-	cmd := m.Command(ctx, sshmux.Quote(args.list(path)...))
+// startAgent runs the agent's proxy over m. No context ends it: Ctrl+C
+// ends Run's, and the session has to end over this connection then; stop
+// ends it.
+func startAgent(m *sshmux.Master, path string, args serveArgs, stderr io.Writer) (*agentProc, error) {
+	cmd := m.Command(context.Background(), sshmux.Quote(args.list(path)...))
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -727,7 +731,7 @@ func startAgent(ctx context.Context, m *sshmux.Master, path string, args serveAr
 	}()
 	return &agentProc{
 		conn:  protocol.NewConn(stdout, stdin, protocol.DefaultPingInterval, protocol.DefaultIdleTimeout),
-		stdin: stdin, exited: exited, log: logTail,
+		stdin: stdin, proc: cmd.Process, exited: exited, log: logTail,
 	}, nil
 }
 
@@ -846,7 +850,8 @@ func (a *agentProc) bye() bool {
 }
 
 // stop closes the agent's stdin, which tells the host this controller is
-// gone, and waits briefly for the proxy to exit.
+// gone, and waits briefly for the proxy to exit, then kills its ssh, which
+// would otherwise outlive the CLI.
 func (a *agentProc) stop() {
 	if a == nil {
 		return
@@ -856,6 +861,9 @@ func (a *agentProc) stop() {
 		select {
 		case <-a.exited:
 		case <-time.After(5 * time.Second):
+			if a.proc != nil {
+				a.proc.Kill()
+			}
 		}
 		a.conn.Close()
 	})

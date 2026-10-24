@@ -221,3 +221,43 @@ func TestReconnectEndsTheSessionWhenItsContextEnds(t *testing.T) {
 		t.Fatalf("the host ran %q, want the end command", b)
 	}
 }
+
+// TestAgentOutlivesCtrlC: Ctrl+C ends Run's context, which startAgent
+// does not take, and without a ControlMaster sends the agent's own ssh
+// SIGINT. The connection stays up, so the CLI ends the session over it
+// with bye rather than with the end command over a fresh login.
+func TestAgentOutlivesCtrlC(t *testing.T) {
+	o, _, _ := localhost(t)
+	o.NoMux = true
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	m, err := dial(ctx, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	echo := filepath.Join(t.TempDir(), "robin-agent")
+	if err := os.WriteFile(echo, []byte("#!/bin/sh\nexec cat\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ag, err := startAgent(m, echo, serveArgs{}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ag.stop()
+	roundTrip := func(what string) {
+		t.Helper()
+		if err := ag.conn.Send(protocol.Message{Type: protocol.TypeBye, Error: what}); err != nil {
+			t.Fatalf("send %s: %v", what, err)
+		}
+		if m, err := ag.conn.Recv(ctx); err != nil || m.Error != what {
+			t.Fatalf("echo of %s: %+v, %v", what, m, err)
+		}
+	}
+	roundTrip("before")
+	if err := ag.proc.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	roundTrip("after")
+}
