@@ -1,0 +1,291 @@
+/* Rendered page content: prose, code, callouts, tables and the flag list.
+   Ported from the design's site-mock.css; layout chrome lives in the
+   components as Tailwind classes. */
+
+@layer components {
+  .prose > * {
+    max-width: var(--spacing-measure);
+  }
+  .prose > :first-child {
+    margin-top: 0;
+  }
+  .prose p,
+  .prose ul,
+  .prose ol {
+    margin: 0 0 1rem;
+  }
+  .prose ul,
+  .prose ol {
+    padding-left: 1.25rem;
+  }
+  .prose ul {
+    list-style: disc;
+  }
+  .prose ol {
+    list-style: decimal;
+  }
+  .prose li {
+    margin: 0.25rem 0;
+    padding-left: 0.125rem;
+  }
+  .prose li::marker {
+    color: var(--muted-foreground);
+  }
+  .prose h2 {
+    margin: 3rem 0 0.75rem;
+    font-size: var(--text-2xl);
+    line-height: 1.25;
+    font-weight: 650;
+    letter-spacing: -0.012em;
+    text-wrap: balance;
+  }
+  .prose h3 {
+    margin: 2rem 0 0.5rem;
+    font-size: var(--text-xl);
+    line-height: 1.35;
+    font-weight: 650;
+  }
+  .prose h2 code,
+  .prose h3 code {
+    font-size: 0.85em;
+  }
+  .prose strong {
+    font-weight: 700;
+  }
+  .prose img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 1.5rem 0;
+    border-radius: var(--radius-panel);
+    box-shadow: 0 0 0 1px var(--border);
+  }
+  .prose figure {
+    margin: 2rem 0;
+  }
+  .prose figure svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    color: var(--foreground);
+  }
+  .prose figcaption {
+    margin-top: 0.75rem;
+    font-size: var(--text-sm);
+    line-height: 1.5;
+    color: var(--muted-foreground);
+  }
+  .prose hr {
+    margin: 2.5rem 0;
+    border: 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .prose a,
+  .link {
+    color: var(--primary);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.18em;
+  }
+  .prose a:hover,
+  .link:hover {
+    text-decoration-thickness: 2px;
+  }
+
+  :not(pre) > code {
+    font-size: 0.875em;
+    padding: 0.1em 0.32em;
+    border-radius: 4px;
+    background: var(--muted);
+    color: var(--foreground);
+    white-space: nowrap;
+  }
+  .prose a > code {
+    color: inherit;
+  }
+  /* A phone cannot fit stun:stun.l.google.com:19302 on one line, so long
+     inline code may break there rather than push the page sideways. */
+  @media (max-width: 40rem) {
+    .prose :is(p, li, dd) > code {
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+  }
+
+  kbd {
+    font-size: var(--text-xs);
+    padding: 0.05rem 0.375rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--muted-foreground);
+    background: var(--muted);
+  }
+
+  /* Code blocks. The copy tab hangs from the top edge like the session
+     page's status tab: square where it meets the edge, rounded below. */
+  .code-wrap {
+    position: relative;
+    margin: 1.5rem 0;
+  }
+  .code-wrap pre,
+  .code-surface {
+    margin: 0;
+    padding: 1.25rem 1.25rem 1.125rem;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    line-height: 1.7;
+    color: var(--code-foreground);
+    background: var(--code);
+    border: 1px solid var(--code-border);
+    border-radius: var(--radius-panel);
+    white-space: pre;
+    tab-size: 4;
+    scrollbar-color: color-mix(in oklch, var(--code-muted) 45%, transparent) transparent;
+  }
+  .code-wrap pre:focus-visible {
+    outline-offset: 2px;
+  }
+  .code-wrap pre code {
+    display: block;
+    width: max-content;
+    min-width: 100%;
+  }
+  .code-prompt {
+    color: var(--code-prompt);
+    user-select: none;
+  }
+  .code-comment {
+    color: var(--code-muted);
+  }
+
+  /* Right edge fade while more content is hidden (see lib/overflow.ts). */
+  [data-overflow] {
+    position: relative;
+  }
+  [data-overflow="more"]::after {
+    content: "";
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    bottom: 1px;
+    width: 2.5rem;
+    pointer-events: none;
+    border-radius: 0 var(--radius-panel) var(--radius-panel) 0;
+    background: linear-gradient(to right, transparent, var(--fade-to, var(--code)));
+  }
+  .table-wrap[data-overflow="more"]::after {
+    --fade-to: var(--background);
+    border-radius: 0;
+  }
+
+  /* Callouts: tinted surface, no border, no icon; a bold run-in names the
+     subject in the kind's colour. */
+  .callout {
+    margin: 1.5rem 0;
+    padding: 0.875rem 1.125rem;
+    border-radius: var(--radius-panel);
+    background: var(--muted);
+  }
+  .callout > :last-child {
+    margin-bottom: 0;
+  }
+  .callout .callout-lead {
+    font-weight: 700;
+    color: var(--foreground);
+  }
+  .callout-warning {
+    background: var(--warning-surface);
+  }
+  .callout-warning .callout-lead {
+    color: var(--warning);
+  }
+  .callout-limit {
+    background: var(--destructive-surface);
+  }
+  .callout-limit .callout-lead {
+    color: var(--destructive);
+  }
+
+  /* Tables (components/ui/table.tsx) scroll inside their wrapper. */
+  .table-wrap {
+    margin: 1.5rem 0;
+  }
+  .table-scroll {
+    overflow-x: auto;
+  }
+
+  /* Flag reference: a man page OPTIONS section, not a table. */
+  .flags {
+    margin: 1rem 0 2rem;
+  }
+  .flag {
+    display: grid;
+    grid-template-columns: 14rem minmax(0, 1fr);
+    gap: 0.25rem 2rem;
+    padding: 1.125rem 0;
+    border-top: 1px solid var(--border);
+    scroll-margin-top: calc(var(--spacing-header) + 1rem);
+  }
+  .flag dt {
+    min-width: 0;
+  }
+  .flag .flag-name {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 0.9375rem;
+    font-weight: 700;
+    color: var(--foreground);
+    overflow-wrap: anywhere;
+  }
+  .flag .flag-arg {
+    font-weight: 400;
+    color: var(--muted-foreground);
+  }
+  .flag .flag-default {
+    display: block;
+    margin-top: 0.125rem;
+    font-size: var(--text-xs);
+    color: var(--muted-foreground);
+  }
+  .flag .flag-default code {
+    font-size: 0.8125rem;
+    padding: 0;
+    background: none;
+    color: var(--muted-foreground);
+    white-space: normal;
+  }
+  .flag dd {
+    margin: 0;
+    font-size: 0.9375rem;
+    line-height: 1.6;
+  }
+  .flag dd > :last-child {
+    margin-bottom: 0;
+  }
+  .flag .flag-anchor {
+    margin-left: 0.375rem;
+    padding: 0 0.25rem;
+    font-family: var(--font-sans);
+    font-weight: 400;
+    color: var(--muted-foreground);
+    text-decoration: none;
+    opacity: 0;
+  }
+  .flag:hover .flag-anchor,
+  .flag .flag-anchor:focus-visible,
+  .flag:target .flag-anchor {
+    opacity: 1;
+  }
+  @media (hover: none) {
+    .flag .flag-anchor {
+      opacity: 1;
+    }
+  }
+  @media (max-width: 56.25rem) {
+    .flag {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+}

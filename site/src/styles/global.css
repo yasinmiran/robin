@@ -1,0 +1,136 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/atkinson-hyperlegible-next/wght.css";
+@import "@fontsource-variable/atkinson-hyperlegible-mono/wght.css";
+@import "./tokens.css";
+@import "./no-script.css";
+@import "./content.css";
+@import "./session.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.45;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.5;
+  --text-base: 1rem;
+  --text-base--line-height: 1.65;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.55;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.35;
+  --text-2xl: 1.5625rem;
+  --text-2xl--line-height: 1.25;
+  --text-3xl: 2.25rem;
+  --text-3xl--line-height: 1.12;
+  --text-display: clamp(2.25rem, 1.35rem + 2.6vw, 2.875rem);
+  --text-display--line-height: 1.06;
+
+  --shadow-float: 0 8px 24px rgb(0 0 0 / 0.3);
+  --radius-panel: 10px;
+  --radius-tab: 12px;
+
+  --breakpoint-nav: 56.25rem; /* 900px: the sidebar moves into a sheet below it */
+  --breakpoint-toc: 68.75rem; /* 1100px: the TOC folds under the lede below it */
+
+  --spacing-header: 3.5rem;
+  --spacing-sidebar: 16.5rem;
+  --spacing-toc: 13.5rem;
+  --spacing-measure: 42rem;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    @apply font-sans;
+    color-scheme: light;
+    -webkit-text-size-adjust: 100%;
+    scroll-padding-top: calc(var(--spacing-header) + 1rem);
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-background text-base text-foreground;
+    -webkit-font-smoothing: antialiased;
+    font-optical-sizing: auto;
+    overflow-wrap: break-word;
+  }
+  code,
+  kbd,
+  pre,
+  samp {
+    font-family: var(--font-mono);
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  ::selection {
+    background: color-mix(in oklch, var(--primary) 28%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a,
+  button {
+    transition:
+      background-color 120ms,
+      color 120ms;
+  }
+}
+
+@utility sr-only-focusable {
+  &:not(:focus) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+/* The session page's #wire, value for value (internal/web/static/style.css):
+   a 2px band in the app's --wait (--warning-edge here) that travels along
+   the top edge of whatever is connecting or loading. */
+@utility wire {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+  &::after {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 28%;
+    background: linear-gradient(90deg, transparent, var(--warning-edge) 40%, var(--warning-edge) 60%, transparent);
+    animation: wire-travel 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  }
+}
+
+@keyframes wire-travel {
+  from {
+    translate: -100% 0;
+  }
+  to {
+    translate: 360% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wire::after {
+    animation: none;
+    width: 100%;
+    background: repeating-linear-gradient(90deg, var(--warning-edge) 0 12px, transparent 12px 20px);
+  }
+}

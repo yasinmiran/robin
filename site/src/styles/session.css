@@ -1,0 +1,212 @@
+/* The homepage's session picture: the product's own page, drawn in HTML.
+   The status tab reproduces the session page's #hud (internal/web/static/
+   style.css) value for value, so its literals stay in step with that file
+   rather than with the site's tokens. */
+
+@layer components {
+  .session-stage {
+    position: relative;
+    padding-bottom: 3rem;
+  }
+  .session-screen {
+    position: relative;
+    aspect-ratio: 16 / 10;
+    overflow: hidden;
+    background: #000; /* the session page is black */
+    border-radius: var(--radius-panel);
+    box-shadow: 0 0 0 1px var(--border);
+  }
+  .session-screen .wire {
+    z-index: 2;
+    opacity: 0;
+  }
+
+  .hud {
+    position: absolute;
+    z-index: 1;
+    top: 0;
+    left: 50%;
+    translate: -50% 0;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 7px 8px 7px 14px;
+    white-space: nowrap;
+    font: 500 12px/16px var(--font-sans);
+    font-variant-numeric: tabular-nums;
+    color: #1a2228;
+    background: rgb(244 246 247 / 0.92);
+    border-radius: 0 0 var(--radius-tab) var(--radius-tab);
+    box-shadow: var(--shadow-float);
+  }
+  .dark .hud {
+    color: #e5eaee;
+    background: rgb(29 36 43 / 0.9);
+    box-shadow:
+      var(--shadow-float),
+      inset 0 -1px 0 rgb(255 255 255 / 0.09);
+  }
+  .hud-state {
+    display: grid;
+    font-weight: 600;
+  }
+  .hud-state > span {
+    grid-area: 1 / 1;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .hud-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #0f8a68;
+  }
+  .dark .hud-dot {
+    background: #52d2a6;
+  }
+  .hud-connecting .hud-dot {
+    background: #b6741a;
+  }
+  .dark .hud-connecting .hud-dot {
+    background: #f1b54a;
+  }
+  .hud-connecting {
+    visibility: hidden;
+  }
+  .hud-unit {
+    color: #5a6770;
+  }
+  .dark .hud-unit {
+    color: #8d9aa5;
+  }
+  .hud svg {
+    width: 14px;
+    height: 14px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 1.4;
+    stroke-linecap: round;
+  }
+  .hud-glyph {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .hud-glyph svg circle {
+    fill: currentColor;
+    stroke: none;
+  }
+
+  .xterm {
+    position: absolute;
+    top: 18%;
+    left: 7%;
+    width: 62%;
+    background: #fff;
+    color: #000;
+    border: 1px solid #5d6670;
+  }
+  .xterm-bar {
+    height: 18px;
+    font: 600 10.5px/18px var(--font-sans);
+    text-align: center;
+    color: #fff;
+    background: #3f5f86;
+  }
+  .xterm pre {
+    margin: 0;
+    padding: 6px 8px 22px;
+    font-size: 10.5px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+  }
+  .xterm-cursor {
+    background: #000;
+    color: #000;
+  }
+
+  .local-term {
+    position: absolute;
+    left: -2.5rem;
+    bottom: 0;
+    width: min(33rem, 96%);
+    margin: 0;
+    padding: 0.875rem 1rem;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--code-foreground);
+    background: var(--code);
+    border: 1px solid var(--code-border);
+    border-radius: var(--radius-panel);
+    box-shadow: var(--shadow-float);
+    white-space: pre-wrap;
+  }
+
+  @media (max-width: 40rem) {
+    .session-stage {
+      padding-bottom: 0;
+    }
+    .local-term {
+      position: relative;
+      left: 0;
+      width: calc(100% - 0.75rem);
+      margin: -1.5rem 0 0 0.75rem;
+      font-size: 11.5px;
+    }
+    .hud {
+      gap: 10px;
+      padding: 5px 6px 5px 10px;
+      font-size: 11px;
+    }
+    .hud .hide-narrow {
+      display: none;
+    }
+  }
+
+  /* One moment on load: the wire runs once along the screen's top edge while
+     the tab says Connecting, then the tab turns Connected and the wire fades.
+     Reduced motion, or no animation at all, shows the connected state. */
+  @media (prefers-reduced-motion: no-preference) {
+    .session-screen .wire {
+      animation: session-wire 1.9s linear forwards;
+    }
+    .session-screen .wire::after {
+      animation-iteration-count: 1;
+      animation-fill-mode: forwards;
+    }
+    .hud-connecting {
+      animation: session-connecting 1.6s steps(1, end) forwards;
+    }
+    .hud-connected {
+      animation: session-connected 1.6s steps(1, end) forwards;
+    }
+  }
+
+  @keyframes session-wire {
+    0%,
+    84% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+  @keyframes session-connecting {
+    from {
+      visibility: visible;
+    }
+    to {
+      visibility: hidden;
+    }
+  }
+  @keyframes session-connected {
+    from {
+      visibility: hidden;
+    }
+    to {
+      visibility: visible;
+    }
+  }
+}

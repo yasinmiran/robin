@@ -1,0 +1,66 @@
+/* Without JavaScript nothing sets .dark, so the page follows the system here
+   instead, and controls that need a script are not shown. The declarations
+   repeat the .dark block of tokens.css; tests/styles.test.ts keeps them equal. */
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.js) {
+    color-scheme: dark;
+    --background: oklch(0.230 0.014 239.3); /* #171e23 */
+    --foreground: oklch(0.934 0.008 241.7); /* #e5eaee */
+    --card: oklch(0.259 0.016 240.7); /* #1d252b */
+    --card-foreground: oklch(0.934 0.008 241.7); /* #e5eaee */
+    --popover: oklch(0.259 0.016 240.7); /* #1d252b */
+    --popover-foreground: oklch(0.934 0.008 241.7); /* #e5eaee */
+    --primary: oklch(0.781 0.130 167.0); /* #52d2a6 */
+    --primary-foreground: oklch(0.215 0.024 166.8); /* #0e1d17 */
+    --secondary: oklch(0.288 0.018 241.7); /* #232c33 */
+    --secondary-foreground: oklch(0.934 0.008 241.7); /* #e5eaee */
+    --muted: oklch(0.268 0.016 240.6); /* #1f272d */
+    --muted-foreground: oklch(0.679 0.022 243.6); /* #8d9aa5 */
+    --accent: oklch(0.299 0.020 242.5); /* #252f37 */
+    --accent-foreground: oklch(0.934 0.008 241.7); /* #e5eaee */
+    --destructive: oklch(0.721 0.145 29.3); /* #f27e6e */
+    --destructive-foreground: oklch(0.191 0.028 31.3); /* #1f0f0c */
+    --border: oklch(0.323 0.020 242.4); /* #2b353d */
+    --input: oklch(0.549 0.023 243.7); /* #66737e */
+    --ring: oklch(0.781 0.130 167.0); /* #52d2a6 */
+    --sidebar: oklch(0.230 0.014 239.3); /* #171e23 */
+    --sidebar-foreground: oklch(0.934 0.008 241.7); /* #e5eaee */
+    --sidebar-primary: oklch(0.781 0.130 167.0); /* #52d2a6 */
+    --sidebar-primary-foreground: oklch(0.215 0.024 166.8); /* #0e1d17 */
+    --sidebar-accent: oklch(0.299 0.020 242.5); /* #252f37 */
+    --sidebar-accent-foreground: oklch(0.934 0.008 241.7); /* #e5eaee */
+    --sidebar-border: oklch(0.323 0.020 242.4); /* #2b353d */
+    --sidebar-ring: oklch(0.781 0.130 167.0); /* #52d2a6 */
+    --warning: oklch(0.810 0.139 78.7); /* #f1b54a */
+    --warning-edge: oklch(0.810 0.139 78.7); /* #f1b54a */
+    --warning-surface: oklch(0.263 0.023 84.3); /* #2a2418 */
+    --destructive-surface: oklch(0.247 0.026 23.1); /* #2c1c1b */
+    --note-edge: oklch(0.679 0.022 243.6); /* #8d9aa5 */
+    --code: oklch(0.200 0.012 237.4); /* #11171b */
+    --code-foreground: oklch(0.934 0.008 241.7); /* #e5eaee */
+    --code-muted: oklch(0.679 0.022 243.6); /* #8d9aa5 */
+    --code-prompt: oklch(0.781 0.130 167.0); /* #52d2a6 */
+    --code-string: oklch(0.810 0.139 78.7); /* #f1b54a */
+    --code-border: oklch(0.323 0.020 242.4); /* #2b353d */
+    --mint: oklch(0.781 0.130 167.0); /* #52d2a6 */
+    --tile: oklch(0.319 0.020 242.4); /* #2a343c */
+  }
+}
+
+:root:not(.js) .js-only {
+  display: none !important;
+}
+
+/* With no menu button to open the sheet, narrow screens list the pages
+   after the article instead. */
+@media (max-width: 56.1875rem) {
+  :root:not(.js) .sidebar {
+    display: block;
+    position: static;
+    order: 1;
+    height: auto;
+    border-right: 0;
+    border-top: 1px solid var(--sidebar-border);
+  }
+}
