@@ -61,24 +61,43 @@ func TestTypeText(t *testing.T) {
 // for it to settle first.
 func TestTypeWaitsForSpares(t *testing.T) {
 	tx := startX(t, "sleep 1000")
+	start := time.Now()
 	if err := tx.c.Type(t.Context(), cjk(0, maxSpareKeys)); err != nil {
 		t.Fatal(err)
 	}
-	start := time.Now()
+	// Every spare keycode was pressed just now, so the next one waits, and
+	// the wait ends with the context.
+	ctx, cancel := context.WithTimeout(t.Context(), spareSettle/10)
+	defer cancel()
+	if err := tx.c.Type(ctx, cjk(maxSpareKeys, 1)); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Type past its deadline = %v", err)
+	}
 	if err := tx.c.Type(t.Context(), cjk(maxSpareKeys, 1)); err != nil {
 		t.Fatal(err)
 	}
-	if d := time.Since(start); d < spareSettle/2 {
-		t.Errorf("rebinding a spare keycode waited %v, want about %v", d, spareSettle)
+	if d := time.Since(start); d < spareSettle {
+		t.Errorf("rebinding a spare keycode came %v after its last press, want at least %v", d, spareSettle)
 	}
 
-	// Waiting ends with the context.
-	ctx, cancel := context.WithCancel(t.Context())
+	// A cancelled context stops between characters.
+	ctx, cancel = context.WithCancel(t.Context())
 	cancel()
-	if err := tx.c.Type(ctx, cjk(0, 2*maxSpareKeys)); !errors.Is(err, context.Canceled) {
+	if err := tx.c.Type(ctx, "ab"); !errors.Is(err, context.Canceled) {
 		t.Errorf("Type with a cancelled context = %v", err)
 	}
 	tx.assertNothingHeld(t)
+}
+
+func TestTypeOnClosedConnection(t *testing.T) {
+	tx := startX(t, "sleep 1000")
+	c, err := Open(tx.d.Name, tx.d.XAuthority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	if err := c.Type(t.Context(), "a"); err == nil {
+		t.Error("Type on a closed connection succeeded")
+	}
 }
 
 // TestTypeIntoXterm types a line with several times as many characters
