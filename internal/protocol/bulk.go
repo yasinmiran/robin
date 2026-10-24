@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"hash"
-	"sync"
 )
 
 // BulkChannel is the label of the data channels that carry bulk transfers:
@@ -74,34 +73,28 @@ var (
 	ErrBulkHash      = errors.New("protocol: bulk transfer SHA-256 mismatch")
 )
 
-var bulkKinds = struct {
-	sync.RWMutex
-	limit map[string]int64
-}{limit: map[string]int64{}}
+// bulkLimits is written only from init, so it needs no lock.
+var bulkLimits = map[string]int64{}
 
 // RegisterBulkKind declares a kind of bulk transfer and the most bytes one
-// may carry. Features register their kinds from init in their own file; a
-// receiver refuses any kind nobody registered, and a sender cannot send
-// one. It panics on an empty kind, a negative limit or a kind registered
-// twice.
+// may carry. Features call it from init in their own file, and only from
+// init; a receiver refuses any kind nobody registered, and a sender cannot
+// send one. It panics on an empty kind, a negative limit or a kind
+// registered twice.
 func RegisterBulkKind(kind string, limit int64) {
 	if kind == "" || limit < 0 {
 		panic(fmt.Sprintf("protocol: bad bulk kind %q with limit %d", kind, limit))
 	}
-	bulkKinds.Lock()
-	defer bulkKinds.Unlock()
-	if _, dup := bulkKinds.limit[kind]; dup {
+	if _, dup := bulkLimits[kind]; dup {
 		panic(fmt.Sprintf("protocol: bulk kind %q registered twice", kind))
 	}
-	bulkKinds.limit[kind] = limit
+	bulkLimits[kind] = limit
 }
 
 // BulkLimit reports the most bytes a transfer of kind may carry, and
 // whether anyone registered the kind.
 func BulkLimit(kind string) (int64, bool) {
-	bulkKinds.RLock()
-	defer bulkKinds.RUnlock()
-	limit, ok := bulkKinds.limit[kind]
+	limit, ok := bulkLimits[kind]
 	return limit, ok
 }
 
