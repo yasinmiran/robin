@@ -10,10 +10,19 @@
 #
 # XTEST_GOFLAGS (default -race) goes to go test -c; clear it to benchmark.
 # XTEST_IMAGE (default localhost/robin-xtest) names the image it builds.
+# XTEST_COVER, a directory, builds the binaries with coverage of the whole
+# module and has each write its profile there, as <binary>.out.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../../../.." && pwd)
 image=${XTEST_IMAGE:-localhost/robin-xtest}
+cover=${XTEST_COVER:-}
+coverflags=
+if [ -n "$cover" ]; then
+	mkdir -p "$cover"
+	cover=$(cd "$cover" && pwd)
+	coverflags="-cover -coverpkg=./..."
+fi
 out=$(mktemp -d)
 trap 'rm -rf "$out"; podman rm -f "robin-xtest-$$" >/dev/null 2>&1 || true' EXIT
 
@@ -21,7 +30,7 @@ trap 'rm -rf "$out"; podman rm -f "robin-xtest-$$" >/dev/null 2>&1 || true' EXIT
 id=$(podman build -q -t "$image" -f "$here/Containerfile" "$here")
 cd "$root"
 for pkg in display x11 .; do
-	go test ${XTEST_GOFLAGS--race} -c -o "$out/$(basename "$(cd "internal/agent/$pkg" && pwd)").test" "./internal/agent/$pkg"
+	go test ${XTEST_GOFLAGS--race} $coverflags -c -o "$out/$(basename "$(cd "internal/agent/$pkg" && pwd)").test" "./internal/agent/$pkg"
 done
 # The audio tests encode with libopus, so they link statically with the
 # agent's toolchain, where the race detector is not available.
@@ -30,12 +39,14 @@ zig=$(toolchain/zig.sh)
 prefix=$(toolchain/opus.sh "$target")
 ZIG_GLOBAL_CACHE_DIR=${ZIG_GLOBAL_CACHE_DIR:-$root/.cache/toolchain/zig} CGO_ENABLED=1 \
 	CC="$zig cc -target $target" CGO_CFLAGS="-I$prefix/include" CGO_LDFLAGS="-L$prefix/lib" \
-	go test -tags opus -c -o "$out/audio.test" ./internal/agent/audio
-podman run --rm --init --name "robin-xtest-$$" -v "$out:/t:ro" "$id" sh -c '
+	go test -tags opus $coverflags -c -o "$out/audio.test" ./internal/agent/audio
+podman run --rm --init --name "robin-xtest-$$" -v "$out:/t:ro" ${cover:+-v "$cover:/cover"} -e "XTEST_COVER=${cover:+/cover}" "$id" sh -c '
 	cd /tmp
 	status=0
 	for t in /t/display.test /t/x11.test /t/agent.test /t/audio.test; do
 		echo "== $t"
-		"$t" -test.v -test.timeout=3m "$@" || status=1
+		profile=
+		[ -z "$XTEST_COVER" ] || profile=-test.coverprofile=$XTEST_COVER/$(basename "$t" .test).out
+		"$t" -test.v -test.timeout=3m $profile "$@" || status=1
 	done
 	exit $status' sh "$@"

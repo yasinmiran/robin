@@ -15,10 +15,19 @@
 #            KWin screencasts only with OpenGL, so this one borrows the host's
 #            render node and is skipped, saying so, where there is none to open
 # WLTEST_GOFLAGS (default -race) goes to go test -c.
+# WLTEST_COVER, a directory, builds the binaries with coverage of the whole
+# module and has each write its profile there, as <desktop>/<binary>.out.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../../../.." && pwd)
 desktops=${WLTEST_DESKTOPS:-gnome46 gnome49 kde}
+cover=${WLTEST_COVER:-}
+coverflags=
+if [ -n "$cover" ]; then
+	mkdir -p "$cover"
+	cover=$(cd "$cover" && pwd)
+	coverflags="-cover -coverpkg=./..."
+fi
 out=$(mktemp -d)
 name=
 cleanup() {
@@ -28,8 +37,8 @@ cleanup() {
 trap cleanup EXIT
 
 cd "$root"
-go test ${WLTEST_GOFLAGS--race} -c -o "$out/wayland.test" ./internal/agent/wayland
-go test ${WLTEST_GOFLAGS--race} -c -o "$out/agent.test" ./internal/agent
+go test ${WLTEST_GOFLAGS--race} $coverflags -c -o "$out/wayland.test" ./internal/agent/wayland
+go test ${WLTEST_GOFLAGS--race} $coverflags -c -o "$out/agent.test" ./internal/agent
 # The audio test encodes with libopus, so it links statically with the
 # agent's toolchain, where the race detector is not available.
 target=$(uname -m)-linux-musl
@@ -37,7 +46,7 @@ zig=$(toolchain/zig.sh)
 prefix=$(toolchain/opus.sh "$target")
 ZIG_GLOBAL_CACHE_DIR=${ZIG_GLOBAL_CACHE_DIR:-$root/.cache/toolchain/zig} CGO_ENABLED=1 \
 	CC="$zig cc -target $target" CGO_CFLAGS="-I$prefix/include" CGO_LDFLAGS="-L$prefix/lib" \
-	go test -tags opus -c -o "$out/audio.test" ./internal/agent/audio
+	go test -tags opus $coverflags -c -o "$out/audio.test" ./internal/agent/audio
 cp "$here/probe.py" "$here/session.sh" "$out/"
 # The session runs as the image's unprivileged user, not the owner of $out.
 chmod -R a+rX "$out"
@@ -79,8 +88,16 @@ run_desktop() {
 	# Run by ID: another checkout may retag the image between build and run.
 	id=$(podman build -q -t "$image" -f "$here/$file" "$here")
 	name=robin-wltest-$desktop-$$
+	profiles=
+	if [ -n "$cover" ]; then
+		profiles=$cover/$desktop
+		mkdir -p "$profiles"
+		# The session user is uid 1000 in there, a subordinate uid out here.
+		chmod 0777 "$profiles"
+	fi
 	# shellcheck disable=SC2086 # $runopts holds options without spaces
-	podman run -d --name "$name" --init --shm-size=512m $runopts -v "$out:/t:ro" "$id" sleep infinity >/dev/null
+	podman run -d --name "$name" --init --shm-size=512m $runopts -v "$out:/t:ro" ${profiles:+-v "$profiles:/cover"} \
+		"$id" sleep infinity >/dev/null
 	# There is no logind or systemd here: mutter falls back to its dummy login
 	# manager once /run/systemd/seats is gone, and wants a system bus of some kind.
 	podman exec -u root "$name" sh -c "
@@ -94,9 +111,11 @@ run_desktop() {
 	ok=0
 	for t in "wayland.test" "agent.test -test.run=Wayland" "audio.test -test.run=PipeWire"; do
 		echo "== $desktop: $t"
+		profile=
+		[ -z "$cover" ] || profile=-test.coverprofile=/cover/${t%%.test*}.out
 		# shellcheck disable=SC2086 # $t is a binary and its own arguments
 		podman exec -w /tmp -e XDG_RUNTIME_DIR=/run/user/$uid -e ROBIN_WAYLAND_PROBE=/t/probe.py -e ROBIN_PIPEWIRE_PULSE=1 \
-			"$name" /t/$t -test.v -test.timeout=5m "$@" || ok=1
+			"$name" /t/$t -test.v -test.timeout=5m $profile "$@" || ok=1
 	done
 	if [ "$ok" != 0 ]; then
 		podman exec "$name" sh -c 'tail -n 20 /tmp/session-logs/*.log' >&2 || true
