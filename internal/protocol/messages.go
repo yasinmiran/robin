@@ -247,6 +247,9 @@ type Control struct {
 	// monitor to show, or MonitorAll.
 	Monitors *Monitors `json:"monitors,omitempty"`
 	Monitor  string    `json:"monitor,omitempty"`
+
+	// File, for the file control types.
+	File *File `json:"file,omitempty"`
 }
 
 // Values for Start.Attach, Ready.Mode and Start.Encoder.
