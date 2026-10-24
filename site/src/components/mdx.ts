@@ -2,7 +2,8 @@ import Callout from "@/components/Callout.astro";
 import CodeBlock from "@/components/CodeBlock.astro";
 import Flag from "@/components/Flag.astro";
 import Flags from "@/components/Flags.astro";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import TableCell from "@/components/TableCell.astro";
+import { Table, TableBody, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 /** components maps MDX elements and the components pages use without importing. */
 export const components = {

@@ -28,7 +28,25 @@ describe("Table", () => {
     expect(screen.getByRole("columnheader", { name: "Encoder" })).toHaveClass("first:sticky");
   });
 
-  it("right aligns numbers and leaves words alone", () => {
+  it("takes the caller's word on whether a cell is a quantity", () => {
+    render(
+      <table>
+        <tbody>
+          <tr>
+            <TableCell numeric>
+              <span>4.8 ms</span>
+            </TableCell>
+            <TableCell numeric={false}>10000</TableCell>
+          </tr>
+        </tbody>
+      </table>,
+    );
+    const [given, overruled] = screen.getAllByRole("cell");
+    expect(given).toHaveAttribute("data-numeric", "true");
+    expect(overruled).not.toHaveAttribute("data-numeric");
+  });
+
+  it("marks quantities and leaves words alone", () => {
     render(
       <table>
         <tbody>
@@ -45,7 +63,7 @@ describe("Table", () => {
     );
     const [measured, joined, word, code] = screen.getAllByRole("cell");
     expect(measured).toHaveAttribute("data-numeric", "true");
-    expect(measured).toHaveClass("text-right");
+    expect(measured).toHaveClass("whitespace-nowrap");
     expect(joined).toHaveAttribute("data-numeric", "true");
     expect(word).not.toHaveAttribute("data-numeric");
     expect(code).not.toHaveAttribute("data-numeric");
@@ -65,7 +83,8 @@ describe("isNumericCell", () => {
   it.each([
     ["10000", true],
     ["4.8 to 5.1 ms", true],
-    ["0.17.0", true],
+    ["0.17.0", false],
+    ["1,000", false],
     ["30 fps", true],
     ["Fedora 43", false],
     ["none (spawn)", false],

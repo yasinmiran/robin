@@ -67,11 +67,15 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
   )
 }
 
-/** isNumericCell is true for a measurement such as 4.8 to 5.1 ms or 10000. */
+/**
+ * isNumericCell is true for a quantity such as 4.8 to 5.1 ms or 10000. A
+ * version like 0.17.0 is a name, not a quantity, and stays left aligned.
+ */
 function isNumericCell(text: string): boolean {
-  return /^\d[\d.,]*(\s*(to|-)\s*\d[\d.,]*)?\s*(ms|s|%|fps|kbps|KiB|MiB)?$/.test(
-    text.trim()
-  )
+  const number = String.raw`\d+(?:\.\d+)?`
+  return new RegExp(
+    String.raw`^${number}(?:\s*(?:to|-)\s*${number})?\s*(?:ms|s|%|fps|kbps|KiB|MiB)?$`
+  ).test(text.trim())
 }
 
 function textOf(node: React.ReactNode): string {
@@ -80,13 +84,23 @@ function textOf(node: React.ReactNode): string {
   return ""
 }
 
-function TableCell({ className, children, ...props }: React.ComponentProps<"td">) {
-  const numeric = isNumericCell(textOf(children))
+function TableCell({
+  className,
+  children,
+  numeric = isNumericCell(textOf(children)),
+  ...props
+}: React.ComponentProps<"td"> & {
+  /**
+   * Marks a quantity, worked out from text children when not given. A column
+   * of nothing but quantities is right aligned, header included (content.css).
+   */
+  numeric?: boolean
+}) {
   return (
     <td
       data-slot="table-cell"
       data-numeric={numeric || undefined}
-      className={cn(cell, numeric && "text-right whitespace-nowrap", className)}
+      className={cn(cell, numeric && "whitespace-nowrap", className)}
       {...props}
     >
       {children}

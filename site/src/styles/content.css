@@ -113,6 +113,13 @@
     }
   }
 
+  /* Search excerpts mark the matched words by weight, not a highlighter. */
+  .search-excerpt mark {
+    background: none;
+    color: var(--foreground);
+    font-weight: 700;
+  }
+
   kbd {
     font-size: var(--text-xs);
     padding: 0.05rem 0.375rem;
@@ -288,4 +295,13 @@
       grid-template-columns: minmax(0, 1fr);
     }
   }
+}
+
+/* A table column where every body cell is a quantity lines up on the right,
+   its header too. Unlayered, so it outranks the cells' text-left utility. */
+.table-scroll table:not(:has(tbody td:nth-child(2):not([data-numeric]))) :is(th, td):nth-child(2),
+.table-scroll table:not(:has(tbody td:nth-child(3):not([data-numeric]))) :is(th, td):nth-child(3),
+.table-scroll table:not(:has(tbody td:nth-child(4):not([data-numeric]))) :is(th, td):nth-child(4),
+.table-scroll table:not(:has(tbody td:nth-child(5):not([data-numeric]))) :is(th, td):nth-child(5) {
+  text-align: right;
 }

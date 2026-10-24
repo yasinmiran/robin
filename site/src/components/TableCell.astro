@@ -1,0 +1,11 @@
+---
+// Stands in for <td> in MDX. MDX hands a React component its children as
+// rendered HTML, not text, so whether the cell holds a number is read here.
+import { TableCell, isNumericCell } from "@/components/ui/table";
+import { decodeEntities } from "@/lib/html";
+
+const html = await Astro.slots.render("default");
+const numeric = isNumericCell(decodeEntities(html.replace(/<[^>]+>/g, "")));
+---
+
+<TableCell {...Astro.props} numeric={numeric}><Fragment set:html={html} /></TableCell>
