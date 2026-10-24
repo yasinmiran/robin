@@ -16,6 +16,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,6 +36,10 @@ type fileBrowser struct {
 	dc       *webrtc.DataChannel
 	controls chan protocol.Control
 	bulks    chan received
+	// refuse makes it answer every transfer with an error instead, and
+	// refused counts those it did.
+	refuse  atomic.Bool
+	refused atomic.Int32
 }
 
 // received is one transfer the agent sent, already answered done.
@@ -46,6 +51,13 @@ type received struct {
 func newFileBrowser(t *testing.T, h *harness) *fileBrowser {
 	t.Helper()
 	pc, dc, _ := connectBrowser(t, h)
+	return wrapBrowser(t, pc, dc)
+}
+
+// wrapBrowser listens on a browser's control channel and takes the bulk
+// transfers the agent opens, once the control channel is open.
+func wrapBrowser(t *testing.T, pc *webrtc.PeerConnection, dc *webrtc.DataChannel) *fileBrowser {
+	t.Helper()
 	b := &fileBrowser{t: t, pc: pc, dc: dc, controls: make(chan protocol.Control, 64), bulks: make(chan received, 8)}
 	dc.OnMessage(func(m webrtc.DataChannelMessage) {
 		var c protocol.Control
@@ -86,10 +98,16 @@ func (b *fileBrowser) take(ch *webrtc.DataChannel) {
 			if f.SHA256 != hex.EncodeToString(sum.Sum(nil)) {
 				verdict = protocol.Bulk{T: protocol.BulkError, Error: "hash"}
 			}
+			if b.refuse.Load() {
+				verdict = protocol.Bulk{T: protocol.BulkError, Error: "no room"}
+				defer b.refused.Add(1)
+			}
 			v, _ := json.Marshal(verdict)
 			ch.SendText(string(v))
 			ch.Close()
-			b.bulks <- r
+			if !b.refuse.Load() {
+				b.bulks <- r
+			}
 		}
 	})
 }
