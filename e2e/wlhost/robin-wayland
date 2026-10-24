@@ -9,8 +9,9 @@
 #   robin-wayland run CMD...         run CMD in the session's environment
 #   robin-wayland events             what the probe window received, JSON lines
 #   robin-wayland redraw             move the probe's picture on by one frame
-#   robin-wayland leftovers          agent and gst-launch-1.0 processes, and
-#                                 portal or mutter sessions, still alive
+#   robin-wayland leftovers          agent and gst-launch-1.0 processes, portal
+#                                 or mutter sessions, and microphone or
+#                                 camera nodes, still alive
 set -euo pipefail
 
 export XDG_RUNTIME_DIR=/run/user/$(id -u)
@@ -55,6 +56,8 @@ leftovers() {
   ((n == 0)) || echo "$n mutter remote desktop sessions"
   n=$(sessions org.gnome.Mutter.ScreenCast /org/gnome/Mutter/ScreenCast/Session 1)
   ((n == 0)) || echo "$n mutter screencast sessions"
+  # The browser's microphone and camera, as PipeWire nodes.
+  pw-cli ls Node 2>/dev/null | grep -o 'robin-\(mic\|camera\)-[0-9]*' | sort -u || true
 }
 
 case ${1:-} in
