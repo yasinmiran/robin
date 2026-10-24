@@ -19,8 +19,14 @@ type Encoder struct{}
 // New always fails in builds without openh264.
 func New(width, height, fps, bitrate int) (*Encoder, error) { return nil, ErrUnavailable }
 
+// Open always fails in builds without openh264.
+func Open(Params) (*Encoder, error) { return nil, ErrUnavailable }
+
 // Encode is never reachable since New fails.
 func (*Encoder) Encode(*yuv.I420, time.Duration, bool) ([]byte, error) { return nil, ErrUnavailable }
+
+// QP is never reachable since New fails.
+func (*Encoder) QP() int { return -1 }
 
 // SetBitrate is never reachable since New fails.
 func (*Encoder) SetBitrate(int) error { return ErrUnavailable }
