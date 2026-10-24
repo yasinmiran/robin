@@ -111,18 +111,22 @@ func (e *taggedEncoder) SetBitrate(bps int) error {
 	return e.Encoder.SetBitrate(bps)
 }
 
+// QP passes on the wrapped encoder's, which the stream logs with keyframes.
+func (e *taggedEncoder) QP() int {
+	if q, ok := e.Encoder.(interface{ QP() int }); ok {
+		return q.QP()
+	}
+	return 0
+}
+
 func (e *taggedEncoder) Encode(img *yuv.I420, ts time.Duration, keyframe bool) ([]byte, error) {
 	au, err := e.Encoder.Encode(img, ts, keyframe)
 	if err != nil || len(au) == 0 {
 		return au, err
 	}
 	i := int(e.t.desk.index.Load())
-	qp := 0
-	if q, ok := e.Encoder.(interface{ QP() int }); ok {
-		qp = q.QP()
-	}
 	e.t.mu.Lock()
-	e.t.sent = append(e.t.sent, vqtest.Sent{Index: i, Bytes: len(au), Key: vqtest.IsKeyframe(au), QP: qp, Target: e.target})
+	e.t.sent = append(e.t.sent, vqtest.Sent{Index: i, Bytes: len(au), Key: vqtest.IsKeyframe(au), QP: e.QP(), Target: e.target})
 	e.t.mu.Unlock()
 	return vqtest.Tag(au, i), nil
 }
