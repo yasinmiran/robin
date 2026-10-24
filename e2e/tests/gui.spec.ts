@@ -8,6 +8,7 @@ import { savePageCoverage, startPageCoverage } from './helpers/cover';
 import { TONE_HZ, pcm, toneOf } from './helpers/fakemedia';
 import { CHANGED_FLOOR, isNonBlack, sampleFrame, waitForStillFrame } from './helpers/frames';
 import * as host from './helpers/host';
+import * as sharp from './helpers/sharp';
 
 // One robin session per scenario, shared by the tests below in order.
 // When a test fails Playwright restarts the worker, so beforeAll brings up a
@@ -100,6 +101,7 @@ test.beforeAll(async ({ browser }, testInfo) => {
     recordVideo: { dir: path.join(OUT, 'video'), size: { width: 1280, height: 720 } },
   });
   page = await context.newPage();
+  await page.addInitScript(sharp.holdControl);
   await startPageCoverage(page);
   const consoleLog = fs.createWriteStream(path.join(OUT, 'console.log'), { flags: 'a' });
   page.on('console', (m) => consoleLog.write(`${new Date().toISOString()} ${m.type()} ${m.text()}\n`));
@@ -592,6 +594,128 @@ test('clipboard: an image and HTML pasted in the page reach the host, an image c
     .toBe(sha256(other));
 });
 
+// Sharp text runs where the xterm can be clicked and the picture read, in
+// any browser that says which frame it shows.
+const SHARP = FILES;
+const sharpState = () => page.evaluate(() => (window as any).robin.sharp.state);
+const tileCount = (g: { w: number; h: number }) => Math.ceil(g.w / 64) * Math.ceil(g.h / 64);
+const allSharp = async () => {
+  const s = await sharpState();
+  return Boolean(s.grid && s.visible && s.drawn === tileCount(s.grid));
+};
+// shownRect is the part of the host's screen the video shows: the current
+// monitor, or all of it.
+const shownRect = async (): Promise<sharp.Rect | undefined> => {
+  const m = await page.evaluate(() => (window as any).robin.monitors);
+  const cur = m?.list?.find((x: any) => x.name === m.current);
+  return cur ? { x: cur.x, y: cur.y, width: cur.w, height: cur.h } : undefined;
+};
+// typeInTerminal clicks the xterm through the picture and types a line.
+const typeInTerminal = async (line: string) => {
+  const t = (await host.terminal())!;
+  const p = await pagePoint(page, SCREEN, t.x + t.width / 2, t.y + t.height / 2);
+  await page.mouse.click(p.x, p.y);
+  await page.keyboard.type(line, { delay: 20 });
+  await page.keyboard.press('Enter');
+};
+// traceWhile records what the page shows of tiles while run runs and for
+// settleMs after.
+const traceWhile = async (run: () => Promise<void>, settleMs: number) => {
+  await page.evaluate(() => (window as any).robin.sharp.trace());
+  await run();
+  await page.waitForTimeout(settleMs);
+  return (await page.evaluate(() => (window as any).robin.sharp.stopTrace())) as sharp.Trace;
+};
+
+test('sharp text: a still screen is exact where the video alone is not, and no tile outlives a change', async ({}, testInfo) => {
+  test.skip(!SHARP, NO_FILES);
+  testInfo.setTimeout(120_000);
+  await expect.poll(async () => (await sharpState()).want, { message: 'sharp text is on by default' }).toBe(true);
+  const first = await sharpState();
+  test.skip(Boolean(first.unsupported), first.unsupported);
+  await expect.poll(async () => (await sharpState()).on, { message: 'the agent sends tiles', timeout: 10_000 }).toBe(true);
+
+  // Coloured text: what 4:2:0 cannot carry exactly.
+  await expect.poll(async () => host.terminal(), { message: 'an xterm is mapped', timeout: 15_000 }).not.toBeNull();
+  await typeInTerminal('tput setaf 1; echo robin-sharp-red; tput setaf 4; echo robin-sharp-blue; tput setaf 2; echo robin-sharp-green; tput sgr0');
+  const still = Date.now();
+  await expect.poll(allSharp, { message: 'every tile drawn and shown', timeout: 20_000 }).toBe(true);
+  const toSharp = Date.now() - still;
+
+  const exact = async (label: string) => {
+    const want = await sharp.hostPixels(await shownRect());
+    const got = await sharp.pagePixels(page);
+    const m = sharp.match(want, got);
+    testInfo.annotations.push({ type: `sharp ${label}`, description: JSON.stringify(m) });
+    expect(m.covered, `${label}: pixels under a tile`).toBe(m.total);
+    expect(m.composite, `${label}: pixels of video and tiles that differ from the host`).toBe(0);
+    expect(m.video, `${label}: pixels of the video alone that differ from the host`).toBeGreaterThan(0);
+  };
+  await exact('still screen');
+  const s = await sharpState();
+  testInfo.annotations.push({
+    type: 'sharp still screen',
+    description: JSON.stringify({ grid: s.grid, bytes: s.bytes, batches: s.batches, msFromTypingToAllSharp: toSharp }),
+  });
+
+  // A change: the tiles it touches go before its frame shows and come back
+  // once it is still.
+  const changed = await traceWhile(() => typeInTerminal('echo robin-sharp-change'), 3_000);
+  const stale = sharp.staleFrames(changed);
+  const again = sharp.sharpAgain(changed);
+  testInfo.annotations.push({
+    type: 'sharp after a change',
+    description: JSON.stringify({ frames: changed.frames.length, manifests: changed.manifests.length, again, hidden: sharp.hiddenTime(changed) }),
+  });
+  expect(again.length, 'tiles the typing changed').toBeGreaterThan(0);
+  expect(stale, 'frames shown with a stale tile').toEqual([]);
+  expect(Math.max(...again), "ms from a tile's last change to it drawn sharp again").toBeLessThan(5_000);
+
+  // The control channel held up 300 ms behind the video, as a lost packet
+  // holds it: the page hides the tiles rather than show one stale.
+  const held = await traceWhile(async () => {
+    await page.evaluate(() => { (window as any).__robinHoldControlMs = 300; });
+    await typeInTerminal('echo robin-sharp-held');
+    await page.waitForTimeout(2_000);
+    await page.evaluate(() => { (window as any).__robinHoldControlMs = 0; });
+  }, 3_000);
+  const hidden = sharp.hiddenTime(held);
+  testInfo.annotations.push({
+    type: 'sharp with the control channel 300 ms behind',
+    description: JSON.stringify({ frames: held.frames.length, stale: sharp.staleFrames(held).length, hidden, again: sharp.sharpAgain(held) }),
+  });
+  expect(sharp.staleFrames(held), 'frames shown with a stale tile, control 300 ms behind').toEqual([]);
+  expect(hidden.frames, 'frames shown before their manifest, with the tiles hidden').toBeGreaterThan(0);
+
+  await expect.poll(allSharp, { message: 'every tile sharp again', timeout: 20_000 }).toBe(true);
+  await exact('after the changes');
+
+  // Off from the status tab: the canvas empties and the agent stops.
+  await page.mouse.move(300, 4); // near the top edge, where the status tab comes out
+  const sw = page.locator('[data-switch="sharp"]');
+  await expect(sw).toHaveAttribute('aria-checked', 'true');
+  await sw.click();
+  await expect(sw).toHaveAttribute('aria-checked', 'false');
+  await expect.poll(async () => { const t = await sharpState(); return [t.on, t.drawn, t.visible]; }).toEqual([false, 0, false]);
+  const manifests = () => page.evaluate(() => (window as any).__robinManifests as number);
+  await page.waitForTimeout(500);
+  const before = await manifests();
+  await typeInTerminal('echo robin-sharp-off');
+  await page.waitForTimeout(1_000);
+  expect(await manifests(), 'manifests after sharp text went off').toBe(before);
+  // Switched on again, the whole still screen comes at once: what one costs.
+  const off = await sharpState();
+  await page.mouse.move(300, 4);
+  await sw.click();
+  const on = Date.now();
+  await expect.poll(allSharp, { message: 'tiles back once switched on', timeout: 20_000 }).toBe(true);
+  const back = await sharpState();
+  testInfo.annotations.push({
+    type: 'sharp one still screen',
+    description: JSON.stringify({ grid: back.grid, bytes: back.bytes - off.bytes, batches: back.batches - off.batches, ms: Date.now() - on }),
+  });
+});
+
 if (SCENARIO === 'direct') {
   test('transport: direct session uses UDP', async ({}, testInfo) => {
     expect((await connectedStats(testInfo, 'direct')).transport).toBe('udp');
@@ -887,6 +1011,61 @@ if (SCENARIO === 'attach') {
     await pick('LEFT');
     await expect.poll(videoSize).toBe('1280x800');
     await pointerLands(100, 100, { x: 100, y: 100 });
+  });
+
+  test('actual size: one desktop pixel to one device pixel, panned at the window edge, the pointer still lands', async () => {
+    // 1280x800 of LEFT in the 1000x700 window the attach resize test left.
+    const box = () => page.$eval(SCREEN, (el) => {
+      const r = el.getBoundingClientRect();
+      const t = document.getElementById('tiles')!.getBoundingClientRect();
+      return { x: r.left, y: r.top, w: r.width, h: r.height, tiles: [t.left, t.top, t.width, t.height] };
+    });
+    const dpr = await page.evaluate(() => window.devicePixelRatio);
+    expect((await box()).w, 'fit view shrinks the picture').toBeLessThan(1280 / dpr);
+    await page.mouse.move(300, 4);
+    await page.locator('[data-switch="actual"]').click();
+    await expect.poll(async () => { const b = await box(); return [b.x, b.y, b.w, b.h]; }).toEqual([0, 0, 1280 / dpr, 800 / dpr]);
+    if ((await sharpState()).visible) {
+      const b = await box();
+      expect(b.tiles, 'the tiles lie on the picture').toEqual([b.x, b.y, b.w, b.h]);
+    }
+    // The pointer at the right edge pans as far as the picture goes.
+    await page.mouse.move(999, 350, { steps: 4 });
+    await expect.poll(async () => (await box()).x, { message: 'panned to the right edge', timeout: 5_000 }).toBe(1000 - 1280 / dpr);
+    await page.mouse.move(500, 350, { steps: 4 });
+    const p = await pagePoint(page, SCREEN, 1200, 400);
+    expect(p.x, 'a pixel off the fit view is now on the page').toBeLessThan(1000);
+    await page.mouse.move(p.x, p.y);
+    await expect
+      .poll(async () => {
+        const m = await host.mouseLocation();
+        return Math.max(Math.abs(m.x - 1200), Math.abs(m.y - 400));
+      }, { message: 'pointer near 1200,400', timeout: 5_000 })
+      .toBeLessThanOrEqual(2);
+    await page.mouse.move(300, 4);
+    await page.locator('[data-switch="actual"]').click();
+    await expect.poll(async () => (await box()).w).toBeLessThan(1280 / dpr);
+  });
+
+  test("sharp text: over the whole screen scaled down to fit, tiles keep the desktop's own pixels", async ({}, testInfo) => {
+    test.skip(Boolean((await sharpState()).unsupported), 'no tiles in this browser');
+    const pick = async (name: string) => {
+      await page.mouse.move(300, 4);
+      await page.locator('#monitor').click();
+      await page.locator(`#monitor-menu [data-name="${name}"]`).click();
+      await expect(page.locator('#monitor-menu')).toBeHidden();
+    };
+    await pick('all');
+    await expect.poll(() => page.$eval(SCREEN, (el) => (el as HTMLVideoElement).videoWidth)).toBeLessThan(2304);
+    await expect.poll(async () => (await sharpState()).grid?.w, { message: "tiles at the desktop's width" }).toBe(2304);
+    await expect.poll(allSharp, { message: 'every tile drawn and shown', timeout: 20_000 }).toBe(true);
+    const m = sharp.match(await sharp.hostPixels(), await sharp.pagePixels(page));
+    testInfo.annotations.push({ type: 'sharp scaled', description: JSON.stringify({ ...m, ...(await sharpState()) }) });
+    expect(m.covered).toBe(m.total);
+    expect(m.composite, 'pixels of video and tiles that differ from the host').toBe(0);
+    expect(m.video, 'pixels of the scaled video alone that differ from the host').toBeGreaterThan(0);
+    await pick('LEFT');
+    await expect.poll(() => page.$eval(SCREEN, (el) => (el as HTMLVideoElement).videoWidth)).toBe(1280);
   });
 
   test('private: the CLI tells the user the room sees the session, and how to stop that', async () => {
