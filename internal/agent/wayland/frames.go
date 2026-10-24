@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/yasinmiran/robin/internal/agent/desktop"
+	"github.com/yasinmiran/robin/internal/agent/xdg"
 )
 
 // firstFrameTimeout bounds the wait for the stream's first picture.
@@ -71,7 +72,7 @@ func pipeline(node uint32, width, height, fps int) []string {
 
 func startFrames(remote *os.File, node uint32, width, height, fps int) (*frames, error) {
 	cmd := exec.Command("gst-launch-1.0", pipeline(node, width, height, fps)...)
-	cmd.Env = append(os.Environ(), "XDG_RUNTIME_DIR="+runtimeDir())
+	cmd.Env = append(os.Environ(), "XDG_RUNTIME_DIR="+xdg.RuntimeDir())
 	cmd.ExtraFiles = []*os.File{remote}
 	// An orphaned gst would keep the stream, and the screen sharing
 	// indicator on the host, alive.

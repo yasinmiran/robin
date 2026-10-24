@@ -1,7 +1,8 @@
 // Package peer is the agent's side of one WebRTC session with a browser: an
 // H.264 video track out, the control data channel and bulk transfers both
-// ways, and the congestion controller that tells the encoder how fast it
-// may go.
+// ways, the browser's microphone and camera tracks in with the feedback a
+// receiver owes for them, and the congestion controller that tells the
+// encoder how fast it may go.
 package peer
 
 import (
@@ -56,6 +57,11 @@ type Config struct {
 	Certificate *webrtc.Certificate
 	// Audio adds an Opus track for WriteAudio.
 	Audio bool
+	// Mic and Camera take the browser's microphone (Opus) and camera
+	// (H.264) as tracks for Handlers.Track, with what a receiver owes the
+	// sender: transport-wide congestion feedback for its rate, NACKs for
+	// the camera's lost packets.
+	Mic, Camera bool
 
 	MinBitrate, StartBitrate, MaxBitrate int // bits per second
 	// Unpaced sends every packet the moment it is written, as a
@@ -118,7 +124,7 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 	}, webrtc.RTPCodecTypeVideo); err != nil {
 		return nil, err
 	}
-	if cfg.Audio {
+	if cfg.Audio || cfg.Mic {
 		if err := m.RegisterCodec(webrtc.RTPCodecParameters{
 			RTPCodecCapability: opusCapability, PayloadType: 111,
 		}, webrtc.RTPCodecTypeAudio); err != nil {
@@ -176,6 +182,11 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 	})
 	if err := webrtc.ConfigureRTCPReports(reg); err != nil {
 		return nil, err
+	}
+	if cfg.Mic || cfg.Camera {
+		if err := addReceiverFeedback(reg); err != nil {
+			return nil, err
+		}
 	}
 	if err := m.RegisterHeaderExtension(webrtc.RTPHeaderExtensionCapability{URI: playoutDelayURI}, webrtc.RTPCodecTypeVideo); err != nil {
 		return nil, err
@@ -288,6 +299,8 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 	})
 	pc.OnTrack(func(tr *webrtc.TrackRemote, r *webrtc.RTPReceiver) {
 		log.Info("remote track", "kind", tr.Kind().String(), "codec", tr.Codec().MimeType)
+		// The browser's sender reports reach the interceptors only if read.
+		go drainRTCP(r)
 		if h.Track != nil {
 			h.Track(tr, r)
 		}
@@ -351,6 +364,12 @@ func (p *Peer) SendControl(m protocol.Control) error {
 		return fmt.Errorf("peer: control message of %d bytes exceeds %d", len(b), MaxControlBytes)
 	}
 	return dc.SendText(string(b))
+}
+
+// RequestKeyframe asks the browser for a keyframe on the track it sends
+// with ssrc.
+func (p *Peer) RequestKeyframe(ssrc uint32) error {
+	return p.pc.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: ssrc}})
 }
 
 // Bitrate is the congestion controller's current target in bits per second.

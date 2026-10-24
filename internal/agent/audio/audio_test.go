@@ -48,7 +48,7 @@ func TestFramerCutsWholeFrames(t *testing.T) {
 }
 
 func TestServerScriptQuotesPaths(t *testing.T) {
-	s := serverScript(`/run/a "b"/native`, `/run/c\d/cookie`)
+	s := serverScript(`/run/a "b"/native`, `/run/c\d/cookie`, false)
 	for _, want := range []string{
 		"load-module module-null-sink sink_name=robin rate=48000 channels=2 norewinds=1 ",
 		"set-default-sink robin\n",
@@ -122,7 +122,7 @@ func TestUserCookie(t *testing.T) {
 func TestNoServerInstalled(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	dir := t.TempDir()
-	if _, err := startServer(t.Context(), dir); err != errNoServer {
+	if _, err := startServer(t.Context(), dir, false); err != errNoServer {
 		t.Fatalf("startServer = %v, want errNoServer", err)
 	}
 	if left, _ := os.ReadDir(dir); len(left) != 0 {

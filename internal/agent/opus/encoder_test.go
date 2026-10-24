@@ -44,7 +44,7 @@ func openEncoder(t testing.TB, complexity int) *Encoder {
 // roundTrip encodes pcm frame by frame and decodes every packet.
 func roundTrip(t *testing.T, enc *Encoder, pcm []int16) (out []int16, bytes int) {
 	t.Helper()
-	dec, err := NewDecoder()
+	dec, err := NewDecoder(Channels)
 	if err != nil {
 		t.Fatal(err)
 	}

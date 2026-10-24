@@ -6,7 +6,7 @@ package opus
 #cgo LDFLAGS: -lopus -lm
 #include <opus/opus.h>
 
-// opus_encoder_ctl and opus_decoder_ctl are variadic, which cgo cannot call.
+// opus_encoder_ctl is variadic, which cgo cannot call.
 
 static int enc_setup(OpusEncoder* e, int bitrate, int complexity, int fec, int loss) {
 	int rc;
@@ -98,48 +98,6 @@ func (e *Encoder) Close() error {
 	if e.e != nil {
 		C.opus_encoder_destroy(e.e)
 		e.e = nil
-	}
-	return nil
-}
-
-// Decoder is a libopus decoder for SampleRate stereo. The agent never
-// decodes; tests use it to check what the encoder and the capture path emit.
-type Decoder struct {
-	d *C.OpusDecoder
-}
-
-// NewDecoder starts a decoder.
-func NewDecoder() (*Decoder, error) {
-	var rc C.int
-	d := C.opus_decoder_create(SampleRate, Channels, &rc)
-	if rc != C.OPUS_OK {
-		return nil, fmt.Errorf("opus: create decoder: %s", strerror(rc))
-	}
-	return &Decoder{d: d}, nil
-}
-
-// Decode decodes one packet into pcm, which must hold FrameSamples*Channels
-// samples, and returns the samples written per channel.
-func (d *Decoder) Decode(pkt []byte, pcm []int16) (int, error) {
-	if len(pcm) < FrameSamples*Channels {
-		return 0, fmt.Errorf("opus: decode buffer holds %d samples, want %d", len(pcm), FrameSamples*Channels)
-	}
-	var data *C.uchar
-	if len(pkt) > 0 {
-		data = (*C.uchar)(unsafe.Pointer(&pkt[0]))
-	}
-	n := C.opus_decode(d.d, data, C.opus_int32(len(pkt)), (*C.opus_int16)(unsafe.Pointer(&pcm[0])), C.int(len(pcm)/Channels), 0)
-	if n < 0 {
-		return 0, fmt.Errorf("opus: decode: %s", strerror(n))
-	}
-	return int(n), nil
-}
-
-// Close releases the decoder. It is safe to call more than once.
-func (d *Decoder) Close() error {
-	if d.d != nil {
-		C.opus_decoder_destroy(d.d)
-		d.d = nil
 	}
 	return nil
 }

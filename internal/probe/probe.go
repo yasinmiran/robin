@@ -67,6 +67,9 @@ type Report struct {
 	// y4menc, in the GstDirs that exist.
 	FFmpegEncoders, GstPlugins, GstDirs []string
 
+	// V4L2Loopback lists the v4l2loopback devices this user can write.
+	V4L2Loopback []VideoDevice
+
 	// AgentDir is where the agent can be stored and executed, or "" when no
 	// candidate passed. AgentDirRejected says why each failed candidate did.
 	AgentDir         string
@@ -275,6 +278,9 @@ func (r *Report) set(key, val string) error {
 		r.GstPlugins = appendNew(r.GstPlugins, val)
 	case "gst_dir":
 		r.GstDirs = appendNew(r.GstDirs, val)
+	case "v4l2loopback":
+		path, label, _ := strings.Cut(val, " ")
+		r.V4L2Loopback = append(r.V4L2Loopback, VideoDevice{Path: path, Label: label})
 
 	case "agentdir":
 		r.AgentDir = val

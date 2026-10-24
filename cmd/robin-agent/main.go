@@ -30,6 +30,7 @@ import (
 
 	"github.com/yasinmiran/robin/internal/agent"
 	"github.com/yasinmiran/robin/internal/agent/audio"
+	"github.com/yasinmiran/robin/internal/agent/camera"
 	"github.com/yasinmiran/robin/internal/agent/daemon"
 	"github.com/yasinmiran/robin/internal/agent/h264"
 	"github.com/yasinmiran/robin/internal/agent/hwenc"
@@ -198,8 +199,10 @@ func runDaemon(args []string) int {
 			protocol.EncoderVAAPI:    hardware(hwenc.NewOpener(hwenc.VAAPI, log)),
 			protocol.EncoderNVENC:    hardware(hwenc.NewOpener(hwenc.NVENC, log)),
 		},
-		NewAudio: newAudio,
-		Log:      log,
+		NewAudio:  newAudio,
+		NewMic:    newMic,
+		NewCamera: newCamera,
+		Log:       log,
 	})
 	if err != nil {
 		log.Error("session ended", "err", err)
@@ -251,11 +254,37 @@ func newEncoder(width, height, fps, bitrate int) (agent.Encoder, error) {
 }
 
 func newAudio(ctx context.Context, o agent.AudioOptions) (agent.AudioSource, []string, error) {
-	src, env, err := audio.Start(ctx, audio.Options{RunDir: o.RunDir, Attached: o.Attached, Log: o.Log})
+	src, env, err := audio.Start(ctx, audio.Options{
+		RunDir: o.RunDir, Attached: o.Attached, Mic: o.Mic, NoCapture: o.NoCapture, Log: o.Log,
+	})
 	if err != nil {
 		return nil, nil, err // not src: a nil *audio.Source would make a non-nil interface
 	}
 	return src, env, nil
+}
+
+func newMic(ctx context.Context, o agent.MicOptions) (agent.Mic, error) {
+	mo := audio.MicOptions{Log: o.Log}
+	if !o.Attached {
+		src, ok := o.Sound.(*audio.Source)
+		if !ok {
+			return nil, errors.New("the microphone needs the sound server this agent starts")
+		}
+		mo.Source = src
+	}
+	m, err := audio.StartMic(ctx, mo)
+	if err != nil {
+		return nil, err // not m: a nil *audio.Mic would make a non-nil interface
+	}
+	return m, nil
+}
+
+func newCamera(_ context.Context, o agent.CameraOptions) (agent.Camera, error) {
+	c, err := camera.Start(camera.Options{Device: o.Device, Log: o.Log})
+	if err != nil {
+		return nil, err // not c: a nil *camera.Camera would make a non-nil interface
+	}
+	return c, nil
 }
 
 func hardware(o *hwenc.Opener) agent.NewEncoderFunc {

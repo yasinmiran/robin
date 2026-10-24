@@ -207,6 +207,11 @@ run_scenario() {
     on_client ssh robinhost robin-wayland start
     cli_args="--attach auto $cli_args"
   fi
+  # The microphone and camera are offered here; the page keeps both off
+  # until a test switches them on, Chrome's fake devices behind them.
+  if [[ $s = direct || $s = wayland ]]; then
+    cli_args="--mic --camera $cli_args"
+  fi
   on_client env "${env_cover[@]}" SCENARIO="$expect" ROBIN_E2E_BROWSER="$project" \
     ROBIN_RESTART_TIMEOUT_MS="${ROBIN_RESTART_TIMEOUT_MS:-15000}" ROBIN_SIGINT_PID_ONLY="${ROBIN_SIGINT_PID_ONLY:-0}" \
     ROBIN_CLI_ARGS="$cli_args" \

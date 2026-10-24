@@ -4,7 +4,6 @@ package audio
 
 import (
 	"context"
-	"log/slog"
 	"math"
 	"math/rand/v2"
 	"os"
@@ -22,7 +21,7 @@ import (
 // returns that sound.
 func listen(t *testing.T, src *Source) []int16 {
 	t.Helper()
-	dec, err := opus.NewDecoder()
+	dec, err := opus.NewDecoder(opus.Channels)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,10 +70,6 @@ func checkTone(t *testing.T, heard []int16, left, right float64) {
 			t.Errorf("channel %d decodes at %.1f Hz, want %.0f", ch, got, want)
 		}
 	}
-}
-
-func quiet() *slog.Logger {
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 }
 
 // TestSpawnedDesktopIsHeard plays a tone the way a program on a spawned

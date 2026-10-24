@@ -728,8 +728,8 @@ without the text feature listing it; the page has `onControl` in
 `control.js` and `onBulk` in `bulk.js`, and `Overlay.addSection` gives a
 feature its own part of the status tab without touching `index.html`. The
 peer routes data channels by label, closing any it does not know, and hands
-remote media tracks to `Handlers.Track`, unset until the microphone and
-camera arrive. Protocol version 2 marks the change, so a CLI and an agent
+remote media tracks to `Handlers.Track`, where the microphone and camera
+take them. Protocol version 2 marks the change, so a CLI and an agent
 from either side of it refuse each other.
 
 ### Kept sessions: the desktop lives in a daemon, the SSH channel in a proxy
@@ -1412,6 +1412,119 @@ seconds of motion after a pause came at that rate until the target climbed
 back. The 1080p lossy run above is one. Pion has no notion of being
 limited by the application, and the agent does not pad; it is in the
 README's Known limits.
+
+### Microphone and camera: the browser's devices as the host's own
+
+`--mic` and `--camera` put the browser's microphone and camera where the
+host's programs look for them. Both are asked for twice, decisions taken
+with the owner: the CLI has to offer them, and even then each stays off
+until the user switches it on in the page, which is when the browser asks
+for permission. Nothing is sent from a switched-off device.
+
+**Negotiated once.** The browser offers and the agent answers, as for
+everything else. With the microphone on offer the page makes its sound line
+sendrecv from the start, and the camera gets a sendonly video line of its
+own, after the screen's and before the data channel, so Pion pairs its own
+video track with the first and leaves the camera's to receive. A switch is
+then `replaceTrack` on a sender that already exists: no offer, no answer, no
+moment without picture. The e2e tests compare the page's local description
+before and after switching each device on and off, and it never changes.
+Without the flags the page offers what it always has. Switching off also
+stops the track, so the browser's own camera light goes out.
+
+**What the agent owes a sender.** Pion's defaults for receiving were never
+in the registry, as the agent only sent. With a device on offer it adds two
+receive-side interceptors: transport-wide feedback, without which Chrome's
+congestion controller has no delay signal for the camera, and a NACK
+generator for the camera's lost packets. Both act on remote streams only,
+so the sending side keeps its bounded NACK responder and its own pacer. The
+camera asks for a keyframe with a PLI when a frame cannot be decoded, at
+most every 500 ms, and the page caps the camera at 1.5 Mbit/s, so it leaves
+most of a thin link to the desktop. A Pion browser in `internal/agent/peer`
+sees a NACK for the one packet it skipped, transport-wide feedback and the
+PLI.
+
+**The microphone.** Opus from the browser is decoded with libopus to 48 kHz
+mono. A packet lost just before one that arrives is recovered from that
+packet's in-band FEC, and the loss before it concealed, up to 100 ms of
+made-up sound, so a long gap is a jump rather than a growing delay.
+Recovery beats concealment by a wide margin on voiced sound at 24 kbit/s
+with 20% planned loss: over 9 dropped frames the error energy against a
+lossless decode was 3.3e9 recovered and 6.7e10 concealed. A sound queue of
+200 ms sits between the track and the sound server, and drops rather than
+waits. Where it goes depends on the server:
+
+| Desktop | Source | Gone when |
+|---|---|---|
+| spawned | a null sink and `module-remap-source`, loaded by the private pulseaudio's startup script, the source made the default | the server stops |
+| attached, PulseAudio | the same two modules, loaded over the protocol with the agent's pid in their names; a playback stream into the sink | the agent unloads them, or the next agent sweeps those of dead pids |
+| attached, PipeWire | a `gst-launch-1.0` child, `pipewiresink mode=provide` as an `Audio/Source` | the child exits, killed by Pdeathsig if need be |
+
+The private server takes no modules once it runs
+(`--disallow-module-loading`), so the agent tells it at startup. A remap
+source rather than the null sink's monitor, because programs hide monitors
+from their lists of microphones. Which kind of server is attached comes
+from its own name over the protocol, so a host running PipeWire for
+screen sharing beside PulseAudio for sound, as Ubuntu 22.04 does, gets the
+PulseAudio route that its programs record from.
+
+The PipeWire route took measuring. A source that a stream provides drives
+nothing, and pipewire-pulse links its recorders without a driver: a 4 s
+recording with `parec` got 0.18 s of a tone on PipeWire 1.0 and 1.4 alike,
+while `pw-record`, which brings its own, got all of it.
+`priority.driver`, `node.driver`, `node.want-driver` and
+`node.always-process` changed nothing. `node.group=pipewire.dummy` puts the
+node with PipeWire's dummy driver, and then `parec` got 4.00 s of 4, at
+438 Hz for a 440 Hz tone. A leaky queue of 100 ms in the pipeline drops
+sound nobody records, rather than letting it back up into the agent. The
+node appears only once data fixes its format, so the agent feeds it
+silence while the browser sends nothing, and waits for it to show up on
+pipewire-pulse before it reports the microphone ready.
+
+On a plain PulseAudio whose user chose no default source, the server picks
+the best one itself, and a remap source outranks monitors, so a host with
+no microphone of its own takes Robin microphone as its default while it is
+there. The tests give the stand-in user server a default of its own and
+check it stays.
+
+**The camera.** Chrome sends Constrained Baseline H.264, which the page puts
+first and the agent's answer allows alone. The agent decodes it with
+openh264 rather than leave it to the host's GStreamer, which seldom has an
+H.264 decoder installed, and fits each picture into one 1280x720 frame:
+the browser changes its resolution with the link and its CPU, and a
+program holding the device needs one size. Nearest-neighbour sampling,
+since the frame is watched, not analysed. On flat test pictures decoding
+took 0.3 ms at 1280x720 and fitting 0.05 ms (a copy), about 1% of a core
+at 30 fps; a 640x360 picture took 0.1 and 0.5 ms (a scale), under 2%
+(`BenchmarkDecodeAndFit`); a real camera's detail costs more decoding. The frames go to a `gst-launch-1.0` child as
+raw I420 through `rawvideoparse`, which needs that fixed size, and from
+there to `pipewiresink` as a `Video/Source` with `media.role=Camera`, or to
+`v4l2sink` on a v4l2loopback device.
+
+v4l2loopback comes first when the probe finds one the user can write,
+labelled Robin by preference: most programs that are not sandboxed open
+`/dev/video*` and never see a PipeWire camera. A spawned desktop has no
+camera otherwise, as there is no PipeWire session of the user's to put it
+in. rootless podman cannot load the module, so that route is tested as far
+as the probe and the pipeline it builds.
+
+While the browser sends no picture the camera shows black, at once and
+then every second: the node appears only once a frame fixes its format, a
+program opening it then gets a picture, and the last face it showed does
+not stay on the host's screen after the switch goes off.
+
+On Fedora 43's PipeWire 1.4, `pipewiresink` in provide mode exits with
+"all buffers have been removed" when the program reading a video node lets
+go; on Ubuntu 24.04's 1.0 it stays. `internal/agent/gstsink` therefore
+starts a child that lasted past its start again, giving up only after 20
+such children in a row lived under 5 s each. The test-wayland camera test
+reads the node twice so that the second read meets the restarted child.
+
+End to end, Chrome's fake devices play a 440 Hz tone that swells twice a
+second (a steady one would be taken for noise and suppressed) and a red
+picture of 81/90/240 in Y, U and V. A spawned desktop's default source
+recorded 440 Hz with 72% of its 20 ms blocks loud, the PipeWire source
+437 Hz with 69%, and the PipeWire camera returned 81/90/240 exactly.
 
 ## Verification parked
 

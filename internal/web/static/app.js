@@ -9,6 +9,8 @@ import { BULK_CHANNEL, registerKind } from './bulkframe.js';
 import { Session } from './session.js';
 import { Files } from './files.js';
 import { Clipboard } from './clipboard.js';
+import { offerDevices } from './devicebar.js';
+import { constrainedBaselineFirst } from './devices.js';
 
 const CONTROL_CHANNEL = 'control';
 const ICE_GRACE_MS = 2000;
@@ -45,6 +47,7 @@ let statsTimer = 0;
 let signals = Promise.resolve();
 let earlyCandidates = [];
 let monitors = null;
+let devices = null;
 
 window.robin = {
   get pc() { return pc; },
@@ -73,6 +76,7 @@ window.robin = {
   addSection: (name) => overlay.addSection(name),
   detach: () => leave(session.detach()),
   endSession: () => leave(session.end()),
+  device: (name) => devices?.switches[name]?.state ?? null,
   bulk: {
     registerKind,
     onBulk,
@@ -184,9 +188,13 @@ function createPeer(config) {
   pc = new RTCPeerConnection({ iceServers: config.iceServers ?? [] });
 
   const transceiver = pc.addTransceiver('video', { direction: 'recvonly' });
-  preferH264(transceiver);
-  // Sound shares the video's stream, so the one element plays both.
-  pc.addTransceiver('audio', { direction: 'recvonly' });
+  const codecs = constrainedBaselineFirst(RTCRtpReceiver.getCapabilities('video')?.codecs ?? []);
+  if (codecs) transceiver.setCodecPreferences(codecs);
+  // Sound shares the video's stream, so the one element plays both. With the
+  // microphone on offer the line goes both ways from the start, as does the
+  // camera's own, so switching either is a replaceTrack and never a new offer.
+  const sound = pc.addTransceiver('audio', { direction: config.mic ? 'sendrecv' : 'recvonly' });
+  devices = offerDevices(pc, sound, config, overlay);
   // One stream for every remote track: the agent may answer an audio line
   // it has nothing to send on, and that track must not replace the video.
   const remote = new MediaStream();
@@ -229,21 +237,6 @@ function createPeer(config) {
   pc.oniceconnectionstatechange = onIceState;
 
   statsTimer = setInterval(async () => overlay.setStats(await sampler.sample(pc)), STATS_EVERY_MS);
-}
-
-// preferH264 puts Constrained Baseline H.264 with packetization-mode=1 first,
-// which is what the agent encodes, and keeps every other codec after it so
-// retransmission and fallbacks still negotiate.
-function preferH264(transceiver) {
-  const codecs = RTCRtpReceiver.getCapabilities('video')?.codecs ?? [];
-  const isWanted = (c) => {
-    if (c.mimeType.toLowerCase() !== 'video/h264') return false;
-    const fmtp = (c.sdpFmtpLine ?? '').toLowerCase();
-    return fmtp.includes('packetization-mode=1') && fmtp.includes('profile-level-id=42e01f');
-  };
-  const wanted = codecs.filter(isWanted);
-  if (!wanted.length) return;
-  transceiver.setCodecPreferences([...wanted, ...codecs.filter((c) => !isWanted(c))]);
 }
 
 function onIceState() {
@@ -294,6 +287,7 @@ function dropPeer() {
   clearInterval(statsTimer);
   clearInterval(heartbeatTimer);
   input.release();
+  devices?.stop();
   earlyCandidates = [];
   const old = pc;
   pc = null;

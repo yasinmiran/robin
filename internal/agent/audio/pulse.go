@@ -14,6 +14,7 @@ import (
 	"github.com/jfreymuth/pulse/proto"
 
 	"github.com/yasinmiran/robin/internal/agent/opus"
+	"github.com/yasinmiran/robin/internal/agent/xdg"
 )
 
 const (
@@ -38,7 +39,27 @@ type recorder struct {
 // once if the server ends the stream or the connection; closing the recorder
 // does not call it.
 func record(socket string, cookie []byte, onFrame func([]int16), onEnd func(error)) (_ *recorder, err error) {
-	conn, err := net.DialTimeout("unix", socket, requestTimeout)
+	f := framer{onFrame: onFrame}
+	ended := false
+	end := func(err error) {
+		if !ended {
+			ended = true
+			onEnd(err)
+		}
+	}
+	// The client runs the callback on its read goroutine, the only place
+	// frames and endings arrive, so f and ended need no lock. The connection
+	// carries one stream, so every data packet is ours.
+	c, conn, err := connect(socket, cookie, func(msg any) {
+		switch m := msg.(type) {
+		case *proto.DataPacket:
+			f.write(m.Data)
+		case *proto.RecordStreamKilled:
+			end(errors.New("the sound server dropped the recording"))
+		case *proto.ConnectionClosed:
+			end(errors.New("the sound server closed the connection"))
+		}
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -48,43 +69,6 @@ func record(socket string, cookie []byte, onFrame func([]int16), onEnd func(erro
 		}
 	}()
 
-	f := framer{onFrame: onFrame}
-	ended := false
-	end := func(err error) {
-		if !ended {
-			ended = true
-			onEnd(err)
-		}
-	}
-	c := &proto.Client{}
-	// The client runs Callback on its read goroutine, the only place frames
-	// and endings arrive, so f and ended need no lock. It is set before Open
-	// starts that goroutine. The connection carries one stream, so every data
-	// packet is ours.
-	c.Callback = func(msg any) {
-		switch m := msg.(type) {
-		case *proto.DataPacket:
-			f.write(m.Data)
-		case *proto.RecordStreamKilled:
-			end(errors.New("the sound server dropped the recording"))
-		case *proto.ConnectionClosed:
-			end(errors.New("the sound server closed the connection"))
-		}
-	}
-	c.Open(conn)
-	c.SetTimeout(requestTimeout)
-
-	var auth proto.AuthReply
-	if err := c.Request(&proto.Auth{Version: c.Version(), Cookie: cookie}, &auth); err != nil {
-		return nil, fmt.Errorf("authenticate: %w", err)
-	}
-	c.SetVersion(auth.Version)
-	if err := c.Request(&proto.SetClientName{Props: proto.PropList{
-		"application.name":       proto.PropListString("robin"),
-		"application.process.id": proto.PropListString(fmt.Sprint(os.Getpid())),
-	}}, &proto.SetClientNameReply{}); err != nil {
-		return nil, fmt.Errorf("introduce the client: %w", err)
-	}
 	var info proto.GetServerInfoReply
 	if err := c.Request(&proto.GetServerInfo{}, &info); err != nil {
 		return nil, fmt.Errorf("ask for the default sink: %w", err)
@@ -113,6 +97,37 @@ func record(socket string, cookie []byte, onFrame func([]int16), onEnd func(erro
 // close drops the connection, and with it the stream.
 func (r *recorder) close() { r.conn.Close() }
 
+// connect opens a client of the server at socket and introduces it. The
+// client runs callback on its read goroutine for everything the server
+// sends unasked; it is set before that goroutine starts.
+func connect(socket string, cookie []byte, callback func(any)) (_ *proto.Client, _ net.Conn, err error) {
+	conn, err := net.DialTimeout("unix", socket, requestTimeout)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() {
+		if err != nil {
+			conn.Close()
+		}
+	}()
+	c := &proto.Client{Callback: callback}
+	c.Open(conn)
+	c.SetTimeout(requestTimeout)
+
+	var auth proto.AuthReply
+	if err := c.Request(&proto.Auth{Version: c.Version(), Cookie: cookie}, &auth); err != nil {
+		return nil, nil, fmt.Errorf("authenticate: %w", err)
+	}
+	c.SetVersion(auth.Version)
+	if err := c.Request(&proto.SetClientName{Props: proto.PropList{
+		"application.name":       proto.PropListString("robin"),
+		"application.process.id": proto.PropListString(fmt.Sprint(os.Getpid())),
+	}}, &proto.SetClientNameReply{}); err != nil {
+		return nil, nil, fmt.Errorf("introduce the client: %w", err)
+	}
+	return c, conn, nil
+}
+
 // framer cuts the byte stream the server sends into whole frames.
 type framer struct {
 	buf     [frameBytes]byte
@@ -139,12 +154,7 @@ func (f *framer) write(b []byte) {
 
 // userSocket is where the logged-in user's sound server listens, as libpulse
 // would find it.
-func userSocket() string {
-	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
-		return filepath.Join(dir, "pulse", "native")
-	}
-	return fmt.Sprintf("/run/user/%d/pulse/native", os.Getuid())
-}
+func userSocket() string { return filepath.Join(xdg.RuntimeDir(), "pulse", "native") }
 
 // userCookie is the user's PulseAudio cookie, as libpulse would find it.
 // PipeWire ignores cookies, and PulseAudio accepts a client of the same user

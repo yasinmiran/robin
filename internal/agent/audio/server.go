@@ -47,7 +47,7 @@ type server struct {
 
 // startServer starts pulseaudio under runDir/pulse and returns once its
 // socket accepts connections. ctx bounds startup only.
-func startServer(ctx context.Context, runDir string) (_ *server, err error) {
+func startServer(ctx context.Context, runDir string, mic bool) (_ *server, err error) {
 	bin, err := exec.LookPath("pulseaudio")
 	if err != nil {
 		return nil, errNoServer
@@ -71,7 +71,7 @@ func startServer(ctx context.Context, runDir string) (_ *server, err error) {
 		return nil, fmt.Errorf("pulseaudio: %w", err)
 	}
 	script := filepath.Join(dir, "robin.pa")
-	if err := os.WriteFile(script, []byte(serverScript(s.socket, s.cookie)), 0o600); err != nil {
+	if err := os.WriteFile(script, []byte(serverScript(s.socket, s.cookie, mic)), 0o600); err != nil {
 		return nil, fmt.Errorf("pulseaudio: %w", err)
 	}
 
@@ -117,10 +117,15 @@ func startServer(ctx context.Context, runDir string) (_ *server, err error) {
 // serverScript is the daemon's whole configuration. Without -n's default
 // script nothing touches the host's sound hardware or Bluetooth. Rewinds
 // are off because each one drops what the monitor had queued: with them a
-// 20 ms recording got 70% of real time, so the RTP clock would drift.
-func serverScript(socket, cookie string) string {
+// 20 ms recording got 70% of real time, so the RTP clock would drift. With
+// mic it adds the browser's microphone, as the default source.
+func serverScript(socket, cookie string, mic bool) string {
+	var micLines string
+	if mic {
+		micLines = micScript()
+	}
 	return "load-module module-null-sink sink_name=robin rate=48000 channels=2 norewinds=1 sink_properties=device.description=robin\n" +
-		"set-default-sink robin\n" +
+		"set-default-sink robin\n" + micLines +
 		"load-module module-native-protocol-unix socket=" + quoteArg(socket) + " auth-anonymous=0 auth-cookie=" + quoteArg(cookie) + "\n"
 }
 

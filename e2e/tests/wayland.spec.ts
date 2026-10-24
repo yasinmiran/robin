@@ -4,6 +4,7 @@ import path from 'node:path';
 import { Cli } from './helpers/cli';
 import { pagePoint } from './helpers/coords';
 import { savePageCoverage, startPageCoverage } from './helpers/cover';
+import { COLOUR, TONE_HZ, near, pcm, pixel, toneOf } from './helpers/fakemedia';
 import { isNonBlack, sampleFrame, waitForStillFrame } from './helpers/frames';
 import * as wl from './helpers/wayland';
 
@@ -268,6 +269,77 @@ test('sound: what the desktop plays through PipeWire is heard once the speaker i
     .toBeGreaterThan(before);
   await playing;
   testInfo.annotations.push({ type: 'audio', description: JSON.stringify(await audio()) });
+});
+
+test("microphone: a PipeWire source that hears the page once it is switched on", async ({}, testInfo) => {
+  testInfo.setTimeout(120_000);
+  expect(stderrText()).toContain('your microphone can reach robinhost as Robin microphone (PipeWire)');
+  const { mic: node } = await wl.deviceNodes();
+  expect(node, "the microphone's node").toMatch(/^robin-mic-\d+$/);
+  const mic = page.locator('button.device[data-device="mic"]');
+  const micState = () => page.evaluate(() => (window as any).robin.device('mic'));
+  const localSDP = () => page.evaluate(() => ((window as any).robin.pc as RTCPeerConnection).localDescription?.sdp);
+  await page.mouse.move(640, 5); // brings the tucked HUD back
+  await expect(mic, 'the microphone switch').toBeVisible({ timeout: 10_000 });
+  await expect(mic).toHaveAttribute('data-state', 'off');
+  expect(toneOf(pcm(await wl.recordSource(node, 1.5))).loud, 'the desktop hears nothing before the switch').toBeLessThan(0.05);
+
+  const offered = await localSDP();
+  await mic.click();
+  await expect.poll(micState, { message: 'the switch turns on' }).toBe('on');
+  let heard = { hz: 0, loud: 0 };
+  await expect
+    .poll(async () => (heard = toneOf(pcm(await wl.recordSource(node, 2)))).loud, { message: 'the tone on the desktop', timeout: 30_000, intervals: [0] })
+    .toBeGreaterThan(0.4);
+  testInfo.annotations.push({ type: 'microphone', description: JSON.stringify(heard) });
+  await page.mouse.move(640, 5);
+  await page.waitForTimeout(400); // the tab slides back in
+  await testInfo.attach('status tab, microphone on', { body: await page.locator('#hud').screenshot(), contentType: 'image/png' });
+  expect(heard.hz, "the page's tone, at its pitch").toBeGreaterThan(TONE_HZ * 0.95);
+  expect(heard.hz).toBeLessThan(TONE_HZ * 1.05);
+
+  await page.mouse.move(640, 5);
+  await mic.click();
+  await expect.poll(micState, { message: 'the switch turns off' }).toBe('off');
+  expect(await localSDP(), 'switching the microphone on and off renegotiated nothing').toBe(offered);
+});
+
+test('camera: a PipeWire camera that shows black, then the page, then black again', async ({}, testInfo) => {
+  testInfo.setTimeout(120_000);
+  expect(stderrText()).toContain('your camera can reach robinhost as Robin camera (PipeWire)');
+  const { camera: node } = await wl.deviceNodes();
+  expect(node, "the camera's node").toMatch(/^robin-camera-\d+$/);
+  const camera = page.locator('button.device[data-device="camera"]');
+  const cameraState = () => page.evaluate(() => (window as any).robin.device('camera'));
+  const localSDP = () => page.evaluate(() => ((window as any).robin.pc as RTCPeerConnection).localDescription?.sdp);
+  const middle = async () => pixel(await wl.cameraFrame(node), 1280, 720, 640, 400);
+  await page.mouse.move(640, 5);
+  await expect(camera, 'the camera switch').toBeVisible({ timeout: 10_000 });
+  await expect(camera).toHaveAttribute('data-state', 'off');
+  let seen = await middle();
+  expect(seen.y, 'black before the switch').toBeLessThan(30);
+
+  const offered = await localSDP();
+  await camera.click();
+  await expect.poll(cameraState, { message: 'the switch turns on' }).toBe('on');
+  await expect
+    .poll(async () => {
+      seen = await middle();
+      return near(seen.y, COLOUR.y) && near(seen.u, COLOUR.u) && near(seen.v, COLOUR.v);
+    }, { message: "the page's picture on the desktop", timeout: 30_000, intervals: [500] })
+    .toBe(true);
+  testInfo.annotations.push({ type: 'camera', description: JSON.stringify(seen) });
+  await page.mouse.move(640, 5);
+  await page.waitForTimeout(400); // the tab slides back in
+  await testInfo.attach('status tab, camera on', { body: await page.locator('#hud').screenshot(), contentType: 'image/png' });
+
+  await page.mouse.move(640, 5);
+  await camera.click();
+  await expect.poll(cameraState, { message: 'the switch turns off' }).toBe('off');
+  expect(await localSDP(), 'switching the camera on and off renegotiated nothing').toBe(offered);
+  await expect
+    .poll(async () => (await middle()).y, { message: 'black again, not the last picture', timeout: 15_000, intervals: [500] })
+    .toBeLessThan(30);
 });
 
 test('teardown: SIGINT ends the CLI, the share and the agent; the desktop lives on and the token stays private', async ({}, testInfo) => {

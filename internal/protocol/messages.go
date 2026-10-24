@@ -85,6 +85,12 @@ type Start struct {
 	// name, its 1-based number in RandR order, MonitorPrimary or MonitorAll.
 	// Empty means MonitorPrimary. Other desktops have one picture and ignore it.
 	Monitor string `json:"monitor,omitempty"`
+	// Mic and Camera offer the host's programs the browser's microphone and
+	// camera, which the page turns on only when the user asks. CameraDevice
+	// is a v4l2loopback device for the camera; empty uses PipeWire.
+	Mic          bool   `json:"mic,omitempty"`
+	Camera       bool   `json:"camera,omitempty"`
+	CameraDevice string `json:"cameraDevice,omitempty"`
 }
 
 // Start limits the CLI fills in when the user names none, and the agent
@@ -151,6 +157,9 @@ type Ready struct {
 	ID      string `json:"id,omitempty"`
 	Keep    int    `json:"keep,omitempty"`
 	Resumed bool   `json:"resumed,omitempty"`
+	// Mic and Camera answer Start's, and are nil when it did not ask.
+	Mic    *Device `json:"mic,omitempty"`
+	Camera *Device `json:"camera,omitempty"`
 }
 
 // Notice is something the user has to do or know before the desktop is ready.
@@ -180,6 +189,10 @@ type Config struct {
 	// Keep is Ready.Keep, so the page knows whether the desktop would
 	// survive a Detach.
 	Keep int `json:"keep,omitempty"`
+	// Mic and Camera say the host takes them, so the page negotiates a way
+	// to send each and offers its switch.
+	Mic    bool `json:"mic,omitempty"`
+	Camera bool `json:"camera,omitempty"`
 }
 
 // ICEServer mirrors the browser's RTCIceServer.

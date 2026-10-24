@@ -160,6 +160,15 @@ export async function cutSSH(): Promise<void> {
 export const playNoise = (seconds: number) =>
   ssh(`head -c ${seconds * 48000 * 4} /dev/urandom | robin-x paplay --raw --format=s16le --rate=48000 --channels=2`, (seconds + 20) * 1000);
 
+// recordMicrophone records seconds of the session's default source, the
+// browser's microphone on a spawned desktop, as a program there would: 48 kHz
+// mono, base64.
+export const recordMicrophone = (seconds: number) =>
+  ssh(
+    `robin-x timeout -s INT ${seconds} parec -d @DEFAULT_SOURCE@ --raw --format=s16le --rate=48000 --channels=1 --latency-msec=20 | base64 -w0`,
+    (seconds + 20) * 1000,
+  );
+
 // diagnostics describes the host side of a session for a failure report: the
 // run dir, the agent's processes and what is mapped on its display.
 export async function diagnostics(): Promise<string> {

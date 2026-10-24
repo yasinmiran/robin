@@ -1,8 +1,8 @@
 #!/bin/sh
 # Runs the tests of internal/agent/wayland, the agent session test that
-# attaches to Wayland and the capture of PipeWire's sound, against headless
-# Wayland desktops in rootless podman containers. Extra arguments go to every
-# test binary:
+# attaches to Wayland, the capture of PipeWire's sound and the browser's
+# microphone and camera as PipeWire nodes, against headless Wayland desktops
+# in rootless podman containers. Extra arguments go to every test binary:
 #
 #   internal/agent/wayland/testdata/wltest.sh
 #   internal/agent/wayland/testdata/wltest.sh -test.run=Attach
@@ -47,6 +47,11 @@ prefix=$(toolchain/opus.sh "$target")
 ZIG_GLOBAL_CACHE_DIR=${ZIG_GLOBAL_CACHE_DIR:-$root/.cache/toolchain/zig} CGO_ENABLED=1 \
 	CC="$zig cc -target $target" CGO_CFLAGS="-I$prefix/include" CGO_LDFLAGS="-L$prefix/lib" \
 	go test -tags opus $coverflags -c -o "$out/audio.test" ./internal/agent/audio
+# The camera test decodes with openh264, which links the same way.
+prefix=$(toolchain/openh264.sh "$target")
+ZIG_GLOBAL_CACHE_DIR=${ZIG_GLOBAL_CACHE_DIR:-$root/.cache/toolchain/zig} CGO_ENABLED=1 \
+	CC="$zig cc -target $target" CXX="$zig c++ -target $target" CGO_CFLAGS="-I$prefix/include" CGO_LDFLAGS="-L$prefix/lib" \
+	go test -tags openh264 $coverflags -c -o "$out/camera.test" ./internal/agent/camera
 cp "$here/probe.py" "$here/session.sh" "$out/"
 # The session runs as the image's unprivileged user, not the owner of $out.
 chmod -R a+rX "$out"
@@ -109,7 +114,7 @@ run_desktop() {
 	podman exec "$name" /t/session.sh
 
 	ok=0
-	for t in "wayland.test" "agent.test -test.run=Wayland" "audio.test -test.run=PipeWire"; do
+	for t in "wayland.test" "agent.test -test.run=Wayland" "audio.test -test.run=PipeWire" "camera.test -test.run=PipeWire"; do
 		echo "== $desktop: $t"
 		profile=
 		[ -z "$cover" ] || profile=-test.coverprofile=/cover/${t%%.test*}.out

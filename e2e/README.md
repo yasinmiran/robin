@@ -94,6 +94,14 @@ The X11 scenarios of `tests/gui.spec.ts` also check, in this order:
    toggle muted and receives audio packets, and once the toggle is clicked,
    noise played on the host with `paplay` through the session's sound server
    raises Chrome's `totalAudioEnergy`. Nothing wrote to `~/.config/pulse`.
+   In `direct` the CLI runs with `--mic --camera`, and Chrome's fake devices
+   play the files `tests/helpers/fakemedia.ts` writes: a 440 Hz tone that
+   swells twice a second, and a picture of one red. **Microphone**: the
+   switch starts off and the session's default source records silence;
+   switched on, it records the tone at 440 Hz within 5%; switched off,
+   silence again, and the page's local description never changed.
+   **Camera**: the CLI says the spawned desktop has no v4l2loopback device,
+   and the page shows no camera switch.
 9. **Files**, in `direct` and `attach`: a file set on the status tab's
    input lands in `~/Downloads` with its SHA-256 intact, the same name again
    lands as `robin-e2e-upload (1).bin` and the tab says so, and a file
@@ -177,16 +185,23 @@ picture on a frame. In order:
    `robin.lastRemoteClipboard`, both through the portal.
 8. **Sound**: noise played into the session's PipeWire raises Chrome's
    `totalAudioEnergy` once the speaker is on.
-9. **Teardown**: SIGINT ends the CLI with exit 0 within 10 s; then no agent,
-   `gst-launch-1.0`, portal session or mutter remote desktop or screencast
-   session is left, mutter still runs, and the restore token beside the
-   agent is mode 600.
-10. **Restore**: a second CLI run reaches Ready with no consent notice, its
+9. **Microphone** (the CLI runs with `--mic --camera` here too): the agent's
+   PipeWire source, `robin-mic-<pid>`, records silence through
+   pipewire-pulse until the switch goes on, then the page's tone.
+10. **Camera**: its node, `robin-camera-<pid>`, read with `pipewiresrc`,
+   shows black, then the page's red within a few levels once switched on,
+   then black again once off. Neither switch changes the page's local
+   description.
+11. **Teardown**: SIGINT ends the CLI with exit 0 within 10 s; then no agent,
+   `gst-launch-1.0`, portal session, mutter remote desktop or screencast
+   session, or microphone or camera node is left, mutter still runs, and
+   the restore token beside the agent is mode 600.
+12. **Restore**: a second CLI run reaches Ready with no consent notice, its
     frames decode and change, and it leaves nothing behind either.
 
 The `firefox` and `webkit` scenarios run `tests/gui.spec.ts` against the
 direct scenario's host, as Playwright projects of the same names
-(`ROBIN_E2E_BROWSER` tells the spec which). Firefox runs every check above.
+(`ROBIN_E2E_BROWSER` tells the spec which), without `--mic` or `--camera`. Firefox runs every check above.
 Playwright's WebKit on Linux decodes WebRTC video but renders no remote
 track into a `<video>` element: in a blank page, a VP8 loopback between two
 peer connections stays at `readyState` 0 with `videoWidth` 0, where Chrome

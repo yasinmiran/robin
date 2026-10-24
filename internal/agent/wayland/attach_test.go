@@ -27,6 +27,7 @@ import (
 
 	"github.com/yasinmiran/robin/internal/agent/desktop"
 	"github.com/yasinmiran/robin/internal/agent/wayland/wltest"
+	"github.com/yasinmiran/robin/internal/agent/xdg"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
@@ -671,7 +672,7 @@ func startProbe(t *testing.T, args ...string) *probe {
 	t.Helper()
 	cmd := exec.Command("python3", append([]string{"-I", probeScript}, args...)...)
 	cmd.Env = append(os.Environ(), "WAYLAND_DISPLAY=wayland-0", "GDK_BACKEND=wayland", "GSK_RENDERER=cairo",
-		"DBUS_SESSION_BUS_ADDRESS=unix:path="+filepath.Join(runtimeDir(), "bus"))
+		"DBUS_SESSION_BUS_ADDRESS=unix:path="+filepath.Join(xdg.RuntimeDir(), "bus"))
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)

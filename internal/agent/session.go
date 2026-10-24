@@ -64,7 +64,11 @@ type Options struct {
 	Encoders map[string]NewEncoderFunc
 	// NewAudio captures the desktop's sound; nil when this build has none.
 	NewAudio NewAudioFunc
-	Log      *slog.Logger
+	// NewMic and NewCamera give the host the browser's microphone and
+	// camera; nil when this build has none.
+	NewMic    NewMicFunc
+	NewCamera NewCameraFunc
+	Log       *slog.Logger
 }
 
 // Run serves one session over r and w (the SSH exec channel) until the CLI
@@ -126,23 +130,23 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 
 	// Sound comes up before a spawned desktop so its programs inherit the
 	// sound server's address.
-	var audio AudioSource
+	var sound AudioSource
 	var desktopEnv []string
-	var audioErr string
-	if start.Audio {
+	var soundErr string
+	if start.Audio || spawnMic(start) {
 		if o.NewAudio == nil {
-			audioErr = "this agent was built without audio"
+			soundErr = "this agent was built without audio"
 			log.Warn("audio requested but this agent has no audio support")
 		} else if src, env, err := o.NewAudio(ctx, AudioOptions{
-			RunDir: runDir, Attached: start.Attach != "", Log: log,
+			RunDir: runDir, Attached: start.Attach != "", Mic: spawnMic(start), NoCapture: !start.Audio, Log: log,
 		}); err != nil {
 			// Nothing from a failed start may reach the desktop, its env least of
 			// all: it could point programs at a server that is not there.
-			audioErr = err.Error()
+			soundErr = err.Error()
 			log.Warn("audio unavailable", "err", err)
 		} else {
-			audio, desktopEnv = src, env
-			defer audio.Close()
+			sound, desktopEnv = src, env
+			defer sound.Close()
 		}
 	}
 	if shared != nil {
@@ -171,6 +175,20 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 	}
 	defer d.close()
 	log.Info("desktop up", "mode", d.mode, "display", d.name, "session", d.session)
+
+	mic, micReady := startMic(ctx, start, o.NewMic, sound, soundErr, log)
+	if mic != nil {
+		defer mic.Close()
+	}
+	camera, cameraReady := startCamera(ctx, start, o.NewCamera, log)
+	if camera != nil {
+		defer camera.Close()
+	}
+	var audio AudioSource
+	var audioErr string
+	if start.Audio {
+		audio, audioErr = sound, soundErr
+	}
 
 	w0, h0 := fit(start.Width, start.Height, start.MaxWidth, start.MaxHeight)
 	if w0 > 0 && h0 > 0 {
@@ -201,8 +219,15 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 		stream:  newStream(d.desk, start.FPS, start.MaxWidth, start.MaxHeight, newEncoder, log),
 		cursors: map[uint32]protocol.Cursor{},
 		files:   shared,
+		mic:     mic,
+		camera:  camera,
 	}
-	defer s.closePeer()
+	// Registered after the microphone's and camera's Close, so it runs
+	// before them.
+	defer func() {
+		s.closePeer()
+		s.endPlays()
+	}()
 
 	width, height := d.desk.Size()
 	ready := &protocol.Ready{
@@ -210,6 +235,7 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 		Width: width, Height: height, TunnelAddr: ln.Addr().String(),
 		Mode: d.mode, Audio: audio != nil, AudioError: audioErr, Encoder: encoderName, EncoderError: encoderErr,
 		ID: filepath.Base(runDir), Keep: int(o.Keep / time.Second),
+		Mic: micReady, Camera: cameraReady,
 	}
 	if mm, ok := d.desk.(desktop.MultiMonitor); ok {
 		ms := mm.MonitorState()
@@ -259,6 +285,15 @@ type session struct {
 	// takes it too, so that once it has let a browser go nothing that
 	// browser sent is still applying, and nothing it sends later will.
 	inputMu sync.Mutex
+
+	mic    Mic    // nil unless the session takes the browser's microphone
+	camera Camera // and its camera
+
+	// plays runs the Play of each track the browser sends; once playsEnded
+	// is set, under playsMu, no more start.
+	playsMu    sync.Mutex
+	playsEnded bool
+	plays      sync.WaitGroup
 
 	mu    sync.Mutex
 	peer  *peer.Peer
@@ -344,6 +379,7 @@ func (s *session) currentPeer() (*peer.Peer, error) {
 	maxBitrate := max(s.start.MaxKbps*1000, startBitrate)
 	p, err := peer.New(peer.Config{
 		STUN: s.start.STUN, TCPMux: s.tcpMux, IncludeLoopback: true, Certificate: s.cert, Audio: s.audio,
+		Mic: s.mic != nil, Camera: s.camera != nil,
 		MinBitrate: minBitrate, StartBitrate: min(startBitrate, maxBitrate), MaxBitrate: maxBitrate,
 		Log: s.log,
 	}, peer.Handlers{
@@ -354,6 +390,7 @@ func (s *session) currentPeer() (*peer.Peer, error) {
 		},
 		Control: s.controlFrom(s.peers),
 		Bulk:    s.bulk,
+		Track:   s.track,
 		ControlOpen: func() {
 			s.sendCurrentCursor()
 			s.sendMonitors()

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { Cli, robin, sshProcesses } from './helpers/cli';
 import { pagePoint } from './helpers/coords';
 import { savePageCoverage, startPageCoverage } from './helpers/cover';
+import { TONE_HZ, pcm, toneOf } from './helpers/fakemedia';
 import { CHANGED_FLOOR, isNonBlack, sampleFrame, waitForStillFrame } from './helpers/frames';
 import * as host from './helpers/host';
 
@@ -26,6 +27,10 @@ const RESTART_TIMEOUT_MS = Number(process.env.ROBIN_RESTART_TIMEOUT_MS ?? 15_000
 // from the browser's stats instead.
 const PICTURE = process.env.ROBIN_E2E_BROWSER !== 'webkit';
 const NO_PICTURE = "Playwright's Linux WebKit renders no remote WebRTC video";
+
+// run.sh offers the microphone and camera in the direct scenario, with
+// Chrome's fake devices (helpers/fakemedia.ts) behind them.
+const DEVICES = (process.env.ROBIN_CLI_ARGS ?? '').includes('--mic');
 
 type Endpoint = { address: string; port: number; protocol: string; candidateType: string };
 type Stats = {
@@ -401,6 +406,44 @@ test('sound: the desktop is heard once the speaker is turned on', async ({}, tes
   if (SCENARIO !== 'attach') {
     expect(await host.exists('/home/robin/.config/pulse'), '~/.config/pulse on the host').toBe(false);
   }
+});
+
+test("microphone: off until switched on, then the desktop's default source hears the page", async ({}, testInfo) => {
+  test.skip(!DEVICES, 'this scenario offers no microphone');
+  testInfo.setTimeout(120_000);
+  expect(cli!.stderrTail(Infinity)).toContain('your microphone can reach robinhost as Robin microphone (the private pulseaudio)');
+  const mic = page.locator('button.device[data-device="mic"]');
+  const micState = () => page.evaluate(() => (window as any).robin.device('mic'));
+  const localSDP = () => page.evaluate(() => ((window as any).robin.pc as RTCPeerConnection).localDescription?.sdp);
+  await page.mouse.move(640, 5); // brings the tucked HUD back
+  await expect(mic, 'the microphone switch').toBeVisible({ timeout: 10_000 });
+  await expect(mic).toHaveAttribute('data-state', 'off');
+  expect(toneOf(pcm(await host.recordMicrophone(1.5))).loud, 'the host hears nothing before the switch').toBeLessThan(0.05);
+
+  const offered = await localSDP();
+  await mic.click();
+  await expect.poll(micState, { message: 'the switch turns on' }).toBe('on');
+  let heard = { hz: 0, loud: 0 };
+  await expect
+    .poll(async () => (heard = toneOf(pcm(await host.recordMicrophone(2)))).loud, { message: 'the tone on the host', timeout: 30_000, intervals: [0] })
+    .toBeGreaterThan(0.4);
+  testInfo.annotations.push({ type: 'microphone', description: JSON.stringify(heard) });
+  expect(heard.hz, "the page's tone, at its pitch").toBeGreaterThan(TONE_HZ * 0.95);
+  expect(heard.hz).toBeLessThan(TONE_HZ * 1.05);
+
+  await page.mouse.move(640, 5);
+  await mic.click();
+  await expect.poll(micState, { message: 'the switch turns off' }).toBe('off');
+  expect(await localSDP(), 'switching the microphone on and off renegotiated nothing').toBe(offered);
+  await expect
+    .poll(async () => toneOf(pcm(await host.recordMicrophone(1.5))).loud, { message: 'silence on the host again', timeout: 15_000, intervals: [0] })
+    .toBeLessThan(0.05);
+});
+
+test('camera: a spawned desktop without v4l2loopback says why, and the page offers no camera', async () => {
+  test.skip(!DEVICES, 'this scenario offers no camera');
+  expect(cli!.stderrTail(Infinity)).toContain('no camera on robinhost: a spawned desktop takes the camera only through v4l2loopback');
+  await expect(page.locator('button.device[data-device="camera"]')).toHaveCount(0);
 });
 
 // Files and the rich clipboard run where the picture can be clicked: in

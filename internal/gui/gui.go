@@ -50,6 +50,9 @@ type Options struct {
 	Monitor string
 	Audio   bool
 	Encoder string
+	// Mic and Camera offer the browser's microphone and camera to the
+	// host's programs; the page keeps each off until the user turns it on.
+	Mic, Camera bool
 	// HiDPI sizes the remote display in the browser's device pixels.
 	HiDPI bool
 	STUN  []string
@@ -167,6 +170,9 @@ func Run(ctx context.Context, o Options) (err error) {
 	if o.Audio && !ready.Audio && !ready.Resumed {
 		fmt.Fprintf(o.Stderr, "robin: no sound from %s: %s\n", o.Dest, ready.AudioError)
 	}
+	for _, note := range deviceNotes(o.Dest, ready) {
+		fmt.Fprintln(o.Stderr, note)
+	}
 
 	t, err := openTunnel(ctx, h.m, ready.TunnelAddr, o.Transport, log)
 	if err != nil {
@@ -190,8 +196,9 @@ func Run(ctx context.Context, o Options) (err error) {
 	}
 	fmt.Fprintf(o.Stderr, "robin: %s; press Ctrl+C to end the session\n", sessionNote(o.Dest, ready))
 
-	b := newBridge(ag.conn, relay.New(relay.Policy{Transport: o.Transport, TunnelPort: t.Port()}),
-		protocol.Config{ICEServers: iceServers(start.STUN), HiDPI: o.HiDPI, Keep: ready.Keep}, log)
+	config := protocol.Config{ICEServers: iceServers(start.STUN), HiDPI: o.HiDPI, Keep: ready.Keep}
+	config.Mic, config.Camera = offeredDevices(ready)
+	b := newBridge(ag.conn, relay.New(relay.Policy{Transport: o.Transport, TunnelPort: t.Port()}), config, log)
 	go b.accept(ctx, srv)
 	defer b.close()
 
@@ -584,6 +591,10 @@ func startMessage(o Options, r *probe.Report) (protocol.Start, string) {
 		Version: protocol.Version, MaxWidth: o.MaxWidth, MaxHeight: o.MaxHeight,
 		FPS: o.FPS, MaxKbps: o.MaxKbps, Session: o.Session, STUN: o.STUN,
 		Attach: o.Attach, Monitor: o.Monitor, Audio: o.Audio, Encoder: o.Encoder,
+		Mic: o.Mic, Camera: o.Camera,
+	}
+	if o.Camera {
+		s.CameraDevice = r.CameraDevice()
 	}
 	small := r.CPUs > 0 && r.CPUs <= protocol.SmallHostCPUs
 	if s.MaxWidth <= 0 || s.MaxHeight <= 0 {

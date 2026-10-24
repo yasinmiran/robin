@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test';
+import { fakeMediaArgs } from './tests/helpers/fakemedia';
 
 // Runs inside the client container, where out/ is e2e/out/<scenario> on the
 // host. run.sh picks the spec file and the project (the browser); SCENARIO
@@ -26,7 +27,7 @@ export default defineConfig({
   projects: [
     {
       name: 'chrome',
-      use: { channel: 'chrome', launchOptions: { args: ['--autoplay-policy=no-user-gesture-required'] } },
+      use: { channel: 'chrome', launchOptions: { args: ['--autoplay-policy=no-user-gesture-required', ...fakeMediaArgs()] } },
     },
     // Playwright's WebKit runs Safari's WebRTC stack (libwebrtc) on Linux.
     { name: 'webkit', use: { browserName: 'webkit' } },
