@@ -40,6 +40,9 @@ robin gui --max-size 2560x1440 --fps 60 workstation
 robin gui --no-browser lab-node                     # print the URL instead of opening it
 robin gui --attach auto workstation                 # the desktop you are logged in to there
 robin gui --attach wayland workstation              # your GNOME or Plasma session on Wayland
+robin gui build-box                                 # again later: picks the desktop up where you left it
+robin ls build-box                                  # the sessions the host keeps
+robin end build-box                                 # end one without opening it
 ```
 
 Your `~/.ssh/config`, agent, `ProxyJump`, `ProxyCommand`, certificates and
@@ -47,6 +50,26 @@ password or 2FA prompts all work as they do for plain `ssh`, because it is
 plain `ssh`: one ControlMaster connection carries the probe, the agent upload,
 the agent itself and the tunnel. The browser tab can be reloaded; the remote
 session survives until you press Ctrl+C in the terminal.
+
+The desktop survives more than that. A desktop Robin started stays on the
+host when the connection drops, for `--keep` (8 hours by default), and the
+CLI keeps redialing meanwhile: the page says Reconnecting, then comes back to
+the same windows. Close the laptop, change networks, lose the VPN, and the
+session is where you left it. The CLI itself may die, or you may choose to
+leave: the page's status tab has a Disconnect, keep desktop button beside
+End session, and a later `robin gui <host>` resumes the one kept desktop by
+default (`--new` starts another beside it; with more than one kept, the CLI
+lists them and asks for `--id`). `robin ls <host>` shows what the host
+keeps, with when each kept desktop ends on its own, and `robin end <host>
+[id]` ends one. Ctrl+C in the CLI always ends the session, desktop included,
+even when it has to reconnect to say so. An attached desktop is never kept:
+nothing of yours would be lost, so `--keep` defaults to 0 there and the
+session ends with the connection as before.
+
+A resumed session is the same session: the agent on the host kept its
+identity, so the fingerprint the CLI pinned still holds, and a CLI that
+carries a different agent than the one running refuses to resume and says to
+run `robin end`, since its upload would have replaced the daemon's binary.
 
 With `--attach`, nothing new is started: the agent streams a desktop that is
 already running on the host, usually the one you are logged in to at the
@@ -92,6 +115,9 @@ host cannot provide sound the session runs without it, and the CLI says why.
 | `--session` | lightest found | command to run in the display, e.g. `startxfce4` |
 | `--attach` | | stream a desktop already running on the host: `auto`, `wayland` for your Wayland session, or an X display such as `:1` |
 | `--monitor` | `primary` | the monitor of an attached X11 desktop to show first: a name such as `DP-2`, its number, or `all`; the page switches between them. Wayland shows the monitor picked in its sharing dialog |
+| `--keep` | `8h`, `0` with `--attach` | how long the host keeps the desktop after the connection drops or the page detaches; `0` ends it with the connection |
+| `--id` | the one kept session | which kept session to resume |
+| `--new` | | start a new desktop even when a kept one could be resumed |
 | `--audio` | `true` | stream the desktop's sound; `--audio=false` leaves it out |
 | `--stun` | Google's public server | STUN servers for NAT traversal, comma-separated, or `none` |
 | `--no-browser` | | print the page URL on stdout instead of opening a browser |
@@ -129,8 +155,14 @@ cores, which is why small hosts get a lower default size and frame rate.
 The agent goes to `~/.cache/robin` (or `$XDG_RUNTIME_DIR/robin`, or
 `/tmp/robin-$UID` when the home directory is mounted `noexec`), checked
 by hash and reused across sessions. It runs as you, starts its own display on
-a free number, and when the SSH channel closes it kills everything it started
-and removes its files.
+a free number, and when the session ends it kills everything it started
+and removes its files. The session lives in a daemon of its own, in its own
+process session (`setsid`), so sshd closing the channel does not reach it;
+where logind is set to kill user processes on logout (`KillUserProcesses=yes`,
+not the default), the daemon runs under `systemd-run --user` instead, and the
+CLI says so when that would still not outlive your last login (it does once
+`loginctl enable-linger` is on). Where neither is possible the desktop ends
+with the connection, and the CLI says that too.
 
 ## Attaching to a Wayland desktop
 
@@ -254,8 +286,13 @@ tests prove for each:
 3. The agent for that architecture is uploaded over SFTP, verified by
    SHA-256 on the host and renamed into place.
 4. The agent starts on an exec channel. Its stdin and stdout carry signaling
-   as JSON lines, with a heartbeat both ways so a dead connection tears the
-   session down instead of leaving a display running.
+   as JSON lines, with a heartbeat both ways so a dead connection is noticed
+   within seconds. The exec channel only runs a proxy: the session itself
+   lives in a daemon the proxy started, reached through a unix socket in the
+   session's run directory, so the daemon outlives the channel and a later
+   proxy picks it up. Without a controller the daemon closes the peer
+   connection, keeps the desktop for `--keep`, and ends with the same
+   teardown as bye when the window runs out.
 5. It starts Xvfb and a session, or attaches to the X display already
    running, and captures with MIT-SHM and DAMAGE. A Wayland desktop is
    reached through xdg-desktop-portal instead, its frames read from PipeWire
@@ -290,6 +327,15 @@ Input from the page is limited to what a keyboard, a pointer and a clipboard
 can do in that session. The agent also listens for bulk transfers from the
 page, but takes only kinds a feature has registered, and no feature has yet,
 so it refuses every one.
+
+A kept session is reached through a unix socket in its 0700 run directory,
+and the daemon accepts a connection only from a process of its own uid
+(`SO_PEERCRED`), one controller at a time. Resuming goes through the same
+SSH login as starting did, and the daemon keeps its DTLS certificate for its
+whole life, so the fingerprint the CLI pinned at the start still has to
+match after a reconnect: anything else answering in the session's place ends
+it. A fresh `robin gui` that resumes pins the fingerprint of the daemon it
+finds, trusting SSH and the uid check as the first run did.
 
 One exposure is on the client side: to open your browser the CLI hands the
 page URL, token included, to `open` or `xdg-open`, so for that moment another
@@ -439,6 +485,20 @@ to print the comparison the ADR quotes.
 - Attached, the sound is the monitor of whatever output was the default when
   the session started, and the host's own speakers keep playing it.
 - Clipboard is plain text up to 255 KiB in each direction.
+- A kept desktop survives its connection only where logind leaves user
+  processes alone on logout (the default) or a user systemd manager can
+  hold it (`KillUserProcesses=yes` with `systemd-run` and, for your last
+  login, `loginctl enable-linger`). Elsewhere the CLI warns and the desktop
+  ends with the connection. Neither path has a test: the test hosts run in
+  containers without systemd, so `systemd-run --user` is checked by hand
+  only.
+- While a kept session has a controller, a second `robin gui` for it is
+  refused as busy. A CLI that lost its network keeps the daemon's socket
+  busy until the daemon's 20 s idle timeout notices, so a fresh `robin gui`
+  started sooner has to retry.
+- Reconnecting keeps the desktop, not the picture: the browser builds a
+  fresh peer connection each time, so the first second after a reconnect is
+  a new keyframe, and anything held down in the page is released.
 - Bulk transfers, the layer file and rich clipboard transfers are to use,
   are not paced against the video. On a 3 Mbit/s link a 2 MiB transfer
   takes about 9 s, the picture drops to about 1 Mbit/s meanwhile and

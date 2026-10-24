@@ -322,6 +322,43 @@ func TestDoneOnMasterExit(t *testing.T) {
 	}
 }
 
+// TestInterruptLeavesTheMasterRunning: Ctrl+C reaches the whole process
+// group; a session over the master dies of it, the master does not, so the
+// CLI can still run a command before closing it.
+func TestInterruptLeavesTheMasterRunning(t *testing.T) {
+	m := dial(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	cmd := m.Command(ctx, "cat")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer stdin.Close()
+	time.Sleep(200 * time.Millisecond)
+	if err := m.cmd.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err == nil {
+		t.Fatal("the session survived SIGINT; the CLI assumes it does not")
+	}
+	if m.Dead() {
+		t.Fatal("the master died of SIGINT")
+	}
+	if got, err := m.Output(ctx, "echo alive", nil); err != nil || string(got) != "alive\n" {
+		t.Fatalf("Output after SIGINT: %q, %v", got, err)
+	}
+	if err := m.Close(); err != nil || !m.Dead() {
+		t.Fatalf("Close: %v, dead %v", err, m.Dead())
+	}
+}
+
 func TestDialUnknownHostKey(t *testing.T) {
 	s := sshtest.Start(t)
 	var stderr tail.Buffer

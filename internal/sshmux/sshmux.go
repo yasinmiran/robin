@@ -79,7 +79,8 @@ func Dial(ctx context.Context, dest string, opts Options) (*Master, error) {
 		stderr = os.Stderr
 	}
 
-	m.cmd = exec.Command(m.ssh, m.masterArgs()...)
+	name, args := ignoringInterrupt(m.ssh, m.masterArgs()...)
+	m.cmd = exec.Command(name, args...)
 	m.cmd.Stderr = io.MultiWriter(&m.stderr, stderr)
 	// A ProxyCommand child can hold stderr open after the master exits.
 	m.cmd.WaitDelay = time.Second
@@ -133,6 +134,18 @@ func (m *Master) Command(ctx context.Context, remoteCmd string) *exec.Cmd {
 	return cmd
 }
 
+// ignoringInterrupt wraps the master's command line so ssh starts with
+// SIGINT ignored. Ctrl+C in a terminal reaches every process in the
+// foreground group, and the master would die of it before the CLI could
+// tell the host anything; ssh keeps an ignore it inherits (its client loop
+// installs a SIGINT handler only when the signal is not already ignored),
+// so the connection outlives the keystroke and the CLI ends the session
+// over it, then closes it. Sessions over the master install their handler
+// unconditionally and do die, which the CLI expects.
+func ignoringInterrupt(ssh string, args ...string) (string, []string) {
+	return "/bin/sh", append([]string{"-c", `trap '' INT; exec "$0" "$@"`, ssh}, args...)
+}
+
 // Output runs remoteCmd with stdin (nil for none) and returns its stdout. A
 // failed command's error includes its stderr.
 func (m *Master) Output(ctx context.Context, remoteCmd string, stdin io.Reader) ([]byte, error) {
@@ -171,6 +184,16 @@ func (m *Master) SocketPath(name string) string {
 // network drop or a signal.
 func (m *Master) Done() <-chan struct{} {
 	return m.done
+}
+
+// Dead reports whether the master process has exited.
+func (m *Master) Dead() bool {
+	select {
+	case <-m.done:
+		return true
+	default:
+		return false
+	}
 }
 
 // Close asks the master to exit, kills it if it does not, and removes the

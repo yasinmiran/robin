@@ -716,6 +716,91 @@ remote media tracks to `Handlers.Track`, unset until the microphone and
 camera arrive. Protocol version 2 marks the change, so a CLI and an agent
 from either side of it refuse each other.
 
+### Kept sessions: the desktop lives in a daemon, the SSH channel in a proxy
+
+Until now the agent was the SSH exec channel: stdin closing meant teardown,
+within 20 s of a dead network thanks to the idle watchdog. That is the right
+reflex for a leaked display and the wrong one for a laptop lid. The change
+keeps the reflex and moves it one process out.
+
+- One abstraction, `agent.Controllers`, hands the session its controller
+  connections one after another: the single stdio connection as before, or
+  the connections a daemon accepts on a unix socket. `agent.Serve` is the
+  old `Run` body around that: Start on the first controller, Resume on the
+  later ones, the same Ready for each, and between controllers a linger of
+  `--keep`. Nothing that holds state across controllers moved: the desktop,
+  the audio source, the ICE-TCP listener, the stream, the cursor cache and
+  the DTLS certificate were all already owned by the session and now simply
+  outlive the connection. So does the fingerprint the CLI pinned, which is
+  what makes a resumed answer acceptable to the relay and anything else
+  answering fatal.
+- `robin-agent serve` on the exec channel became a proxy: it starts (or,
+  with `-resume`, finds) `robin-agent daemon`, waits for the socket, and
+  copies bytes both ways, so the CLI's pings reach the daemon and the 20 s
+  idle rule is unchanged, only its consequence is: a controller that goes
+  silent is dropped, its peer closed, and the keep window opens. The
+  daemon's log goes to a file in the run directory that the proxy tails to
+  its stderr, so the CLI's "agent log:" on an error reads as before.
+- Leaving the SSH session: the daemon is started with `setsid`, stdio on
+  `/dev/null` and SIGHUP ignored, which is enough wherever logind leaves
+  user processes alone on logout, the upstream default and that of every
+  distribution the probe fixtures cover. `KillUserProcesses=yes` kills the
+  whole session scope regardless of process sessions, so there the probe
+  (busctl's live answer, else the last `logind.conf` setting read) makes
+  the CLI ask for `systemd-run --user`, a transient unit outside the scope.
+  That unit still stops with the user's manager when their last session
+  ends unless lingering is on, so the CLI warns, naming
+  `loginctl enable-linger`, and warns differently where `systemd-run` is
+  missing, where the desktop will end with the connection after all. The
+  containers the tests run in have no systemd, so the `systemd-run` path
+  has a unit test for its command line and a hand check on a real host
+  (see the README's Known limits); the `setsid` path is what test-x and e2e
+  exercise.
+- Teardown guarantees moved with the ownership: children are spawned by the
+  daemon, so their process groups, `Pdeathsig` and the display watchdog
+  die with it; the keep window expiring returns from `Serve` through the
+  same defers as bye, and so does the desktop dying while nobody is
+  attached. test-x proves all three with the real binary: SIGKILL of the
+  proxy's process group leaves the daemon and Xvfb running (same pids), a
+  second proxy resumes, and 4 s after it leaves the daemon, Xvfb, the
+  watchdog and the run directory are gone. `robin-agent end` sends SIGTERM
+  to the pid in `session.json` only after `/proc/<pid>/cmdline` shows it is
+  that session's daemon, since the pid may have been reused, and removes a
+  stale directory instead.
+- Trust: the socket lives in the 0700 run directory and the daemon checks
+  `SO_PEERCRED` against its own uid, one controller at a time (a second is
+  told "another CLI is connected" after a 2 s handoff wait, long enough for
+  the daemon to get from one controller to the next). A fresh `robin gui`
+  reaches the daemon through the same SSH login that started it and pins
+  the fingerprint of whatever it finds, which is what the first run did too.
+- Identity across deploys: `deploy.Ensure` removes other agent versions
+  from the directory, and Linux keeps the daemon's unlinked binary running,
+  so after an upgrade the daemon runs code the CLI no longer carries.
+  `session.json` records the agent's file name, which is its content hash,
+  and a CLI whose embedded agent differs refuses to resume and says to run
+  `robin end`. The version string is `dev` on every local build and would
+  not have caught that.
+- The CLI: the relay, the page server, the tunnel's loopback listener and
+  the page itself outlive the SSH connection; only the master, the proxy
+  and the forward are remade. The page is told `reconnecting`, drops its
+  peer connection and builds a fresh one from the next `config`, the same
+  path a reload takes. Redials back off from 1 s to 15 s until the keep
+  window closes. Ctrl+C has to end the session, and a terminal delivers it
+  to ssh as well: OpenSSH's sessions over the master die of it, but the
+  master itself keeps an inherited SIGINT ignore, so the master is started
+  through `sh -c 'trap "" INT; exec ssh ...'` and the CLI runs the agent's
+  end command over it when bye got no answer; only when the master is gone
+  too does it dial once more, bounded to 30 s, and failing that it names
+  the time the host lets the desktop go.
+- Measured in the `resume` e2e scenario on 2026-10-24: killing the host's
+  sshd children drops every connection at once, the page shows
+  Reconnecting 5 ms later and is connected again 263 ms after the cut on
+  the same display, Xvfb and xterm, with 50 of the xterm's 152,944 pixels
+  changed against the frame saved before the cut. The `rejoin` scenario
+  kills the CLI outright, resumes from a new `robin gui`, detaches from the
+  page and ends with `robin end`, leaving no process or directory behind.
+  In test-x the daemon ends 4.0 to 4.4 s after a 4 s keep window opened.
+
 ## Verification parked
 
 Two checks were parked by decision on 2026-10-18. Both needed hardware the

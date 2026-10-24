@@ -513,7 +513,9 @@ if (SCENARIO === 'rejoin') {
 
     // A new robin gui finds the one kept session and resumes it.
     cli = await Cli.start(OUT);
-    expect(cli.stderrTail(), 'the CLI resumed').toContain(`resumed session ${before.session.id}`);
+    // stderr reaches the log a moment after stdout printed the URL.
+    const resumed = cli;
+    await expect.poll(() => resumed.stderrTail(), { message: 'the CLI said it resumed' }).toContain(`resumed session ${before.session.id}`);
     await page.goto(cli.url);
     await expect.poll(() => state(page), { message: 'the new page connects', timeout: 60_000 }).toBe('connected');
     await expectSameDesktop(before, marker);

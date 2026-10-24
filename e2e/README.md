@@ -14,7 +14,7 @@ Firefox and WebKit.
 
 ```sh
 # build bin/robin-linux-amd64 first (the repo Makefile does)
-e2e/run.sh                # direct, blocked, restart, attach, wayland, webkit, firefox
+e2e/run.sh                # direct, blocked, restart, resume, rejoin, attach, wayland, webkit, firefox
 e2e/run.sh direct         # one scenario
 e2e/run.sh selftest       # the harness itself, no CLI needed
 ROBIN_BIN=/path/to/robin e2e/run.sh restart
@@ -58,12 +58,14 @@ cannot leak into the next one. The tests run in order against one session.
 | `direct` | open | the session comes up on UDP |
 | `blocked` | UDP dropped (except loopback) before the CLI starts | ICE-TCP through the SSH forward carries the whole session; the selected remote candidate is `127.0.0.1` |
 | `restart` | open, then UDP dropped mid-session | the page notices, restarts ICE and recovers onto TCP within 15 s (`ROBIN_RESTART_TIMEOUT_MS`; typically about 3 s), and input still works afterwards |
+| `resume` | open, SSH cut mid-session | the robin user's sshd processes are killed, dropping every connection at once; the page says Reconnecting, the CLI redials and resumes the same daemon, Xvfb and xterm, the marker typed before the cut is still on screen, and typing works again |
+| `rejoin` | open | the CLI is SIGKILLed, ssh master and all; the desktop stays, `robin ls` lists it as kept, a new `robin gui` resumes it with the marker on screen, the page's Disconnect, keep desktop button makes the CLI exit 0 and leaves the desktop, and `robin end` tears everything down |
 | `attach` | open | `--attach auto` finds and streams the desktop the `robin` user already has running (`robin-live`: Xvfb on `:5` at 2304x800 split into two monitors with `xrandr --setmonitor`, its cookie in `~/.Xauthority`, an xterm and openbox, started over ssh before the CLI) and leaves it as it was |
 | `wayland` | open, Wayland host image | `--attach auto` finds the `robin` user's GNOME Wayland session (`robin-wayland start`: mutter with a 1280x720 virtual monitor, PipeWire with pipewire-pulse, the GNOME portal and a fullscreen probe window, started over ssh before the CLI), the portal's consent dialog is answered once, and a second run restores without it; see below |
 | `firefox` | open | the direct scenario in Playwright's Firefox with the OpenH264 plugin: every check passes |
 | `webkit` | open | the direct scenario in Playwright's WebKit (Safari's WebRTC stack): H.264 negotiates and decodes, keyboard, clipboard, resize, sound, UDP and teardown work; see below for what it cannot show |
 
-The four X11 scenarios also check, in this order:
+The six X11 scenarios also check, in this order:
 
 1. **Frames**: a non-black frame within 20 s of the URL appearing, and
    `framesDecoded` grows after the host retitles the xterm (damage that does not

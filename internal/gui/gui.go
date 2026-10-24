@@ -300,8 +300,8 @@ func (h *host) deployAgent(ctx context.Context) (agentbin.Agent, string, error) 
 }
 
 // end finishes the session on Ctrl+C: bye over the connection when it is
-// still up, else a fresh connection to tell the host, since a desktop left
-// kept by mistake would stay for hours.
+// still up, else the agent's end command over the master, else over a fresh
+// connection, since a desktop left kept by mistake would stay for hours.
 func (h *host) end(ag *agentProc, ready *protocol.Ready, path string, o Options) error {
 	if ag.bye() {
 		return nil
@@ -312,11 +312,19 @@ func (h *host) end(ag *agentProc, ready *protocol.Ready, path string, o Options)
 	fmt.Fprintf(o.Stderr, "robin: ending the kept session on %s\n", o.Dest)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	h.close()
-	m, err := sshmux.Dial(ctx, o.Dest, sshmux.Options{SSHPath: o.SSHPath, Args: o.SSHArgs, Stderr: o.Stderr})
-	if err == nil {
-		h.m = m
-		err = endSession(ctx, m, path, ready.ID)
+	var err error
+	if h.m != nil && !h.m.Dead() {
+		err = endSession(ctx, h.m, path, ready.ID)
+	} else {
+		err = errors.New("the connection is gone")
+	}
+	if err != nil {
+		h.close()
+		var m *sshmux.Master
+		if m, err = sshmux.Dial(ctx, o.Dest, sshmux.Options{SSHPath: o.SSHPath, Args: o.SSHArgs, Stderr: o.Stderr}); err == nil {
+			h.m = m
+			err = endSession(ctx, m, path, ready.ID)
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("could not end session %s on %s: %w\nit ends by itself at %s; robin end %s ends it sooner",
