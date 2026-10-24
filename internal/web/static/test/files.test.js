@@ -27,9 +27,10 @@ const clipboard = new Clipboard({
   propose: (list) => files.propose(list),
 });
 
-// fromAgent sends one file transfer to the page as the agent would, and
-// resolves with the page's verdict.
-async function fromAgent(id, bytes) {
+// fromAgent sends one file transfer to the page as the agent would, with
+// header's fields over the usual ones, and resolves with the page's
+// verdict.
+async function fromAgent(id, bytes, header = {}) {
   const page = new FakeChannel('bulk');
   const agent = new FakeChannel('bulk');
   page.peer = agent;
@@ -37,7 +38,7 @@ async function fromAgent(id, bytes) {
   page.readyState = agent.readyState = 'open';
   const verdict = new Promise((resolve) => agent.addEventListener('message', (e) => resolve(JSON.parse(e.data)), { once: true }));
   acceptBulk(page);
-  agent.send(JSON.stringify({ t: 'header', kind: 'file', id, name: `${id}.bin`, size: bytes.length }));
+  agent.send(JSON.stringify({ t: 'header', kind: 'file', id, name: `${id}.bin`, size: bytes.length, ...header }));
   const sum = new Sum(bytes.length);
   sum.add(bytes);
   agent.send(bytes);
@@ -120,4 +121,31 @@ test('the host cannot withdraw an upload', async () => {
   dispatchControl({ t: 'file-offer', file: { id: 'w3', name: 'w3.bin', size: 1 } });
   dispatchControl({ t: 'file-withdraw', file: { id: 'w3' } });
   assert.equal(files.list().some((t) => t.id === 'w3'), false, 'an offer the host withdrew is still listed');
+});
+
+test('a download may not be larger than its offer', async () => {
+  const before = saved.length;
+  dispatchControl({ t: 'file-offer', file: { id: 'd4', name: 'd4.bin', size: 3 } });
+  button(await row('d4'), 'save').click();
+  const bigger = await fromAgent('d4', new Uint8Array(6));
+  assert.equal(bigger.t, 'error');
+  assert.match(bigger.error, /larger than the 3 B offered/);
+  assert.equal(saved.length, before, 'a download larger than its offer was saved');
+  const t = files.list().find((x) => x.id === 'd4');
+  assert.equal(t.state, 'offered');
+  assert.match(t.error, /larger than/);
+
+  // A file that shrank since its offer still comes, as it is now.
+  button(await row('d4'), 'save').click();
+  assert.deepEqual(await fromAgent('d4', new Uint8Array(2)), { t: 'done' });
+  assert.equal(saved.length, before + 1);
+
+  // The agent leaves out a size of 0.
+  dispatchControl({ t: 'file-offer', file: { id: 'd5', name: 'd5.bin', size: 0 } });
+  button(await row('d5'), 'save').click();
+  assert.deepEqual(await fromAgent('d5', new Uint8Array(0), { size: undefined }), { t: 'done' });
+  assert.equal(saved.length, before + 2);
+  // An offer has to say how big it is.
+  for (const size of ['lots', -1, 1.5]) dispatchControl({ t: 'file-offer', file: { id: 'd6', name: 'd6.bin', size } });
+  assert.equal(files.list().some((t) => t.id === 'd6'), false, 'an offer of no size is listed');
 });
