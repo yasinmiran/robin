@@ -211,8 +211,10 @@ the session logind reports as active is a Wayland one.
 
 The first time, a dialog comes up on the host's own screen and someone sitting
 there has to answer it. On GNOME, switch on Allow Remote Interaction before
-pressing Share, or the session is view only; the CLI says so if that happens,
-and also says, while it waits, what to approve and for how long (two minutes).
+pressing Share, or the session is view only: the page shows the screen and
+still trades the clipboard both ways, but sends no keys, pointer or uploads.
+The CLI says so if that happens, and also says, while it waits, what to
+approve and for how long (two minutes).
 KDE Plasma asks once for both the picture and the input, and Approve grants
 them together.
 Approval gets the agent a restore token from the portal. The agent keeps it
@@ -365,7 +367,9 @@ socket inside the run directory; the agent and its run directory are 0700.
 The page can do on the host what a keyboard, a pointer and a clipboard can do
 in that session, say two words about the session itself (End session,
 which the CLI carries out as it does Ctrl+C, and Disconnect, keep desktop,
-which leaves the desktop for `--keep`), and move files, within these bounds:
+which leaves the desktop for `--keep`), and move files, within these bounds.
+A view-only Wayland grant takes the keyboard, the pointer and uploads away,
+and leaves the clipboard and the files the host offers.
 
 - **Writing files**, into the download folder and nowhere else, and never
   into your home directory itself, even where xdg-user-dirs names it as the

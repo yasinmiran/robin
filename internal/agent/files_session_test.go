@@ -357,20 +357,15 @@ func TestSessionOffersFiles(t *testing.T) {
 	if got.header.Kind != protocol.BulkFile || got.header.ID != offered.ID || got.header.Name != "report.pdf" || !bytes.Equal(got.data, content) {
 		t.Errorf("fetched %+v with %d bytes, want the offered file", got.header, len(got.data))
 	}
-	select {
-	case r := <-res:
-		if r.err != nil || !strings.Contains(r.out, "report.pdf: saved by the browser") {
-			t.Errorf("robin-agent send: %v, printed %q", r.err, r.out)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("robin-agent send did not return once the file was saved")
+	if r := waitSent(t, res); r.err != nil || !strings.Contains(r.out, "report.pdf: saved by the browser") {
+		t.Errorf("robin-agent send: %v, printed %q", r.err, r.out)
 	}
 
 	// Declined.
 	res = offerFiles(t, sock, path)
 	offered = b.control(protocol.ControlFileOffer).File
 	b.sendControl(protocol.Control{T: protocol.ControlFileDecline, File: &protocol.File{ID: offered.ID}})
-	if r := <-res; !errors.Is(r.err, files.ErrNotSaved) || !strings.Contains(r.out, "declined") {
+	if r := waitSent(t, res); !errors.Is(r.err, files.ErrNotSaved) || !strings.Contains(r.out, "declined") {
 		t.Errorf("a declined offer: %v, printed %q", r.err, r.out)
 	}
 
@@ -401,13 +396,13 @@ func TestSessionOffersFiles(t *testing.T) {
 	res = offerFiles(t, sock, path)
 	b.control(protocol.ControlFileOffer)
 	h.stdin.Close()
-	if r := <-res; r.err == nil || !strings.Contains(r.err.Error(), "ended") {
+	if r := waitSent(t, res); r.err == nil || !strings.Contains(r.err.Error(), "ended") {
 		t.Errorf("robin-agent send at the end of the session: %v", r.err)
 	}
 	h.waitGone(ready.Display)
 }
 
-// onDisplay runs xclip on the session's display.
+// xclipOn runs xclip on the session's display.
 func xclipOn(runDir string, args ...string) *exec.Cmd {
 	disp, _ := os.ReadFile(filepath.Join(runDir, "display"))
 	cmd := exec.Command("xclip", append([]string{"-selection", "clipboard"}, args...)...)

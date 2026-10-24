@@ -23,9 +23,19 @@ import (
 // with no desktop or CLI: the transfers alone.
 func peerBrowser(t *testing.T, s *session) *fileBrowser {
 	t.Helper()
+	// The candidate relays end with the test, before the peers close.
+	quit := t.Context().Done()
 	cands := make(chan protocol.Candidate, 64)
 	p, err := peer.New(peer.Config{IncludeLoopback: true, MinBitrate: minBitrate, StartBitrate: startBitrate, MaxBitrate: startBitrate, Log: s.log},
-		peer.Handlers{Candidate: func(c protocol.Candidate) { cands <- c }, Control: s.control, Bulk: s.bulk, ControlOpen: s.resendOffers})
+		peer.Handlers{
+			Candidate: func(c protocol.Candidate) {
+				select {
+				case cands <- c:
+				case <-quit:
+				}
+			},
+			Control: s.control, Bulk: s.bulk, ControlOpen: s.resendOffers,
+		})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,8 +60,12 @@ func peerBrowser(t *testing.T, s *session) *fileBrowser {
 	}
 	browserCands := make(chan webrtc.ICECandidateInit, 64)
 	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
-		if c != nil {
-			browserCands <- c.ToJSON()
+		if c == nil {
+			return
+		}
+		select {
+		case browserCands <- c.ToJSON():
+		case <-quit:
 		}
 	})
 	offer, _ := pc.CreateOffer(nil)
@@ -64,14 +78,24 @@ func peerBrowser(t *testing.T, s *session) *fileBrowser {
 		t.Fatal(err)
 	}
 	go func() {
-		for c := range browserCands {
-			p.AddCandidate(protocol.Candidate{Candidate: c.Candidate, SDPMid: c.SDPMid, SDPMLineIndex: c.SDPMLineIndex})
+		for {
+			select {
+			case c := <-browserCands:
+				p.AddCandidate(protocol.Candidate{Candidate: c.Candidate, SDPMid: c.SDPMid, SDPMLineIndex: c.SDPMLineIndex})
+			case <-quit:
+				return
+			}
 		}
 	}()
 	go func() {
-		for c := range cands {
-			if c.Candidate != "" {
-				pc.AddICECandidate(webrtc.ICECandidateInit{Candidate: c.Candidate, SDPMid: c.SDPMid, SDPMLineIndex: c.SDPMLineIndex})
+		for {
+			select {
+			case c := <-cands:
+				if c.Candidate != "" {
+					pc.AddICECandidate(webrtc.ICECandidateInit{Candidate: c.Candidate, SDPMid: c.SDPMid, SDPMLineIndex: c.SDPMLineIndex})
+				}
+			case <-quit:
+				return
 			}
 		}
 	}()
@@ -81,7 +105,7 @@ func peerBrowser(t *testing.T, s *session) *fileBrowser {
 // Uploads that go wrong in transit leave nothing behind: a corrupt one, a
 // truncated one and one the browser gives up on.
 func TestUploadsThatFailLeaveNothing(t *testing.T) {
-	s, _ := sharedSession(t)
+	s, _, _ := sharedSession(t, &fakeDesktop{})
 	b := peerBrowser(t, s)
 	downloads := s.files.inbox.Dir()
 
@@ -119,7 +143,7 @@ func TestUploadsThatFailLeaveNothing(t *testing.T) {
 // An offer reaches the page, waits for its click, and a failed transfer
 // leaves it on offer for another try.
 func TestOfferFetchedOverAPeer(t *testing.T) {
-	s, runDir := sharedSession(t)
+	s, runDir, _ := sharedSession(t, &fakeDesktop{})
 	content := noise(120 << 10)
 	path := filepath.Join(t.TempDir(), "notes.txt")
 	os.WriteFile(path, content, 0o600)
@@ -139,13 +163,8 @@ func TestOfferFetchedOverAPeer(t *testing.T) {
 	if got.header.ID != offered.ID || !bytes.Equal(got.data, content) {
 		t.Errorf("fetched %+v, %d bytes", got.header, len(got.data))
 	}
-	select {
-	case r := <-res:
-		if r.err != nil || !strings.Contains(r.out, "notes.txt: saved by the browser") {
-			t.Errorf("robin-agent send: %v, %q", r.err, r.out)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("robin-agent send did not return")
+	if r := waitSent(t, res); r.err != nil || !strings.Contains(r.out, "notes.txt: saved by the browser") {
+		t.Errorf("robin-agent send: %v, %q", r.err, r.out)
 	}
 
 	// The page refuses this one, so the offer stands and is still on offer.
@@ -168,8 +187,7 @@ func TestOfferFetchedOverAPeer(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	s.declineOffer(protocol.Control{T: protocol.ControlFileDecline, File: &protocol.File{ID: offered.ID}})
-	r := <-res
-	if !errors.Is(r.err, files.ErrNotSaved) || !strings.Contains(r.out, "transfer failed, still on offer") {
+	if r := waitSent(t, res); !errors.Is(r.err, files.ErrNotSaved) || !strings.Contains(r.out, "transfer failed, still on offer") {
 		t.Errorf("after a refused transfer: %v, %q", r.err, r.out)
 	}
 }

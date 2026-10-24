@@ -16,6 +16,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/yasinmiran/robin/internal/agent/desktop"
 	"github.com/yasinmiran/robin/internal/agent/files"
 	"github.com/yasinmiran/robin/internal/agent/peer"
 	"github.com/yasinmiran/robin/internal/protocol"
@@ -41,10 +42,7 @@ type fileShare struct {
 	sock  string
 	bin   string // holds the robin-send link
 	log   *slog.Logger
-
-	ctx  context.Context // ends with the session; bounds transfers
-	stop context.CancelFunc
-	wg   sync.WaitGroup // transfers in progress
+	wg    sync.WaitGroup // transfers in progress
 
 	mu     sync.Mutex
 	offers map[string]*offer
@@ -92,10 +90,9 @@ func openFiles(runDir string, log *slog.Logger) (*fileShare, error) {
 		ln.Close()
 		return nil, fmt.Errorf("link %s: %w", SendCommand, err)
 	}
-	ctx, stop := context.WithCancel(context.Background())
 	return &fileShare{
 		inbox: files.NewInbox(files.DownloadDir(home, os.Getenv), log),
-		ln:    ln, sock: sock, bin: bin, log: log, ctx: ctx, stop: stop,
+		ln:    ln, sock: sock, bin: bin, log: log,
 		offers: map[string]*offer{},
 	}, nil
 }
@@ -110,12 +107,12 @@ func (fs *fileShare) env() []string {
 	return []string{files.SocketEnv + "=" + fs.sock, "PATH=" + fs.bin + ":" + path}
 }
 
-// close removes every upload in progress and closes what is still on
-// offer. The session has stopped serving by then.
+// close ends the share once serveFiles has returned, which withdrew every
+// offer and so stopped every transfer: it waits for those, and removes
+// every upload still under way. It closes the socket too, for a session
+// that ended before it served.
 func (fs *fileShare) close() {
 	fs.ln.Close()
-	fs.withdrawAll()
-	fs.stop()
 	fs.wg.Wait()
 	fs.inbox.Close()
 }
@@ -146,7 +143,8 @@ func (fs *fileShare) settle(o *offer, s files.Status, detail string) {
 	}
 }
 
-// withdraw ends every offer from, which has gone, and returns them.
+// withdraw ends the offers from made, or every offer when from is nil,
+// and returns them.
 func (fs *fileShare) withdraw(from *sendCall) []*offer {
 	fs.mu.Lock()
 	var gone []*offer
@@ -180,7 +178,8 @@ func (fs *fileShare) withdrawAll() {
 	}
 }
 
-// serveFiles takes offers from robin-agent send until the session ends.
+// serveFiles takes offers from robin-agent send until the session ends,
+// then closes the socket and withdraws what is still on offer.
 func (s *session) serveFiles(ctx context.Context) {
 	if s.files == nil {
 		return
@@ -200,6 +199,7 @@ func (s *session) serveFiles(ctx context.Context) {
 // takeOffers puts the files of one robin-agent send on offer and keeps
 // them there until each is settled or the sender goes.
 func (s *session) takeOffers(r *files.Request) {
+	defer r.Close()
 	fs := s.files
 	from := &sendCall{req: r}
 	var mine []*offer
@@ -225,7 +225,6 @@ func (s *session) takeOffers(r *files.Request) {
 		for _, o := range mine {
 			o.file.Close()
 		}
-		r.Close()
 		return
 	}
 	for _, o := range mine {
@@ -278,7 +277,8 @@ func (s *session) fetchOffer(m protocol.Control) {
 		fs.mu.Unlock()
 		return
 	}
-	ctx, cancel := context.WithCancel(fs.ctx)
+	// Withdrawing the offer, as the end of the session does, cancels it.
+	ctx, cancel := context.WithCancel(context.Background())
 	o.cancel = cancel
 	fs.wg.Add(1)
 	fs.mu.Unlock()
@@ -331,10 +331,14 @@ func (s *session) declineOffer(m protocol.Control) {
 	}
 }
 
-// acceptUpload takes a file the page sends into the download directory.
+// acceptUpload takes a file the page sends into the download directory,
+// unless the host allowed viewing only.
 func (s *session) acceptUpload(h protocol.Bulk) (peer.BulkSink, error) {
-	if s.files == nil {
+	switch v, ok := s.desk.(desktop.ViewOnly); {
+	case s.files == nil:
 		return nil, errors.New("this session takes no files")
+	case ok && v.ViewOnly():
+		return nil, errors.New("the host allowed viewing only, so this session takes no files")
 	}
 	u, err := s.files.inbox.Accept(h.Name, h.Size)
 	if err != nil {

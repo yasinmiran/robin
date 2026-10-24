@@ -66,7 +66,10 @@ type Desktop struct {
 	closeOnce sync.Once
 }
 
-var _ desktop.Desktop = (*Desktop)(nil)
+var (
+	_ desktop.Desktop  = (*Desktop)(nil)
+	_ desktop.ViewOnly = (*Desktop)(nil)
+)
 
 // Open asks the portal for the screen, keyboard, pointer and clipboard and
 // starts reading frames. ctx bounds the opening only, consent included.
@@ -216,6 +219,10 @@ func (d *Desktop) Capture(bool) (*desktop.Frame, bool, error) { return d.frames.
 
 // Input applies a key, pointer, wheel or release message.
 func (d *Desktop) Input(m protocol.Control) error { return d.in.apply(m) }
+
+// ViewOnly reports whether the host granted the screen without keyboard
+// and pointer.
+func (d *Desktop) ViewOnly() bool { return d.sess.viewOnly() }
 
 // SetClipboard offers text as the desktop's clipboard.
 func (d *Desktop) SetClipboard(text string) error {

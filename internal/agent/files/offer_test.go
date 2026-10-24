@@ -434,8 +434,12 @@ func TestFindSocket(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		go l.Serve(func(r *Request) { r.Close() })
-		t.Cleanup(func() { l.Close() })
+		served := make(chan struct{})
+		go func() { defer close(served); l.Serve(func(r *Request) { r.Close() }) }()
+		t.Cleanup(func() {
+			l.Close()
+			<-served
+		})
 	}
 	live("2")
 	if got, err := FindSocket(env(""), root); err != nil || got != filepath.Join(root, "2", SocketName) {

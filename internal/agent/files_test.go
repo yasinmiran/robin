@@ -5,47 +5,76 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"golang.org/x/sys/unix"
+
+	"github.com/yasinmiran/robin/internal/agent/desktop"
 	"github.com/yasinmiran/robin/internal/agent/files"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
-// sharedSession is a session with files and no browser, its home in a
-// fresh directory.
-func sharedSession(t *testing.T) (*session, string) {
+// sharedSession is a session of desk with files and no browser, its home
+// in a fresh directory. end ends it as Run does, and the test's end does
+// too.
+func sharedSession(t *testing.T, desk desktop.Desktop) (s *session, runDir string, end func()) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_DOWNLOAD_DIR", "")
 	t.Setenv("XDG_CONFIG_HOME", "")
-	runDir := t.TempDir()
+	runDir = t.TempDir()
 	fs, err := openFiles(runDir, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := testSession(&fakeDesktop{})
+	s = testSession(desk)
 	s.files = fs
 	ctx, stop := context.WithCancel(context.Background())
 	served := make(chan struct{})
 	go func() { defer close(served); s.serveFiles(ctx) }()
-	t.Cleanup(func() {
-		stop()
-		<-served
-		fs.close()
-	})
-	return s, runDir
+	var once sync.Once
+	end = func() {
+		once.Do(func() {
+			stop()
+			<-served
+			fs.close()
+		})
+	}
+	t.Cleanup(end)
+	return s, runDir, end
+}
+
+// viewOnlyDesktop is a desktop whose host allowed viewing only.
+type viewOnlyDesktop struct{ *fakeDesktop }
+
+func (viewOnlyDesktop) ViewOnly() bool { return true }
+
+// waitSent is what robin-agent send's offer returned, or a failure after
+// a while.
+func waitSent(t *testing.T, res <-chan sent) sent {
+	t.Helper()
+	select {
+	case r := <-res:
+		return r
+	case <-time.After(10 * time.Second):
+		t.Fatal("robin-agent send did not return")
+		return sent{}
+	}
 }
 
 func TestFilesEnvForASpawnedDesktop(t *testing.T) {
-	s, runDir := sharedSession(t)
+	s, runDir, _ := sharedSession(t, &fakeDesktop{})
 	env := s.files.env()
 	if want := files.SocketEnv + "=" + filepath.Join(runDir, files.SocketName); env[0] != want {
 		t.Errorf("env %q, want %q", env[0], want)
@@ -131,12 +160,12 @@ func hostFile(t *testing.T, name, content string) string {
 }
 
 func TestOffersSettleOnDecline(t *testing.T) {
-	s, runDir := sharedSession(t)
+	s, runDir, _ := sharedSession(t, &fakeDesktop{})
 	sock := filepath.Join(runDir, files.SocketName)
 	res := offerFiles(t, sock, hostFile(t, "a.txt", "a"), t.TempDir())
 
 	// A directory never reaches the session: Send refuses it first.
-	if r := <-res; r.err == nil || !strings.Contains(r.err.Error(), "not a regular file") {
+	if r := waitSent(t, res); r.err == nil || !strings.Contains(r.err.Error(), "not a regular file") {
 		t.Fatalf("offering a directory: %v", r.err)
 	}
 	res = offerFiles(t, sock, hostFile(t, "a.txt", "a"), hostFile(t, "b.txt", "bb"))
@@ -156,29 +185,73 @@ func TestOffersSettleOnDecline(t *testing.T) {
 	for _, o := range offers {
 		s.declineOffer(protocol.Control{T: protocol.ControlFileDecline, File: &protocol.File{ID: o.info.ID}})
 	}
-	select {
-	case r := <-res:
-		if !errors.Is(r.err, files.ErrNotSaved) || strings.Count(r.out, "declined in the browser") != 2 {
-			t.Errorf("Send = %v, printed %q", r.err, r.out)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Send did not return once both files were declined")
+	if r := waitSent(t, res); !errors.Is(r.err, files.ErrNotSaved) || strings.Count(r.out, "declined in the browser") != 2 {
+		t.Errorf("Send = %v, printed %q", r.err, r.out)
 	}
 	openOffers(t, s, 0)
 }
 
+// A sender that goes is hung up on, rather than its connection waiting for
+// the garbage collector.
+func TestGoneSenderIsHungUp(t *testing.T) {
+	s, runDir, _ := sharedSession(t, &fakeDesktop{})
+	c, err := net.DialUnix("unixpacket", nil, &net.UnixAddr{Name: filepath.Join(runDir, files.SocketName), Net: "unixpacket"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	f, err := os.Open(hostFile(t, "a.txt", "a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := json.Marshal(map[string][]string{"names": {"a.txt"}})
+	if _, _, err := c.WriteMsgUnix(req, unix.UnixRights(int(f.Fd())), nil); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	openOffers(t, s, 1)
+	// Gone, as far as the session can tell, yet still able to hear it.
+	if err := c.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	openOffers(t, s, 0)
+	c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	buf := make([]byte, 4096)
+	for {
+		_, err := c.Read(buf)
+		if errors.Is(err, io.EOF) {
+			return
+		}
+		if err != nil {
+			t.Fatalf("the session kept the connection of a sender that went: %v", err)
+		}
+	}
+}
+
+// A host that allowed viewing only gets no files from the page.
+func TestViewOnlyTakesNoUploads(t *testing.T) {
+	s, _, _ := sharedSession(t, viewOnlyDesktop{&fakeDesktop{}})
+	b := peerBrowser(t, s)
+	data := noise(64 << 10)
+	v := b.upload(protocol.Bulk{Kind: protocol.BulkFile, ID: "v1", Name: "notes.txt", Size: int64(len(data))}, data, nil, 0)
+	if v.T != protocol.BulkError || !strings.Contains(v.Error, "viewing only") {
+		t.Errorf("an upload to a view-only session: %+v, want refused", v)
+	}
+	if names := dirNames(t, s.files.inbox.Dir()); len(names) != 0 {
+		t.Errorf("Downloads holds %q", names)
+	}
+	if _, err := s.acceptUpload(protocol.Bulk{Kind: protocol.BulkFile, Name: "x", Size: 1}); err == nil {
+		t.Error("a view-only session took an upload")
+	}
+}
+
 func TestOffersEndWithTheSession(t *testing.T) {
-	s, runDir := sharedSession(t)
+	s, runDir, end := sharedSession(t, &fakeDesktop{})
 	res := offerFiles(t, filepath.Join(runDir, files.SocketName), hostFile(t, "keep.bin", "k"))
 	o := openOffers(t, s, 1)[0]
-	s.files.close()
-	select {
-	case r := <-res:
-		if r.err == nil || !strings.Contains(r.err.Error(), "ended") {
-			t.Errorf("Send when the session ended: %v", r.err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Send did not return when the session ended")
+	end()
+	if r := waitSent(t, res); r.err == nil || !strings.Contains(r.err.Error(), "ended") {
+		t.Errorf("Send when the session ended: %v", r.err)
 	}
 	if _, err := o.file.Stat(); err == nil {
 		t.Error("the offered file is still open")
@@ -186,7 +259,7 @@ func TestOffersEndWithTheSession(t *testing.T) {
 }
 
 func TestUploadThroughTheSession(t *testing.T) {
-	s, _ := sharedSession(t)
+	s, _, _ := sharedSession(t, &fakeDesktop{})
 	sink, err := s.acceptUpload(protocol.Bulk{T: protocol.BulkHeader, Kind: protocol.BulkFile, ID: "u1", Name: "notes.txt", Size: 5})
 	if err != nil {
 		t.Fatal(err)

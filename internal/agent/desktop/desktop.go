@@ -66,6 +66,14 @@ type MultiMonitor interface {
 	ShowMonitor(name string) error
 }
 
+// ViewOnly is a desktop whose host may allow it to be seen and not used,
+// as a Wayland portal's consent dialog can.
+type ViewOnly interface {
+	// ViewOnly reports whether the host allowed viewing only: no keyboard
+	// or pointer, and no files from the browser either.
+	ViewOnly() bool
+}
+
 // RichClipboard is a desktop whose clipboard carries HTML and images as
 // well as text. Its Clipboard channel still reports the text of each copy.
 type RichClipboard interface {
