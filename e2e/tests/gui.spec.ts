@@ -486,12 +486,16 @@ test('clipboard: an image and HTML pasted in the page reach the host, an image c
   test.skip(!FILES, NO_FILES);
   const png = Buffer.from(PNG_B64, 'base64');
   const html = `<b>robin-e2e</b> ${Date.now()}`;
-  await page.evaluate(({ b64, html }) => {
+  // Firefox builds a ClipboardEvent's clipboardData afresh and keeps none of
+  // what a script passes it, so there the DataTransfer goes in directly.
+  const asEvent = process.env.ROBIN_E2E_BROWSER !== 'firefox';
+  await page.evaluate(({ b64, html, asEvent }) => {
     const dt = new DataTransfer();
     dt.setData('text/html', html);
     dt.items.add(new File([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], 'image.png', { type: 'image/png' }));
-    window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, cancelable: true }));
-  }, { b64: PNG_B64, html });
+    if (asEvent) window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, cancelable: true }));
+    else (window as any).robin.paste(dt);
+  }, { b64: PNG_B64, html, asEvent });
   await expect
     .poll(async () => (await host.sshRaw('robin-x xclip -o -selection clipboard -t image/png | sha256sum')).stdout.split(' ')[0], {
       message: 'the image on the host clipboard',

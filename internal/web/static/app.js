@@ -49,6 +49,9 @@ window.robin = {
   video,
   stats: () => sampler.sample(pc),
   sendClipboard: (text) => input.sendClipboard(text),
+  // paste takes a DataTransfer as a paste event would carry it. Firefox
+  // keeps none of a script's DataTransfer in a ClipboardEvent it builds.
+  paste: (data) => clipboard.paste(data),
   get lastRemoteClipboard() { return clipboard.last?.text ?? null; },
   get lastRemoteClip() { return clipboard.last; },
   files: {
