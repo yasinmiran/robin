@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
-import { CHUNK_SIZE, DEFAULT_INBOUND, Sum, checkHeader, kindInbound, kindLimit, parseFrame, registerKind } from '../bulkframe.js';
+import { CHUNK_SIZE, Sum, checkHeader, kindLimit, parseFrame, registerKind } from '../bulkframe.js';
 
 registerKind('frame-test', 1000);
 
@@ -13,19 +13,6 @@ test('kinds are registered once with a limit', () => {
     assert.throws(() => registerKind(kind, limit), /bad kind/, `${kind} ${limit}`);
   }
   assert.equal(kindLimit('negative'), undefined);
-});
-
-test('a kind takes one transfer from the agent at a time unless it names more', () => {
-  assert.equal(kindInbound('frame-test'), DEFAULT_INBOUND);
-  assert.equal(DEFAULT_INBOUND, 1);
-  assert.equal(kindInbound('nobody'), undefined);
-  registerKind('frame-pair', 1, { inbound: 2 });
-  registerKind('frame-clicked', 1, { inbound: Infinity });
-  assert.equal(kindInbound('frame-pair'), 2);
-  assert.equal(kindInbound('frame-clicked'), Infinity);
-  for (const inbound of [0, -1, 1.5, '2', null, NaN]) {
-    assert.throws(() => registerKind(`frame-${inbound}`, 1, { inbound }), /bad kind/, String(inbound));
-  }
 });
 
 test('parseFrame takes JSON objects within a chunk', () => {

@@ -964,15 +964,18 @@ The page holds the user's consent and the tab's memory, so it bounds what
 the host sends it as the agent bounds what the page sends, rather than
 trusting the agent to bound itself.
 
-**Transfers per kind.** `registerKind` takes, beside the size limit, how
-many transfers of the kind the agent may have open to the page at once.
-A place is taken when the header passes its checks, before the feature's
-accept runs, so two headers on two channels cannot both take the last one
-while accept awaits, and it is given back with the verdict or the close.
-One more header than that is refused with a reason and its channel closed.
-A kind that names no number takes one at a time; the clipboard takes two,
-as many as the agent takes from the page, since a newer copy's header can
-arrive before the cancelled older one's close; files name no count,
+**Transfers per kind.** `onBulk` takes, beside the feature's accept, how
+many transfers of the kind the agent may have open to the page at once,
+and has no default: a kind the page takes names its own, so a new one
+cannot inherit a number that fits another. The limit is the receiving
+side's, which is why it sits there and not with the size limit in
+`registerKind`, which both directions share. A place is taken when the
+header passes its checks, before accept runs, so two headers on two
+channels cannot both take the last one while accept awaits, and it is
+given back with the verdict or the close. One more header than that is
+refused with a reason and its channel closed. The clipboard takes two, as
+many as the agent takes from the page, since a newer copy's header can
+arrive before the cancelled older one's close; files take any number,
 because each download already needs a click on Save of its own. The
 clipboard's sink used to reserve the size a header declared, up to 16 MiB,
 before a byte came. It now gathers chunks as they arrive and joins them at

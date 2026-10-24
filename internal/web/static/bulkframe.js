@@ -9,38 +9,23 @@ import { Sha256 } from './sha256.js';
 export const BULK_CHANNEL = 'bulk';
 export const CHUNK_SIZE = 64 * 1024;
 
-// DEFAULT_INBOUND is how many transfers of a kind the agent may have open
-// to the page at once when the kind names no number. A receiver holds what
-// has arrived of each until its last byte, so one at a time unless the
-// kind says why it needs more.
-export const DEFAULT_INBOUND = 1;
-
-const kinds = new Map(); // kind -> { limit, inbound }
+const limits = new Map();
 
 // registerKind declares a kind of transfer and the most bytes one may
-// carry, as protocol.RegisterBulkKind does on the agent, and inbound, how
-// many of it the agent may have open to the page at once: a positive
-// integer, or Infinity for a kind something else bounds. The page neither
+// carry, as protocol.RegisterBulkKind does on the agent. The page neither
 // sends nor accepts a kind nobody registered.
-export function registerKind(kind, limit, { inbound = DEFAULT_INBOUND } = {}) {
-  const count = (Number.isSafeInteger(inbound) && inbound > 0) || inbound === Infinity;
-  if (typeof kind !== 'string' || !kind || !Number.isSafeInteger(limit) || limit < 0 || !count) {
-    throw new Error(`bulk: bad kind ${JSON.stringify(kind)} with limit ${limit}, ${inbound} inbound`);
+export function registerKind(kind, limit) {
+  if (typeof kind !== 'string' || !kind || !Number.isSafeInteger(limit) || limit < 0) {
+    throw new Error(`bulk: bad kind ${JSON.stringify(kind)} with limit ${limit}`);
   }
-  if (kinds.has(kind)) throw new Error(`bulk: kind ${JSON.stringify(kind)} registered twice`);
-  kinds.set(kind, { limit, inbound });
+  if (limits.has(kind)) throw new Error(`bulk: kind ${JSON.stringify(kind)} registered twice`);
+  limits.set(kind, limit);
 }
 
 // kindLimit is the most bytes a transfer of kind may carry, or undefined
 // for a kind nobody registered.
 export function kindLimit(kind) {
-  return kinds.get(kind)?.limit;
-}
-
-// kindInbound is how many transfers of kind the agent may have open to the
-// page at once, or undefined for a kind nobody registered.
-export function kindInbound(kind) {
-  return kinds.get(kind)?.inbound;
+  return limits.get(kind);
 }
 
 // parseFrame decodes a text frame.

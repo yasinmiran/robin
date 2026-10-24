@@ -2,7 +2,7 @@
 // in the frames bulkframe.js defines. Features register the kinds they
 // send with registerKind and the kinds they take with onBulk.
 
-import { BULK_CHANNEL, CHUNK_SIZE, Sum, checkHeader, kindInbound, parseFrame } from './bulkframe.js';
+import { BULK_CHANNEL, CHUNK_SIZE, Sum, checkHeader, parseFrame } from './bulkframe.js';
 
 // A sender keeps between LOW_WATER and HIGH_WATER bytes queued, as the
 // agent does.
@@ -10,7 +10,7 @@ const HIGH_WATER = 1024 * 1024;
 const LOW_WATER = 256 * 1024;
 const MAX_REASON = 1024;
 
-const receivers = new Map();
+const receivers = new Map(); // kind -> { accept, inbound }
 // underWay counts, by kind, the transfers from the agent that hold a place
 // under the kind's inbound limit.
 const underWay = new Map();
@@ -25,18 +25,22 @@ export class BulkRefused extends Error {
   }
 }
 
-// onBulk registers accept for transfers of kind from the agent. accept is
-// called with the header and returns a sink, or throws to refuse; its
-// message reaches the agent. A sink has write(chunk), commit() and
-// abort(err), each of which may return a promise: writes come in order,
-// then commit once every byte arrived intact, its throw refusing the
-// transfer after all, or abort with the reason it failed. Frames wait in
-// memory while a sink is slow, since a page cannot stop a data channel
-// reading. A header past the kind's inbound limit (registerKind) is
-// refused before accept sees it.
-export function onBulk(kind, accept) {
+// onBulk registers accept for transfers of kind from the agent, of which
+// the agent may have inbound open to the page at once: a positive integer,
+// or Infinity for a kind something else bounds. A header past that is
+// refused before accept sees it. accept is called with the header and
+// returns a sink, or throws to refuse; its message reaches the agent. A
+// sink has write(chunk), commit() and abort(err), each of which may return
+// a promise: writes come in order, then commit once every byte arrived
+// intact, its throw refusing the transfer after all, or abort with the
+// reason it failed. Frames wait in memory while a sink is slow, since a
+// page cannot stop a data channel reading.
+export function onBulk(kind, accept, { inbound } = {}) {
   if (receivers.has(kind)) throw new Error(`bulk: kind ${JSON.stringify(kind)} taken twice`);
-  receivers.set(kind, accept);
+  if (!(Number.isSafeInteger(inbound) && inbound > 0) && inbound !== Infinity) {
+    throw new Error(`bulk: kind ${JSON.stringify(kind)} needs how many may be inbound at once, not ${inbound}`);
+  }
+  receivers.set(kind, { accept, inbound });
 }
 
 // sendBulk sends blob, a Blob or File, as one transfer described by header
@@ -188,10 +192,10 @@ export class Inbound {
     if (typeof data !== 'string') throw new Error('malformed bulk frame: data before the header');
     const h = parseFrame(data);
     checkHeader(h);
-    const accept = this.#lookup(h.kind);
-    if (!accept) throw new Error(`unknown bulk kind ${JSON.stringify(h.kind)}: this page takes none`);
-    this.#hold(h.kind);
-    this.#sink = await accept(h);
+    const receiver = this.#lookup(h.kind);
+    if (!receiver) throw new Error(`unknown bulk kind ${JSON.stringify(h.kind)}: this page takes none`);
+    this.#hold(h.kind, receiver.inbound);
+    this.#sink = await receiver.accept(h);
     this.#sum = new Sum(h.size ?? 0);
   }
 
@@ -207,9 +211,8 @@ export class Inbound {
 
   // hold takes one of kind's places before accept runs, so two headers
   // cannot both take the last one while it does.
-  #hold(kind) {
+  #hold(kind, most) {
     const n = underWay.get(kind) ?? 0;
-    const most = kindInbound(kind);
     if (n >= most) throw new Error(`too many ${kind} transfers under way: the page takes ${most} at once`);
     underWay.set(kind, n + 1);
     this.#held = kind;

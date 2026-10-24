@@ -8,7 +8,7 @@ import { onBulk } from './bulk.js';
 import { onControl } from './control.js';
 import { CLIP_INBOUND, CLIP_KIND, CLIP_LIMIT, MAX_CLIP, clipSize, decodeClip, encodeClip, fitsControl, splitPaste } from './clip.js';
 
-registerKind(CLIP_KIND, CLIP_LIMIT, { inbound: CLIP_INBOUND });
+registerKind(CLIP_KIND, CLIP_LIMIT);
 
 export class Clipboard {
   // last is what the host copied most recently: { text, html, png }.
@@ -36,7 +36,7 @@ export class Clipboard {
         commit: () => this.#copied(decodeClip(join(chunks))),
         abort: () => {},
       };
-    });
+    }, { inbound: CLIP_INBOUND });
   }
 
   // paste takes what a paste event carries to the host, and resolves once

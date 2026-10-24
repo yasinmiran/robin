@@ -32,7 +32,7 @@ onBulk('test', (h) => {
   sinks.push(sink);
   if (h.id === 'refuse') throw new Error('not today');
   return sink;
-});
+}, { inbound: Infinity });
 
 test('a transfer arrives whole on the far side, flow control and all', async () => {
   let farChannel;
@@ -140,8 +140,12 @@ test('aborting cancels a transfer under way', async () => {
   assert.match(result.err.message, /cancelled/);
 });
 
-test('onBulk takes each kind once', () => {
-  assert.throws(() => onBulk('test', () => null), /taken twice/);
+test('onBulk takes each kind once, with how many may be inbound at once', () => {
+  assert.throws(() => onBulk('test', () => null, { inbound: 1 }), /taken twice/);
+  for (const inbound of [undefined, 0, -1, 1.5, '2', null, NaN]) {
+    assert.throws(() => onBulk(`inbound-${inbound}`, () => null, { inbound }), /needs how many may be inbound at once/, String(inbound));
+  }
+  assert.throws(() => onBulk('inbound-none', () => null), /needs how many/);
 });
 
 // inbound feeds frames to a receiver and reports its verdict.
@@ -152,7 +156,10 @@ function inbound(lookup) {
   let closed = false;
   channel.send = (data) => verdicts.push(JSON.parse(data));
   channel.close = () => { closed = true; };
-  const rx = new Inbound(channel, lookup);
+  const rx = new Inbound(channel, (kind) => {
+    const accept = lookup(kind);
+    return accept && { accept, inbound: Infinity };
+  });
   return { rx, verdicts, closed: () => closed };
 }
 
@@ -234,14 +241,14 @@ test('Inbound keeps a good transfer and reports a sink that fails', async () => 
 });
 
 // The agent may have two transfers of this kind open to the page at once.
-registerKind('capped', 1024, { inbound: 2 });
+registerKind('capped', 1024);
 const capped = [];
 onBulk('capped', (h) => {
   if (h.id === 'no') throw new Error('not this one');
   const sink = memSink();
   capped.push(sink);
   return sink;
-});
+}, { inbound: 2 });
 
 // fromAgent opens a channel to the page as the agent would and sends the
 // header of an empty transfer on it; verdict resolves with the page's

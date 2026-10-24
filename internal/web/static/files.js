@@ -22,9 +22,7 @@ const PIECE_BYTES = 16 * 1024 * 1024;
 // Revoking a download's URL at once can cancel the download itself.
 const REVOKE_AFTER_MS = 60_000;
 
-// Each download needs a click on Save of its own, which bounds how many
-// run at once.
-registerKind(FILE_KIND, MAX_FILE, { inbound: Infinity });
+registerKind(FILE_KIND, MAX_FILE);
 
 export class Files {
   #transfers = new Transfers(() => this.#changed());
@@ -57,7 +55,9 @@ export class Files {
     });
     onControl('file-withdraw', ({ file }) => this.#transfers.withdraw(file?.id));
     onControl('file-saved', ({ file }) => this.#transfers.saved(file?.id, String(file?.name ?? '')));
-    onBulk(FILE_KIND, (h) => this.#download(h));
+    // Each download needs a click on Save of its own, which bounds how many
+    // run at once.
+    onBulk(FILE_KIND, (h) => this.#download(h), { inbound: Infinity });
 
     window.addEventListener('dragover', (e) => {
       if (!carriesFiles(e)) return;
