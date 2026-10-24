@@ -147,7 +147,7 @@ type process struct {
 }
 
 func (m *Master) startProcess(args []string) (*process, error) {
-	p := &process{cmd: exec.Command(m.ssh, args...), exited: make(chan struct{})}
+	p := &process{cmd: shielded(context.Background(), m.ssh, args...), exited: make(chan struct{})}
 	p.cmd.Stderr = io.MultiWriter(&p.stderr, m.out)
 	// A ProxyCommand child can hold stderr open after ssh exits.
 	p.cmd.WaitDelay = time.Second
