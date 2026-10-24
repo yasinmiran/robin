@@ -1741,14 +1741,29 @@ page holding only the first of its two manifests would show tiles the
 second names.
 
 **Actual size.** A picture the browser scales by a fraction blurs text
-however it was encoded. Actual size lays the video out at one desktop pixel
-to one device pixel, the desktop's size from the tile grid where the video
-is scaled down to `--max-size` and the video's own otherwise, with every
-edge on a device pixel, centred while it fits and panned while it does not:
-by the pointer within 24 px of the window's edge, or by two fingers through
-the gesture E's `view.js` reports as a pinch, which pans there instead of
+however it was encoded. Actual size lays the video out with each desktop
+pixel as many device pixels as fit whole in a CSS pixel, at least one: at
+`devicePixelRatio` 2 that is two, since one would halve a desktop sized to
+the window in CSS pixels, the default spawned session, and a switch that
+shrinks the picture on every Retina screen helps no one. The desktop's size
+comes from the tile grid where the video is scaled down to `--max-size` and
+from the video otherwise; the tiles, and a video at that size, are drawn
+with `image-rendering: pixelated`, every edge on a device pixel, centred
+while it fits and panned while it does not: by the pointer within 24 px of
+the window's edge, outside the status tab, or by two fingers through the
+gesture E's `view.js` reports as a pinch, which pans there instead of
 zooming. The tile canvas follows the picture's box in either view, since
 `getBoundingClientRect` includes the zoom and the pan.
+
+**What the page trusts.** Nothing of the agent's tile geometry. A manifest
+must name a grid of 1 to 16384 pixels a side (`MaxTileGrid`, the largest
+canvas side a browser draws) and gone ranges that ascend within it, and a
+batch only tiles of its grid, each once; anything else drops every tile, a
+bad agent costing blur rather than a page spinning over a range of 2^31
+tiles. An atlas's PNG header must give the size its tiles take before
+`createImageBitmap` sees it, since a few MiB of deflate can declare a
+picture a thousand times larger, and its transfer counts against the four
+the page takes at once until the decode is done.
 
 **Measured.** On this workstation (i7-13800H), by `BenchmarkTiles` over
 the vqtest 2560x1440 screen of small text: comparing a frame takes 2.6 ms

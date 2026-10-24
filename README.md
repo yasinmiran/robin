@@ -171,13 +171,15 @@ A tile that keeps changing soon after it was sent, as one with a blinking
 caret does, waits longer each time and soon stays video rather than flicker.
 Sharp text needs an X11 desktop and a browser that says which frame it shows
 (the RTP timestamp in `requestVideoFrameCallback`, which Chrome, Edge and
-Firefox give); otherwise the switch is off and says why.
+Firefox give); otherwise the switch is greyed out with the reason under it.
 
-**Actual size** shows one desktop pixel to one pixel of your screen instead
-of fitting the picture to the window, so text never goes through a
-fractional scale. A desktop larger than the window pans: hold the pointer
-near an edge of the window, or on a touch screen move two fingers apart and
-along. Pointer and touch input land where the picture shows them either way.
+**Actual size** shows each desktop pixel as a whole number of your screen's
+pixels instead of fitting the picture to the window: one, or two on a screen
+of twice the density, so text never goes through a fractional scale. A
+desktop larger than the window pans, and the status tab says how: hold the
+pointer near an edge of the window, or on a touch screen drag with two
+fingers. Pointer and touch input land where the picture shows them either
+way.
 
 ## Files and the clipboard
 
@@ -594,9 +596,12 @@ are refused.
 
 Sharp text brings pictures of the screen into the page a second way: tile
 transfers from the agent, taken only while the switch is on, at most 4 MiB
-each and four open at once, whose PNG the browser's own image decoder reads,
-as it reads the pointer images. They are drawn on a canvas and nowhere else;
-the page sends nothing new because of them but the switch itself.
+each and four at once, open or still being decoded. Each atlas's PNG header
+must give the size its tiles take, at most 1024x1024, before the browser's
+own image decoder reads it, and a tile manifest or batch that strays outside
+its grid drops every tile instead of growing what the page keeps. Tiles are
+drawn on a canvas and nowhere else; the page sends nothing new because of
+them but the switch itself.
 
 A kept session is reached through a unix socket in its 0700 run directory,
 and the daemon accepts a connection only from a process of its own uid
@@ -917,11 +922,12 @@ verified against a Linux build.
   hard to read. Monitors come from RandR 1.5; an X server older than that
   shows the whole desktop.
 - Sharp text works on X11 desktops only. Wayland's portal hands the agent
-  its frames already at 4:2:0, so there the switch is off and says why.
+  its frames already at 4:2:0, so there the switch is greyed out with the
+  reason under it.
 - Sharp text needs the browser to report the RTP timestamp of the frame it
   shows, which Chrome, Edge and Firefox do; in a browser that does not, the
-  switch is off and says why. Safari is unchecked, since the tests cannot
-  see its picture.
+  switch is greyed out with the reason under it. Safari is unchecked, since
+  the tests cannot see its picture.
 - When the message that says which tiles a frame changes is held up behind
   a lost packet, the frame can reach the screen first. The page then hides
   every tile until the message arrives, so the whole picture is plain video
