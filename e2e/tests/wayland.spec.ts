@@ -290,6 +290,9 @@ test("microphone: a PipeWire source that hears the page once it is switched on",
     .poll(async () => (heard = toneOf(pcm(await wl.recordSource(node, 2)))).loud, { message: 'the tone on the desktop', timeout: 30_000, intervals: [0] })
     .toBeGreaterThan(0.4);
   testInfo.annotations.push({ type: 'microphone', description: JSON.stringify(heard) });
+  await page.mouse.move(640, 5);
+  await page.waitForTimeout(400); // the tab slides back in
+  await testInfo.attach('status tab, microphone on', { body: await page.locator('#hud').screenshot(), contentType: 'image/png' });
   expect(heard.hz, "the page's tone, at its pitch").toBeGreaterThan(TONE_HZ * 0.95);
   expect(heard.hz).toBeLessThan(TONE_HZ * 1.05);
 
@@ -321,6 +324,9 @@ test('camera: a PipeWire camera that shows black, then the page, then black agai
     }, { message: "the page's picture on the desktop", timeout: 30_000, intervals: [500] })
     .toBe(true);
   testInfo.annotations.push({ type: 'camera', description: JSON.stringify(seen) });
+  await page.mouse.move(640, 5);
+  await page.waitForTimeout(400); // the tab slides back in
+  await testInfo.attach('status tab, camera on', { body: await page.locator('#hud').screenshot(), contentType: 'image/png' });
 
   await page.mouse.move(640, 5);
   await camera.click();
