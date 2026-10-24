@@ -113,10 +113,10 @@ func (e *taggedEncoder) SetBitrate(bps int) error {
 
 // QP passes on the wrapped encoder's, which the stream logs with keyframes.
 func (e *taggedEncoder) QP() int {
-	if q, ok := e.Encoder.(interface{ QP() int }); ok {
+	if q, ok := e.Encoder.(qpReporter); ok {
 		return q.QP()
 	}
-	return 0
+	return -1
 }
 
 func (e *taggedEncoder) Encode(img *yuv.I420, ts time.Duration, keyframe bool) ([]byte, error) {

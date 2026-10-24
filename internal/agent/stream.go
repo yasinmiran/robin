@@ -23,6 +23,10 @@ type Encoder interface {
 	Close() error
 }
 
+// qpReporter is an Encoder that can say which quantiser its last frame
+// used; QP returns -1 when it cannot.
+type qpReporter interface{ QP() int }
+
 // NewEncoderFunc builds an encoder for one frame size. The session recreates
 // the encoder whenever the display is resized.
 type NewEncoderFunc func(width, height, fps, bitrate int) (Encoder, error)
@@ -187,7 +191,7 @@ func (s *stream) run(ctx context.Context) {
 			s.keyframe.Store(false)
 			lastKey = now
 			attrs := []any{"w", w, "h", h, "bytes", len(au), "kbps", appliedBitrate / 1000}
-			if q, ok := enc.(interface{ QP() int }); ok {
+			if q, ok := enc.(qpReporter); ok {
 				attrs = append(attrs, "qp", q.QP())
 			}
 			s.log.Info("keyframe", attrs...)
