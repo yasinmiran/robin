@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -56,6 +57,10 @@ func (e *unreadable) Unwrap() []error { return []error{e.err, ErrUnreadable} }
 
 var errNoPath = errors.New("macros: the store has no path")
 
+// lockWait bounds how long a change waits for another session's change to
+// the file: it runs on the page's read loop.
+var lockWait = 2 * time.Second
+
 // Path is where the macros are kept: robin/macros.json in the user's config
 // directory.
 func Path() (string, error) {
@@ -74,8 +79,11 @@ type Store struct {
 	path string
 	host string
 	// mu serializes this process's changes, each a read, a change and a
-	// write of the file.
+	// write of the file; the lock file beside it does so between processes.
 	mu sync.Mutex
+	// beforeWrite, when set, runs while a change holds the file, between
+	// reading it and writing it.
+	beforeWrite func()
 }
 
 // New returns the store at path, Path in a session, for a session to host,
@@ -100,12 +108,21 @@ func (s *Store) Load() ([]protocol.Macro, error) {
 func (s *Store) Change(c *protocol.MacroChange) ([]protocol.Macro, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlock, err := s.lock()
+	if err != nil {
+		all, _ := s.read()
+		return s.visible(all), err
+	}
+	defer unlock()
 	all, err := s.read()
 	if err != nil {
 		return s.visible(nil), err
 	}
 	next, err := s.apply(all, c)
 	if err == nil {
+		if s.beforeWrite != nil {
+			s.beforeWrite()
+		}
 		err = s.write(next)
 	}
 	if err == nil {
@@ -160,6 +177,43 @@ func (s *Store) apply(all []protocol.Macro, c *protocol.MacroChange) ([]protocol
 		next = append(next, m)
 	}
 	return next, nil
+}
+
+// lock makes the file's directory private and takes the lock beside the
+// file, waiting up to lockWait for another session to let go of it.
+func (s *Store) lock() (unlock func(), err error) {
+	if s.path == "" {
+		return nil, errNoPath
+	}
+	dir := filepath.Dir(s.path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	if err := privateDir(dir); err != nil {
+		return nil, err
+	}
+	f, err := openLock(s.path + ".lock")
+	if err != nil {
+		return nil, err
+	}
+	for deadline := time.Now().Add(lockWait); ; {
+		held, err := tryLock(f)
+		if err != nil {
+			f.Close()
+			return nil, err
+		}
+		if held {
+			return func() {
+				unlockFile(f)
+				f.Close()
+			}, nil
+		}
+		if time.Now().After(deadline) {
+			f.Close()
+			return nil, errors.New("another Robin session is changing the macros; try again")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // read reads the file through one open, so what it checks is what it
@@ -248,8 +302,8 @@ func encode(all []protocol.Macro) ([]byte, error) {
 }
 
 // write replaces the file through a rename, so a reader finds the old file
-// or the new one and never a part. The file is 0600 and its directory
-// 0700: what a macro types may be a password.
+// or the new one and never a part. The file is 0600, in the directory lock
+// made 0700: what a macro types may be a password.
 func (s *Store) write(all []protocol.Macro) (err error) {
 	if s.path == "" {
 		return errNoPath
@@ -261,16 +315,9 @@ func (s *Store) write(all []protocol.Macro) (err error) {
 	if len(b) > protocol.MaxMacrosBytes {
 		return fmt.Errorf("the macros would take %d KiB, over the %d KiB the file holds", (len(b)+1023)>>10, protocol.MaxMacrosBytes>>10)
 	}
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	if err := privateDir(dir); err != nil {
-		return err
-	}
 	// CreateTemp makes the file 0600, and a name of its own that no other
 	// file has.
-	f, err := os.CreateTemp(dir, ".macros-*.json")
+	f, err := os.CreateTemp(filepath.Dir(s.path), ".macros-*.json")
 	if err != nil {
 		return err
 	}

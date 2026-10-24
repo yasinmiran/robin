@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yasinmiran/robin/internal/protocol"
 )
@@ -55,7 +56,7 @@ func mustLoad(t *testing.T, s *Store) []protocol.Macro {
 	return got
 }
 
-// entries names what dir holds.
+// entries names what dir holds besides the lock file.
 func entries(t *testing.T, dir string) []string {
 	t.Helper()
 	es, err := os.ReadDir(dir)
@@ -64,7 +65,9 @@ func entries(t *testing.T, dir string) []string {
 	}
 	var names []string
 	for _, e := range es {
-		names = append(names, e.Name())
+		if e.Name() != "macros.json.lock" {
+			names = append(names, e.Name())
+		}
 	}
 	return names
 }
@@ -251,6 +254,78 @@ func TestAChangeKeepsWhatAnotherSessionWrote(t *testing.T) {
 	mustChange(t, one, put(macro("a", "A")))
 	if got := mustChange(t, two, put(macro("b", "B"))); ids(got) != "a,b" {
 		t.Errorf("the second session lost the first one's macro: %+v", got)
+	}
+}
+
+// holding starts a's change and returns once it holds the file, with the
+// function that lets it write and the channel its result comes on.
+func holding(a *Store, c *protocol.MacroChange) (release func(), done <-chan error) {
+	in, out := make(chan struct{}), make(chan struct{})
+	a.beforeWrite = func() {
+		close(in)
+		<-out
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, err := a.Change(c)
+		result <- err
+	}()
+	<-in
+	return func() { close(out) }, result
+}
+
+func TestADeleteIsNotUndoneByAnotherSessionsChange(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "macros.json")
+	mustChange(t, New(path, "box"), put(macro("x", "Secret", protocol.MacroStep{Text: "hunter2"})))
+	a, b := New(path, "box"), New(path, "lab")
+	release, aDone := holding(a, &protocol.MacroChange{Delete: "x"})
+
+	bDone := make(chan error, 1)
+	go func() {
+		_, err := b.Change(put(macro("y", "Y")))
+		bDone <- err
+	}()
+	var bErr error
+	bFinished := false
+	select {
+	case bErr = <-bDone:
+		bFinished = true
+		t.Error("another session changed the file while this one held it")
+	case <-time.After(200 * time.Millisecond):
+	}
+	release()
+	if err := <-aDone; err != nil {
+		t.Fatalf("the delete: %v", err)
+	}
+	if !bFinished {
+		bErr = <-bDone
+	}
+	if bErr != nil {
+		t.Fatalf("the put: %v", bErr)
+	}
+	if got := mustLoad(t, New(path, "box")); ids(got) != "y" {
+		t.Errorf("the file holds %q, want the put and not the deleted macro", ids(got))
+	}
+}
+
+func TestAChangeWaitsForAnotherSessionWithinABound(t *testing.T) {
+	was := lockWait
+	lockWait = 50 * time.Millisecond
+	t.Cleanup(func() { lockWait = was })
+	path := filepath.Join(t.TempDir(), "macros.json")
+	mustChange(t, New(path, "box"), put(macro("x", "X")))
+	release, aDone := holding(New(path, "box"), put(macro("a", "A")))
+	defer func() {
+		release()
+		<-aDone
+	}()
+	start := time.Now()
+	got, err := New(path, "lab").Change(put(macro("b", "B")))
+	if err == nil || !strings.Contains(err.Error(), "another Robin session is changing the macros") || ids(got) != "x" {
+		t.Errorf("a change while another holds the file: %+v, %v", ids(got), err)
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Errorf("waited %v", took)
 	}
 }
 

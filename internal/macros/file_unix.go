@@ -22,6 +22,11 @@ func openFile(path string) (*os.File, error) {
 	return f, err
 }
 
+// openLock opens the lock file beside the macros, making it if need be.
+func openLock(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
+}
+
 // privateDir makes dir 0700 once it has opened it and found it a directory
 // of the user's own, not a link: a link could name anyone's.
 func privateDir(dir string) error {
@@ -69,4 +74,17 @@ func ownedAlone(fi fs.FileInfo) error {
 		return errors.New("others can write it")
 	}
 	return nil
+}
+
+// tryLock takes f's exclusive lock if no one holds it.
+func tryLock(f *os.File) (bool, error) {
+	err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EINTR) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func unlockFile(f *os.File) {
+	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 }
