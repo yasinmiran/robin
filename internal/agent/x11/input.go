@@ -7,6 +7,7 @@ import (
 	"math"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unicode/utf8"
 
 	"github.com/jezek/xgb"
@@ -67,6 +68,7 @@ type spare struct {
 	code     xproto.Keycode
 	sym      xproto.Keysym // currently bound, 0 when free
 	lastUsed uint64
+	usedAt   time.Time // when its key was last pressed
 }
 
 func (k *keyboard) init(x *xgb.Conn, setup *xproto.SetupInfo) {
@@ -155,7 +157,7 @@ func (k *keyboard) key(m protocol.Control) error {
 		if !m.Down || r < 0x20 || r == 0x7f {
 			return nil // typed on key-down; nothing is held
 		}
-		return k.typeRune(r)
+		return k.typeSym(runeKeysym(r))
 	}
 	sym, ok := namedKeysym(m.Key, m.Code)
 	if !ok {
@@ -191,11 +193,11 @@ func (k *keyboard) key(m protocol.Control) error {
 	return nil
 }
 
-// typeRune taps the key that produces r. Shift and AltGr are set to what that
-// key's level needs for the tap only; every other held modifier stays down,
-// so Ctrl+C arrives as Ctrl+C.
-func (k *keyboard) typeRune(r rune) error {
-	code, level, err := k.keycodeFor(runeKeysym(r))
+// typeSym taps the key that produces sym. Shift and AltGr are set to what
+// that key's level needs for the tap only; every other held modifier stays
+// down, so Ctrl+C arrives as Ctrl+C.
+func (k *keyboard) typeSym(sym xproto.Keysym) error {
+	code, level, err := k.keycodeFor(sym)
 	if err != nil {
 		return err
 	}
@@ -242,20 +244,28 @@ func (k *keyboard) keycodeFor(sym xproto.Keysym) (xproto.Keycode, int, error) {
 	if err := k.refresh(); err != nil {
 		return 0, 0, err
 	}
-	// Columns 0 and 1 are group 1 without and with Shift. Deeper levels need
-	// modifiers whose meaning depends on the key's XKB type, which the core
-	// protocol does not show, so those keysyms take a spare keycode instead.
-	for level := range min(2, k.perCode) {
-		for i := level; i < len(k.syms); i += k.perCode {
-			if k.syms[i] == sym {
-				code := k.min + xproto.Keycode(i/k.perCode)
-				k.touch(code)
-				return code, level, nil
-			}
-		}
+	if code, level, ok := k.lookup(sym); ok {
+		k.touch(code)
+		return code, level, nil
 	}
 	code, err := k.bind(sym)
 	return code, 0, err
+}
+
+// lookup finds a keycode and shift level producing sym in the keymap as
+// last read. Columns 0 and 1 are group 1 without and with Shift. Deeper
+// levels need modifiers whose meaning depends on the key's XKB type, which
+// the core protocol does not show, so those keysyms take a spare keycode
+// instead.
+func (k *keyboard) lookup(sym xproto.Keysym) (xproto.Keycode, int, bool) {
+	for level := range min(2, k.perCode) {
+		for i := level; i < len(k.syms); i += k.perCode {
+			if k.syms[i] == sym {
+				return k.min + xproto.Keycode(i/k.perCode), level, true
+			}
+		}
+	}
+	return 0, 0, false
 }
 
 // touch marks a spare keycode as just used, so the pool keeps it bound.
@@ -263,7 +273,7 @@ func (k *keyboard) touch(code xproto.Keycode) {
 	for i := range k.spares {
 		if k.spares[i].code == code {
 			k.clock++
-			k.spares[i].lastUsed = k.clock
+			k.spares[i].lastUsed, k.spares[i].usedAt = k.clock, time.Now()
 		}
 	}
 }
@@ -272,15 +282,7 @@ func (k *keyboard) touch(code xproto.Keycode) {
 // Reusing a keycode soon after a tap would race clients that read the new
 // mapping before processing the old key event, hence the pool.
 func (k *keyboard) bind(sym xproto.Keysym) (xproto.Keycode, error) {
-	best := -1
-	for i, s := range k.spares {
-		if k.isHeld(s.code) {
-			continue
-		}
-		if best < 0 || s.lastUsed < k.spares[best].lastUsed {
-			best = i
-		}
-	}
+	best := k.nextSpare()
 	if best < 0 {
 		return 0, fmt.Errorf("x11: no spare keycode for keysym %#x", sym)
 	}
@@ -291,9 +293,24 @@ func (k *keyboard) bind(sym xproto.Keysym) (xproto.Keycode, error) {
 		return 0, fmt.Errorf("x11: bind keysym %#x: %w", sym, err)
 	}
 	k.clock++
-	s.sym, s.lastUsed = sym, k.clock
+	s.sym, s.lastUsed, s.usedAt = sym, k.clock, time.Now()
 	k.setSyms(s.code, sym, sym)
 	return s.code, nil
+}
+
+// nextSpare returns the index of the spare bind takes next: the least
+// recently used one that is not held, or -1.
+func (k *keyboard) nextSpare() int {
+	best := -1
+	for i, s := range k.spares {
+		if k.isHeld(s.code) {
+			continue
+		}
+		if best < 0 || s.lastUsed < k.spares[best].lastUsed {
+			best = i
+		}
+	}
+	return best
 }
 
 func (k *keyboard) isHeld(code xproto.Keycode) bool {
