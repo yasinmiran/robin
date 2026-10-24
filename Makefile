@@ -62,11 +62,11 @@ $(AGENTS)/robin-agent-linux-%.gz: bin/robin-agent-linux-%
 
 # Release CLIs for every client platform, each embedding every agent.
 dist: agents
-	@set -e; for p in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do \
-		os=$${p%/*}; arch=$${p#*/}; \
-		echo "build dist/robin-$$os-$$arch"; \
+	@set -e; for p in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do \
+		os=$${p%/*}; arch=$${p#*/}; ext=; [ $$os != windows ] || ext=.exe; \
+		echo "build dist/robin-$$os-$$arch$$ext"; \
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) build -trimpath \
-			-ldflags "-s -w -X main.version=$(VERSION)" -o dist/robin-$$os-$$arch ./cmd/robin; \
+			-ldflags "-s -w -X main.version=$(VERSION)" -o dist/robin-$$os-$$arch$$ext ./cmd/robin; \
 	done
 
 # The linux/amd64 CLI the e2e client container runs.
