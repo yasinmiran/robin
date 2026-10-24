@@ -42,3 +42,15 @@ export function withLead(html: string, lead: string | undefined): string {
   if (!opening) return `<p>${bold}</p>${html}`;
   return `${opening[0]}${bold} ${html.slice(opening[0].length)}`;
 }
+
+/**
+ * tableLabel names a table by its column headings, "File, Runs on", so a
+ * page of scrolling tables does not announce the same "Table" for each.
+ */
+export function tableLabel(html: string): string {
+  const head = html.match(/<thead[\s>][\s\S]*?<\/thead>/)?.[0] ?? "";
+  const headings = [...head.matchAll(/<th[\s>][\s\S]*?<\/th>/g)]
+    .map(([cell]) => decodeEntities(cell.replace(/<[^>]+>/g, "")).trim())
+    .filter(Boolean);
+  return headings.length > 0 ? headings.join(", ") : "Table";
+}

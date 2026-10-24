@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { codeText, decodeEntities, escapeHtml, withLead } from "./html";
+import { codeText, decodeEntities, escapeHtml, tableLabel, withLead } from "./html";
 
 describe("decodeEntities", () => {
   it("decodes named, decimal and hex entities", () => {
@@ -52,5 +52,19 @@ describe("withLead", () => {
 
   it("returns the body untouched without a lead", () => {
     expect(withLead("<p>Body</p>", undefined)).toBe("<p>Body</p>");
+  });
+});
+
+describe("tableLabel", () => {
+  it("joins the column headings", () => {
+    const html =
+      '<thead><tr><th class="x">Package manager</th><th>Xvfb</th><th><code>&lt;dir&gt;</code> path</th></tr></thead>' +
+      "<tbody><tr><th>not a heading</th><td>apt</td></tr></tbody>";
+    expect(tableLabel(html)).toBe("Package manager, Xvfb, <dir> path");
+  });
+
+  it("falls back to Table without headings", () => {
+    expect(tableLabel("<tbody><tr><td>1</td></tr></tbody>")).toBe("Table");
+    expect(tableLabel("<thead><tr><th> </th></tr></thead>")).toBe("Table");
   });
 });

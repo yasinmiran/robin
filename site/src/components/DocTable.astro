@@ -1,0 +1,10 @@
+---
+// Stands in for <table> in MDX, naming its scroll region after the column
+// headings. MDX hands a React component rendered HTML, so they are read here.
+import { Table } from "@/components/ui/table";
+import { tableLabel } from "@/lib/html";
+
+const html = await Astro.slots.render("default");
+---
+
+<Table {...Astro.props} label={tableLabel(html)}><Fragment set:html={html} /></Table>
