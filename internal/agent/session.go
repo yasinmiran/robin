@@ -89,23 +89,23 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 
 	// Sound comes up before a spawned desktop so its programs inherit the
 	// sound server's address.
-	var audio AudioSource
+	var sound AudioSource
 	var desktopEnv []string
-	var audioErr string
+	var soundErr string
 	if start.Audio || spawnMic(start) {
 		if o.NewAudio == nil {
-			audioErr = "this agent was built without audio"
+			soundErr = "this agent was built without audio"
 			log.Warn("audio requested but this agent has no audio support")
 		} else if src, env, err := o.NewAudio(ctx, AudioOptions{
 			RunDir: runDir, Attached: start.Attach != "", Mic: spawnMic(start), NoCapture: !start.Audio, Log: log,
 		}); err != nil {
 			// Nothing from a failed start may reach the desktop, its env least of
 			// all: it could point programs at a server that is not there.
-			audioErr = err.Error()
+			soundErr = err.Error()
 			log.Warn("audio unavailable", "err", err)
 		} else {
-			audio, desktopEnv = src, env
-			defer audio.Close()
+			sound, desktopEnv = src, env
+			defer sound.Close()
 		}
 	}
 
@@ -132,7 +132,7 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 	defer d.close()
 	log.Info("desktop up", "mode", d.mode, "display", d.name, "session", d.session)
 
-	mic, micReady := startMic(ctx, start, o.NewMic, audio, audioErr, log)
+	mic, micReady := startMic(ctx, start, o.NewMic, sound, soundErr, log)
 	if mic != nil {
 		defer mic.Close()
 	}
@@ -140,10 +140,10 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 	if camera != nil {
 		defer camera.Close()
 	}
-	if !start.Audio {
-		// A server started for the microphone alone has no sound to send;
-		// the deferred Close above still stops it.
-		audio, audioErr = nil, ""
+	var audio AudioSource
+	var audioErr string
+	if start.Audio {
+		audio, audioErr = sound, soundErr
 	}
 
 	w0, h0 := fit(start.Width, start.Height, start.MaxWidth, start.MaxHeight)
