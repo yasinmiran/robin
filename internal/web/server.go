@@ -29,7 +29,10 @@ import (
 	"github.com/coder/websocket"
 )
 
-//go:embed static
+// The page's own files only: static/test holds its unit tests, and
+// package.json is there for Node, which runs them.
+//
+//go:embed static/*.html static/*.js static/*.css static/*.svg
 var static embed.FS
 
 // subprotocol is the websocket subprotocol the page requests and the server

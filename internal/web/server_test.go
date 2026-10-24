@@ -209,6 +209,24 @@ func TestStaticContentTypes(t *testing.T) {
 	}
 }
 
+func TestStaticLeavesOutTests(t *testing.T) {
+	s, err := Listen(Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.ln.Close()
+	h := s.handler()
+	for _, path := range []string{"/package.json", "/test/stats.test.js", "/test/"} {
+		r := httptest.NewRequest("GET", path, nil)
+		r.Host = s.host
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("%s: status %d, want %d", path, w.Code, http.StatusNotFound)
+		}
+	}
+}
+
 func TestOriginRequired(t *testing.T) {
 	s, _ := start(t)
 	_, port, _ := strings.Cut(s.host, ":")

@@ -19,7 +19,7 @@ target_arm64 := aarch64-linux-musl
 
 export ZIG_GLOBAL_CACHE_DIR := $(CACHE)/zig
 
-.PHONY: all agents cli dist test test-short test-x test-wayland check e2e clean
+.PHONY: all agents cli dist test test-js test-short test-x test-wayland check e2e clean
 .PRECIOUS: bin/robin-agent-linux-%
 
 all: cli
@@ -67,6 +67,11 @@ ifeq ($(HOST_OS)/$(HOST_ARCH),linux/amd64)
 	CGO_CFLAGS="-I$$prefix/include" CGO_LDFLAGS="-L$$prefix/lib" \
 	$(GO) test -tags openh264,opus ./internal/agent/h264/ ./internal/agent/opus/ ./internal/agent/audio/
 endif
+	@if command -v node >/dev/null; then $(MAKE) --no-print-directory test-js; else echo "make test: no node, skipping test-js"; fi
+
+# The page's pure modules, under Node's own test runner.
+test-js:
+	node --test internal/web/static/test/
 
 test-short:
 	$(GO) test -short ./...
