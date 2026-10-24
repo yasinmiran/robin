@@ -414,8 +414,9 @@ to print the comparison the ADR quotes.
   drive on Linux renders no remote WebRTC video (see What the client needs).
 - Firefox shows no picture until it has fetched its OpenH264 plugin, which
   needs a network connection the first time.
-- The macOS client builds but has not been run; neither has building the
-  agents from a Mac.
+- The macOS client has run from Chrome on an Apple silicon Mac, attached to
+  an X11 desktop over Tailscale. Safari, and building the agents from a Mac,
+  are untried.
 - One browser per session; a second tab is refused until the first closes.
 - Hardware encoding answers a keyframe request about 35 ms later than
   software and adds a few milliseconds to every frame, which is the price on
