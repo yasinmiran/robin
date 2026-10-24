@@ -1,7 +1,8 @@
 /* Robin docs: design tokens.
    Names follow shadcn/ui (Tailwind v4, CSS variables). Values are oklch, each
-   with its sRGB hex so contrast can be audited; the pairs are checked by
-   tools/tokens.py. Light is :root, dark is .dark (shadcn's class strategy).
+   with its sRGB hex so contrast can be audited; tokens.test.ts checks that
+   each value renders its hex and that the promised pairs hold. Light is
+   :root, dark is .dark (shadcn's class strategy).
    Slate, ink and mint come from the session page (internal/web/static/style.css):
    the site and the product share one palette. */
 
@@ -23,6 +24,7 @@
   --popover-foreground: oklch(0.247 0.016 240.7); /* #1a2228 */
   --primary: oklch(0.516 0.102 167.7); /* #0c7a5c */
   --primary-foreground: oklch(1.000 0 0); /* #ffffff */
+  --primary-hover: oklch(0.484 0.092 167.4); /* #156f54 */
   --secondary: oklch(0.946 0.007 233.6); /* #e9eef1 */
   --secondary-foreground: oklch(0.247 0.016 240.7); /* #1a2228 */
   --muted: oklch(0.959 0.005 228.8); /* #eef2f4 */
@@ -66,6 +68,7 @@
   --popover-foreground: oklch(0.934 0.008 241.7); /* #e5eaee */
   --primary: oklch(0.781 0.130 167.0); /* #52d2a6 */
   --primary-foreground: oklch(0.215 0.024 166.8); /* #0e1d17 */
+  --primary-hover: oklch(0.798 0.115 167.3); /* #6ad5ae */
   --secondary: oklch(0.288 0.018 241.7); /* #232c33 */
   --secondary-foreground: oklch(0.934 0.008 241.7); /* #e5eaee */
   --muted: oklch(0.268 0.016 240.6); /* #1f272d */
@@ -110,6 +113,7 @@
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-primary-hover: var(--primary-hover);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
