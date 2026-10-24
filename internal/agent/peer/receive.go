@@ -13,16 +13,16 @@ import (
 // packets. Both act on remote streams only; the agent's own sending keeps
 // its own NACK responder and no pacer.
 func addReceiverFeedback(reg *interceptor.Registry) error {
-	gen, err := nack.NewGeneratorInterceptor()
-	if err != nil {
-		return err
+	for _, newFactory := range []func() (interceptor.Factory, error){
+		func() (interceptor.Factory, error) { return nack.NewGeneratorInterceptor() },
+		func() (interceptor.Factory, error) { return twcc.NewSenderInterceptor() },
+	} {
+		f, err := newFactory()
+		if err != nil {
+			return err
+		}
+		reg.Add(f)
 	}
-	reg.Add(gen)
-	fb, err := twcc.NewSenderInterceptor()
-	if err != nil {
-		return err
-	}
-	reg.Add(fb)
 	return nil
 }
 

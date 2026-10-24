@@ -198,7 +198,8 @@ func TestSpawnedMicKeepsTheSpeakers(t *testing.T) {
 // userServer starts a pulseaudio standing in for the user's own: module
 // loading allowed, a default source the user chose, found through
 // XDG_RUNTIME_DIR as libpulse would.
-func userServer(t *testing.T) {
+// flags are added to the server's own.
+func userServer(t *testing.T, flags ...string) {
 	t.Helper()
 	needServer(t)
 	dir := t.TempDir()
@@ -209,8 +210,8 @@ func userServer(t *testing.T) {
 	script := filepath.Join(dir, "user.pa")
 	os.WriteFile(script, []byte("load-module module-null-sink sink_name=speakers\nset-default-sink speakers\nset-default-source speakers.monitor\n"+
 		"load-module module-native-protocol-unix socket="+quoteArg(socket)+" auth-anonymous=1\n"), 0o600)
-	cmd := exec.Command("pulseaudio", "-n", "--file="+script, "--daemonize=no", "--exit-idle-time=-1",
-		"--use-pid-file=no", "--realtime=no", "--high-priority=no", "--log-target=stderr")
+	cmd := exec.Command("pulseaudio", append([]string{"-n", "--file=" + script, "--daemonize=no", "--exit-idle-time=-1",
+		"--use-pid-file=no", "--realtime=no", "--high-priority=no", "--log-target=stderr"}, flags...)...)
 	cmd.Env = serverEnv(dir)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
 	var log bytes.Buffer
@@ -295,6 +296,64 @@ func TestAttachedMicSweepsADeadAgents(t *testing.T) {
 		if !strings.Contains(mods, "source_name="+want+" ") {
 			t.Errorf("microphone %s missing:\n%s", want, mods)
 		}
+	}
+}
+
+// TestAttachedMicRefusedByTheServer: a server that loads no modules fails
+// StartMic, which leaves nothing of the microphone behind.
+func TestAttachedMicRefusedByTheServer(t *testing.T) {
+	userServer(t, "--disallow-module-loading=yes")
+	_, err := StartMic(context.Background(), MicOptions{Log: quiet()})
+	if err == nil || !strings.Contains(err.Error(), "load module-null-sink") {
+		t.Fatalf("StartMic = %v, want the module refused", err)
+	}
+	if mods := pactl(t, nil, "list", "short", "modules"); strings.Contains(mods, "module-remap-source") {
+		t.Errorf("a refused microphone left a source loaded:\n%s", mods)
+	}
+}
+
+// TestAttachedMicOutlivesItsModules: the user unloads the microphone's
+// modules, then stops the server, and the agent's microphone carries on to
+// a clean Close.
+func TestAttachedMicOutlivesItsModules(t *testing.T) {
+	userServer(t)
+	m, err := StartMic(context.Background(), MicOptions{Log: quiet()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(pactl(t, nil, "list", "short", "modules"), "\n") {
+		// The source goes with the sink it reads.
+		if f := strings.Fields(line); len(f) > 2 && f[1] == "module-null-sink" && strings.Contains(line, micFeedPrefix+strconv.Itoa(os.Getpid())) {
+			pactl(t, nil, "unload-module", f[0])
+		}
+	}
+	m.enqueue(make([]int16, opus.FrameSamples))
+	pactl(t, nil, "exit")
+	time.Sleep(200 * time.Millisecond)
+	m.enqueue(make([]int16, opus.FrameSamples))
+	done := make(chan error, 1)
+	go func() { done <- m.Close() }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Close hung on a server that is gone")
+	}
+}
+
+// TestSpawnedMicWithoutItsServer: the private server died before the
+// microphone could join it.
+func TestSpawnedMicWithoutItsServer(t *testing.T) {
+	needServer(t)
+	src, _, err := Start(context.Background(), Options{RunDir: t.TempDir(), Mic: true, NoCapture: true, Log: quiet()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	src.srv.cmd.Process.Kill()
+	<-src.srv.Done()
+	if _, err := StartMic(context.Background(), MicOptions{Source: src, Log: quiet()}); err == nil ||
+		!strings.Contains(err.Error(), "play into the private pulseaudio") {
+		t.Fatalf("StartMic = %v, want no server to play into", err)
 	}
 }
 
