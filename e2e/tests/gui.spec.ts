@@ -770,6 +770,16 @@ if (SCENARIO === 'rejoin') {
     expect(ls.stdout).toContain(before.session.id);
     expect(ls.stdout).toContain('kept until');
 
+    // A new robin gui that offers a microphone the session never had is
+    // refused, and the session stays kept for the next one.
+    const mic = await robin(['gui', '--no-browser', '--mic', 'robinhost']);
+    testInfo.annotations.push({ type: 'robin gui --mic', description: mic.stdout + mic.stderr });
+    expect(mic.code, 'robin gui --mic exit code').not.toBe(0);
+    expect(mic.stderr).toContain(`session ${before.session.id} started without a microphone`);
+    expect(mic.stderr).toContain('resume it without --mic');
+    expect(mic.stdout, 'a URL for a refused resume').toBe('');
+    expect(await host.session(), 'the session, still kept').toMatchObject({ id: before.session.id, pid: before.session.pid, connected: false });
+
     // A new robin gui finds the one kept session and resumes it.
     cli = await Cli.start(OUT);
     // stderr reaches the log a moment after stdout printed the URL.
@@ -966,6 +976,87 @@ if (SCENARIO === 'attach') {
     expect(await host.liveState()).toBe(await host.liveBefore());
     expect(cli!.extraStdout, 'stdout carries only the URL').toEqual([]);
   });
+
+  // An attached desktop kept with --keep: a switch clicked while the page
+  // reconnects reaches the host once the page is back, and a new robin gui
+  // that resumes the desktop gets the switches it names, or is told why not.
+  test('kept: a switch clicked while reconnecting is carried over, and a resume turns on what the new CLI names', async ({}, testInfo) => {
+    testInfo.setTimeout(240_000);
+    cli = await Cli.start(OUT, ['--keep', '10m']);
+    await page.goto(cli.url);
+    await expect.poll(() => state(page), { message: 'the kept session connects', timeout: 60_000 }).toBe('connected');
+    await expect
+      .poll(() => page.evaluate(() => (window as any).robin.private), { message: 'the page was told the private session' })
+      .toEqual({ curtain: {}, silent: {} });
+    const kept = await host.keptSession();
+    expect(`${kept.mode}, kept ${kept.keep} s`).toBe('attach, kept 600 s');
+
+    // SSH goes, and stays away for 8 s: the page waits for the CLI's redial
+    // with no peer connection to carry a click.
+    await host.cutSSHFor(8);
+    const waiting = () => page.evaluate(() => `${(window as any).robin.state}, ${(window as any).robin.pc ? 'a peer' : 'no peer'}`);
+    await expect
+      .poll(waiting, { message: 'the page waits for the CLI to redial', timeout: 30_000, intervals: [100] })
+      .toBe('reconnecting, no peer');
+    await page.mouse.move(300, 4); // near the top edge, where the status tab comes out
+    const curtain = page.locator('[data-switch="curtain"]');
+    await curtain.click();
+    await expect(curtain, 'the switch waits').toHaveAttribute('aria-busy', 'true');
+    expect(await waiting(), 'the click came while the page waited').toBe('reconnecting, no peer');
+    await expect.poll(() => state(page), { message: 'the page is connected again', timeout: 60_000 }).toBe('connected');
+    expect(cli.stderrTail(), 'the CLI said it reconnected').toContain('reconnected to robinhost');
+    await expect(curtain, 'the curtain, once the new peer carried the click').toHaveAttribute('aria-checked', 'true', { timeout: 15_000 });
+    await expect(curtain).toHaveAttribute('aria-busy', 'false');
+    await expect.poll(host.roomBrightness, { message: 'the host screen with the curtain drawn' }).toBe(0);
+    await flip('curtain', false);
+    await expect.poll(host.roomBrightness, { message: 'the host screen once lifted' }).toBeGreaterThan(0.5);
+
+    // The CLI dies without a word; the host keeps the desktop.
+    const exit = await cli.kill();
+    testInfo.annotations.push({ type: 'kill', description: JSON.stringify(exit) });
+    await expect
+      .poll(async () => (await host.keptSession()).connected, { message: 'session.json says kept', timeout: 30_000 })
+      .toBe(false);
+
+    // A new robin gui that offers a microphone the desktop never had is
+    // refused, and the desktop stays kept.
+    const mic = await robin(['gui', '--no-browser', '--id', kept.id, '--mic', 'robinhost']);
+    testInfo.annotations.push({ type: 'robin gui --mic', description: mic.stdout + mic.stderr });
+    expect(mic.code, 'robin gui --mic exit code').not.toBe(0);
+    expect(mic.stderr).toContain(`session ${kept.id} started without a microphone`);
+    expect(await host.keptSession(), 'the session, still kept').toMatchObject({ id: kept.id, pid: kept.pid, connected: false });
+
+    // One that names --curtain and --silent gets both, before Ready.
+    cli = await Cli.start(OUT, ['--id', kept.id, '--curtain', '--silent']);
+    const resumed = cli;
+    await expect.poll(() => resumed.stderrTail(), { message: 'the CLI said it resumed' }).toContain(`resumed session ${kept.id}`);
+    expect(await host.roomBrightness(), 'the host screen as the CLI resumed').toBe(0);
+    // The log holds every CLI of the run; this one's lines follow its header.
+    const said = resumed.stderrTail(200);
+    expect(said.slice(said.lastIndexOf('\n--- ')), 'a hint that the room sees the session').not.toContain('to whoever is there');
+    await page.goto(cli.url);
+    await expect.poll(() => state(page), { message: 'the new page connects', timeout: 60_000 }).toBe('connected');
+    await expect
+      .poll(() => page.evaluate(() => (window as any).robin.private), { message: 'the page is told both are on' })
+      .toEqual({ curtain: { on: true }, silent: { on: true } });
+    await expect(page.locator('[data-switch="silent"]')).toHaveAttribute('aria-checked', 'true');
+    const noise = host.playNoise(4);
+    await page.waitForTimeout(1_500);
+    const quiet = await host.roomLoudness();
+    await noise;
+    testInfo.annotations.push({ type: 'room RMS while silent', description: String(quiet) });
+    expect(quiet, 'the host speakers').toBeLessThan(50);
+
+    // Ctrl+C ends the kept desktop and gives the room its screen and
+    // speakers back.
+    const stop = await cli.stop(10_000);
+    testInfo.annotations.push({ type: 'exit', description: JSON.stringify(stop) });
+    expect(stop.killed, 'CLI exited by itself within 10 s of SIGINT').toBe(false);
+    expect(stop.code, 'CLI exit code').toBe(0);
+    await expect.poll(host.agentLeftovers, { message: 'agent processes and run dirs on the host', timeout: 10_000 }).toBe('');
+    expect(await host.liveState()).toBe(await host.liveBefore());
+    expect(cli.extraStdout, 'stdout carries only the URL').toEqual([]);
+  });
 }
 
 if (SCENARIO === 'direct') {
@@ -1008,5 +1099,12 @@ test('teardown: SIGINT ends the CLI and leaves nothing behind on the host', asyn
   await expect.poll(() => host.exists(dir), { message: `run dir ${dir} exists`, timeout: 1_000 }).toBe(false);
   await expect.poll(sshProcesses, { message: "the CLI's ssh processes on the client", timeout: 5_000 }).toEqual([]);
   expect(cli!.extraStdout, 'stdout carries only the URL').toEqual([]);
+  if (SCENARIO === 'nomux') {
+    // Ctrl+C reached the CLI alone, so bye went over the agent's own ssh:
+    // no reconnect to announce, and no fresh login to end the desktop with.
+    const said = cli!.stderrTail(1_000);
+    expect(said, 'the CLI after Ctrl+C').not.toContain('reconnecting to robinhost');
+    expect(said, 'the CLI after Ctrl+C').not.toContain('ending the kept session');
+  }
   testInfo.annotations.push({ type: 'page state after teardown', description: String(await state(page)) });
 });

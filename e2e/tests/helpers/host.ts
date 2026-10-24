@@ -155,6 +155,24 @@ export async function cutSSH(): Promise<void> {
   await sshRaw('pkill -u robin -x sshd');
 }
 
+// cutSSHFor drops every connection as cutSSH does, and refuses new ones
+// for seconds, so the CLI's redials fail fast until then: a window a test
+// can act in while the page reconnects. The rule takes itself away; host
+// checks fail meanwhile too.
+export async function cutSSHFor(seconds: number): Promise<void> {
+  const rule = 'INPUT -p tcp --dport 22 --syn -j REJECT --reject-with tcp-reset';
+  await sshRaw(
+    `sudo -n iptables -w -I ${rule} && setsid -f sh -c 'sleep ${seconds}; sudo -n iptables -w -D ${rule}' </dev/null >/dev/null 2>&1; pkill -u robin -x sshd`,
+  );
+}
+
+// keptSession reads the record of the one session the agent keeps, in its
+// run dir under ~/.cache/robin/run; an attached session has no display
+// file for robin-rundir to find it by.
+export async function keptSession(): Promise<Session> {
+  return JSON.parse(await ssh('cat ~/.cache/robin/run/*/session.json')) as Session;
+}
+
 // roomBrightness is the brightness of robin's own desktop's screen gamma as
 // xrandr reads it (host/robin-room): 0 is black, about 1 is lit.
 export const roomBrightness = async () => Number(await ssh('robin-room brightness'));
