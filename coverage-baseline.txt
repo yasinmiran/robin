@@ -1,3 +1,30 @@
 # Statement coverage per package, in percent, from the merged make cover
 # on main. make cover fails when a package falls more than 0.5 points below
 # its line; make cover-baseline rewrites this file from the last run.
+cmd/robin 71.8
+cmd/robin-agent 63.4
+internal/agent 89.3
+internal/agent/audio 85.0
+internal/agent/display 84.4
+internal/agent/h264 69.4
+internal/agent/hwenc 85.9
+internal/agent/keysym 100.0
+internal/agent/opus 76.1
+internal/agent/peer 89.0
+internal/agent/wayland 76.9
+internal/agent/wayland/wltest 75.7
+internal/agent/wayland/wltest/cmd/robin-consent 0.0
+internal/agent/x11 85.9
+internal/agent/yuv 98.4
+internal/agentbin 97.7
+internal/deploy 82.0
+internal/gui 80.7
+internal/probe 97.7
+internal/protocol 95.8
+internal/relay 90.1
+internal/sshmux 86.0
+internal/sshmux/sshtest 76.2
+internal/tail 100.0
+internal/tools/covercheck 98.2
+internal/tools/pagecover 98.0
+internal/web 91.5
