@@ -188,7 +188,9 @@ func (a *bulkAgent) play(ctx context.Context, b *Browser) error {
 		p   *peer.Peer
 		err error
 	)
-	p, err = peer.New(peer.Config{IncludeLoopback: true, MinBitrate: 100_000, StartBitrate: 1_000_000, MaxBitrate: 5_000_000}, peer.Handlers{
+	// No video streams, so the target stays where it starts, and the
+	// agent paces its echo under it.
+	p, err = peer.New(peer.Config{IncludeLoopback: true, MinBitrate: 100_000, StartBitrate: 200_000_000, MaxBitrate: 200_000_000}, peer.Handlers{
 		Candidate: func(c protocol.Candidate) { b.Send(protocol.Message{Type: protocol.TypeCandidate, Candidate: &c}) },
 		// Heartbeat like the real agent, or the page treats the link as stalled.
 		ControlOpen: func() {
