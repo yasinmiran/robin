@@ -390,7 +390,7 @@ func TestBulkReceiveRefuses(t *testing.T) {
 
 	t.Run("commit fails", func(t *testing.T) {
 		err := bp.upload(context.Background(), t, header("fail-commit", 100), bytes.NewReader(hundred))
-		var refused *BulkRefused
+		var refused *BulkRefusedError
 		if !errors.As(err, &refused) || refused.Reason != "rename failed" {
 			t.Fatalf("upload: %v, want refused with the commit error", err)
 		}
@@ -457,7 +457,7 @@ func TestBulkSendFails(t *testing.T) {
 		t.Errorf("too large: %v, want ErrBulkTooLarge", err)
 	}
 
-	var refused *BulkRefused
+	var refused *BulkRefusedError
 	if err := send(ctx, "refuse", 10, bytes.NewReader(make([]byte, 10))); !errors.As(err, &refused) || refused.Reason != "not today" {
 		t.Errorf("refused by the browser: %v", err)
 	}
@@ -559,12 +559,12 @@ func TestBulkVerdicts(t *testing.T) {
 	}{
 		{"done before the end", func(dc *webrtc.DataChannel) { sendJSON(t, dc, protocol.Bulk{T: protocol.BulkDone}) },
 			func(err error) bool {
-				var r *BulkRefused
+				var r *BulkRefusedError
 				return errors.As(err, &r) && strings.Contains(r.Reason, "before the end")
 			}},
 		{"junk verdict", func(dc *webrtc.DataChannel) { dc.SendText("junk") },
 			func(err error) bool {
-				var r *BulkRefused
+				var r *BulkRefusedError
 				return errors.As(err, &r) && r.Reason == "malformed verdict"
 			}},
 		{"closed without a verdict", func(dc *webrtc.DataChannel) { dc.Close() },

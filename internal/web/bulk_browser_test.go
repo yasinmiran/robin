@@ -108,7 +108,7 @@ func TestBrowserBulk(t *testing.T) {
 	if a.echoErr != nil || r.Down.SHA256 != r.UpSHA256 || r.Down.Size != r.Size || r.Down.Header.ID != "down" || r.Down.Header.Name != "noise.bin" {
 		t.Errorf("agent to page: %v; page got %+v", a.echoErr, r.Down)
 	}
-	var refused *peer.BulkRefused
+	var refused *peer.BulkRefusedError
 	if !errors.As(a.refuseErr, &refused) || refused.Reason != "page says no" {
 		t.Errorf("transfer the page refuses: %v", a.refuseErr)
 	}

@@ -35,11 +35,11 @@ const maxBulkReason = 1 << 10
 // transfer finished.
 var ErrBulkCancelled = errors.New("peer: bulk transfer cancelled")
 
-// BulkRefused is what SendBulk returns when the browser refused a transfer
-// or could not keep it. Reason is the browser's own account.
-type BulkRefused struct{ Reason string }
+// BulkRefusedError is what SendBulk returns when the browser refused a
+// transfer or could not keep it. Reason is the browser's own account.
+type BulkRefusedError struct{ Reason string }
 
-func (e *BulkRefused) Error() string { return "peer: bulk transfer refused: " + e.Reason }
+func (e *BulkRefusedError) Error() string { return "peer: bulk transfer refused: " + e.Reason }
 
 // BulkSink takes the payload of one transfer from the browser. Write gets
 // the chunks in order. A Write that blocks holds the browser back, and on
@@ -58,8 +58,8 @@ type BulkSink interface {
 // SendBulk sends r as one transfer described by h, on a data channel of its
 // own, and returns once the browser has kept it. h.T is set for the caller;
 // h.Size must be exactly what r holds. Cancelling ctx cancels the transfer.
-// It returns a *BulkRefused when the browser refuses, and ErrBulkCancelled
-// when the browser closes the channel first.
+// It returns a *BulkRefusedError when the browser refuses, and
+// ErrBulkCancelled when the browser closes the channel first.
 func (p *Peer) SendBulk(ctx context.Context, h protocol.Bulk, r io.Reader) error {
 	h.T = protocol.BulkHeader
 	if err := h.CheckHeader(); err != nil {
@@ -241,9 +241,9 @@ func (s *bulkSender) afterClose() error {
 
 func refusal(v protocol.Bulk) error {
 	if v.T == protocol.BulkDone {
-		return &BulkRefused{Reason: "receiver finished before the end"}
+		return &BulkRefusedError{Reason: "receiver finished before the end"}
 	}
-	return &BulkRefused{Reason: v.Error}
+	return &BulkRefusedError{Reason: v.Error}
 }
 
 func outcome(v protocol.Bulk) error {
