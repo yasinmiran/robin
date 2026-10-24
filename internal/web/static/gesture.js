@@ -42,19 +42,21 @@ export class Gestures {
   }
 
   down(id, x, y) {
+    // A finger more than the gesture needs is not kept, so nothing it does
+    // counts.
+    if (this.#mode !== 'idle' && this.#mode !== 'press') return;
     this.#fingers.set(id, { x, y, x0: x, y0: y });
     if (this.#mode === 'idle') {
       this.#mode = 'press';
       this.#first = id;
       this.#timer = this.#timers.set(() => this.#longPress(), LONG_PRESS_MS);
-    } else if (this.#mode === 'press' && this.#fingers.size === 2) {
-      this.#timers.clear(this.#timer);
-      this.#mode = 'two';
-      for (const f of this.#fingers.values()) Object.assign(f, { sx: f.x, sy: f.y, moved: false });
-      this.#last = this.#pair();
-      this.#start = this.#last;
+      return;
     }
-    // A finger more than the gesture needs is ignored.
+    this.#timers.clear(this.#timer);
+    this.#mode = 'two';
+    for (const f of this.#fingers.values()) Object.assign(f, { sx: f.x, sy: f.y, moved: false });
+    this.#last = this.#pair();
+    this.#start = this.#last;
   }
 
   move(id, x, y) {

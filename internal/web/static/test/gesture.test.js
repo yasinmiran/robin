@@ -184,3 +184,19 @@ test('the long press timer is ignored once the press became something else', () 
   assert.deepEqual(out, []);
   assert.equal(g.mode, 'two');
 });
+
+test('a third finger changes nothing', () => {
+  for (const [settle, mode] of [[() => {}, 'two'], [(g) => { g.move(1, 100, 280); g.move(2, 200, 280); }, 'scroll']]) {
+    const { g, out } = setup();
+    g.down(1, 100, 300);
+    g.down(2, 200, 300);
+    settle(g);
+    const before = out.length;
+    g.down(3, 400, 400);
+    g.move(3, 400 + ALONE_PX * 2, 400 + ALONE_PX * 2);
+    g.move(3, 0, 0);
+    g.up(3, 0, 0);
+    assert.equal(g.mode, mode);
+    assert.equal(out.length, before);
+  }
+});
