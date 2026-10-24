@@ -237,12 +237,14 @@ tests prove for each:
   included, given Cisco's OpenH264 plugin. Firefox downloads it by itself
   on first use (it shows under Add-ons and themes, Plugins); a Firefox that
   cannot fetch it offers no H.264, and the page stays black.
-- **Safari** is stood in for by Playwright's WebKit on Linux, which shares
-  Safari's WebRTC stack. It negotiates Constrained Baseline H.264, decodes
-  it, plays the sound, carries keyboard, clipboard and resize, and tears
-  down cleanly. That build renders no remote WebRTC video at all (a VP8
-  loopback in a blank page stays black too), so the picture and the pointer,
-  which is mapped onto the picture, have not been seen in Safari itself.
+- **Safari** on macOS shows the picture and takes keyboard and pointer
+  input, checked by hand from an Apple silicon Mac on 2026-10-24. In the
+  automated tests it is stood in for by Playwright's WebKit on Linux, which
+  shares Safari's WebRTC stack: it negotiates Constrained Baseline H.264,
+  decodes it, plays the sound, carries keyboard, clipboard and resize, and
+  tears down cleanly. That build renders no remote WebRTC video at all (a VP8
+  loopback in a blank page stays black too), so the e2e suite cannot check
+  Safari's picture and the hand check is the only one.
 
 ## How it works
 
@@ -410,13 +412,13 @@ to print the comparison the ADR quotes.
   changes; that is not a stall.
 - Through the SSH tunnel video is TCP inside TCP, so a lossy link shows
   head-of-line stalls that direct UDP would not.
-- Safari's picture and pointer are untested: the only WebKit the tests can
-  drive on Linux renders no remote WebRTC video (see What the client needs).
+- Safari's picture is checked by hand only: the WebKit the tests drive on
+  Linux renders no remote WebRTC video (see What the client needs).
 - Firefox shows no picture until it has fetched its OpenH264 plugin, which
   needs a network connection the first time.
-- The macOS client has run from Chrome on an Apple silicon Mac, attached to
-  an X11 desktop over Tailscale. Safari, and building the agents from a Mac,
-  are untried.
+- The macOS client has run on an Apple silicon Mac, in Chrome and in
+  Safari, attached to an X11 desktop over Tailscale. Building the agents
+  from a Mac is untried.
 - One browser per session; a second tab is refused until the first closes.
 - Hardware encoding answers a keyframe request about 35 ms later than
   software and adds a few milliseconds to every frame, which is the price on

@@ -595,9 +595,9 @@ differs between GNOME and KDE, discrete steps do not.
 
 ## Verification parked
 
-Two checks are parked by decision (2026-10-18), not forgotten. Both need
-hardware the test workstation cannot offer without changes the owner chose to
-leave for later.
+Two checks were parked by decision on 2026-10-18. Both needed hardware the
+test workstation cannot offer without changes the owner chose to leave for
+later; the second has since been closed by hand.
 
 - NVENC on NVIDIA hardware. The workstation has an NVIDIA GPU and the 535
   driver's userspace, but no kernel module for its running kernel, and
@@ -606,9 +606,10 @@ leave for later.
   for that reason. To close it: install `linux-modules-nvidia-535-$(uname -r)`,
   load `nvidia`, run `ROBIN_HWENC_REQUIRE=nvenc make test` and one 4K session
   with `--encoder nvenc`.
-- Safari. The macOS client ran on 2026-10-24: `dist/robin-darwin-arm64 gui
-  --attach auto` from an Apple silicon Mac reached this workstation over
-  Tailscale on direct UDP, with picture, input and sound in Chrome. Safari's
-  picture is still unverified, because Playwright's Linux WebKit renders no
-  remote WebRTC video. To close it: run the same session with `--no-browser`
-  and open the printed URL in Safari.
+- Safari, closed 2026-10-24. `dist/robin-darwin-arm64 gui --attach auto`
+  from an Apple silicon Mac reached this workstation over Tailscale on
+  direct UDP, with picture, input and sound in Chrome; the same session with
+  `--no-browser`, opened in Safari, showed the picture and took typing. The
+  e2e suite still cannot check Safari's picture, because Playwright's Linux
+  WebKit renders no remote WebRTC video, so a change to the page's video or
+  input path needs this hand check again.
