@@ -368,7 +368,8 @@ func (s *session) handle(m protocol.Message) (done bool, err error) {
 		p := s.peer
 		s.mu.Unlock()
 		if p != nil && m.Candidate != nil {
-			if err := p.AddCandidate(*m.Candidate); err != nil {
+			// The peer logs the first candidate past its bound itself.
+			if err := p.AddCandidate(*m.Candidate); err != nil && !errors.Is(err, peer.ErrTooManyCandidates) {
 				s.log.Warn("remote candidate rejected", "err", err)
 			}
 		}

@@ -100,6 +100,8 @@ type Peer struct {
 	mu      sync.Mutex
 	control *webrtc.DataChannel
 	bwe     cc.BandwidthEstimator
+
+	remote remoteCandidates
 }
 
 // New builds the peer connection and its video track. Nothing is sent until
@@ -209,6 +211,14 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 		})
 	}
 	se.SetIncludeLoopbackCandidate(cfg.IncludeLoopback)
+	// No mDNS: whoever answers a query on the host's network would pick
+	// where the agent sends checks for the browser's .local names, and the
+	// browser reaches the agent as a peer-reflexive candidate anyway.
+	se.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
+	// ICE-TCP comes in through the tunnel listener only. Connecting out to
+	// the passive TCP candidates the page names would aim the agent at any
+	// port the host can reach.
+	se.DisableActiveTCP(true)
 	if cfg.Net != nil {
 		se.SetNet(cfg.Net)
 	}
@@ -312,9 +322,14 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 // Answer applies an offer and returns the answer SDP. A later offer on the
 // same peer is a renegotiation, typically the browser's ICE restart.
 func (p *Peer) Answer(offerSDP string) (string, error) {
+	counted, err := p.remote.offer(offerSDP)
+	if err != nil {
+		return "", err
+	}
 	if err := p.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: offerSDP}); err != nil {
 		return "", fmt.Errorf("peer: apply offer: %w", err)
 	}
+	counted()
 	answer, err := p.pc.CreateAnswer(nil)
 	if err != nil {
 		return "", fmt.Errorf("peer: create answer: %w", err)
@@ -326,8 +341,17 @@ func (p *Peer) Answer(offerSDP string) (string, error) {
 }
 
 // AddCandidate applies a browser candidate. An empty candidate marks the end
-// of the browser's gathering.
+// of the browser's gathering. Past maxRemoteCandidates since the last ICE
+// restart it drops the candidate and returns ErrTooManyCandidates.
 func (p *Peer) AddCandidate(c protocol.Candidate) error {
+	if c.Candidate != "" {
+		if warn, err := p.remote.add(c.Candidate); err != nil {
+			if warn {
+				p.log.Warn("dropping the browser's candidates past the bound", "max", maxRemoteCandidates)
+			}
+			return err
+		}
+	}
 	return p.pc.AddICECandidate(webrtc.ICECandidateInit{
 		Candidate: c.Candidate, SDPMid: c.SDPMid,
 		SDPMLineIndex: c.SDPMLineIndex, UsernameFragment: c.UsernameFragment,
