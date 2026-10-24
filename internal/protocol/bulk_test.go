@@ -134,6 +134,25 @@ func TestBulkSumMatchesSHA256(t *testing.T) {
 	}
 }
 
+func TestBulkSumZeroValue(t *testing.T) {
+	var s BulkSum
+	if err := s.Add([]byte{1}); !errors.Is(err, ErrBulkOverrun) {
+		t.Errorf("a byte into the zero sum: %v, want ErrBulkOverrun", err)
+	}
+	if err := s.Add(nil); err != nil {
+		t.Errorf("an empty chunk into the zero sum: %v", err)
+	}
+	empty := sha256.Sum256(nil)
+	end, err := s.End()
+	if err != nil || end != (Bulk{T: BulkEnd, SHA256: hex.EncodeToString(empty[:])}) {
+		t.Fatalf("zero sum ends with %+v, %v, want the SHA-256 of nothing", end, err)
+	}
+	var fresh BulkSum
+	if err := fresh.Check(end); err != nil {
+		t.Errorf("a fresh zero sum refuses the end of nothing: %v", err)
+	}
+}
+
 func TestBulkSumRefuses(t *testing.T) {
 	good := bytes.Repeat([]byte{7}, 100)
 	sum := sha256.Sum256(good)

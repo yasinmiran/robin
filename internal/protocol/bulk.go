@@ -130,7 +130,8 @@ func (b Bulk) CheckHeader() error {
 }
 
 // BulkSum counts and hashes the chunks of one transfer as they pass, on
-// either side of the channel.
+// either side of the channel. The zero value is the sum of a transfer that
+// declared no bytes.
 type BulkSum struct {
 	size, n int64
 	h       hash.Hash
@@ -138,7 +139,14 @@ type BulkSum struct {
 
 // NewBulkSum starts the sum of a transfer that declared size bytes.
 func NewBulkSum(size int64) *BulkSum {
-	return &BulkSum{size: size, h: sha256.New()}
+	return &BulkSum{size: size}
+}
+
+func (s *BulkSum) hash() hash.Hash {
+	if s.h == nil {
+		s.h = sha256.New()
+	}
+	return s.h
 }
 
 // Add takes the next chunk. It refuses a chunk larger than BulkChunkSize and
@@ -151,7 +159,7 @@ func (s *BulkSum) Add(chunk []byte) error {
 		return fmt.Errorf("%w: %d bytes declared", ErrBulkOverrun, s.size)
 	}
 	s.n += int64(len(chunk))
-	s.h.Write(chunk)
+	s.hash().Write(chunk)
 	return nil
 }
 
@@ -161,7 +169,7 @@ func (s *BulkSum) End() (Bulk, error) {
 	if s.n < s.size {
 		return Bulk{}, fmt.Errorf("%w: %d of %d bytes", ErrBulkTruncated, s.n, s.size)
 	}
-	return Bulk{T: BulkEnd, SHA256: hex.EncodeToString(s.h.Sum(nil))}, nil
+	return Bulk{T: BulkEnd, SHA256: hex.EncodeToString(s.hash().Sum(nil))}, nil
 }
 
 // Check compares the sender's end frame with the bytes that passed.
