@@ -587,9 +587,13 @@ func startMessage(o Options, r *probe.Report) (protocol.Start, string) {
 	}
 	small := r.CPUs > 0 && r.CPUs <= protocol.SmallHostCPUs
 	if s.MaxWidth <= 0 || s.MaxHeight <= 0 {
-		s.MaxWidth, s.MaxHeight = protocol.DefaultMaxWidth, protocol.DefaultMaxHeight
-		if small {
+		switch {
+		case small:
 			s.MaxWidth, s.MaxHeight = protocol.SmallHostMaxWidth, protocol.SmallHostMaxHeight
+		case r.CPUs <= protocol.MidHostCPUs:
+			s.MaxWidth, s.MaxHeight = protocol.MidHostMaxWidth, protocol.MidHostMaxHeight
+		default:
+			s.MaxWidth, s.MaxHeight = protocol.DefaultMaxWidth, protocol.DefaultMaxHeight
 		}
 	}
 	if s.FPS <= 0 {

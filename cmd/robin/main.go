@@ -65,8 +65,9 @@ func runGUI(args []string) int {
 		fs.PrintDefaults()
 	}
 	transport := fs.String("transport", "auto", "media path: auto (direct UDP, SSH tunnel as fallback), direct, or tunnel")
-	maxSize := fs.String("max-size", "", fmt.Sprintf("largest remote resolution, WxH (default %dx%d, %dx%d on hosts with %d cores or fewer)",
-		protocol.DefaultMaxWidth, protocol.DefaultMaxHeight, protocol.SmallHostMaxWidth, protocol.SmallHostMaxHeight, protocol.SmallHostCPUs))
+	maxSize := fs.String("max-size", "", fmt.Sprintf("largest remote resolution, WxH (default %dx%d, %dx%d on hosts with %d cores or fewer, %dx%d with %d or fewer)",
+		protocol.DefaultMaxWidth, protocol.DefaultMaxHeight, protocol.MidHostMaxWidth, protocol.MidHostMaxHeight, protocol.MidHostCPUs,
+		protocol.SmallHostMaxWidth, protocol.SmallHostMaxHeight, protocol.SmallHostCPUs))
 	fps := fs.Int("fps", 0, fmt.Sprintf("frame rate cap (default %d, %d on small hosts)", protocol.DefaultFPS, protocol.SmallHostFPS))
 	maxKbps := fs.Int("max-kbps", 0, fmt.Sprintf("video bitrate ceiling in kbit/s (default %d)", protocol.DefaultMaxKbps))
 	session := fs.String("session", "", "command to run in the spawned display (default: the lightest desktop found)")

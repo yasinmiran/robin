@@ -58,7 +58,10 @@ type Config struct {
 	Audio bool
 
 	MinBitrate, StartBitrate, MaxBitrate int // bits per second
-	Log                                  *slog.Logger
+	// Unpaced sends every packet the moment it is written, as a
+	// comparison for measurements; the agent paces.
+	Unpaced bool
+	Log     *slog.Logger
 }
 
 // Handlers receive the peer's events. Each may be nil. They are called from
@@ -126,15 +129,25 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 	reg := &interceptor.Registry{}
 	bweReady := make(chan cc.BandwidthEstimator, 1)
 	ccf, err := cc.NewInterceptor(func() (cc.BandwidthEstimator, error) {
-		// No pacer: the default one queues without bound, so a burst sent
-		// while the target falls drains for seconds and the delay that adds
-		// keeps the target at its floor. The encoder already holds the rate.
-		return gcc.NewSendSideBWE(
-			gcc.SendSideBWEPacer(gcc.NewNoOpPacer()),
+		// Not Pion's pacer: it queues without bound, so a burst sent while
+		// the target falls drains for seconds and the delay that adds keeps
+		// the target at its floor. The encoder holds the rate; the pacer
+		// only spreads bursts, keyframes above all.
+		var p gcc.Pacer = gcc.NewNoOpPacer()
+		if !cfg.Unpaced {
+			p = newPacer(cfg.StartBitrate)
+		}
+		e, err := gcc.NewSendSideBWE(
+			gcc.SendSideBWEPacer(p),
 			gcc.SendSideBWEInitialBitrate(cfg.StartBitrate),
 			gcc.SendSideBWEMinBitrate(cfg.MinBitrate),
 			gcc.SendSideBWEMaxBitrate(cfg.MaxBitrate),
 		)
+		if err != nil {
+			p.Close()
+			return nil, err
+		}
+		return e, nil
 	})
 	if err != nil {
 		return nil, err
@@ -147,12 +160,20 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 	// Registered after the TWCC and congestion-control interceptors so
 	// retransmissions carry transport sequence numbers and count as sent.
 	var bwe atomic.Pointer[cc.BandwidthEstimator]
-	reg.Add(&nackResponderFactory{budget: func() int {
-		if e := bwe.Load(); e != nil {
-			return (*e).GetTargetBitrate()
-		}
-		return cfg.StartBitrate
-	}})
+	reg.Add(&nackResponderFactory{
+		budget: func() int {
+			if e := bwe.Load(); e != nil {
+				return (*e).GetTargetBitrate()
+			}
+			return cfg.StartBitrate
+		},
+		lost: func() {
+			log.Info("keyframe requested", "by", "nack-unrecoverable")
+			if h.Keyframe != nil {
+				h.Keyframe()
+			}
+		},
+	})
 	if err := webrtc.ConfigureRTCPReports(reg); err != nil {
 		return nil, err
 	}

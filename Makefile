@@ -20,7 +20,7 @@ MODULE   := $(shell $(GO) list -m)
 # link, and a run starts by clearing COVER.
 COVER    ?= $(CURDIR)/.cover
 # The packages tested against the real openh264 and libopus.
-CGO_TESTS := ./internal/agent/h264/ ./internal/agent/opus/ ./internal/agent/audio/
+CGO_TESTS := ./internal/agent/h264/ ./internal/agent/opus/ ./internal/agent/audio/ ./internal/agent/ ./internal/agent/vqtest/
 # Every shipped binary is reproducible: the same commit built from any
 # checkout path gives the same bytes. -trimpath keeps the checkout out of
 # Go's paths, -buildvcs=false keeps git state out of the build info, and

@@ -62,6 +62,26 @@ const decodedVideo = (page: Page) =>
     return out;
   });
 
+// videoCounters reads what Chrome counts about the video it receives:
+// keyframes it asked for and decoded, packets it NACKed, and freezes.
+const videoCounters = (page: Page) =>
+  page.evaluate(async () => {
+    const report = await ((window as any).robin.pc as RTCPeerConnection).getStats();
+    let out = { pliCount: 0, nackCount: 0, keyFramesDecoded: 0, framesDecoded: 0, freezeCount: 0, totalFreezesDuration: 0 };
+    report.forEach((s: any) => {
+      if (s.type !== 'inbound-rtp' || s.kind !== 'video') return;
+      out = {
+        pliCount: s.pliCount ?? 0,
+        nackCount: s.nackCount ?? 0,
+        keyFramesDecoded: s.keyFramesDecoded ?? 0,
+        framesDecoded: s.framesDecoded ?? 0,
+        freezeCount: s.freezeCount ?? 0,
+        totalFreezesDuration: s.totalFreezesDuration ?? 0,
+      };
+    });
+    return out;
+  });
+
 let cli: Cli | undefined;
 let context: BrowserContext;
 let page: Page;
@@ -223,9 +243,10 @@ if (!PICTURE) {
   });
 }
 
-// A still screen sends only the keyframes Chrome asks for every 3 s, and
-// Chrome's jitter estimate grows on them until it holds new frames back for
-// about a second, so what is typed after a pause shows late.
+// Chrome asks for a keyframe after 3 s without a frame, and its jitter
+// estimate grows on those keyframes until it holds new frames back. The
+// agent sends a still picture again every 500 ms, so a still screen costs
+// no keyframe request and what is typed after a pause shows at once.
 test('latency: after 20 s of a still screen, keystrokes show within 400 ms', async ({}, testInfo) => {
   test.skip(!PICTURE, NO_PICTURE);
   testInfo.setTimeout(60_000);
@@ -234,7 +255,14 @@ test('latency: after 20 s of a still screen, keystrokes show within 400 ms', asy
   const t = term!;
   const centre = await pagePoint(page, SCREEN, t.x + t.width / 2, t.y + t.height / 2);
   await page.mouse.click(centre.x, centre.y);
-  await page.waitForTimeout(20_000);
+  // The click may still be on its way to the picture; count from after it.
+  await page.waitForTimeout(1_000);
+  const before = await videoCounters(page);
+  await page.waitForTimeout(19_000);
+  const after = await videoCounters(page);
+  const still = Object.fromEntries(Object.entries(after).map(([k, v]) => [k, Number((v - (before as any)[k]).toFixed(3))]));
+  testInfo.annotations.push({ type: 'still screen', description: JSON.stringify(still) });
+  expect.soft(still.pliCount, `keyframes Chrome asked for during 19 s of a still screen: ${JSON.stringify(still)}`).toBe(0);
 
   await page.evaluate((selector) => {
     const w = window as any;
@@ -808,7 +836,8 @@ if (SCENARIO === 'attach') {
     await pointerLands(100, 100, { x: 1380, y: 100 });
 
     await pick('all');
-    // 2304x800 shrinks to fit the session's 1920x1080 at most.
+    // 2304x800 shrinks to fit the --max-size 1920x1080 run.sh gives this
+    // scenario.
     await expect.poll(videoSize, { message: 'the video shows the whole screen, scaled' }).toMatch(/^19(18|20)x666$/);
     await expect(page.locator('#monitor .label')).toHaveText('All monitors');
 

@@ -23,6 +23,10 @@ type Encoder interface {
 	Close() error
 }
 
+// qpReporter is an Encoder that can say which quantiser its last frame
+// used; QP returns -1 when it cannot.
+type qpReporter interface{ QP() int }
+
 // NewEncoderFunc builds an encoder for one frame size. The session recreates
 // the encoder whenever the display is resized.
 type NewEncoderFunc func(width, height, fps, bitrate int) (Encoder, error)
@@ -32,8 +36,16 @@ type NewEncoderFunc func(width, height, fps, bitrate int) (Encoder, error)
 // the loss.
 const minKeyframeGap = 300 * time.Millisecond
 
+// refreshEvery is how long a still screen goes without a frame. Chrome asks
+// for a keyframe after 3 s without one, and each such keyframe resets the
+// picture to whatever quality rate control gave it; encoding the unchanged
+// picture again instead costs a few hundred bytes and lets rate control
+// spend what it has spare sharpening it.
+const refreshEvery = 500 * time.Millisecond
+
 // stream captures, encodes and sends frames at up to fps while a peer is
-// attached. An idle screen costs one cheap DAMAGE check per tick.
+// attached. An idle screen costs one cheap DAMAGE check per tick and an
+// encode of the unchanged picture every refreshEvery.
 type stream struct {
 	desk desktop.Desktop
 	fps  int
@@ -42,6 +54,9 @@ type stream struct {
 	maxW, maxH int
 	newEncoder NewEncoderFunc
 	log        *slog.Logger
+	// refresh is refreshEvery, or 0 to send nothing while the screen is
+	// still.
+	refresh time.Duration
 
 	peer     atomic.Pointer[peer.Peer]
 	keyframe atomic.Bool
@@ -67,7 +82,7 @@ func (s *stream) toDesktop(m protocol.Control) protocol.Control {
 }
 
 func newStream(desk desktop.Desktop, fps, maxW, maxH int, newEncoder NewEncoderFunc, log *slog.Logger) *stream {
-	s := &stream{desk: desk, fps: fps, maxW: maxW, maxH: maxH, newEncoder: newEncoder, log: log}
+	s := &stream{desk: desk, fps: fps, maxW: maxW, maxH: maxH, newEncoder: newEncoder, log: log, refresh: refreshEvery}
 	s.bitrate.Store(startBitrate)
 	return s
 }
@@ -119,12 +134,13 @@ func (s *stream) run(ctx context.Context) {
 		}
 		now := time.Now()
 		force := enc == nil || (s.keyframe.Load() && now.Sub(lastKey) >= minKeyframeGap)
-		f, changed, err := s.desk.Capture(force || stale)
+		refresh := s.refresh > 0 && !lastWrite.IsZero() && now.Sub(lastWrite) >= s.refresh
+		f, changed, err := s.desk.Capture(force || stale || refresh)
 		if err != nil {
 			s.log.Warn("capture", "err", err)
 			continue
 		}
-		if !changed && !force && !stale {
+		if !changed && !force && !stale && !refresh {
 			continue
 		}
 		w, h := f.Width&^1, f.Height&^1
@@ -174,7 +190,11 @@ func (s *stream) run(ctx context.Context) {
 		if force {
 			s.keyframe.Store(false)
 			lastKey = now
-			s.log.Info("keyframe", "w", w, "h", h, "bytes", len(au), "kbps", appliedBitrate/1000)
+			attrs := []any{"w", w, "h", h, "bytes", len(au), "kbps", appliedBitrate / 1000}
+			if q, ok := enc.(qpReporter); ok {
+				attrs = append(attrs, "qp", q.QP())
+			}
+			s.log.Info("keyframe", attrs...)
 		}
 		stale = len(au) == 0
 		if stale {

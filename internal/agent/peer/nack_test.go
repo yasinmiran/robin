@@ -105,6 +105,36 @@ func TestNackStaysWithinBudget(t *testing.T) {
 	}
 }
 
+func TestNackReportsWhatItCannotResend(t *testing.T) {
+	r, out := newTestResponder(t, 100_000_000, nackHistory+10)
+	var lost int
+	r.lost = func() { lost++ }
+	now := time.Now()
+	r.resend(nackFor(), now) // starts the bucket
+	for range nackMaxResends + 1 {
+		now = now.Add(nackBurst)
+		r.resend(nackFor(nackHistory+5), now)
+	}
+	if lost != 0 {
+		t.Fatalf("lost reported %d times for a packet it still holds", lost)
+	}
+	if got := len(out.take()); got != nackMaxResends {
+		t.Fatalf("got %d resends, want %d", got, nackMaxResends)
+	}
+	r.resend(nackFor(3), now) // overwritten by a newer packet
+	if lost != 1 {
+		t.Fatalf("lost reported %d times for a packet it no longer holds, want 1", lost)
+	}
+	r.resend(nackFor(3), now.Add(nackLostGap/2))
+	if lost != 1 {
+		t.Fatalf("lost reported %d times within %v, want 1", lost, nackLostGap)
+	}
+	r.resend(nackFor(nackHistory+6), now.Add(nackMaxAge+nackLostGap))
+	if lost != 2 {
+		t.Fatalf("lost reported %d times after a packet aged out, want 2", lost)
+	}
+}
+
 func TestNackSkipsStreamsWithoutNack(t *testing.T) {
 	f := &nackResponderFactory{budget: func() int { return 1_000_000 }}
 	i, _ := f.NewInterceptor("")

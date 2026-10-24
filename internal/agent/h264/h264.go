@@ -131,6 +131,13 @@ static int enc_size(encoder* e) {
 	return n;
 }
 
+static int enc_qp(encoder* e) {
+	SEncoderStatistics s;
+	memset(&s, 0, sizeof s);
+	if ((*e->enc)->GetOption(e->enc, ENCODER_OPTION_GET_STATISTICS, &s) != 0) return -1;
+	return (int)s.uiAverageFrameQP;
+}
+
 static void enc_close(encoder* e) {
 	(*e->enc)->Uninitialize(e->enc);
 	WelsDestroySVCEncoder(e->enc);
@@ -158,34 +165,6 @@ const (
 	FrameI    FrameType = C.videoFrameTypeI
 	FrameP    FrameType = C.videoFrameTypeP
 )
-
-// Params tune the encoder. Defaults returns the values the agent uses.
-type Params struct {
-	Width, Height, FPS int
-	Bitrate            int // target, bits per second
-	Threads            int
-	MinQP, MaxQP       int
-	// Screen selects openh264's screen-content mode, which always detects
-	// scene changes; camera mode lets SceneChange be switched off.
-	Screen      bool
-	SceneChange bool
-	FrameSkip   bool
-}
-
-// Defaults returns the agent's encoder settings for a frame size. Camera mode
-// with scene-change detection off never inserts IDR frames of its own (screen
-// mode turns full-screen motion into an IDR per frame) and encodes 3 to 4
-// times faster. Frame skipping is what holds the target on incompressible
-// content; its skips cluster after a keyframe, while the link is still busy
-// carrying it. QP 51 leaves rate control room to back off under congestion.
-func Defaults(width, height, fps, bitrate int) Params {
-	return Params{
-		Width: width, Height: height, FPS: fps, Bitrate: bitrate,
-		Threads: min(max(runtime.NumCPU()/2, 1), 4),
-		MinQP:   16, MaxQP: 51,
-		Screen: false, SceneChange: false, FrameSkip: true,
-	}
-}
 
 // Encoder is one openh264 instance for a fixed frame size. It is not safe for
 // concurrent use.
@@ -266,6 +245,15 @@ func (e *Encoder) Encode(img *yuv.I420, ts time.Duration, keyframe bool) ([]byte
 
 // LastFrameType reports the type of the most recent Encode result.
 func (e *Encoder) LastFrameType() FrameType { return e.last }
+
+// QP reports the average quantiser of the most recent encoded frame, or -1
+// when openh264 does not say.
+func (e *Encoder) QP() int {
+	if e.closed {
+		return -1
+	}
+	return int(C.enc_qp(e.e))
+}
 
 // SetBitrate retargets rate control; it applies from the next frame.
 func (e *Encoder) SetBitrate(bps int) error {

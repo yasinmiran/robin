@@ -108,7 +108,8 @@ func TestAutoEncoder(t *testing.T) {
 
 		{"vaapi, 20 CPUs, 1080p", Report{CPUs: 20, GPU: intel, FFmpegEncoders: ffVAAPI}, 1920, 1080, "software", "cheap enough at 1920x1080 on 20 CPUs"},
 		{"vaapi, 20 CPUs, 4K through ffmpeg", Report{CPUs: 20, GPU: intel, FFmpegEncoders: ffVAAPI}, 3840, 2160, "vaapi", "through ffmpeg: sessions reach 3840x2160"},
-		{"vaapi, 20 CPUs, 1440p through ffmpeg", Report{CPUs: 20, GPU: intel, FFmpegEncoders: ffVAAPI}, 2560, 1440, "vaapi", "2560x1440"},
+		{"vaapi, 20 CPUs, 1440p", Report{CPUs: 20, GPU: intel, FFmpegEncoders: ffVAAPI}, 2560, 1440, "software", "cheap enough at 2560x1440"},
+		{"vaapi, 20 CPUs, 1600p through ffmpeg", Report{CPUs: 20, GPU: intel, FFmpegEncoders: ffVAAPI}, 2560, 1600, "vaapi", "2560x1600"},
 		{"vaapi, 20 CPUs, 4K through GStreamer only", Report{CPUs: 20, GPU: intel, Commands: gst, GstPlugins: []string{"va"}}, 3840, 2160, "software", "needs ffmpeg"},
 		{"vaapi, 4 CPUs, GStreamer", Report{CPUs: 4, GPU: intel, Commands: gst, GstPlugins: []string{"vaapi"}}, 1920, 1080, "vaapi", "4 CPUs"},
 		{"vaapi, 5 CPUs, 1080p", Report{CPUs: 5, GPU: intel, FFmpegEncoders: ffVAAPI}, 1920, 1080, "software", "5 CPUs"},

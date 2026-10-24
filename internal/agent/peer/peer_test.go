@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -224,6 +225,48 @@ func TestPeerRejectsOversizedControl(t *testing.T) {
 	// No channel yet: nothing is sent, and the caller can tell.
 	if err := p.SendControl(protocol.Control{T: protocol.ControlClipboard, Text: "x"}); !errors.Is(err, ErrNoControl) {
 		t.Fatalf("send before channel open: %v, want ErrNoControl", err)
+	}
+}
+
+// TestPeerOwnsItsPacer checks that a paced peer's drain goroutine ends
+// when the peer closes and that an unpaced peer never starts one.
+func TestPeerOwnsItsPacer(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		unpaced bool
+		running int
+	}{
+		{"paced", false, 1},
+		{"unpaced", true, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := pacersRunning()
+			p, err := New(Config{MinBitrate: 100_000, StartBitrate: 500_000, MaxBitrate: 1_000_000, Unpaced: tc.unpaced}, Handlers{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n := pacersRunning() - before; n != tc.running {
+				p.Close()
+				t.Fatalf("%d pacers running, want %d", n, tc.running)
+			}
+			if err := p.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if n := pacersRunning() - before; n != 0 {
+				t.Fatalf("%d pacers still running after Close", n)
+			}
+		})
+	}
+}
+
+// pacersRunning counts the goroutines inside pacer.run.
+func pacersRunning() int {
+	buf := make([]byte, 1<<20)
+	for {
+		if n := runtime.Stack(buf, true); n < len(buf) {
+			return strings.Count(string(buf[:n]), ".(*pacer).run(")
+		}
+		buf = make([]byte, 2*len(buf))
 	}
 }
 

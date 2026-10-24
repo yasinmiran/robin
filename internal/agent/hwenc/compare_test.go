@@ -26,9 +26,9 @@ type contender struct {
 
 // TestCompare prints openh264 and every working VA-API route side by side
 // at 30 fps: time per Encode call and CPU per encoded frame, in the agent and
-// in the tool, at 1080p and 2160p; the bitrate each sends against a 2 Mbit/s
-// target; how a 500, 4000, 500 kbit/s target sequence is followed; and how
-// long a requested keyframe takes. It is a measuring aid: set
+// in the tool, at 1080p, 1440p and 2160p; the bitrate each sends against a
+// 2 Mbit/s target; how a 500, 4000, 500 kbit/s target sequence is followed;
+// and how long a requested keyframe takes. It is a measuring aid: set
 // ROBIN_HWENC_COMPARE=1 and build with the openh264 tag, as the Makefile builds
 // the agent, to run it.
 func TestCompare(t *testing.T) {
@@ -56,7 +56,7 @@ func TestCompare(t *testing.T) {
 	// bitrate each holds against a tight one.
 	for _, run := range []struct {
 		w, h, bps int
-	}{{w, h, 20_000_000}, {3840, 2160, 40_000_000}, {w, h, 2_000_000}} {
+	}{{w, h, 20_000_000}, {2560, 1440, 30_000_000}, {3840, 2160, 40_000_000}, {w, h, 2_000_000}} {
 		for _, pat := range patterns {
 			frames := render(pat, run.w, run.h, 30)
 			for _, c := range contenders {
