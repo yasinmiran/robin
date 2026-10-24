@@ -124,8 +124,9 @@ export function newId(now = Date.now(), random = Math.random) {
 // Recorder turns the keys pressed while recording into chord steps: each
 // key that is not a modifier, with the modifiers held as it went down, and
 // modifiers pressed and let go with no other key, such as Super alone.
-// It takes key messages as Input would send them, which go nowhere else
-// meanwhile.
+// It takes key and text messages as Input would send them, which go
+// nowhere else meanwhile; text, from an input method or a soft keyboard,
+// becomes a text step.
 export class Recorder {
   #held = new Map(); // code -> key, in the order pressed
   #lone = []; // modifiers pressed since every key was up, while no chord went out
@@ -136,7 +137,11 @@ export class Recorder {
     this.#onStep = onStep;
   }
 
-  key({ key: k, code = '', down, repeat }) {
+  key({ t, text, key: k, code = '', down, repeat }) {
+    if (t === 'text') {
+      if (text) this.#onStep({ text });
+      return;
+    }
     if (!down) {
       if (!this.#held.delete(code) || this.#held.size) return;
       if (!this.#chorded && this.#lone.length) this.#onStep({ keys: this.#lone });

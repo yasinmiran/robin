@@ -129,6 +129,13 @@ test('recording skips repeats, keys it never saw go down, and keys a chord canno
   assert.equal(steps.length, 2);
 });
 
+test('text an input method or a soft keyboard typed while recording is a text step', () => {
+  const { steps } = record([
+    { t: 'text', text: '日本' }, { t: 'text', text: '' }, down('Enter'), up('Enter'),
+  ]);
+  assert.deepEqual(steps, [{ text: '日本' }, { keys: [k('Enter')] }]);
+});
+
 test('a chord holds at most eight keys, the last ones pressed', () => {
   const mods = ['Shift', 'Control', 'Alt', 'AltGraph', 'Meta', 'OS'];
   const events = [...mods.map((m, i) => down(m, `M${i}`)), down('Shift', 'ShiftRight'), down('Control', 'ControlRight'), down('a', 'KeyA')];

@@ -123,6 +123,9 @@ test('a new macro records keys that reach nothing else, then saves through the C
   clipboard = async () => 'from the clipboard';
   click('Type clipboard');
   await later();
+  // A soft keyboard's letters join the text step before them.
+  input.capture({ t: 'text', text: ' and' });
+  input.capture({ t: 'text', text: ' more' });
   // Blur loses the releases; the recording starts over from nothing held.
   key('Shift', 'ShiftLeft', true);
   window.dispatchEvent(new Event('blur'));
@@ -140,9 +143,9 @@ test('a new macro records keys that reach nothing else, then saves through the C
   assert.match(note().textContent, /A pause is 1 to 60000 ms/);
   byClass('pause').value = '250';
   click('Add pause');
-  assert.deepEqual(steps(), ['Ctrl+Alt+T', 'Alt+Tab', '“from the clipboard”', 'X', '“echo hi⏎”', 'Wait 250 ms']);
+  assert.deepEqual(steps(), ['Ctrl+Alt+T', 'Alt+Tab', '“from the clipboard and more”', 'X', '“echo hi⏎”', 'Wait 250 ms']);
   find((el) => el.className === 'remove' && el.title === 'Remove step 4').click();
-  assert.deepEqual(steps(), ['Ctrl+Alt+T', 'Alt+Tab', '“from the clipboard”', '“echo hi⏎”', 'Wait 250 ms']);
+  assert.deepEqual(steps(), ['Ctrl+Alt+T', 'Alt+Tab', '“from the clipboard and more”', '“echo hi⏎”', 'Wait 250 ms']);
 
   find((el) => el.tagName === 'INPUT' && el.type === 'checkbox').checked = true;
   click('Save');
@@ -157,7 +160,7 @@ test('a new macro records keys that reach nothing else, then saves through the C
   assert.deepEqual(m.steps, [
     { keys: [{ key: 'Control', code: 'ControlLeft' }, { key: 'Alt', code: 'AltLeft' }, { key: 't', code: 'KeyT' }] },
     { keys: [{ key: 'Alt', code: 'AltLeft' }, { key: 'Tab', code: 'Tab' }] },
-    { text: 'from the clipboard' },
+    { text: 'from the clipboard and more' },
     { text: 'echo hi\n' },
     { pause: 250 },
   ]);

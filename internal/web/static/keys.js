@@ -251,9 +251,17 @@ export class Keys {
     e.empty.hidden = e.steps.length > 0;
   }
 
+  // addStep adds a step to the macro being edited. Text that follows text
+  // joins it, so a soft keyboard's letters make one step.
   #addStep(step) {
     const e = this.#editor;
     if (!e) return;
+    const last = e.steps.at(-1);
+    if (step.text && last?.text && utf8Bytes(last.text + step.text) <= MAX_MACRO_TEXT_BYTES) {
+      last.text += step.text;
+      this.#renderSteps();
+      return;
+    }
     if (e.steps.length >= MAX_MACRO_STEPS) {
       this.#say(`A macro takes ${MAX_MACRO_STEPS} steps at most`);
       return;
