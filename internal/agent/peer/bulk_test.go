@@ -770,6 +770,9 @@ func TestBulkSenderOutcomes(t *testing.T) {
 	if err := fresh(full, true).afterClose(); !refusedFull(err) {
 		t.Errorf("close after a refusal: %v", err)
 	}
+	if got, want := (&BulkRefusedError{Reason: "full"}).Error(), "peer: bulk transfer refused: full"; got != want {
+		t.Errorf("refusal reads %q, want %q", got, want)
+	}
 
 	if got := reason(errors.New(strings.Repeat("x", 3*maxBulkReason))); len(got) != maxBulkReason {
 		t.Errorf("reason kept %d bytes, want %d", len(got), maxBulkReason)
