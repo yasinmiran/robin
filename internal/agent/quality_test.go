@@ -263,15 +263,46 @@ func seconds(k vqtest.Kind, s float64) vqtest.Segment {
 // TestVideoQuality streams a short clip of real small text, still and
 // moving, through the stream loop, the agent's peer and openh264 to a
 // stand-in for Chrome over a 20 ms round trip, and scores what it shows.
+// The browser never has to ask for a keyframe, still or moving, and a still
+// screen ends up sharper than its first picture.
 func TestVideoQuality(t *testing.T) {
 	if testing.Short() {
 		t.Skip("streams for about 20 s")
 	}
 	needVideoHarness(t)
-	clip := mustClip(t, vqtest.Captured, 960, 540,
-		seconds(vqtest.Still, 7), seconds(vqtest.Typing, 2), seconds(vqtest.Scroll, 2), seconds(vqtest.Drag, 2), seconds(vqtest.Still, 4))
+	clip := mustClip(t, vqtest.Captured, 1920, 1080,
+		seconds(vqtest.Still, 5), seconds(vqtest.Typing, 2), seconds(vqtest.Scroll, 2), seconds(vqtest.Drag, 2), seconds(vqtest.Still, 4))
 	r := clipRun{clip: clip, fps: 30, link: vqtest.Link{Delay: 10 * time.Millisecond}, open: softwareEncoder(t), preroll: 2 * time.Second}.run(t)
-	t.Logf("\n%s%s", vqtest.Table(r.Spans()), r.Summary())
+	spans := r.Spans()
+	t.Logf("\n%s%s", vqtest.Table(spans), r.Summary())
+
+	if n := len(r.Result.Requests); n != 0 {
+		t.Errorf("the browser asked for %d keyframes: %s", n, r.Summary())
+	}
+	if r.Result.DecodeErrors != 0 || r.Result.Untagged != 0 {
+		t.Errorf("%d decode errors, %d pictures without their frame", r.Result.DecodeErrors, r.Result.Untagged)
+	}
+	for _, s := range spans {
+		switch {
+		case s.Name == "all":
+		case s.Shown == 0:
+			t.Errorf("%s: nothing shown", s.Name)
+		case s.Name == "scroll" || s.Name == "drag":
+			if s.FPS < 15 {
+				t.Errorf("%s: %.1f fps", s.Name, s.FPS)
+			}
+		}
+	}
+	var first vqtest.Score
+	for _, p := range r.Result.Shown {
+		if p.Index >= 0 {
+			first = p.Score
+			break
+		}
+	}
+	if last := spans[0].Last; last.PSNR < first.PSNR+1 {
+		t.Errorf("the still screen ends at %.1f dB, first shown at %.1f: refreshing it did not sharpen it", last.PSNR, first.PSNR)
+	}
 }
 
 // matrixSizes are the screens the matrix streams: a 1080p monitor, the
