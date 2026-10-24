@@ -50,9 +50,9 @@ These are the current limits of the shipped tool. Some of them are being worked 
 
 ## Clients and browsers
 
-- Safari's picture and pointer are untested. The only WebKit the tests can drive on Linux renders no remote WebRTC video; see [Browsers and clients](/browsers).
+- Safari's picture is checked by hand only: the WebKit the tests drive on Linux renders no remote WebRTC video. See [Browsers and clients](/browsers).
 - Firefox shows no picture until it has fetched its OpenH264 plugin, which needs a network connection the first time.
-- The macOS client has run from Chrome on an Apple silicon Mac, attached to an X11 desktop over Tailscale. Safari, and building the agents from a Mac, are untried.
+- The macOS client has run on an Apple silicon Mac, in Chrome and in Safari, attached to an X11 desktop over Tailscale. Building the agents from a Mac is untried.
 - The client needs OpenSSH with ControlMaster, which rules out native Windows for now.
 
 ## Encoding

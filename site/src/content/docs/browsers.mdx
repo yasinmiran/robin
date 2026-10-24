@@ -1,6 +1,6 @@
 ---
 title: Browsers and clients
-description: Which client systems and browsers Robin runs on, what the tests prove for each, and what is still unverified.
+description: Which client systems and browsers Robin runs on, what the tests prove for each, and what is checked by hand only.
 section: Guides
 order: 6
 ---
@@ -14,7 +14,7 @@ The client is the machine you run `robin` on. It needs macOS or Linux, OpenSSH w
 | Chrome | supported | every scenario: picture, input, latency, sound, clipboard, resize, both transports, failover, attach and Wayland |
 | Edge | same engine as Chrome | not driven by the tests |
 | Firefox | supported, with Cisco's OpenH264 plugin | every check of the direct scenario, latency and sound included |
-| Safari | picture unverified | stood in for by Playwright's WebKit on Linux; see below |
+| Safari | picture and input checked by hand | stood in for by Playwright's WebKit on Linux; see below |
 
 ### Chrome
 
@@ -26,15 +26,15 @@ Firefox passes every check of the direct scenario given Cisco's OpenH264 plugin.
 
 ### Safari
 
-What is known comes from Playwright's WebKit build on Linux, which shares Safari's WebRTC stack. It negotiates Constrained Baseline H.264, decodes it, plays the sound, carries keyboard, clipboard and resize, and tears down cleanly.
+Safari on macOS shows the picture and takes keyboard and pointer input, checked by hand from an Apple silicon Mac on 2026-10-24.
 
-That build renders no remote WebRTC video at all; even a VP8 loopback between two peer connections in a blank page stays black. So the picture, and the pointer, which is mapped onto the picture, have not been seen in Safari itself. Closing that gap takes one session from a Mac with `--no-browser` and the printed link opened in Safari, and it has not been run yet.
+In the automated tests, Safari is stood in for by Playwright's WebKit build on Linux, which shares Safari's WebRTC stack. It negotiates Constrained Baseline H.264, decodes it, plays the sound, carries keyboard, clipboard and resize, and tears down cleanly. That build renders no remote WebRTC video at all; even a VP8 loopback between two peer connections in a blank page stays black. So the e2e suite still cannot check Safari's picture, and a change to the page's video or input path needs that hand check again.
 
 ## Client systems
 
 **Linux** is where every test runs, with the CLI in the e2e client container.
 
-**macOS** has run once for real: `dist/robin-darwin-arm64 gui --attach auto` from an Apple silicon Mac reached a Linux workstation over Tailscale on direct UDP, attached to its X11 desktop, with picture, input and sound in Chrome. Safari on the Mac, and building the agents on a Mac rather than using a `make dist` binary, are untried.
+**macOS** has run for real: `dist/robin-darwin-arm64 gui --attach auto` from an Apple silicon Mac reached a Linux workstation over Tailscale on direct UDP, attached to its X11 desktop, with picture, input and sound in Chrome. The same session with `--no-browser`, opened in Safari, showed the picture and took typing. Only building the agents on a Mac, rather than using a `make dist` binary, is untried.
 
 On a Mac, Cmd is sent to the remote as Control, and keys pressed while Cmd is held are released when Cmd goes up, since macOS swallows their key-ups.
 
