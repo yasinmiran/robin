@@ -204,7 +204,7 @@ func TestSendRefusesWhatItCannotOffer(t *testing.T) {
 		"none":      nil,
 		"directory": {dir},
 		"missing":   {filepath.Join(dir, "missing")},
-		"too many":  make([]string, maxOffer+1),
+		"too many":  make([]string, MaxOffer+1),
 	} {
 		var out bytes.Buffer
 		if err := Send(t.Context(), sock, paths, &out); err == nil || errors.Is(err, ErrNotSaved) {
@@ -341,7 +341,7 @@ func TestListenerRefusesMalformedOffers(t *testing.T) {
 		"names, one file":  {two, []*os.File{f}, "2 names for 1 files"},
 		"no names":         {[]byte(`{"names":[]}`), []*os.File{f}, "0 names"},
 		"names too long":   {bytes.Repeat([]byte("x"), maxRequest+1), []*os.File{f}, "in one offer"},
-		"too many to pass": {one, filesOf(f, maxOffer+1), "in one offer"},
+		"too many to pass": {one, filesOf(f, MaxOffer+1), "in one offer"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rep := rawOffer(t, sock, tc.payload, tc.files...)

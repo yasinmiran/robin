@@ -24,10 +24,11 @@ const SocketName = "files.sock"
 // to offer files to. A spawned session sets it for its programs.
 const SocketEnv = "ROBIN_FILES_SOCK"
 
+// MaxOffer bounds the files one request may offer, well under the 253
+// descriptors Linux passes in one message.
+const MaxOffer = 64
+
 const (
-	// maxOffer bounds the files one request may offer, well under the 253
-	// descriptors Linux passes in one message.
-	maxOffer = 64
 	// maxRequest bounds a request's names.
 	maxRequest = 64 << 10
 	// requestTimeout bounds how long a connection may take to say what it
@@ -105,7 +106,7 @@ func (l *Listener) Serve(handle func(*Request)) {
 			if err != nil {
 				l.log.Info("offer refused", "err", err)
 				if !errors.Is(err, errStranger) {
-					writeReport(c, l.timeout, report{I: -1, Detail: err.Error()})
+					writeReport(c, l.timeout, refusal(err.Error()))
 				}
 				c.Close()
 				return
@@ -126,7 +127,7 @@ func (l *Listener) read(c *net.UnixConn) (*Request, error) {
 	}
 	c.SetReadDeadline(time.Now().Add(l.timeout))
 	buf := make([]byte, maxRequest)
-	oob := make([]byte, unix.CmsgSpace(maxOffer*4))
+	oob := make([]byte, unix.CmsgSpace(MaxOffer*4))
 	n, oobn, flags, _, err := c.ReadMsgUnix(buf, oob)
 	fds := rights(oob[:oobn])
 	closeAll := func() {
@@ -140,7 +141,7 @@ func (l *Listener) read(c *net.UnixConn) (*Request, error) {
 		return nil, fmt.Errorf("files: read the offer: %w", err)
 	case flags&(unix.MSG_TRUNC|unix.MSG_CTRUNC) != 0:
 		closeAll()
-		return nil, fmt.Errorf("files: more than %d files or %d bytes of names in one offer", maxOffer, maxRequest)
+		return nil, fmt.Errorf("files: more than %d files or %d bytes of names in one offer", MaxOffer, maxRequest)
 	}
 	c.SetReadDeadline(time.Time{})
 	var req request
@@ -245,6 +246,16 @@ func (r *Request) Tell(i int, s Status, detail string) {
 	defer r.mu.Unlock()
 	writeReport(r.conn, r.timeout, report{I: i, Status: s, Detail: detail})
 }
+
+// Refuse tells robin-agent send its whole request was turned down, and
+// why.
+func (r *Request) Refuse(detail string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	writeReport(r.conn, r.timeout, refusal(detail))
+}
+
+func refusal(detail string) report { return report{I: -1, Detail: detail} }
 
 // Gone is closed once robin-agent send has gone, or Close was called.
 func (r *Request) Gone() <-chan struct{} { return r.gone }

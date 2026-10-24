@@ -308,24 +308,43 @@ func rawOffer(t *testing.T, sock, path string, n int) *net.UnixConn {
 	return c
 }
 
-// TestOffersAreBounded keeps offering files without hanging up: past
-// maxOffers on offer at once a request is refused whole, its descriptors
-// closed, and once a sender goes there is room again.
+// TestOffersAreBounded keeps offering files without hanging up: a request
+// that would bring more than maxSessionOffers on offer is refused whole,
+// its descriptors closed, even when part of it would fit, and once a
+// sender goes there is room again.
 func TestOffersAreBounded(t *testing.T) {
 	s, runDir, _ := sharedSession(t, &fakeDesktop{})
 	sock := filepath.Join(runDir, files.SocketName)
 	path := hostFile(t, "a.txt", "a")
-	const perSender = 64 // the most one request may hold
 	var senders []*net.UnixConn
-	for range maxOffers / perSender {
-		senders = append(senders, rawOffer(t, sock, path, perSender))
+	for range maxSessionOffers/files.MaxOffer - 1 {
+		senders = append(senders, rawOffer(t, sock, path, files.MaxOffer))
 	}
-	openOffers(t, s, maxOffers)
+	rawOffer(t, sock, path, files.MaxOffer-1)
+	openOffers(t, s, maxSessionOffers-1)
 
-	late := rawOffer(t, sock, path, 1)
-	late.SetReadDeadline(time.Now().Add(5 * time.Second))
+	refused(t, rawOffer(t, sock, path, 2), "offering 2 more")
+	openOffers(t, s, maxSessionOffers-1)
+	rawOffer(t, sock, path, 1)
+	openOffers(t, s, maxSessionOffers)
+	refused(t, rawOffer(t, sock, path, 1), "offering 1 more")
+	openOffers(t, s, maxSessionOffers)
+
+	if err := senders[0].CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	openOffers(t, s, maxSessionOffers-files.MaxOffer)
+	rawOffer(t, sock, path, 1)
+	openOffers(t, s, maxSessionOffers-files.MaxOffer+1)
+}
+
+// refused checks that the session refused c's whole request, saying want,
+// and hung up.
+func refused(t *testing.T, c *net.UnixConn, want string) {
+	t.Helper()
+	c.SetReadDeadline(time.Now().Add(5 * time.Second))
 	buf := make([]byte, 4096)
-	n, err := late.Read(buf)
+	n, err := c.Read(buf)
 	if err != nil {
 		t.Fatalf("no answer to an offer past the bound: %v", err)
 	}
@@ -333,18 +352,10 @@ func TestOffersAreBounded(t *testing.T) {
 		I      int    `json:"i"`
 		Detail string `json:"detail"`
 	}
-	if err := json.Unmarshal(buf[:n], &rep); err != nil || rep.I != -1 || !strings.Contains(rep.Detail, "on offer") {
-		t.Errorf("an offer past the bound got %s, want a refusal of the request", buf[:n])
+	if err := json.Unmarshal(buf[:n], &rep); err != nil || rep.I != -1 || !strings.Contains(rep.Detail, want) {
+		t.Errorf("an offer past the bound got %s, want a refusal of the request saying %q", buf[:n], want)
 	}
-	if _, err := late.Read(buf); !errors.Is(err, io.EOF) {
+	if _, err := c.Read(buf); !errors.Is(err, io.EOF) {
 		t.Errorf("the refused sender was not hung up on: %v", err)
 	}
-	openOffers(t, s, maxOffers)
-
-	if err := senders[0].CloseWrite(); err != nil {
-		t.Fatal(err)
-	}
-	openOffers(t, s, maxOffers-perSender)
-	rawOffer(t, sock, path, 1)
-	openOffers(t, s, maxOffers-perSender+1)
 }

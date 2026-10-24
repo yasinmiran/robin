@@ -196,15 +196,16 @@ func (s *session) serveFiles(ctx context.Context) {
 	<-served
 }
 
-// maxOffers bounds the files on offer at once, from every robin-send
-// together. Each keeps a descriptor open in the agent and a line in the
-// page, and four full requests are more than anyone picks through; a
-// program that offers and never hangs up holds no more than that.
-const maxOffers = 256
+// maxSessionOffers bounds the files on offer at once, from every
+// robin-send together. Each keeps a descriptor open in the agent and a
+// line in the page, and four full requests are more than anyone picks
+// through; a program that offers and never hangs up holds no more than
+// that.
+const maxSessionOffers = 4 * files.MaxOffer
 
 // takeOffers puts the files of one robin-agent send on offer and keeps
 // them there until each is settled or the sender goes. A request that
-// would bring more than maxOffers on offer is refused whole.
+// would bring more than maxSessionOffers on offer is refused whole.
 func (s *session) takeOffers(r *files.Request) {
 	defer r.Close()
 	fs := s.files
@@ -219,7 +220,8 @@ func (s *session) takeOffers(r *files.Request) {
 	}
 	fs.mu.Lock()
 	closed := fs.closed
-	full := len(fs.offers)+len(mine) > maxOffers
+	offered := len(fs.offers)
+	full := offered+len(mine) > maxSessionOffers
 	if !closed && !full {
 		for _, o := range mine {
 			fs.seq++
@@ -234,8 +236,8 @@ func (s *session) takeOffers(r *files.Request) {
 			o.file.Close()
 		}
 		if full && !closed {
-			s.log.Info("offer refused", "files", len(mine), "on offer", maxOffers)
-			r.Tell(-1, "", fmt.Sprintf("%d files are on offer already, the most a session holds", maxOffers))
+			s.log.Info("offer refused", "offered", offered, "files", len(mine), "limit", maxSessionOffers)
+			r.Refuse(fmt.Sprintf("offering %d more would pass the %d files a session holds on offer", len(mine), maxSessionOffers))
 		}
 		return
 	}
