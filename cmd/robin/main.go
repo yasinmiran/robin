@@ -24,12 +24,16 @@ var version = "dev"
 const defaultSTUN = "stun:stun.l.google.com:19302"
 
 const usage = `usage: robin gui [flags] [user@]host [-- ssh-args...]
+       robin ls [user@]host [-- ssh-args...]
+       robin end [user@]host [id] [-- ssh-args...]
        robin version
 
 gui opens a desktop on host in your browser. It connects with your ssh
 config and agent, copies a small agent to the host, starts a headless X
 session there and streams it over WebRTC. Media goes direct over UDP when it
-can and through the SSH connection when it cannot.
+can and through the SSH connection when it cannot. A desktop it started
+stays on the host for --keep after the connection drops, and gui picks it
+up again; ls lists such sessions and end ends one.
 `
 
 func main() {
@@ -40,6 +44,10 @@ func main() {
 	switch os.Args[1] {
 	case "gui":
 		os.Exit(runGUI(os.Args[2:]))
+	case "ls":
+		os.Exit(runSessions(os.Args[1], os.Args[2:]))
+	case "end":
+		os.Exit(runSessions(os.Args[1], os.Args[2:]))
 	case "version", "--version", "-version":
 		fmt.Println("robin", version)
 	case "help", "-h", "--help":
@@ -68,6 +76,9 @@ func runGUI(args []string) int {
 	hidpi := fs.Bool("hidpi", false, "size the remote display in device pixels: sharper on HiDPI screens, more to encode (raise --max-size to go native)")
 	encoder := fs.String("encoder", protocol.EncoderAuto, "video encoder on the host: auto (the GPU where the host has one and it pays, else software), software, vaapi or nvenc")
 	stun := fs.String("stun", defaultSTUN, `comma-separated STUN servers for NAT traversal, or "none"`)
+	keep := fs.Duration("keep", gui.KeepDefault, fmt.Sprintf("how long the host keeps a desktop after the connection drops or the page detaches, for robin gui to resume (default %s for a desktop robin started, 0 with --attach)", protocol.DefaultKeep))
+	resume := fs.String("id", "", "resume the kept session with this id (default: the one kept session, when there is one)")
+	fresh := fs.Bool("new", false, "start a new desktop even when a kept session could be resumed")
 	listen := fs.String("listen", "127.0.0.1:0", "loopback address for the browser page")
 	noBrowser := fs.Bool("no-browser", false, "print the page URL on stdout instead of opening a browser")
 	sshPath := fs.String("ssh", "ssh", "ssh client to use")
@@ -105,15 +116,69 @@ func runGUI(args []string) int {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
+	if *keep < 0 && *keep != gui.KeepDefault {
+		return fail(fmt.Errorf("bad --keep %s: want a duration such as 8h, or 0", *keep))
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	err = gui.Run(ctx, gui.Options{
 		Dest: dest, SSHPath: *sshPath, SSHArgs: sshArgs,
 		Transport: t, MaxWidth: w, MaxHeight: h, FPS: *fps, MaxKbps: *maxKbps,
 		Session: *session, Attach: *attach, Monitor: *monitor, Audio: *audio, Encoder: *encoder, HiDPI: *hidpi, STUN: parseSTUN(*stun),
+		Keep: *keep, Resume: *resume, New: *fresh,
 		Listen: *listen, NoBrowser: *noBrowser, Verbose: *verbose,
 		Stdout: os.Stdout, Stderr: os.Stderr, Log: log,
 	})
+	if err != nil {
+		return fail(err)
+	}
+	return 0
+}
+
+// runSessions runs ls and end, which take the host and, for end, a session id.
+func runSessions(cmd string, args []string) int {
+	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprint(fs.Output(), usage+"\nflags:\n")
+		fs.PrintDefaults()
+	}
+	sshPath := fs.String("ssh", "ssh", "ssh client to use")
+	verbose := fs.Bool("v", false, "verbose logging")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	rest := fs.Args()
+	if len(rest) == 0 {
+		fs.Usage()
+		return 2
+	}
+	dest, rest := rest[0], rest[1:]
+	id := ""
+	if cmd == "end" && len(rest) > 0 && rest[0] != "--" {
+		id, rest = rest[0], rest[1:]
+	}
+	if len(rest) > 0 && rest[0] == "--" {
+		rest = rest[1:]
+	}
+	level := slog.LevelWarn
+	if *verbose {
+		level = slog.LevelInfo
+	}
+	o := gui.Options{
+		Dest: dest, SSHPath: *sshPath, SSHArgs: rest, Verbose: *verbose,
+		Stdout: os.Stdout, Stderr: os.Stderr, Log: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})),
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer stop()
+	var err error
+	if cmd == "ls" {
+		err = gui.List(ctx, o)
+	} else {
+		err = gui.End(ctx, o, id)
+	}
 	if err != nil {
 		return fail(err)
 	}

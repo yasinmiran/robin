@@ -27,89 +27,154 @@ type browsers interface {
 	Accept(ctx context.Context) (*web.Browser, error)
 }
 
+// Why one agent connection's relay ended.
+var (
+	// errSSHLost: the master went away.
+	errSSHLost = errors.New("SSH connection to the host was lost")
+	// errAgentGone: the agent's channel closed without a word, as it does
+	// when the proxy dies with its connection.
+	errAgentGone = errors.New("agent exited")
+	// errDetached: the page asked to leave the desktop running.
+	errDetached = errors.New("the page detached, keeping the desktop")
+	// errEnded: the session is over on purpose, by the page's or the
+	// host's doing.
+	errEnded = errors.New("session ended")
+)
+
 // bridge relays signaling between whichever page is connected and the agent.
 // A page that goes away (reload, closed tab) costs the agent its peer
-// connection but not its display.
+// connection but not its display. The page outlives the agent connection
+// too: while the CLI redials, the page is told so and waits for the next
+// Config, which makes it build a fresh peer connection.
 type bridge struct {
-	agent  signaling
 	relay  *relay.Relay
 	config protocol.Config
 	log    *slog.Logger
 
-	mu  sync.Mutex
-	cur *web.Browser
+	mu    sync.Mutex
+	cur   *web.Browser
+	agent signaling // nil while no agent connection is up
+	// redialing marks the gap between agent connections, so a page that
+	// arrives then is told to wait.
+	redialing bool
+	// events carries what the page decides: errDetached or errEnded.
+	events chan error
 }
 
-// run relays until ctx ends, SSH drops, the agent goes away or the page
-// server stops. serveErr carries the page server's result.
-func (b *bridge) run(ctx context.Context, srv browsers, sshDone <-chan struct{}, serveErr <-chan error) error {
-	// Ending run must also end the accept loop below, whatever the reason.
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	agentErr := make(chan error, 1)
-	go func() { agentErr <- b.fromAgent(ctx) }()
+func newBridge(r *relay.Relay, config protocol.Config, log *slog.Logger) *bridge {
+	return &bridge{relay: r, config: config, log: log, events: make(chan error, 2)}
+}
 
-	accepted := make(chan *web.Browser)
-	go func() {
-		for {
-			br, err := srv.Accept(ctx)
-			if err != nil {
-				return
-			}
-			select {
-			case accepted <- br:
-			case <-ctx.Done():
-				br.Close()
-				return
-			}
-		}
-	}()
-
+// accept takes pages as they connect, one at a time, for the life of ctx.
+func (b *bridge) accept(ctx context.Context, srv browsers) {
 	var prevDone chan struct{}
 	for {
-		select {
-		case <-ctx.Done():
-			b.closeCurrent()
-			return ctx.Err()
-		case <-sshDone:
-			b.closeCurrent()
-			return errors.New("SSH connection to the host was lost")
-		case err := <-serveErr:
-			b.closeCurrent()
-			return fmt.Errorf("page server stopped: %w", err)
-		case err := <-agentErr:
-			b.closeCurrent()
-			if errors.Is(err, io.EOF) {
-				return errors.New("agent exited")
+		br, err := srv.Accept(ctx)
+		if err != nil {
+			return
+		}
+		// The previous page's hangup must reach the agent before this
+		// page's offer, or the offer would land on the old peer.
+		if prevDone != nil {
+			<-prevDone
+		}
+		done := make(chan struct{})
+		prevDone = done
+		b.mu.Lock()
+		b.cur = br
+		redialing := b.redialing
+		b.mu.Unlock()
+		if redialing {
+			if err := br.Send(protocol.Message{Type: protocol.TypeReconnecting}); err != nil {
+				b.log.Warn("send reconnecting", "err", err)
 			}
-			return err
-		case br := <-accepted:
-			// The previous page's hangup must reach the agent before this
-			// page's offer, or the offer would land on the old peer.
-			if prevDone != nil {
-				<-prevDone
-			}
-			done := make(chan struct{})
-			prevDone = done
-			b.mu.Lock()
-			b.cur = br
-			b.mu.Unlock()
-			if err := br.Send(protocol.Message{Type: protocol.TypeConfig, Config: &b.config}); err != nil {
-				b.log.Warn("send config", "err", err)
-			}
-			go b.fromBrowser(ctx, br, done)
+		} else {
+			b.sendConfig(br)
+		}
+		go b.fromBrowser(ctx, br, done)
+	}
+}
+
+func (b *bridge) sendConfig(br *web.Browser) {
+	if err := br.Send(protocol.Message{Type: protocol.TypeConfig, Config: &b.config}); err != nil {
+		b.log.Warn("send config", "err", err)
+	}
+}
+
+// run relays one agent connection until it ends: the agent or SSH goes
+// away, the page server stops, the page detaches or ends the session, or
+// ctx ends. serveErr carries the page server's result.
+func (b *bridge) run(ctx context.Context, agent signaling, sshDone <-chan struct{}, serveErr <-chan error) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	b.mu.Lock()
+	b.agent = agent
+	b.redialing = false
+	br := b.cur
+	b.mu.Unlock()
+	defer func() {
+		b.mu.Lock()
+		b.agent = nil
+		b.mu.Unlock()
+	}()
+	if br != nil {
+		// A page that waited through a redial builds its peer connection
+		// anew from this; the first page got its Config on arrival and
+		// ignores a second.
+		b.sendConfig(br)
+	}
+	agentErr := make(chan error, 1)
+	go func() { agentErr <- b.fromAgent(ctx, agent) }()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-sshDone:
+		return errSSHLost
+	case err := <-serveErr:
+		return fmt.Errorf("page server stopped: %w", err)
+	case err := <-agentErr:
+		return err
+	case err := <-b.events:
+		return err
+	}
+}
+
+// reconnecting tells the current page the host connection is being redialed,
+// and pages that arrive meanwhile the same.
+func (b *bridge) reconnecting() {
+	b.mu.Lock()
+	b.redialing = true
+	br := b.cur
+	b.mu.Unlock()
+	if br != nil {
+		if err := br.Send(protocol.Message{Type: protocol.TypeReconnecting}); err != nil {
+			b.log.Debug("send reconnecting", "err", err)
 		}
 	}
 }
 
-func (b *bridge) fromAgent(ctx context.Context) error {
+// fromAgent relays the agent's messages to the page until the connection
+// ends. An error message the agent sent before leaving is the reason it
+// left; without one it went silently.
+func (b *bridge) fromAgent(ctx context.Context, agent signaling) error {
+	var last string
 	for {
-		m, err := b.agent.Recv(ctx)
+		m, err := agent.Recv(ctx)
 		if err != nil {
-			return err
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if last != "" {
+				return &agentError{last}
+			}
+			return errAgentGone
 		}
-		if m.Type == protocol.TypeError {
+		switch m.Type {
+		case protocol.TypeEnded:
+			return fmt.Errorf("%w: %s", errEnded, m.Error)
+		case protocol.TypeError:
 			b.log.Warn("agent reported", "err", m.Error)
+			last = m.Error
 		}
 		out, err := b.relay.FromAgent(m)
 		if err != nil {
@@ -131,6 +196,13 @@ func (b *bridge) fromAgent(ctx context.Context) error {
 	}
 }
 
+// currentAgent is the agent connection to send to, or nil between them.
+func (b *bridge) currentAgent() signaling {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.agent
+}
+
 func (b *bridge) fromBrowser(ctx context.Context, br *web.Browser, done chan<- struct{}) {
 	defer close(done)
 	for {
@@ -138,9 +210,20 @@ func (b *bridge) fromBrowser(ctx context.Context, br *web.Browser, done chan<- s
 		if err != nil {
 			break
 		}
-		if err := b.agent.Send(m); err != nil {
+		switch m.Type {
+		case protocol.TypeDetach:
+			b.events <- errDetached
+			continue
+		case protocol.TypeBye:
+			b.events <- fmt.Errorf("%w: the page ended it", errEnded)
+		}
+		agent := b.currentAgent()
+		if agent == nil {
+			b.log.Debug("dropped while reconnecting", "type", m.Type)
+			continue
+		}
+		if err := agent.Send(m); err != nil {
 			b.log.Warn("send to agent", "err", err)
-			break
 		}
 	}
 	b.mu.Lock()
@@ -150,12 +233,15 @@ func (b *bridge) fromBrowser(ctx context.Context, br *web.Browser, done chan<- s
 	b.mu.Unlock()
 	br.Close()
 	b.log.Info("page disconnected")
-	if err := b.agent.Send(protocol.Message{Type: protocol.TypeHangup}); err != nil {
-		b.log.Debug("send hangup", "err", err)
+	if agent := b.currentAgent(); agent != nil {
+		if err := agent.Send(protocol.Message{Type: protocol.TypeHangup}); err != nil {
+			b.log.Debug("send hangup", "err", err)
+		}
 	}
 }
 
-func (b *bridge) closeCurrent() {
+// close drops the current page once the session is over.
+func (b *bridge) close() {
 	b.mu.Lock()
 	br := b.cur
 	b.mu.Unlock()

@@ -1,6 +1,8 @@
 // Package gui runs `robin gui`: it connects over SSH, probes the host,
 // deploys and starts the agent, forwards the ICE-TCP tunnel, serves the
-// browser page and relays signaling between the page and the agent.
+// browser page and relays signaling between the page and the agent. It also
+// runs `robin ls` and `robin end`, which look after the sessions a host
+// keeps between CLI connections.
 package gui
 
 import (
@@ -48,6 +50,17 @@ type Options struct {
 	HiDPI bool
 	STUN  []string
 
+	// Keep is how long the host keeps the desktop after this CLI goes
+	// without ending the session, for a later robin gui to resume. KeepDefault
+	// picks protocol.DefaultKeep for a spawned desktop and none for an
+	// attached one.
+	Keep time.Duration
+	// Resume names the kept session to pick up. Empty resumes the one kept
+	// spawned session when there is exactly one, unless New is set, which
+	// always starts another.
+	Resume string
+	New    bool
+
 	Listen    string // page address, default 127.0.0.1:0
 	NoBrowser bool   // print the URL on stdout instead of opening a browser
 	Verbose   bool
@@ -56,50 +69,35 @@ type Options struct {
 	Log            *slog.Logger
 }
 
+// KeepDefault as Options.Keep lets the desktop's mode pick the keep window.
+const KeepDefault = -1
+
 const readyTimeout = 60 * time.Second
 
-// Run holds one session until ctx ends, the agent exits or SSH drops. Its
-// error, like everything it writes to Stderr, is safe to print on a
-// terminal, whatever the host sent.
+// Reconnect backoff: the first wait after a lost connection and the most
+// between two tries.
+const (
+	reconnectFirst = time.Second
+	reconnectMax   = 15 * time.Second
+)
+
+// Run holds one session until ctx ends, the session ends on the host, or
+// the page detaches. A lost SSH connection is redialed for as long as the
+// host keeps the desktop. Its error, like everything it writes to Stderr,
+// is safe to print on a terminal, whatever the host sent.
 func Run(ctx context.Context, o Options) (err error) {
-	if o.Stdout == nil {
-		o.Stdout = os.Stdout
-	}
-	if o.Stderr == nil {
-		o.Stderr = os.Stderr
-	}
-	// The host's text (the agent's log and errors, the probe's findings,
-	// what ssh prints) leaves through these two ways only.
-	o.Stderr = printableWriter{o.Stderr}
+	o, log := o.fill()
 	defer func() {
 		if err != nil {
 			err = printableError{err}
 		}
 	}()
-	log := o.Log
-	if log == nil {
-		log = slog.Default()
-	}
-
-	log.Info("connecting", "dest", o.Dest)
-	m, err := sshmux.Dial(ctx, o.Dest, sshmux.Options{SSHPath: o.SSHPath, Args: o.SSHArgs, Stderr: o.Stderr})
+	h, err := connect(ctx, o, log)
 	if err != nil {
 		return err
 	}
-	defer m.Close()
-
-	report, err := runProbe(ctx, m)
-	if err != nil {
-		return err
-	}
-	log.Info("probed host", "distro", report.Distro.ID+" "+report.Distro.VersionID, "arch", report.Arch, "cpus", report.CPUs, "agentdir", report.AgentDir)
-	if report.AgentDir == "" {
-		var why []string
-		for _, r := range report.AgentDirRejected {
-			why = append(why, r.Path+": "+r.Reason)
-		}
-		return fmt.Errorf("no usable directory for the agent on %s (%s)", o.Dest, strings.Join(why, "; "))
-	}
+	defer h.close()
+	report := h.report
 	if o.Attach == "auto" {
 		if o.Attach, err = pickAttach(report); err != nil {
 			return err
@@ -118,58 +116,64 @@ func Run(ctx context.Context, o Options) (err error) {
 			return err
 		}
 	}
-	a, err := agentbin.For(report.Arch)
+	a, path, err := h.deployAgent(ctx)
 	if err != nil {
 		return err
 	}
-	path, err := deploy.Ensure(ctx, m, deploy.Target{
-		Dir: report.AgentDir, PresentHash: report.AgentHash(a.Name()), SHA256Tool: report.SHA256Tool,
-	}, a)
-	if err != nil {
-		return fmt.Errorf("deploy agent: %w", err)
-	}
-	log.Info("agent in place", "path", path)
-
-	ag, err := startAgent(ctx, m, path, o.Verbose, o.Stderr)
+	resume, err := pickSession(o, report, a.Name())
 	if err != nil {
 		return err
 	}
-	defer ag.stop()
+	keep := o.Keep
+	if keep == KeepDefault {
+		keep = protocol.DefaultKeep
+		if o.Attach != "" {
+			keep = 0
+		}
+	}
+	if resume == "" && keep > 0 {
+		if note := keepNote(report); note != "" {
+			fmt.Fprintf(o.Stderr, "robin: %s: %s\n", o.Dest, note)
+		}
+	}
 
+	ag, err := startAgent(ctx, h.m, path, serveArgs{verbose: o.Verbose, keep: keep, resume: resume, detach: detachMode(report)}, o.Stderr)
+	if err != nil {
+		return err
+	}
+	defer func() { ag.stop() }()
+
+	var ready *protocol.Ready
 	start, picked := startMessage(o, report)
-	if picked != "" {
-		log.Info("encoder picked", "encoder", start.Encoder, "why", picked)
+	if resume == "" {
+		if picked != "" {
+			log.Info("encoder picked", "encoder", start.Encoder, "why", picked)
+		}
+		if err := ag.conn.Send(protocol.Message{Type: protocol.TypeStart, Start: &start}); err != nil {
+			return ag.explain(err)
+		}
+		ready, err = ag.awaitReady(ctx, hostOf(o.Dest), o.Stderr)
+	} else {
+		ready, err = ag.resume(ctx, resume)
 	}
-	if err := ag.conn.Send(protocol.Message{Type: protocol.TypeStart, Start: &start}); err != nil {
-		return ag.explain(err)
-	}
-	ready, err := ag.awaitReady(ctx, hostOf(o.Dest), o.Stderr)
 	if err != nil {
 		return err
 	}
 	log.Info("agent ready", "mode", ready.Mode, "display", ready.Display, "session", ready.Session,
 		"size", fmt.Sprintf("%dx%d", ready.Width, ready.Height), "monitor", ready.Monitor,
-		"encoder", ready.Encoder, "audio", ready.Audio)
+		"encoder", ready.Encoder, "audio", ready.Audio, "id", ready.ID, "keep", ready.Keep, "resumed", ready.Resumed)
 	if ready.EncoderError != "" {
 		log.Info("encoder fell back to software", "why", ready.EncoderError)
 	}
-	if o.Audio && !ready.Audio {
+	if o.Audio && !ready.Audio && !ready.Resumed {
 		fmt.Fprintf(o.Stderr, "robin: no sound from %s: %s\n", o.Dest, ready.AudioError)
 	}
 
-	tunnelPort := 0
-	if ready.TunnelAddr != "" && o.Transport != relay.Direct {
-		t, err := openTunnel(ctx, m, ready.TunnelAddr, log)
-		if err != nil {
-			if o.Transport == relay.Tunnel {
-				return err
-			}
-			log.Warn("SSH tunnel unavailable; direct UDP only", "err", err)
-		} else {
-			defer t.Close()
-			tunnelPort = t.Port()
-		}
+	t, err := openTunnel(ctx, h.m, ready.TunnelAddr, o.Transport, log)
+	if err != nil {
+		return err
 	}
+	defer t.Close()
 
 	srv, err := web.Listen(web.Options{Addr: o.Listen})
 	if err != nil {
@@ -185,25 +189,315 @@ func Run(ctx context.Context, o Options) (err error) {
 	} else if err := openBrowser(srv.URL()); err != nil {
 		fmt.Fprintf(o.Stderr, "open this URL in your browser: %s\n", srv.URL())
 	}
-	desktop := ready.Display
-	if ready.Mode == protocol.ModeAttach {
-		desktop = "attached to " + ready.Display
-	}
-	fmt.Fprintf(o.Stderr, "robin: %s on %s%s; press Ctrl+C to end the session\n", desktop, o.Dest, monitorNote(ready))
+	fmt.Fprintf(o.Stderr, "robin: %s; press Ctrl+C to end the session\n", sessionNote(o.Dest, ready))
 
-	b := &bridge{
-		agent: ag.conn, relay: relay.New(relay.Policy{Transport: o.Transport, TunnelPort: tunnelPort}),
-		config: protocol.Config{ICEServers: iceServers(start.STUN), HiDPI: o.HiDPI}, log: log,
+	b := newBridge(relay.New(relay.Policy{Transport: o.Transport, TunnelPort: t.Port()}),
+		protocol.Config{ICEServers: iceServers(start.STUN), HiDPI: o.HiDPI, Keep: ready.Keep}, log)
+	go b.accept(ctx, srv)
+	defer b.close()
+
+	for {
+		err = b.run(ctx, ag.conn, h.m.Done(), serveErr)
+		switch {
+		case ctx.Err() != nil:
+			// Ctrl+C in a terminal reaches ssh too, so the master may die
+			// first; the session must end either way.
+			return h.end(ag, ready, path, o)
+		case errors.Is(err, errDetached):
+			ag.stop()
+			fmt.Fprintf(o.Stderr, "robin: desktop kept on %s for %s; robin gui %s resumes it, robin end %s ends it\n",
+				o.Dest, keepDuration(ready.Keep), o.Dest, o.Dest)
+			return nil
+		case errors.Is(err, errEnded):
+			log.Info("session ended", "why", err)
+			return nil
+		case ready.Keep == 0 || !resumable(err):
+			return ag.explain(err)
+		}
+		until := time.Now().Add(time.Duration(ready.Keep) * time.Second)
+		b.reconnecting()
+		fmt.Fprintf(o.Stderr, "robin: %v; reconnecting to %s until %s (Ctrl+C ends the session)\n", err, o.Dest, until.Format(time.Kitchen))
+		ag.stop()
+		if ag, ready, err = h.reconnect(ctx, o, path, ready.ID, until, t); err != nil {
+			return err
+		}
+		fmt.Fprintf(o.Stderr, "robin: reconnected to %s\n", o.Dest)
 	}
-	err = b.run(ctx, srv, m.Done(), serveErr)
-	// Ctrl+C in a terminal reaches ssh too, so the master may die first; a
-	// signal is a clean exit either way. The agent sees its stdin close and
-	// tears the display down by itself.
-	if ctx.Err() != nil {
-		err = nil
+}
+
+// fill applies the defaults and wraps the terminal writers.
+func (o Options) fill() (Options, *slog.Logger) {
+	if o.Stdout == nil {
+		o.Stdout = os.Stdout
 	}
-	ag.conn.Send(protocol.Message{Type: protocol.TypeBye})
-	return ag.explain(err)
+	if o.Stderr == nil {
+		o.Stderr = os.Stderr
+	}
+	// The host's text (the agent's log and errors, the probe's findings,
+	// what ssh prints) leaves through these two ways only.
+	o.Stderr = printableWriter{o.Stderr}
+	log := o.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	return o, log
+}
+
+// host is the SSH connection to the host and what the probe found there.
+type host struct {
+	o      Options
+	log    *slog.Logger
+	m      *sshmux.Master
+	report *probe.Report
+}
+
+// connect dials the host and probes it.
+func connect(ctx context.Context, o Options, log *slog.Logger) (*host, error) {
+	log.Info("connecting", "dest", o.Dest)
+	m, err := sshmux.Dial(ctx, o.Dest, sshmux.Options{SSHPath: o.SSHPath, Args: o.SSHArgs, Stderr: o.Stderr})
+	if err != nil {
+		return nil, err
+	}
+	report, err := runProbe(ctx, m)
+	if err != nil {
+		m.Close()
+		return nil, err
+	}
+	log.Info("probed host", "distro", report.Distro.ID+" "+report.Distro.VersionID, "arch", report.Arch, "cpus", report.CPUs, "agentdir", report.AgentDir)
+	if report.AgentDir == "" {
+		m.Close()
+		var why []string
+		for _, r := range report.AgentDirRejected {
+			why = append(why, r.Path+": "+r.Reason)
+		}
+		return nil, fmt.Errorf("no usable directory for the agent on %s (%s)", o.Dest, strings.Join(why, "; "))
+	}
+	return &host{o: o, log: log, m: m, report: report}, nil
+}
+
+func (h *host) close() {
+	if h.m != nil {
+		h.m.Close()
+		h.m = nil
+	}
+}
+
+// deployAgent puts this CLI's agent for the host's architecture in place and
+// returns it and its path there.
+func (h *host) deployAgent(ctx context.Context) (agentbin.Agent, string, error) {
+	a, err := agentbin.For(h.report.Arch)
+	if err != nil {
+		return agentbin.Agent{}, "", err
+	}
+	path, err := deploy.Ensure(ctx, h.m, deploy.Target{
+		Dir: h.report.AgentDir, PresentHash: h.report.AgentHash(a.Name()), SHA256Tool: h.report.SHA256Tool,
+	}, a)
+	if err != nil {
+		return agentbin.Agent{}, "", fmt.Errorf("deploy agent: %w", err)
+	}
+	h.log.Info("agent in place", "path", path)
+	return a, path, nil
+}
+
+// end finishes the session on Ctrl+C: bye over the connection when it is
+// still up, else a fresh connection to tell the host, since a desktop left
+// kept by mistake would stay for hours.
+func (h *host) end(ag *agentProc, ready *protocol.Ready, path string, o Options) error {
+	if ag.bye() {
+		return nil
+	}
+	if ready.Keep == 0 {
+		return nil
+	}
+	fmt.Fprintf(o.Stderr, "robin: ending the kept session on %s\n", o.Dest)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	h.close()
+	m, err := sshmux.Dial(ctx, o.Dest, sshmux.Options{SSHPath: o.SSHPath, Args: o.SSHArgs, Stderr: o.Stderr})
+	if err == nil {
+		h.m = m
+		err = endSession(ctx, m, path, ready.ID)
+	}
+	if err != nil {
+		return fmt.Errorf("could not end session %s on %s: %w\nit ends by itself at %s; robin end %s ends it sooner",
+			ready.ID, o.Dest, err, time.Now().Add(time.Duration(ready.Keep)*time.Second).Format(time.Kitchen), o.Dest)
+	}
+	return nil
+}
+
+// reconnect redials the host with backoff and resumes session id, until it
+// works, ctx ends or the keep window closes at until. The tunnel is
+// forwarded again over the new connection.
+func (h *host) reconnect(ctx context.Context, o Options, path, id string, until time.Time, t *tunnel) (*agentProc, *protocol.Ready, error) {
+	backoff := reconnectFirst
+	for attempt := 1; ; attempt++ {
+		h.close()
+		ag, ready, err := h.redial(ctx, o, path, id, until, t)
+		if err == nil {
+			return ag, ready, nil
+		}
+		if ctx.Err() != nil {
+			// Nothing is connected to send bye to; end wants the keep to
+			// matter.
+			return nil, nil, h.end(nil, &protocol.Ready{ID: id, Keep: int(time.Until(until) / time.Second)}, path, o)
+		}
+		var final *finalError
+		if errors.As(err, &final) {
+			return nil, nil, err
+		}
+		h.log.Warn("reconnect failed", "attempt", attempt, "err", err)
+		if time.Now().Add(backoff).After(until) {
+			return nil, nil, fmt.Errorf("could not reconnect to %s before the host let the desktop go: %w", o.Dest, err)
+		}
+		select {
+		case <-time.After(backoff):
+		case <-ctx.Done():
+		}
+		backoff = min(backoff*2, reconnectMax)
+	}
+}
+
+// redial makes one attempt at reconnect's job.
+func (h *host) redial(ctx context.Context, o Options, path, id string, until time.Time, t *tunnel) (*agentProc, *protocol.Ready, error) {
+	dialCtx, cancel := context.WithDeadline(ctx, until)
+	defer cancel()
+	m, err := sshmux.Dial(dialCtx, o.Dest, sshmux.Options{SSHPath: o.SSHPath, Args: o.SSHArgs, Stderr: o.Stderr})
+	if err != nil {
+		return nil, nil, err
+	}
+	h.m = m
+	ag, err := startAgent(ctx, m, path, serveArgs{verbose: o.Verbose, resume: id}, o.Stderr)
+	if err != nil {
+		return nil, nil, err
+	}
+	ready, err := ag.resume(dialCtx, id)
+	if err != nil {
+		ag.stop()
+		return nil, nil, err
+	}
+	if err := t.forward(ctx, m, ready.TunnelAddr); err != nil {
+		h.log.Warn("SSH tunnel unavailable after reconnect; direct UDP only", "err", err)
+	}
+	return ag, ready, nil
+}
+
+// finalError is a reconnect failure no retry can mend: the host says the
+// session is gone, or speaks another protocol.
+type finalError struct{ err error }
+
+func (e *finalError) Error() string { return e.err.Error() }
+func (e *finalError) Unwrap() error { return e.err }
+
+// resumable says whether a lost connection is worth redialing: SSH or the
+// agent's proxy went away without a word, as a dropped network does.
+func resumable(err error) bool {
+	return errors.Is(err, errSSHLost) || errors.Is(err, errAgentGone)
+}
+
+// pickSession decides which kept session, if any, robin gui resumes.
+func pickSession(o Options, r *probe.Report, agentName string) (string, error) {
+	if o.Attach != "" && o.Resume == "" {
+		// An attached desktop is never kept; nothing to resume.
+		return "", nil
+	}
+	var kept []protocol.Session
+	for _, s := range r.Kept {
+		if s.Mode == protocol.ModeSpawn || s.ID == o.Resume {
+			kept = append(kept, s)
+		}
+	}
+	var pick *protocol.Session
+	switch {
+	case o.Resume != "":
+		for i := range kept {
+			if kept[i].ID == o.Resume {
+				pick = &kept[i]
+			}
+		}
+		if pick == nil {
+			return "", fmt.Errorf("no kept session %s on %s%s", o.Resume, o.Dest, keptList(r.Kept))
+		}
+	case o.New || len(kept) == 0:
+		return "", nil
+	case len(kept) == 1:
+		pick = &kept[0]
+	default:
+		return "", fmt.Errorf("%s keeps %d sessions; pick one with --id, or start another with --new%s", o.Dest, len(kept), keptList(kept))
+	}
+	if pick.Agent != agentName {
+		return "", fmt.Errorf("session %s on %s runs agent %s (build %s), this robin carries %s: run robin end %s %s to end it, or robin gui --new %s to start another beside it",
+			pick.ID, o.Dest, pick.Agent, pick.Build, agentName, o.Dest, pick.ID, o.Dest)
+	}
+	return pick.ID, nil
+}
+
+// keptList describes kept sessions, one per line, for messages.
+func keptList(kept []protocol.Session) string {
+	var b strings.Builder
+	for _, s := range kept {
+		b.WriteString("\n  " + describeSession(s))
+	}
+	return b.String()
+}
+
+// describeSession is one line of robin ls.
+func describeSession(s protocol.Session) string {
+	state := "connected"
+	if !s.Connected {
+		state = "kept"
+		if s.Until != nil {
+			state += " until " + s.Until.Local().Format(time.Kitchen)
+		}
+	}
+	desktop := s.Display
+	if s.Desktop != "" {
+		desktop += " (" + s.Desktop + ")"
+	}
+	return fmt.Sprintf("%s  %s  %s  started %s  %s", s.ID, s.Mode, desktop, s.Started.Local().Format("Jan 2 15:04"), state)
+}
+
+// detachMode picks how the daemon leaves the SSH session on this host:
+// under the user's systemd where logind would otherwise kill it on logout.
+func detachMode(r *probe.Report) string {
+	if r.KillUserProcesses == "yes" && r.Commands["systemd-run"] != "" {
+		return "systemd-run"
+	}
+	return "setsid"
+}
+
+// keepNote warns where a kept desktop would not survive the user logging
+// out, and says what would make it.
+func keepNote(r *probe.Report) string {
+	if r.KillUserProcesses != "yes" {
+		return ""
+	}
+	if r.Commands["systemd-run"] == "" {
+		return "logind kills user processes on logout here and systemd-run is missing, so the desktop ends with this connection after all"
+	}
+	if !r.Linger {
+		return "logind kills user processes on logout here; the desktop runs under your systemd user manager, which stops with your last login unless you run loginctl enable-linger"
+	}
+	return ""
+}
+
+// sessionNote is the line that says what the user got.
+func sessionNote(dest string, r *protocol.Ready) string {
+	desktop := r.Display
+	if r.Mode == protocol.ModeAttach {
+		desktop = "attached to " + r.Display
+	}
+	note := fmt.Sprintf("%s on %s%s", desktop, dest, monitorNote(r))
+	if r.Resumed {
+		note = fmt.Sprintf("resumed session %s, %s", r.ID, note)
+	}
+	if r.Keep > 0 {
+		note += fmt.Sprintf("; kept for %s if the connection drops", keepDuration(r.Keep))
+	}
+	return note
+}
+
+func keepDuration(secs int) string {
+	return (time.Duration(secs) * time.Second).String()
 }
 
 func runProbe(ctx context.Context, m *sshmux.Master) (*probe.Report, error) {
@@ -272,12 +566,33 @@ type agentProc struct {
 	once  sync.Once
 }
 
-func startAgent(ctx context.Context, m *sshmux.Master, path string, verbose bool, stderr io.Writer) (*agentProc, error) {
+// serveArgs are the flags of robin-agent serve.
+type serveArgs struct {
+	verbose bool
+	keep    time.Duration
+	resume  string
+	detach  string
+}
+
+func (a serveArgs) list(path string) []string {
 	args := []string{path, "serve"}
-	if verbose {
+	if a.verbose {
 		args = append(args, "-v")
 	}
-	cmd := m.Command(ctx, sshmux.Quote(args...))
+	if a.resume != "" {
+		return append(args, "-resume", a.resume)
+	}
+	if a.keep > 0 {
+		args = append(args, "-keep", a.keep.String())
+	}
+	if a.detach != "" && a.detach != "setsid" {
+		args = append(args, "-detach", a.detach)
+	}
+	return args
+}
+
+func startAgent(ctx context.Context, m *sshmux.Master, path string, args serveArgs, stderr io.Writer) (*agentProc, error) {
+	cmd := m.Command(ctx, sshmux.Quote(args.list(path)...))
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -287,7 +602,7 @@ func startAgent(ctx context.Context, m *sshmux.Master, path string, verbose bool
 		return nil, err
 	}
 	logTail := &tail.Buffer{Max: 8 << 10}
-	if verbose {
+	if args.verbose {
 		cmd.Stderr = io.MultiWriter(logTail, prefixWriter(stderr, "agent: "))
 	} else {
 		cmd.Stderr = logTail
@@ -324,14 +639,40 @@ func (a *agentProc) awaitReady(ctx context.Context, host string, stderr io.Write
 		case err != nil:
 			return nil, a.explain(err)
 		case m.Type == protocol.TypeError:
-			return nil, a.explain(fmt.Errorf("agent: %s", m.Error))
+			return nil, a.explain(&agentError{m.Error})
 		case m.Type != protocol.TypeReady || m.Ready == nil:
 			return nil, a.explain(fmt.Errorf("agent sent %q before ready", m.Type))
 		case m.Ready.Version != protocol.Version:
-			return nil, fmt.Errorf("agent speaks protocol %d, this CLI speaks %d", m.Ready.Version, protocol.Version)
+			return nil, &finalError{fmt.Errorf("agent speaks protocol %d, this CLI speaks %d", m.Ready.Version, protocol.Version)}
 		}
 		return m.Ready, nil
 	}
+}
+
+// agentError is an error message the agent sent.
+type agentError struct{ text string }
+
+func (e *agentError) Error() string { return "agent: " + e.text }
+
+// resume asks the agent for kept session id and waits for its Ready. An
+// agent that has no such session, or does not speak this protocol, makes
+// the error final.
+func (a *agentProc) resume(ctx context.Context, id string) (*protocol.Ready, error) {
+	if err := a.conn.Send(protocol.Message{Type: protocol.TypeResume, Resume: &protocol.Resume{Version: protocol.Version, ID: id}}); err != nil {
+		return nil, a.explain(err)
+	}
+	ready, err := a.awaitReady(ctx, "", io.Discard)
+	var agentErr *agentError
+	if errors.As(err, &agentErr) && !strings.Contains(agentErr.text, "another CLI") {
+		return nil, &finalError{err}
+	}
+	if err != nil {
+		return nil, err
+	}
+	if ready.ID != id || !ready.Resumed {
+		return nil, &finalError{fmt.Errorf("agent resumed session %q, not %q", ready.ID, id)}
+	}
+	return ready, nil
 }
 
 // maxConsentWait caps how far one notice may stretch the wait for Ready, and
@@ -350,9 +691,37 @@ func readyWait(start, now time.Time, secs int) time.Duration {
 	return min(time.Duration(secs)*time.Second+readyTimeout, start.Add(maxReadyWait).Sub(now))
 }
 
-// stop closes the agent's stdin, which is its signal to tear the display
-// down, and waits briefly for it to exit.
+// bye ends the session over the live connection and reports whether the
+// agent confirmed before the connection went: a bye that reached the host
+// needs no second trip.
+func (a *agentProc) bye() bool {
+	if a == nil {
+		return false
+	}
+	if err := a.conn.Send(protocol.Message{Type: protocol.TypeBye}); err != nil {
+		a.stop()
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ended := false
+	for !ended {
+		m, err := a.conn.Recv(ctx)
+		if err != nil {
+			break
+		}
+		ended = m.Type == protocol.TypeEnded
+	}
+	a.stop()
+	return ended
+}
+
+// stop closes the agent's stdin, which tells the host this controller is
+// gone, and waits briefly for the proxy to exit.
 func (a *agentProc) stop() {
+	if a == nil {
+		return
+	}
 	a.once.Do(func() {
 		a.stdin.Close()
 		done := make(chan struct{})
@@ -377,43 +746,101 @@ func (a *agentProc) explain(err error) error {
 	return err
 }
 
-// tunnel is the client end of the ICE-TCP fallback: a loopback TCP listener
-// whose connections are spliced into an SSH forward to the agent's listener.
-type tunnel struct {
-	ln net.Listener
+// endSession runs the agent's end command for session id over m.
+func endSession(ctx context.Context, m *sshmux.Master, path, id string) error {
+	out, err := m.Output(ctx, sshmux.Quote(path, "end", id), nil)
+	if err != nil {
+		return fmt.Errorf("%w%s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
-func openTunnel(ctx context.Context, m *sshmux.Master, remote string, log *slog.Logger) (*tunnel, error) {
-	sock := m.SocketPath("ice.sock")
-	if err := m.ForwardLocal(ctx, sock, remote); err != nil {
-		return nil, fmt.Errorf("forward ICE-TCP over SSH: %w", err)
+// tunnel is the client end of the ICE-TCP fallback: a loopback TCP listener
+// whose connections are spliced into an SSH forward to the agent's listener.
+// The listener lives as long as the session; the forward is remade on each
+// SSH connection, so the port the browser was told never changes.
+type tunnel struct {
+	ln  net.Listener
+	log *slog.Logger
+
+	mu   sync.Mutex
+	sock string // the forward's local socket, "" while there is none
+}
+
+// openTunnel sets the tunnel up for transport: none for Direct, and for
+// the others the listener plus the forward over m, where a forward that
+// fails is an error only when the tunnel is all the user allowed.
+func openTunnel(ctx context.Context, m *sshmux.Master, remote string, transport relay.Transport, log *slog.Logger) (*tunnel, error) {
+	t := &tunnel{log: log}
+	if remote == "" || transport == relay.Direct {
+		return t, nil
 	}
 	ln, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
 	}
-	t := &tunnel{ln: ln}
+	t.ln = ln
 	go func() {
 		for {
 			c, err := ln.Accept()
 			if err != nil {
 				return
 			}
-			go splice(c, sock, log)
+			go t.splice(c)
 		}
 	}()
+	if err := t.forward(ctx, m, remote); err != nil {
+		if transport == relay.Tunnel {
+			ln.Close()
+			return nil, err
+		}
+		log.Warn("SSH tunnel unavailable; direct UDP only", "err", err)
+	}
 	return t, nil
 }
 
-func (t *tunnel) Port() int { return t.ln.Addr().(*net.TCPAddr).Port }
+// forward points the tunnel at remote through m.
+func (t *tunnel) forward(ctx context.Context, m *sshmux.Master, remote string) error {
+	if t.ln == nil {
+		return nil
+	}
+	sock := m.SocketPath("ice.sock")
+	if err := m.ForwardLocal(ctx, sock, remote); err != nil {
+		return fmt.Errorf("forward ICE-TCP over SSH: %w", err)
+	}
+	t.mu.Lock()
+	t.sock = sock
+	t.mu.Unlock()
+	return nil
+}
 
-func (t *tunnel) Close() error { return t.ln.Close() }
+// Port is the loopback port the browser's tunnel candidate names, or 0
+// without a tunnel.
+func (t *tunnel) Port() int {
+	if t.ln == nil {
+		return 0
+	}
+	return t.ln.Addr().(*net.TCPAddr).Port
+}
 
-func splice(c net.Conn, sock string, log *slog.Logger) {
+func (t *tunnel) Close() error {
+	if t.ln == nil {
+		return nil
+	}
+	return t.ln.Close()
+}
+
+func (t *tunnel) splice(c net.Conn) {
 	defer c.Close()
+	t.mu.Lock()
+	sock := t.sock
+	t.mu.Unlock()
+	if sock == "" {
+		return
+	}
 	u, err := net.Dial("unix", sock)
 	if err != nil {
-		log.Warn("tunnel dial", "err", err)
+		t.log.Warn("tunnel dial", "err", err)
 		return
 	}
 	defer u.Close()

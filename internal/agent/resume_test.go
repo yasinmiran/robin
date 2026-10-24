@@ -264,9 +264,9 @@ func (k *kept) xvfbPID() int {
 	return findProcess("Xvfb", "-auth", filepath.Join(k.dir, "Xauthority"))
 }
 
-// findProcess returns the pid of a live process whose command line holds
-// every word given, or 0.
-func findProcess(words ...string) int {
+// findProcess returns the pid of a live process with the command named and
+// every other word given on its command line, or 0.
+func findProcess(want ...string) int {
 	entries, _ := os.ReadDir("/proc")
 	for _, e := range entries {
 		pid, err := strconv.Atoi(e.Name())
@@ -278,8 +278,12 @@ func findProcess(words ...string) int {
 			continue
 		}
 		argv := strings.Split(string(b), "\x00")
+		// argv[0] is the path LookPath found, not the bare name.
+		if len(argv) == 0 || filepath.Base(argv[0]) != want[0] {
+			continue
+		}
 		found := true
-		for _, w := range words {
+		for _, w := range want[1:] {
 			if !slices.Contains(argv, w) {
 				found = false
 				break

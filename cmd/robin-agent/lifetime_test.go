@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -60,9 +61,11 @@ type proxy struct {
 	cmd  *exec.Cmd
 	conn *protocol.Conn
 	in   io.WriteCloser
-	log  *bytes.Buffer
-	done chan error
-	msgs chan protocol.Message
+	log  *syncBuffer
+	// done closes once the proxy exited; exitErr is cmd.Wait's result.
+	done    chan struct{}
+	exitErr error
+	msgs    chan protocol.Message
 }
 
 func serveAgent(t *testing.T, exe string, args ...string) *proxy {
@@ -79,12 +82,15 @@ func serveAgent(t *testing.T, exe string, args ...string) *proxy {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := &proxy{t: t, cmd: cmd, in: in, log: &bytes.Buffer{}, done: make(chan error, 1), msgs: make(chan protocol.Message, 256)}
+	p := &proxy{t: t, cmd: cmd, in: in, log: &syncBuffer{}, done: make(chan struct{}), msgs: make(chan protocol.Message, 256)}
 	cmd.Stderr = p.log
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	go func() { p.done <- cmd.Wait() }()
+	go func() {
+		p.exitErr = cmd.Wait()
+		close(p.done)
+	}()
 	p.conn = protocol.NewConn(out, in, protocol.DefaultPingInterval, 0)
 	go func() {
 		defer close(p.msgs)
@@ -138,12 +144,30 @@ func (p *proxy) killGroup() {
 func (p *proxy) exited() error {
 	p.t.Helper()
 	select {
-	case err := <-p.done:
-		return err
+	case <-p.done:
+		return p.exitErr
 	case <-time.After(10 * time.Second):
 		p.t.Fatalf("the proxy did not exit; its stderr:\n%s", p.log)
 		return nil
 	}
+}
+
+// syncBuffer collects the proxy's stderr while the test reads it.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }
 
 func alive(pid int) bool { return pid > 0 && syscall.Kill(pid, 0) != syscall.ESRCH }
@@ -162,8 +186,12 @@ func xvfbPID(dir string) int {
 			continue
 		}
 		argv := strings.Split(string(b), "\x00")
+		// argv[0] is the path LookPath found, not the bare name.
+		if len(argv) == 0 || filepath.Base(argv[0]) != want[0] {
+			continue
+		}
 		found := true
-		for _, w := range want {
+		for _, w := range want[1:] {
 			if !slices.Contains(argv, w) {
 				found = false
 				break
@@ -216,8 +244,14 @@ func TestDaemonOutlivesTheProxyAndEndsWithTheKeepWindow(t *testing.T) {
 	if xvfb == 0 {
 		t.Fatalf("no Xvfb for %s", ready.Display)
 	}
-	if !strings.Contains(p1.log.String(), "desktop up") {
-		t.Errorf("the daemon's log did not reach the proxy's stderr:\n%s", p1.log)
+	// The proxy tails the daemon's log a few times a second.
+	logDeadline := time.Now().Add(3 * time.Second)
+	for !strings.Contains(p1.log.String(), "desktop up") {
+		if time.Now().After(logDeadline) {
+			t.Errorf("the daemon's log did not reach the proxy's stderr:\n%s", p1.log)
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	// sshd goes: the proxy's whole process group dies at once.

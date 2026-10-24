@@ -381,7 +381,7 @@ func TestPageMessagesRestricted(t *testing.T) {
 		p   string
 	}{
 		"start":     {websocket.MessageText, `{"type":"start","start":{"version":1}}`},
-		"bye":       {websocket.MessageText, `{"type":"bye"}`},
+		"hangup":    {websocket.MessageText, `{"type":"hangup"}`},
 		"untyped":   {websocket.MessageText, `{"sdp":"v=0"}`},
 		"malformed": {websocket.MessageText, `{"type":`},
 		"binary":    {websocket.MessageBinary, `{"type":"offer","sdp":"v=0"}`},
@@ -398,6 +398,21 @@ func TestPageMessagesRestricted(t *testing.T) {
 			}
 			<-b.Done()
 		})
+	}
+}
+
+// TestPageMayEndOrDetach: besides offers and candidates, the page may say
+// bye and detach, which the bridge acts on itself.
+func TestPageMayEndOrDetach(t *testing.T) {
+	s, _ := start(t)
+	c, b := connect(t, s)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, typ := range []protocol.Type{protocol.TypeDetach, protocol.TypeBye} {
+		c.Write(ctx, websocket.MessageText, []byte(`{"type":"`+string(typ)+`"}`))
+		if m, err := b.Recv(ctx); err != nil || m.Type != typ {
+			t.Fatalf("Recv = %v, %v; want %s", m, err, typ)
+		}
 	}
 }
 
