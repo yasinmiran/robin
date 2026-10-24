@@ -242,11 +242,10 @@ if (!PICTURE) {
   });
 }
 
-// Chrome asks for a keyframe after 3 s without a frame. A still screen
-// used to send nothing else, and Chrome's jitter estimate grew on those
-// keyframes until it held new frames back for about a second, so what was
-// typed after a pause showed late. The agent now sends the unchanged
-// picture again every 500 ms, so a still screen costs no keyframe at all.
+// Chrome asks for a keyframe after 3 s without a frame, and its jitter
+// estimate grows on those keyframes until it holds new frames back. The
+// agent sends a still picture again every 500 ms, so a still screen costs
+// no keyframe request and what is typed after a pause shows at once.
 test('latency: after 20 s of a still screen, keystrokes show within 400 ms', async ({}, testInfo) => {
   test.skip(!PICTURE, NO_PICTURE);
   testInfo.setTimeout(60_000);
