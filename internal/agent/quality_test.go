@@ -249,13 +249,13 @@ func (c clipRun) run(t *testing.T) *vqtest.Run {
 		if !c.sound {
 			return
 		}
-		t := time.NewTicker(20 * time.Millisecond)
-		defer t.Stop()
+		tick := time.NewTicker(20 * time.Millisecond)
+		defer tick.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case now := <-t.C:
+			case now := <-tick.C:
 				p.WriteAudio(vqtest.SoundPayload(240, now), 20*time.Millisecond)
 			}
 		}
