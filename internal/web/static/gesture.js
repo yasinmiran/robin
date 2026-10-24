@@ -27,7 +27,7 @@ export class Gestures {
   #last = null; // and at the last move
   #timer = 0;
 
-  constructor(emit, timers = { set: setTimeout, clear: clearTimeout }) {
+  constructor(emit, timers = { set: (fn, ms) => setTimeout(fn, ms), clear: (id) => clearTimeout(id) }) {
     this.#emit = emit;
     this.#timers = timers;
   }

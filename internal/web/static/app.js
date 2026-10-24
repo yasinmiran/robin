@@ -16,9 +16,10 @@ const STATS_EVERY_MS = 1000;
 const TOKEN_KEY = 'robin.token';
 
 const video = document.getElementById('screen');
+const typing = document.getElementById('typing');
 const overlay = new Overlay();
 const sampler = new StatsSampler();
-const input = new Input(video, sendControl, () => channel?.readyState === 'open');
+const input = new Input(video, typing, document.getElementById('preedit'), sendControl, () => channel?.readyState === 'open');
 const cursor = new RemoteCursor(video);
 
 let ws = null;
@@ -45,6 +46,11 @@ window.robin = {
   get muted() { return video.muted; },
   get monitors() { return monitors; },
   showMonitor: (name) => showMonitor(name),
+  // The picture's local zoom: scale, and the shift of its top-left corner.
+  get zoom() {
+    const v = input.view;
+    return { scale: v.scale, x: v.x, y: v.y };
+  },
   addSection: (name) => overlay.addSection(name),
   bulk: {
     registerKind,
@@ -68,6 +74,8 @@ onControl('clipboard', (c) => {
 });
 
 input.attach();
+// A touch screen has no keys of its own: the button raises the soft one.
+if (navigator.maxTouchPoints > 0) overlay.showKeyboard(typing, () => input.toggleKeyboard());
 connect(takeToken());
 
 // takeToken reads the token from the fragment and moves it out of the address
