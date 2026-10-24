@@ -93,16 +93,24 @@
     text-decoration-thickness: 2px;
   }
 
+  /* A tint of the text colour rather than --muted, so the chip shows on the
+     page and on a callout alike and its padding reads as its edge, not as
+     stray spaces around the punctuation beside it. */
   :not(pre) > code {
     font-size: 0.875em;
     padding: 0.1em 0.32em;
     border-radius: 4px;
-    background: var(--muted);
+    background: color-mix(in oklch, var(--foreground) 8%, transparent);
     color: var(--foreground);
     white-space: nowrap;
   }
   .prose a > code {
     color: inherit;
+  }
+  /* In a table, where a column can be all code, the mono face is enough. */
+  .table-scroll :is(td, th) > code {
+    padding: 0;
+    background: none;
   }
   /* A phone cannot fit stun:stun.l.google.com:19302 on one line, so long
      inline code may break there rather than push the page sideways. */
