@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -173,38 +174,135 @@ func TestNoMuxSFTP(t *testing.T) {
 }
 
 func TestNoMuxForward(t *testing.T) {
+	for _, tcp := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unix", true: "tcp"}[tcp], func(t *testing.T) {
+			m := dialNoMux(t, sshtest.Start(t))
+			m.tcpForwards = tcp
+			echo := echoServer(t)
+
+			f, err := m.Forward(t.Context(), echo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tcp && (f.network != "tcp" || !strings.HasPrefix(f.addr, "127.0.0.1:")) {
+				t.Errorf("forward listens on %s %s, want loopback TCP", f.network, f.addr)
+			}
+			if !tcp {
+				if f.network != "unix" || filepath.Dir(f.addr) != m.dir {
+					t.Errorf("forward at %s %s, want a socket in %s", f.network, f.addr, m.dir)
+				}
+				if fi, err := os.Stat(m.dir); err != nil || fi.Mode().Perm() != 0o700 {
+					t.Errorf("socket directory: %v, mode %v; want 0700", err, fi.Mode().Perm())
+				}
+			}
+			echoThrough(t, f)
+			echoThrough(t, f)
+			g, err := m.Forward(t.Context(), echo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if g.addr == f.addr {
+				t.Errorf("two forwards share %s", f.addr)
+			}
+			echoThrough(t, g)
+
+			if err := m.Close(); err != nil {
+				t.Fatal(err)
+			}
+			waitNoProcesses(t, f.addr+":"+echo)
+			waitNoProcesses(t, g.addr+":"+echo)
+			if c, err := f.Dial(); err == nil {
+				c.Close()
+				t.Error("forward still accepts after Close")
+			}
+			if _, err := m.Forward(t.Context(), echo); err == nil {
+				t.Error("Forward after Close succeeded")
+			}
+			if _, err := os.Stat(m.dir); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("socket directory left behind: %v", err)
+			}
+		})
+	}
+}
+
+// squatter listens on a loopback port as another program on this machine
+// could, counting the connections it gets.
+type squatter struct {
+	net.Listener
+	accepted atomic.Int32
+}
+
+func squat(t *testing.T, addr string) *squatter {
+	t.Helper()
+	ln, err := net.Listen("tcp4", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sq := &squatter{Listener: ln}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			sq.accepted.Add(1)
+			c.Close()
+		}
+	}()
+	return sq
+}
+
+// TestNoMuxForwardTaken has another program take the forward's port while
+// ssh logs in, and checks no connection goes to it.
+func TestNoMuxForwardTaken(t *testing.T) {
 	m := dialNoMux(t, sshtest.Start(t))
-	echo := echoServer(t)
+	m.tcpForwards = true
+	sq := squat(t, "127.0.0.1:0")
+	m.freeAddr = func() (string, error) { return sq.Addr().String(), nil }
+	f, err := m.Forward(t.Context(), echoServer(t))
+	t.Logf("Forward onto a taken port: %v", err)
+	if err == nil {
+		if c, err := f.Dial(); err == nil {
+			c.Close()
+		}
+		t.Error("Forward onto a port another program holds succeeded")
+	}
+	if n := sq.accepted.Load(); n != 0 {
+		t.Errorf("the program holding the port got %d connections", n)
+	}
+	m.Close()
+	waitNoProcesses(t, sq.Addr().String())
+}
 
-	f, err := m.Forward(t.Context(), echo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if f.network != "tcp" || !strings.HasPrefix(f.addr, "127.0.0.1:") {
-		t.Errorf("forward listens on %s %s, want loopback TCP", f.network, f.addr)
-	}
-	echoThrough(t, f)
-	echoThrough(t, f)
-	g, err := m.Forward(t.Context(), echo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if g.addr == f.addr {
-		t.Errorf("two forwards share %s", f.addr)
-	}
-	echoThrough(t, g)
-
-	if err := m.Close(); err != nil {
-		t.Fatal(err)
-	}
-	waitNoProcesses(t, f.addr+":"+echo)
-	waitNoProcesses(t, g.addr+":"+echo)
-	if c, err := f.Dial(); err == nil {
-		c.Close()
-		t.Error("forward still accepts after Close")
-	}
-	if _, err := m.Forward(t.Context(), echo); err == nil {
-		t.Error("Forward after Close succeeded")
+// TestNoMuxForwardDead kills a forward's ssh, and checks the forward then
+// refuses to dial, even when another program has taken its port.
+func TestNoMuxForwardDead(t *testing.T) {
+	for _, tcp := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unix", true: "tcp"}[tcp], func(t *testing.T) {
+			m := dialNoMux(t, sshtest.Start(t))
+			m.tcpForwards = tcp
+			f, err := m.Forward(t.Context(), echoServer(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			echoThrough(t, f)
+			f.proc.cmd.Process.Kill()
+			<-f.proc.exited
+			var sq *squatter
+			if tcp {
+				sq = squat(t, f.addr)
+			}
+			if c, err := f.Dial(); err == nil {
+				c.Close()
+				t.Error("a forward whose ssh has exited still dials")
+			} else {
+				t.Logf("Dial after its ssh exited: %v", err)
+			}
+			if sq != nil && sq.accepted.Load() != 0 {
+				t.Error("the program now on the forward's port got a connection")
+			}
+		})
 	}
 }
 

@@ -49,9 +49,14 @@ type Master struct {
 	ssh  string
 	args []string
 	dest string
-	dir  string
+	dir  string // private directory for unix sockets; none for tcpForwards
 	ctl  string
 	mux  bool
+	// tcpForwards puts forwards without a master on loopback TCP ports,
+	// which freeAddr picks, rather than unix sockets in dir: Windows'
+	// OpenSSH forwards no unix sockets.
+	tcpForwards bool
+	freeAddr    func() (string, error)
 	// out receives the stderr of the master, or of each forward without one.
 	out io.Writer
 
@@ -82,14 +87,16 @@ func Dial(ctx context.Context, dest string, opts Options) (*Master, error) {
 		return nil, fmt.Errorf("sshmux: invalid destination %q", dest)
 	}
 	m := &Master{
-		ssh:  cmp.Or(opts.SSHPath, "ssh"),
-		args: opts.Args,
-		dest: dest,
-		mux:  !opts.NoMux,
-		out:  cmp.Or[io.Writer](opts.Stderr, os.Stderr),
-		done: make(chan struct{}),
+		ssh:         cmp.Or(opts.SSHPath, "ssh"),
+		args:        opts.Args,
+		dest:        dest,
+		mux:         !opts.NoMux,
+		tcpForwards: opts.NoMux && runtime.GOOS == "windows",
+		freeAddr:    freeLoopbackAddr,
+		out:         cmp.Or[io.Writer](opts.Stderr, os.Stderr),
+		done:        make(chan struct{}),
 	}
-	if !m.mux {
+	if m.tcpForwards {
 		return m, nil
 	}
 	dir, err := controlDir()
@@ -97,6 +104,9 @@ func Dial(ctx context.Context, dest string, opts Options) (*Master, error) {
 		return nil, err
 	}
 	m.dir, m.ctl = dir, filepath.Join(dir, controlName)
+	if !m.mux {
+		return m, nil
+	}
 
 	m.cmd = exec.Command(m.ssh, m.masterArgs()...)
 	m.cmd.Stderr = io.MultiWriter(&m.stderr, m.out)
@@ -189,6 +199,14 @@ func (m *Master) socketPath(name string) string {
 	return filepath.Join(m.dir, name)
 }
 
+// nextForwardPath returns the socket path for the next forward.
+func (m *Master) nextForwardPath() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sockets++
+	return m.socketPath(fmt.Sprintf("fwd%d.sock", m.sockets))
+}
+
 // Done is closed when the master process exits, whether through Close, a
 // network drop or a signal. Without a master it is closed by Close only: a
 // network drop shows as the failure of whatever was using the connection.
@@ -197,13 +215,16 @@ func (m *Master) Done() <-chan struct{} {
 }
 
 // Close asks the master to exit, kills it if it does not, and removes the
-// control directory. Commands still running over the master fail. Without
+// private directory. Commands still running over the master fail. Without
 // a master it stops the forwards; commands end with their contexts.
 func (m *Master) Close() error {
 	m.closeOnce.Do(func() {
 		m.stopForwards()
 		if !m.mux {
 			close(m.done)
+			if m.dir != "" {
+				m.closeErr = os.RemoveAll(m.dir)
+			}
 			return
 		}
 		select {
@@ -288,9 +309,10 @@ func (m *Master) sessionArgs() []string {
 	}
 }
 
-// controlDir makes a private directory for the control socket. ssh binds the
-// socket under a temporary name 17 bytes longer than ControlPath before
-// renaming it, so the limit is checked against that.
+// controlDir makes a private directory for unix sockets: the master's
+// control socket, and the forwards'. ssh binds the control socket under a
+// temporary name 17 bytes longer than ControlPath before renaming it, so
+// the limit is checked against that.
 func controlDir() (string, error) {
 	limit := 108 // sizeof(sun_path) on Linux
 	if runtime.GOOS != "linux" {

@@ -63,7 +63,7 @@ cannot leak into the next one. The tests run in order against one session.
 | `wayland` | open, Wayland host image | `--attach auto` finds the `robin` user's GNOME Wayland session (`robin-wayland start`: mutter with a 1280x720 virtual monitor, PipeWire with pipewire-pulse, the GNOME portal and a fullscreen probe window, started over ssh before the CLI), the portal's consent dialog is answered once, and a second run restores without it; see below |
 | `firefox` | open | the direct scenario in Playwright's Firefox with the OpenH264 plugin: every check passes |
 | `webkit` | open | the direct scenario in Playwright's WebKit (Safari's WebRTC stack): H.264 negotiates and decodes, keyboard, clipboard, resize, sound, UDP and teardown work; see below for what it cannot show |
-| `nomux` | UDP dropped (except loopback) before the CLI starts | the `blocked` checks with `--ssh-mux=false`, the way the CLI runs on Windows: no ControlMaster runs on the client, the agent and the tunnel's `ssh -N -L 127.0.0.1:<port>:...` are ssh processes of their own, and ICE-TCP through that forward carries the session |
+| `nomux` | UDP dropped (except loopback) before the CLI starts | the `blocked` checks with `--ssh-mux=false`, the way the CLI runs on Windows: no ControlMaster runs on the client, the agent and the tunnel's `ssh -N -L <private dir>/fwd1.sock:...` are ssh processes of their own, and ICE-TCP through that forward carries the session |
 | `touch` | open | Chrome as a touch screen (`isMobile`, `hasTouch`), fingers sent through the DevTools protocol; see below |
 
 The X11 scenarios of `tests/gui.spec.ts` also check, in this order:

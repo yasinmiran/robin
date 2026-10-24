@@ -719,7 +719,7 @@ remote media tracks to `Handlers.Track`, unset until the microphone and
 camera arrive. Protocol version 2 marks the change, so a CLI and an agent
 from either side of it refuse each other.
 
-### Without ControlMaster: an ssh per command, forwards on loopback TCP
+### Without ControlMaster: an ssh per command and per forward
 
 Windows' OpenSSH has no ControlMaster, so `sshmux` has a mode without one
 (`Options.NoMux`, `--ssh-mux=false`), picked by default on Windows. Each
@@ -727,10 +727,21 @@ command and SFTP session is an ssh of its own that reads the user's config
 and arguments as the master would, with `ControlMaster=no` and
 `ControlPath=none` so a master in that config neither starts nor gets
 ridden, and `ClearAllForwardings=yes` so its forwards do not come up once
-per command. A forward is an `ssh -N -L 127.0.0.1:<port>:<remote>` that
-lives until `Close`: Windows' OpenSSH forwards no unix sockets, so the
-client end is a loopback port the CLI picks, and the tunnel splices into it
-as it does into the master's socket. That ssh cannot clear the config's
+per command. A forward is an `ssh -N -L <local>:<remote>` that lives
+until `Close`, and the tunnel splices into it as it does into the master's
+socket. `<local>` is a unix socket in a 0700 directory, as over a master,
+so no other user of the client machine can reach it or take its place.
+Windows' OpenSSH forwards no unix sockets, so there it is a loopback port
+the CLI picks and releases for ssh, and ssh binds it only after logging
+in, seconds or, with a password typed, minutes later. Another user can take
+the port meanwhile, and it shows in ssh's command line. So the CLI does not
+take a connection that the port accepts as proof: it waits until the
+system's table of listeners (`GetExtendedTcpTable`) names ssh's process as
+the one on that port, and fails the forward when another process holds it.
+Nothing here runs Windows; the tests take that path on Linux, where
+`/proc/net/tcp` and the process's open sockets answer the same question.
+Once a forward's ssh has exited, its `Dial` refuses rather than connect to
+whoever listens there next. That ssh cannot clear the config's
 forwards: `ssh -G -o ClearAllForwardings=yes -L ...` shows the option drops
 the command line's `-L` along with them, so a `LocalForward` for the host
 comes up with the tunnel and, under `ExitOnForwardFailure`, takes it down if
