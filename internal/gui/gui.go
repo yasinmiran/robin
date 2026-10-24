@@ -25,7 +25,6 @@ import (
 	"github.com/yasinmiran/robin/internal/relay"
 	"github.com/yasinmiran/robin/internal/sshmux"
 	"github.com/yasinmiran/robin/internal/tail"
-	"github.com/yasinmiran/robin/internal/web"
 )
 
 // Options are the user's choices for one session. Zero values pick defaults.
@@ -186,7 +185,7 @@ func Run(ctx context.Context, o Options) (err error) {
 	}
 	defer t.Close()
 
-	srv, err := web.Listen(web.Options{Addr: o.Listen})
+	srv, err := listenPage(o)
 	if err != nil {
 		return h.abandon(err, ag, ready, path)
 	}
@@ -195,11 +194,7 @@ func Run(ctx context.Context, o Options) (err error) {
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve(serveCtx) }()
 
-	if o.NoBrowser {
-		fmt.Fprintln(o.Stdout, srv.URL())
-	} else if err := openBrowser(srv.URL()); err != nil {
-		fmt.Fprintf(o.Stderr, "open this URL in your browser: %s\n", srv.URL())
-	}
+	showPage(o, srv)
 	fmt.Fprintf(o.Stderr, "robin: %s; press Ctrl+C to end the session\n", sessionNote(o.Dest, ready))
 	if note := privateNote(ready); note != "" {
 		fmt.Fprintln(o.Stderr, note)
