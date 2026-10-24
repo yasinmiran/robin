@@ -1,0 +1,176 @@
+package protocol
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"math/rand/v2"
+	"strings"
+	"testing"
+)
+
+// testKind is the one bulk kind these tests may send.
+const (
+	testKind  = "test"
+	testLimit = 1 << 20
+)
+
+func init() { RegisterBulkKind(testKind, testLimit) }
+
+func TestBulkWireShape(t *testing.T) {
+	for _, tc := range []struct {
+		frame Bulk
+		want  string
+	}{
+		{Bulk{T: BulkHeader, Kind: "file", ID: "7", Name: "a.txt", MIME: "text/plain", Size: 3},
+			`{"t":"header","kind":"file","id":"7","name":"a.txt","mime":"text/plain","size":3}`},
+		{Bulk{T: BulkHeader, Kind: "file"}, `{"t":"header","kind":"file"}`},
+		{Bulk{T: BulkEnd, SHA256: "ab"}, `{"t":"end","sha256":"ab"}`},
+		{Bulk{T: BulkDone}, `{"t":"done"}`},
+		{Bulk{T: BulkError, Error: "no"}, `{"t":"error","error":"no"}`},
+	} {
+		b, err := json.Marshal(tc.frame)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(b) != tc.want {
+			t.Errorf("%+v marshals as %s, want %s", tc.frame, b, tc.want)
+		}
+		back, err := ParseBulk(b)
+		if err != nil || back != tc.frame {
+			t.Errorf("ParseBulk(%s) = %+v, %v", b, back, err)
+		}
+	}
+}
+
+func TestParseBulkRefusesJunk(t *testing.T) {
+	for name, data := range map[string][]byte{
+		"not json":   []byte("header"),
+		"wrong type": []byte(`{"t":"header","size":"big"}`),
+		"oversized":  []byte(`{"t":"header","name":"` + strings.Repeat("x", BulkChunkSize) + `"}`),
+	} {
+		if _, err := ParseBulk(data); !errors.Is(err, ErrBulkFrame) {
+			t.Errorf("%s: %v, want ErrBulkFrame", name, err)
+		}
+	}
+}
+
+func TestBulkRegistry(t *testing.T) {
+	if limit, ok := BulkLimit(testKind); !ok || limit != testLimit {
+		t.Fatalf("BulkLimit(%q) = %d, %v", testKind, limit, ok)
+	}
+	if _, ok := BulkLimit("never registered"); ok {
+		t.Fatal("an unregistered kind has a limit")
+	}
+	for name, register := range map[string]func(){
+		"twice":          func() { RegisterBulkKind(testKind, 1) },
+		"empty kind":     func() { RegisterBulkKind("", 1) },
+		"negative limit": func() { RegisterBulkKind("negative", -1) },
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("%s: no panic", name)
+				}
+			}()
+			register()
+		}()
+	}
+	if _, ok := BulkLimit("negative"); ok {
+		t.Error("a refused registration was kept")
+	}
+}
+
+func TestCheckHeader(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		h    Bulk
+		want error
+	}{
+		{"empty payload", Bulk{T: BulkHeader, Kind: testKind}, nil},
+		{"at the limit", Bulk{T: BulkHeader, Kind: testKind, Size: testLimit}, nil},
+		{"past the limit", Bulk{T: BulkHeader, Kind: testKind, Size: testLimit + 1}, ErrBulkTooLarge},
+		{"negative size", Bulk{T: BulkHeader, Kind: testKind, Size: -1}, ErrBulkFrame},
+		{"unknown kind", Bulk{T: BulkHeader, Kind: "nobody", Size: 1}, ErrBulkKind},
+		{"not a header", Bulk{T: BulkEnd, Kind: testKind}, ErrBulkFrame},
+	} {
+		if err := tc.h.CheckHeader(); !errors.Is(err, tc.want) || (tc.want == nil) != (err == nil) {
+			t.Errorf("%s: %v, want %v", tc.name, err, tc.want)
+		}
+	}
+}
+
+func TestBulkSumMatchesSHA256(t *testing.T) {
+	rng := rand.New(rand.NewPCG(1, 2))
+	for _, size := range []int{0, 1, 63, 64, 65, BulkChunkSize, BulkChunkSize + 1, 3*BulkChunkSize + 17} {
+		payload := make([]byte, size)
+		for i := range payload {
+			payload[i] = byte(rng.Uint32())
+		}
+		sender, receiver := NewBulkSum(int64(size)), NewBulkSum(int64(size))
+		for rest := payload; len(rest) > 0; {
+			n := min(len(rest), 1+rng.IntN(BulkChunkSize))
+			if err := sender.Add(rest[:n]); err != nil {
+				t.Fatalf("size %d: sender: %v", size, err)
+			}
+			if err := receiver.Add(rest[:n]); err != nil {
+				t.Fatalf("size %d: receiver: %v", size, err)
+			}
+			rest = rest[n:]
+		}
+		end, err := sender.End()
+		if err != nil {
+			t.Fatalf("size %d: %v", size, err)
+		}
+		sum := sha256.Sum256(payload)
+		if end.T != BulkEnd || end.SHA256 != hex.EncodeToString(sum[:]) {
+			t.Fatalf("size %d: end %+v, want sha256 %x", size, end, sum)
+		}
+		if err := receiver.Check(end); err != nil {
+			t.Fatalf("size %d: receiver refuses a good end: %v", size, err)
+		}
+	}
+}
+
+func TestBulkSumRefuses(t *testing.T) {
+	good := bytes.Repeat([]byte{7}, 100)
+	sum := sha256.Sum256(good)
+	goodEnd := Bulk{T: BulkEnd, SHA256: hex.EncodeToString(sum[:])}
+
+	s := NewBulkSum(100)
+	if err := s.Add(make([]byte, BulkChunkSize+1)); !errors.Is(err, ErrBulkFrame) {
+		t.Errorf("oversized chunk: %v, want ErrBulkFrame", err)
+	}
+	if err := s.Add(make([]byte, 101)); !errors.Is(err, ErrBulkOverrun) {
+		t.Errorf("chunk past the size: %v, want ErrBulkOverrun", err)
+	}
+	if err := s.Add(good[:60]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.End(); !errors.Is(err, ErrBulkTruncated) {
+		t.Errorf("End after 60 of 100 bytes: %v, want ErrBulkTruncated", err)
+	}
+	if err := s.Check(goodEnd); !errors.Is(err, ErrBulkTruncated) {
+		t.Errorf("Check after 60 of 100 bytes: %v, want ErrBulkTruncated", err)
+	}
+	if err := s.Add(good[60:]); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Add([]byte{0}); !errors.Is(err, ErrBulkOverrun) {
+		t.Errorf("one byte past the size: %v, want ErrBulkOverrun", err)
+	}
+	if err := s.Check(Bulk{T: BulkEnd, SHA256: strings.Repeat("0", 64)}); !errors.Is(err, ErrBulkHash) {
+		t.Errorf("wrong hash: %v, want ErrBulkHash", err)
+	}
+	if err := s.Check(Bulk{T: BulkEnd, SHA256: strings.ToUpper(goodEnd.SHA256)}); !errors.Is(err, ErrBulkHash) {
+		t.Errorf("uppercase hash: %v, want ErrBulkHash", err)
+	}
+	if err := s.Check(Bulk{T: BulkDone}); !errors.Is(err, ErrBulkFrame) {
+		t.Errorf("verdict where the end belongs: %v, want ErrBulkFrame", err)
+	}
+	if err := s.Check(goodEnd); err != nil {
+		t.Errorf("good end: %v", err)
+	}
+}

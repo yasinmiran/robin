@@ -4,7 +4,8 @@
 // Signaling (Message) travels as JSON lines over the agent's stdin and stdout,
 // which ride the user's SSH connection, and between the CLI and the browser over
 // a localhost websocket. Input, clipboard and resize (Control) travel over the
-// WebRTC data channel labelled ControlChannel.
+// WebRTC data channel labelled ControlChannel, and payloads too big for a
+// control message over a data channel of their own labelled BulkChannel.
 package protocol
 
 // Version is bumped on any incompatible change to the messages in this package.

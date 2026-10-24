@@ -1,0 +1,187 @@
+package protocol
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"hash"
+	"sync"
+)
+
+// BulkChannel is the label of the data channels that carry bulk transfers:
+// one channel per transfer, opened by whichever side sends.
+//
+// On it the sender writes a BulkHeader frame, the payload as binary chunks
+// of at most BulkChunkSize bytes, and a BulkEnd frame with the payload's
+// SHA-256. The receiver answers with one verdict frame, BulkDone or
+// BulkError, and closes the channel. It may refuse at any point by sending
+// BulkError early. Either side closing the channel before the verdict
+// cancels the transfer.
+const BulkChannel = "bulk"
+
+// BulkChunkSize bounds every frame on a bulk channel, text or binary. It
+// keeps a chunk well under the 256 KiB message size browsers accept.
+const BulkChunkSize = 64 << 10
+
+// BulkType identifies a text frame on a bulk channel. Binary frames are
+// always chunks.
+type BulkType string
+
+// Bulk frame types, in the order a transfer sends them.
+const (
+	// BulkHeader opens the transfer, from the sender.
+	BulkHeader BulkType = "header"
+	// BulkEnd follows the last chunk, from the sender.
+	BulkEnd BulkType = "end"
+	// BulkDone is the receiver's verdict when every byte arrived intact and
+	// was kept.
+	BulkDone BulkType = "done"
+	// BulkError is the receiver's verdict when it refused or lost the
+	// transfer, with the reason.
+	BulkError BulkType = "error"
+)
+
+// Bulk is one text frame of a bulk transfer. Only the fields that belong to
+// T are set.
+type Bulk struct {
+	T BulkType `json:"t"`
+
+	// Header. Kind says what the payload is for and picks the receiver's
+	// handler; ID, Name and MIME mean whatever that kind says. Size is the
+	// payload's length in bytes.
+	Kind string `json:"kind,omitempty"`
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
+	MIME string `json:"mime,omitempty"`
+	Size int64  `json:"size,omitempty"`
+
+	// End: the payload's SHA-256 in lowercase hex.
+	SHA256 string `json:"sha256,omitempty"`
+
+	// Error: why the receiver refused or failed the transfer.
+	Error string `json:"error,omitempty"`
+}
+
+// Reasons a bulk transfer fails. Each is wrapped with the detail.
+var (
+	ErrBulkFrame     = errors.New("protocol: malformed bulk frame")
+	ErrBulkKind      = errors.New("protocol: unknown bulk kind")
+	ErrBulkTooLarge  = errors.New("protocol: bulk transfer too large")
+	ErrBulkOverrun   = errors.New("protocol: bulk data past the declared size")
+	ErrBulkTruncated = errors.New("protocol: bulk transfer ended early")
+	ErrBulkHash      = errors.New("protocol: bulk transfer SHA-256 mismatch")
+)
+
+var bulkKinds = struct {
+	sync.RWMutex
+	limit map[string]int64
+}{limit: map[string]int64{}}
+
+// RegisterBulkKind declares a kind of bulk transfer and the most bytes one
+// may carry. Features register their kinds from init in their own file; a
+// receiver refuses any kind nobody registered, and a sender cannot send
+// one. It panics on an empty kind, a negative limit or a kind registered
+// twice.
+func RegisterBulkKind(kind string, limit int64) {
+	if kind == "" || limit < 0 {
+		panic(fmt.Sprintf("protocol: bad bulk kind %q with limit %d", kind, limit))
+	}
+	bulkKinds.Lock()
+	defer bulkKinds.Unlock()
+	if _, dup := bulkKinds.limit[kind]; dup {
+		panic(fmt.Sprintf("protocol: bulk kind %q registered twice", kind))
+	}
+	bulkKinds.limit[kind] = limit
+}
+
+// BulkLimit reports the most bytes a transfer of kind may carry, and
+// whether anyone registered the kind.
+func BulkLimit(kind string) (int64, bool) {
+	bulkKinds.RLock()
+	defer bulkKinds.RUnlock()
+	limit, ok := bulkKinds.limit[kind]
+	return limit, ok
+}
+
+// ParseBulk decodes a text frame from a bulk channel.
+func ParseBulk(data []byte) (Bulk, error) {
+	if len(data) > BulkChunkSize {
+		return Bulk{}, fmt.Errorf("%w: %d bytes", ErrBulkFrame, len(data))
+	}
+	var b Bulk
+	if err := json.Unmarshal(data, &b); err != nil {
+		return Bulk{}, fmt.Errorf("%w: %v", ErrBulkFrame, err)
+	}
+	return b, nil
+}
+
+// CheckHeader reports whether b may open a transfer: a header of a
+// registered kind whose size is within the kind's limit.
+func (b Bulk) CheckHeader() error {
+	if b.T != BulkHeader {
+		return fmt.Errorf("%w: %q where a header belongs", ErrBulkFrame, b.T)
+	}
+	if b.Size < 0 {
+		return fmt.Errorf("%w: size %d", ErrBulkFrame, b.Size)
+	}
+	limit, ok := BulkLimit(b.Kind)
+	if !ok {
+		return fmt.Errorf("%w %q", ErrBulkKind, b.Kind)
+	}
+	if b.Size > limit {
+		return fmt.Errorf("%w: %d bytes of %s, the limit is %d", ErrBulkTooLarge, b.Size, b.Kind, limit)
+	}
+	return nil
+}
+
+// BulkSum counts and hashes the chunks of one transfer as they pass, on
+// either side of the channel.
+type BulkSum struct {
+	size, n int64
+	h       hash.Hash
+}
+
+// NewBulkSum starts the sum of a transfer that declared size bytes.
+func NewBulkSum(size int64) *BulkSum {
+	return &BulkSum{size: size, h: sha256.New()}
+}
+
+// Add takes the next chunk. It refuses a chunk larger than BulkChunkSize and
+// one that runs past the declared size.
+func (s *BulkSum) Add(chunk []byte) error {
+	if len(chunk) > BulkChunkSize {
+		return fmt.Errorf("%w: chunk of %d bytes", ErrBulkFrame, len(chunk))
+	}
+	if int64(len(chunk)) > s.size-s.n {
+		return fmt.Errorf("%w: %d bytes declared", ErrBulkOverrun, s.size)
+	}
+	s.n += int64(len(chunk))
+	s.h.Write(chunk)
+	return nil
+}
+
+// End returns the frame that closes the transfer, once every declared byte
+// has passed.
+func (s *BulkSum) End() (Bulk, error) {
+	if s.n < s.size {
+		return Bulk{}, fmt.Errorf("%w: %d of %d bytes", ErrBulkTruncated, s.n, s.size)
+	}
+	return Bulk{T: BulkEnd, SHA256: hex.EncodeToString(s.h.Sum(nil))}, nil
+}
+
+// Check compares the sender's end frame with the bytes that passed.
+func (s *BulkSum) Check(end Bulk) error {
+	if end.T != BulkEnd {
+		return fmt.Errorf("%w: %q where the end belongs", ErrBulkFrame, end.T)
+	}
+	want, err := s.End()
+	if err != nil {
+		return err
+	}
+	if end.SHA256 != want.SHA256 {
+		return ErrBulkHash
+	}
+	return nil
+}
