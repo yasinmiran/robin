@@ -145,6 +145,7 @@ func runSessions(cmd string, args []string) int {
 		fs.PrintDefaults()
 	}
 	sshPath := fs.String("ssh", "ssh", "ssh client to use")
+	sshMux := fs.Bool("ssh-mux", defaultSSHMux(runtime.GOOS), "carry the commands over one ssh ControlMaster connection; false gives each a connection of its own, the default on Windows, whose OpenSSH has no ControlMaster")
 	verbose := fs.Bool("v", false, "verbose logging")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -170,7 +171,7 @@ func runSessions(cmd string, args []string) int {
 		level = slog.LevelInfo
 	}
 	o := gui.Options{
-		Dest: dest, SSHPath: *sshPath, SSHArgs: rest, Verbose: *verbose,
+		Dest: dest, SSHPath: *sshPath, SSHArgs: rest, NoMux: !*sshMux, Verbose: *verbose,
 		Stdout: os.Stdout, Stderr: os.Stderr, Log: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})),
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)

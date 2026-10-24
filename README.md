@@ -133,6 +133,8 @@ host cannot provide sound the session runs without it, and the CLI says why.
 | `--ssh-mux` | `true`, `false` on Windows | carry everything over one ControlMaster connection; `--ssh-mux=false` gives the probe, the upload, the agent and the tunnel an ssh connection each, as on Windows |
 | `-v` | | log the CLI and the agent to stderr |
 
+`robin ls` and `robin end` take `--ssh`, `--ssh-mux` and `-v` as well.
+
 ## Files and the clipboard
 
 Files go to the host when you drop them anywhere on the page or pick them with
