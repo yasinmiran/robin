@@ -758,7 +758,9 @@ release of every key and button, which the queue never refuses, follows
 whatever was dropped: a 4096-byte CJK commit types for about 4 s on X11,
 long enough for pointer moves alone to fill it, and a key-up lost there
 would leave the key held. A browser that leaves has what it queued
-dropped and its typing stopped.
+dropped and its typing stopped, and its peer's handler applies nothing it
+sends after that: the data channel can deliver a last message while the
+peer closes, and text in it would start typing again.
 
 On X11 each character the keymap lacks borrows one of 16 spare keycodes.
 A commit of more than 16 such characters reuses keycodes faster than

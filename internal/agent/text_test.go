@@ -207,3 +207,29 @@ func TestLaneLetsGoWhenFull(t *testing.T) {
 		t.Errorf("after the text the desktop got %d messages, want the key, the last moves and its release:\n got %+v\nwant %+v", len(after), after, want)
 	}
 }
+
+// TestNothingAppliesFromABrowserThatLeft delivers messages as the peer of a
+// browser that has gone would, late, and checks none of them applies.
+func TestNothingAppliesFromABrowserThatLeft(t *testing.T) {
+	desk := &fakeTypist{}
+	s := testSession(desk)
+	if _, err := s.currentPeer(); err != nil {
+		t.Fatal(err)
+	}
+	left := s.controlFrom(s.peers)
+	key := protocol.Control{T: protocol.ControlKey, Key: "a", Code: "KeyA", Down: true}
+	left(key)
+	s.closePeer()
+	left(protocol.Control{T: protocol.ControlText, Text: "typed after it left"})
+	left(key)
+	// Nor once another browser has come.
+	if _, err := s.currentPeer(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.closePeer()
+	left(key)
+	waitIdle(t, &s.typing)
+	if got, want := desk.got(), []protocol.Control{key, {T: protocol.ControlRelease}}; !slices.Equal(got, want) {
+		t.Errorf("desktop got %+v, want the key from while the browser was there and the release as it left", got)
+	}
+}

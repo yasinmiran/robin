@@ -238,9 +238,14 @@ type session struct {
 	audio  bool
 	stream *stream
 	typing lane
+	// inputMu is held while a browser's control message applies. closePeer
+	// takes it too, so that once it has let a browser go nothing that
+	// browser sent is still applying, and nothing it sends later will.
+	inputMu sync.Mutex
 
-	mu   sync.Mutex
-	peer *peer.Peer
+	mu    sync.Mutex
+	peer  *peer.Peer
+	peers uint64 // peers made so far; the current one is the peers-th
 	// cursors holds the last maxCursors pointer images, so a page that
 	// connects later can be sent images the desktop reported before it
 	// arrived. cursorOrder lists their IDs oldest first.
@@ -315,6 +320,7 @@ func (s *session) currentPeer() (*peer.Peer, error) {
 	if s.peer != nil {
 		return s.peer, nil
 	}
+	s.peers++
 	maxBitrate := max(s.start.MaxKbps*1000, startBitrate)
 	p, err := peer.New(peer.Config{
 		STUN: s.start.STUN, TCPMux: s.tcpMux, IncludeLoopback: true, Certificate: s.cert, Audio: s.audio,
@@ -326,7 +332,7 @@ func (s *session) currentPeer() (*peer.Peer, error) {
 				s.log.Warn("send candidate", "err", err)
 			}
 		},
-		Control: s.control,
+		Control: s.controlFrom(s.peers),
 		Bulk:    s.bulk,
 		ControlOpen: func() {
 			s.sendCurrentCursor()
@@ -349,11 +355,30 @@ func (s *session) currentPeer() (*peer.Peer, error) {
 	return p, nil
 }
 
+// controlFrom returns the handler of the control messages of the gen-th
+// peer. Once closePeer has let that browser go, nothing more it sends
+// applies: its data channel can still deliver a message or two while the
+// peer closes, and text among them would start the lane typing again.
+func (s *session) controlFrom(gen uint64) func(protocol.Control) {
+	return func(m protocol.Control) {
+		s.inputMu.Lock()
+		defer s.inputMu.Unlock()
+		s.mu.Lock()
+		live := s.peer != nil && s.peers == gen
+		s.mu.Unlock()
+		if live {
+			s.control(m)
+		}
+	}
+}
+
 func (s *session) closePeer() {
+	s.inputMu.Lock()
 	s.mu.Lock()
 	p := s.peer
 	s.peer = nil
 	s.mu.Unlock()
+	s.inputMu.Unlock()
 	if p == nil {
 		return
 	}
