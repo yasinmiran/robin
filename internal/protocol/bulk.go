@@ -17,7 +17,8 @@ import (
 // SHA-256. The receiver answers with one verdict frame, BulkDone or
 // BulkError, and closes the channel. It may refuse at any point by sending
 // BulkError early. Either side closing the channel before the verdict
-// cancels the transfer.
+// cancels the transfer. Every bulk channel is ordered and reliable, the
+// default for a data channel: the frames mean nothing out of order.
 const BulkChannel = "bulk"
 
 // BulkChunkSize bounds every frame on a bulk channel, text or binary. It

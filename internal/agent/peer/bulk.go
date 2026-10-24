@@ -67,8 +67,7 @@ func (p *Peer) SendBulk(ctx context.Context, h protocol.Bulk, r io.Reader) error
 	if err := h.CheckHeader(); err != nil {
 		return err
 	}
-	ordered := true
-	dc, err := p.pc.CreateDataChannel(protocol.BulkChannel, &webrtc.DataChannelInit{Ordered: &ordered})
+	dc, err := p.pc.CreateDataChannel(protocol.BulkChannel, nil)
 	if err != nil {
 		return fmt.Errorf("peer: open bulk channel: %w", err)
 	}

@@ -181,8 +181,7 @@ func newBulkPair(t *testing.T, cfg Config, h Handlers) *bulkPair {
 // upload sends payload from the browser to the agent with the real sender.
 func (bp *bulkPair) upload(ctx context.Context, t *testing.T, h protocol.Bulk, r io.Reader) error {
 	t.Helper()
-	ordered := true
-	dc, err := bp.browser.pc.CreateDataChannel(protocol.BulkChannel, &webrtc.DataChannelInit{Ordered: &ordered})
+	dc, err := bp.browser.pc.CreateDataChannel(protocol.BulkChannel, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,8 +282,7 @@ func TestBulkBothWays(t *testing.T) {
 // reports the agent's frames and the channel's close.
 func (bp *bulkPair) rawBulk(t *testing.T) (dc *webrtc.DataChannel, frames <-chan protocol.Bulk, closed <-chan struct{}) {
 	t.Helper()
-	ordered := true
-	dc, err := bp.browser.pc.CreateDataChannel(protocol.BulkChannel, &webrtc.DataChannelInit{Ordered: &ordered})
+	dc, err := bp.browser.pc.CreateDataChannel(protocol.BulkChannel, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -552,8 +550,7 @@ func TestBulkSendFails(t *testing.T) {
 // never report.
 func TestBulkCancelWhileBlocked(t *testing.T) {
 	bp := newBulkPair(t, Config{}, Handlers{})
-	ordered := true
-	dc, err := bp.agent.pc.CreateDataChannel(protocol.BulkChannel, &webrtc.DataChannelInit{Ordered: &ordered})
+	dc, err := bp.agent.pc.CreateDataChannel(protocol.BulkChannel, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -596,7 +593,6 @@ func TestBulkCancelWhileBlocked(t *testing.T) {
 func TestBulkVerdicts(t *testing.T) {
 	bp := newBulkPair(t, Config{}, Handlers{})
 	bp.raw.Store(true)
-	ordered := true
 	for _, tc := range []struct {
 		name  string
 		reply func(dc *webrtc.DataChannel)
@@ -616,7 +612,7 @@ func TestBulkVerdicts(t *testing.T) {
 			func(err error) bool { return errors.Is(err, ErrBulkCancelled) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dc, err := bp.agent.pc.CreateDataChannel(protocol.BulkChannel, &webrtc.DataChannelInit{Ordered: &ordered})
+			dc, err := bp.agent.pc.CreateDataChannel(protocol.BulkChannel, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
