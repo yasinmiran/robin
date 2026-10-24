@@ -63,13 +63,19 @@ type Browser struct {
 	pc     *webrtc.PeerConnection
 	clip   *Clip
 	dec    *Decoder
-	cfg    ReceiverConfig
 	scores chan scoreJob
 	frames chan decodeJob
-	done   chan struct{}
-	wg     sync.WaitGroup
+	// done stops poll and the candidate forwarders.
+	done chan struct{}
+	// readers counts the track readers, which feed frames; wg counts
+	// every other goroutine.
+	readers, wg sync.WaitGroup
+
+	closeOnce sync.Once
+	closeErr  error
 
 	mu     sync.Mutex
+	closed bool
 	rx     *Receiver
 	result Result
 	ssrc   uint32
@@ -129,7 +135,7 @@ func NewBrowser(net *vnet.Net, clip *Clip, cfg ReceiverConfig) (*Browser, error)
 		return nil, err
 	}
 	b := &Browser{
-		pc: pc, clip: clip, dec: dec, cfg: cfg,
+		pc: pc, clip: clip, dec: dec,
 		scores: make(chan scoreJob, 64), frames: make(chan decodeJob, 256), done: make(chan struct{}),
 		rx: NewReceiver(cfg, time.Now()),
 	}
@@ -140,10 +146,13 @@ func NewBrowser(net *vnet.Net, clip *Clip, cfg ReceiverConfig) (*Browser, error)
 	}
 	pc.OnTrack(func(tr *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 		b.mu.Lock()
+		defer b.mu.Unlock()
+		if b.closed {
+			return
+		}
 		b.ssrc = uint32(tr.SSRC())
 		b.rx = NewReceiver(cfg, time.Now())
-		b.mu.Unlock()
-		b.wg.Add(1)
+		b.readers.Add(1)
 		go b.read(tr)
 	})
 	workers := max(runtime.NumCPU()/2, 1)
@@ -161,8 +170,12 @@ func NewBrowser(net *vnet.Net, clip *Clip, cfg ReceiverConfig) (*Browser, error)
 func (b *Browser) Connect(a Agent, agentCandidates <-chan protocol.Candidate) error {
 	cands := make(chan webrtc.ICECandidateInit, 64)
 	b.pc.OnICECandidate(func(c *webrtc.ICECandidate) {
-		if c != nil {
-			cands <- c.ToJSON()
+		if c == nil {
+			return
+		}
+		select {
+		case cands <- c.ToJSON():
+		case <-b.done:
 		}
 	})
 	offer, err := b.pc.CreateOffer(nil)
@@ -179,7 +192,9 @@ func (b *Browser) Connect(a Agent, agentCandidates <-chan protocol.Candidate) er
 	if err := b.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: answer}); err != nil {
 		return err
 	}
+	b.wg.Add(2)
 	go func() {
+		defer b.wg.Done()
 		for {
 			select {
 			case <-b.done:
@@ -190,6 +205,7 @@ func (b *Browser) Connect(a Agent, agentCandidates <-chan protocol.Candidate) er
 		}
 	}()
 	go func() {
+		defer b.wg.Done()
 		for {
 			select {
 			case <-b.done:
@@ -205,7 +221,7 @@ func (b *Browser) Connect(a Agent, agentCandidates <-chan protocol.Candidate) er
 }
 
 func (b *Browser) read(tr *webrtc.TrackRemote) {
-	defer b.wg.Done()
+	defer b.readers.Done()
 	for {
 		p, _, err := tr.ReadRTP()
 		if err != nil {
@@ -217,11 +233,7 @@ func (b *Browser) read(tr *webrtc.TrackRemote) {
 		frames := b.rx.Push(Packet{Seq: p.SequenceNumber, Timestamp: p.Timestamp, Marker: p.Marker, Payload: p.Payload}, now)
 		b.mu.Unlock()
 		for _, f := range frames {
-			select {
-			case b.frames <- decodeJob{f, now}:
-			case <-b.done:
-				return
-			}
+			b.frames <- decodeJob{f, now}
 		}
 	}
 }
@@ -265,13 +277,7 @@ func (b *Browser) poll() {
 func (b *Browser) decode() {
 	defer b.wg.Done()
 	defer close(b.scores)
-	for {
-		var job decodeJob
-		select {
-		case <-b.done:
-			return
-		case job = <-b.frames:
-		}
+	for job := range b.frames {
 		var au []byte
 		var depay codecs.H264Packet
 		bytes := 0
@@ -307,11 +313,7 @@ func (b *Browser) decode() {
 		n := len(b.result.Shown) - 1
 		b.mu.Unlock()
 		if ok && b.clip != nil && index >= 0 && index < b.clip.Len() {
-			select {
-			case b.scores <- scoreJob{shown: n, clip: index, img: img}:
-			case <-b.done:
-				return
-			}
+			b.scores <- scoreJob{shown: n, clip: index, img: img}
 		}
 	}
 }
@@ -334,29 +336,28 @@ func (b *Browser) score() {
 	}
 }
 
-// Close disconnects, waits for every picture to be scored and returns what
-// the browser saw.
+// Close disconnects, decodes and scores every frame already received and
+// returns what the browser saw. Later calls return the same.
 func (b *Browser) Close() (Result, error) {
-	err := b.pc.Close()
-	b.drain()
-	close(b.done)
-	b.wg.Wait()
-	b.dec.Close()
+	b.closeOnce.Do(func() {
+		b.mu.Lock()
+		b.closed = true
+		b.mu.Unlock()
+		b.closeErr = b.pc.Close()
+		// The readers end with the connection; the decoder then runs
+		// out of frames and the scorers out of pictures.
+		b.readers.Wait()
+		close(b.frames)
+		close(b.done)
+		b.wg.Wait()
+		b.dec.Close()
+		b.mu.Lock()
+		b.result.Stats = b.rx.Stats
+		b.mu.Unlock()
+	})
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.result.Stats = b.rx.Stats
-	return b.result, err
-}
-
-// drain waits until the decoder and the scorers have caught up, so Close
-// keeps every picture already received.
-func (b *Browser) drain() {
-	deadline := time.Now().Add(30 * time.Second)
-	for (len(b.frames) > 0 || len(b.scores) > 0) && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	// The job each goroutine holds finishes within one picture's time.
-	time.Sleep(200 * time.Millisecond)
+	return b.result, b.closeErr
 }
 
 // errNoVideo is returned when nothing was shown before the deadline.
