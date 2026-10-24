@@ -183,10 +183,8 @@ func start(p *proxy, exe string) (*protocol.Ready, string) {
 	}})
 	ready := p.recv(protocol.TypeReady).Ready
 	dir := filepath.Join(filepath.Dir(exe), "run", ready.ID)
-	st, err := agent.ReadSession(dir)
-	if err != nil || st.PID <= 0 {
-		p.t.Fatalf("session.json after ready: %+v, %v", st, err)
-	}
+	// session.json follows Ready by a moment.
+	st := waitSession(p.t, dir, func(s protocol.Session) bool { return s.PID > 0 })
 	p.t.Cleanup(func() {
 		syscall.Kill(st.PID, syscall.SIGKILL)
 		os.RemoveAll(dir)
