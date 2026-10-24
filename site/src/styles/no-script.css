@@ -1,6 +1,6 @@
 /* Without JavaScript nothing sets .dark, so the page follows the system here
    instead, and controls that need a script are not shown. The declarations
-   repeat the .dark block of tokens.css; tests/styles.test.ts keeps them equal. */
+   repeat the .dark block of tokens.css; no-script.test.ts keeps them equal. */
 
 @media (prefers-color-scheme: dark) {
   :root:not(.js) {
