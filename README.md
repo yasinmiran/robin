@@ -130,17 +130,17 @@ host cannot provide sound the session runs without it, and the CLI says why.
 
 ## Files and the clipboard
 
-Files go to the host when you drop them anywhere on the page or pick them
-with Upload files in the status tab. Files you paste are listed there too,
-and each goes only when you click its Upload, since the clipboard can still
-hold files you copied long ago. They land in your download
-folder there: `$XDG_DOWNLOAD_DIR`, else the one `~/.config/user-dirs.dirs`
-names, else `~/Downloads`, which is created if it is missing. A download
-folder that is your home directory itself counts as unset, which is what
-xdg-user-dirs-update leaves once `~/Downloads` is gone, so uploads then go to
-`~/Downloads` too. A file whose name starts with a dot is refused, so no
-upload is hidden. Nothing on the host is ever replaced; a second `report.pdf`
-becomes `report (1).pdf`, and the status tab shows the name it got.
+Files go to the host when you drop them anywhere on the page or pick them with
+Upload files in the status tab. Files you paste are listed there too, and each
+goes only when you click its Upload, since the clipboard can still hold files
+you copied long ago. They land in your download folder there:
+`$XDG_DOWNLOAD_DIR`, else the one `~/.config/user-dirs.dirs` names, else
+`~/Downloads`, which is created if it is missing. A download folder that is
+your home directory itself counts as unset, which is what xdg-user-dirs-update
+leaves once `~/Downloads` is gone, so uploads then go to `~/Downloads` too. A
+file whose name starts with a dot is refused, so no upload is hidden. Nothing
+on the host is ever replaced; a second `report.pdf` becomes `report (1).pdf`,
+and the status tab shows the name it got.
 
 Getting a file from the host starts on the host:
 
@@ -390,20 +390,20 @@ and leaves the clipboard and the files the host offers.
   removed, unless the disk under it stopped answering (see Known limits).
 - **Reading files**, only those a program running as you on the host offered
   with `robin-send`, and only after a click on Save in the page, which takes
-  one transfer for each click. `robin-send`
-  opens each file itself and hands the session its descriptor over a socket
-  in the 0700 run directory, which also checks that the caller's uid is
-  yours, so the page never names a path on the host and the session reads
-  nothing its sender could not. Offers end when `robin-send` exits.
+  one transfer for each click. `robin-send` opens each file itself and hands
+  the session its descriptor over a socket in the 0700 run directory, which
+  also checks that the caller's uid is yours, so the page never names a path
+  on the host and the session reads nothing its sender could not. Offers end
+  when `robin-send` exits.
 - **The clipboard**, as text, HTML or a PNG image, up to 16 MiB, held in
   memory, two transfers at a time.
 
 File names from the host appear in the page as text, never as markup. Words
-from the page that reach a terminal on the host, a refusal's reason printed
-by `robin-send`, have their control characters replaced first, and a file
-name it prints that holds any, or a mark that reorders text, is printed
-quoted with escapes, as `ls` does. Bulk transfers
-of any kind the agent has not registered are refused.
+from the page that reach a terminal on the host, a refusal's reason printed by
+`robin-send`, have their control characters replaced first, and a file name it
+prints that holds any, or a mark that reorders text, is printed quoted with
+escapes, as `ls` does. Bulk transfers of any kind the agent has not registered
+are refused.
 
 A kept session is reached through a unix socket in its 0700 run directory,
 and the daemon accepts a connection only from a process of its own uid
