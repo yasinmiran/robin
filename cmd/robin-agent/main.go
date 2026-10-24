@@ -126,27 +126,18 @@ func newMic(ctx context.Context, o agent.MicOptions) (agent.Mic, error) {
 	}
 	m, err := audio.StartMic(ctx, mo)
 	if err != nil {
-		return nil, err
+		return nil, err // not m: a nil *audio.Mic would make a non-nil interface
 	}
-	return mic{m}, nil
+	return m, nil
 }
-
-// mic and camera adapt the device packages to the session's interfaces.
-type mic struct{ *audio.Mic }
-
-func (m mic) Play(r agent.RTPReader) error { return m.Mic.Play(r) }
 
 func newCamera(_ context.Context, o agent.CameraOptions) (agent.Camera, error) {
 	c, err := camera.Start(camera.Options{Device: o.Device, Log: o.Log})
 	if err != nil {
-		return nil, err
+		return nil, err // not c: a nil *camera.Camera would make a non-nil interface
 	}
-	return cam{c}, nil
+	return c, nil
 }
-
-type cam struct{ *camera.Camera }
-
-func (c cam) Play(r agent.RTPReader, keyframe func()) error { return c.Camera.Play(r, keyframe) }
 
 func hardware(o *hwenc.Opener) agent.NewEncoderFunc {
 	return func(width, height, fps, bitrate int) (agent.Encoder, error) {

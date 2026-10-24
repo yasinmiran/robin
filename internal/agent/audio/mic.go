@@ -15,10 +15,9 @@ import (
 	"time"
 
 	"github.com/jfreymuth/pulse/proto"
-	"github.com/pion/interceptor"
-	"github.com/pion/rtp"
 
 	"github.com/yasinmiran/robin/internal/agent/opus"
+	"github.com/yasinmiran/robin/internal/agent/track"
 )
 
 // MicName is what the desktop's programs see the browser's microphone as.
@@ -28,12 +27,6 @@ const MicName = "Robin microphone"
 // pieces. A server that falls further behind loses the newest piece rather
 // than holding up the track.
 const micQueue = 10
-
-// RTPReader yields the packets of one media track. *webrtc.TrackRemote is
-// one.
-type RTPReader interface {
-	ReadRTP() (*rtp.Packet, interceptor.Attributes, error)
-}
 
 // MicOptions say where the browser's microphone goes.
 type MicOptions struct {
@@ -172,7 +165,7 @@ func (m *Mic) write(ticks <-chan time.Time) {
 
 // Play feeds the microphone from one track of the browser's until the
 // track ends. Tracks take turns: a second Play waits for the first.
-func (m *Mic) Play(r RTPReader) error {
+func (m *Mic) Play(r track.Reader) error {
 	m.playing.Lock()
 	defer m.playing.Unlock()
 	dec, err := opus.NewDecoder(1)

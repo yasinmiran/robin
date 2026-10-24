@@ -7,24 +7,17 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/pion/interceptor"
-	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 
+	"github.com/yasinmiran/robin/internal/agent/track"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
-
-// RTPReader yields the packets of one track the browser sends.
-// *webrtc.TrackRemote is one.
-type RTPReader interface {
-	ReadRTP() (*rtp.Packet, interceptor.Attributes, error)
-}
 
 // Mic is the browser's microphone as a source the desktop's programs can
 // record. It is there, silent, until Close.
 type Mic interface {
 	// Play feeds it one track from the browser until the track ends.
-	Play(RTPReader) error
+	Play(track.Reader) error
 	// Where says what carries it on the host, for Ready.
 	Where() string
 	Close() error
@@ -47,7 +40,7 @@ type NewMicFunc func(ctx context.Context, o MicOptions) (Mic, error)
 type Camera interface {
 	// Play shows one track from the browser until the track ends, calling
 	// keyframe when it needs the browser to send one.
-	Play(track RTPReader, keyframe func()) error
+	Play(r track.Reader, keyframe func()) error
 	// Where says what carries it on the host, for Ready.
 	Where() string
 	Close() error

@@ -16,6 +16,7 @@ import (
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
 
+	"github.com/yasinmiran/robin/internal/agent/track"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
@@ -35,7 +36,7 @@ type fakeMic struct {
 
 func newFakeMic(where string) *fakeMic { return &fakeMic{where: where, packets: make(chan int, 64)} }
 
-func (m *fakeMic) Play(r RTPReader) error {
+func (m *fakeMic) Play(r track.Reader) error {
 	m.mu.Lock()
 	m.playing++
 	m.mu.Unlock()
@@ -83,7 +84,7 @@ type fakeCamera struct {
 	askKeyframe bool
 }
 
-func (c *fakeCamera) Play(r RTPReader, keyframe func()) error {
+func (c *fakeCamera) Play(r track.Reader, keyframe func()) error {
 	if c.askKeyframe {
 		keyframe()
 	}

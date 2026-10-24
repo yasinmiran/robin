@@ -18,13 +18,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pion/interceptor"
-	"github.com/pion/rtp"
 	"github.com/pion/rtp/codecs"
 	"github.com/pion/webrtc/v4/pkg/media/samplebuilder"
 
 	"github.com/yasinmiran/robin/internal/agent/gstsink"
 	"github.com/yasinmiran/robin/internal/agent/h264"
+	"github.com/yasinmiran/robin/internal/agent/track"
 )
 
 // The picture the host's programs see. The page asks the browser for this
@@ -55,12 +54,6 @@ const (
 	maxLate  = 128
 	maxDelay = 100 * time.Millisecond
 )
-
-// RTPReader yields the packets of one media track. *webrtc.TrackRemote is
-// one.
-type RTPReader interface {
-	ReadRTP() (*rtp.Packet, interceptor.Attributes, error)
-}
 
 // Options say where the camera goes.
 type Options struct {
@@ -197,7 +190,7 @@ func (c *Camera) write() {
 // Play shows one track of the browser's camera until the track ends.
 // keyframe asks the browser for one; Play calls it when the pictures stop
 // decoding. Tracks take turns: a second Play waits for the first.
-func (c *Camera) Play(r RTPReader, keyframe func()) error {
+func (c *Camera) Play(r track.Reader, keyframe func()) error {
 	c.playing.Lock()
 	defer c.playing.Unlock()
 	dec, err := h264.NewDecoder()
