@@ -1,12 +1,15 @@
 // Turns fingers on the picture into what a mouse would do, and a local zoom.
 // One finger taps to click, holds still to right click, and drags to drag.
 // Two fingers drag to scroll, or pinch to zoom the picture and pan it;
-// which of the two is settled by what they do first.
+// which of the two is settled by what they do first, once both have moved:
+// a browser reports fingers one at a time, and one finger of a pinch on its
+// own moves the centre as much as a scroll does.
 
 export const TAP_SLOP_PX = 10; // how far a finger may wander and still tap
 export const LONG_PRESS_MS = 500;
 export const PINCH_SLOP_PX = 24; // how far the spread moves before two fingers zoom
 export const SCROLL_SLOP_PX = 8; // how far two fingers move together before they scroll
+export const ALONE_PX = 40; // how far one finger moves, the other still, to settle it anyway
 
 // Gestures reads touch pointers and calls emit with what they mean, in page
 // coordinates:
@@ -18,7 +21,9 @@ export const SCROLL_SLOP_PX = 8; // how far two fingers move together before the
 export class Gestures {
   #emit;
   #timers;
-  #fingers = new Map(); // pointerId -> { x, y, x0, y0 }
+  // pointerId -> { x, y, x0, y0 }, and for two fingers where each was when
+  // the second came down, sx, sy, and whether it has moved since.
+  #fingers = new Map();
   // idle, press (one finger, undecided), drag, held (long press fired),
   // two (undecided), scroll, pinch, or spent (ignored until all lift).
   #mode = 'idle';
@@ -45,6 +50,7 @@ export class Gestures {
     } else if (this.#mode === 'press' && this.#fingers.size === 2) {
       this.#timers.clear(this.#timer);
       this.#mode = 'two';
+      for (const f of this.#fingers.values()) Object.assign(f, { sx: f.x, sy: f.y, moved: false });
       this.#last = this.#pair();
       this.#start = this.#last;
     }
@@ -69,6 +75,9 @@ export class Gestures {
         if (id === this.#first) this.#emit({ t: 'move', x, y });
         return;
       case 'two': {
+        f.moved = true;
+        const [a, b] = this.#fingers.values();
+        if (!(a.moved && b.moved) && Math.hypot(x - f.sx, y - f.sy) <= ALONE_PX) return;
         const now = this.#pair();
         if (Math.abs(now.span - this.#start.span) > PINCH_SLOP_PX) this.#mode = 'pinch';
         else if (Math.hypot(now.cx - this.#start.cx, now.cy - this.#start.cy) > SCROLL_SLOP_PX) this.#mode = 'scroll';
