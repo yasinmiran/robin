@@ -143,6 +143,7 @@ func (b *bridge) macroView(list []protocol.Macro, err error) *protocol.Macros {
 	}
 	if err != nil {
 		v.Error = err.Error()
+		v.ReadOnly = errors.Is(err, macros.ErrUnreadable)
 	}
 	return v
 }

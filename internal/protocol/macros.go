@@ -17,8 +17,10 @@ type Macros struct {
 	Host string  `json:"host"`
 	List []Macro `json:"list"`
 	// Error says why the macros could not be read or the last change made.
-	// While the file cannot be read, the CLI changes nothing.
 	Error string `json:"error,omitempty"`
+	// ReadOnly says the file does not read, so the CLI refuses every change
+	// until it does.
+	ReadOnly bool `json:"readOnly,omitempty"`
 }
 
 // MacroChange is one edit from the page: Put adds a macro or replaces the

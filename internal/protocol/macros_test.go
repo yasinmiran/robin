@@ -27,8 +27,8 @@ func TestMacrosWireShape(t *testing.T) {
 		t.Errorf("delete: %s", got)
 	}
 
-	b, _ = json.Marshal(Config{ICEServers: []ICEServer{}, Macros: &Macros{Host: "box", List: []Macro{}, Error: "unreadable"}})
-	if got := string(b); got != `{"iceServers":[],"macros":{"host":"box","list":[],"error":"unreadable"}}` {
+	b, _ = json.Marshal(Config{ICEServers: []ICEServer{}, Macros: &Macros{Host: "box", List: []Macro{}, Error: "unreadable", ReadOnly: true}})
+	if got := string(b); got != `{"iceServers":[],"macros":{"host":"box","list":[],"error":"unreadable","readOnly":true}}` {
 		t.Errorf("config: %s", got)
 	}
 }

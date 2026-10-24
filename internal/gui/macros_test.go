@@ -52,7 +52,7 @@ func TestThePageKeepsItsMacrosThroughTheCLI(t *testing.T) {
 	bad := lock
 	bad.ID, bad.Name = "bad", ""
 	pg.send(protocol.Message{Type: protocol.TypeMacros, MacroChange: &protocol.MacroChange{Put: &bad}})
-	if m = pg.recv(); m.Macros == nil || !strings.Contains(m.Macros.Error, "name") || len(m.Macros.List) != 1 {
+	if m = pg.recv(); m.Macros == nil || !strings.Contains(m.Macros.Error, "name") || m.Macros.ReadOnly || len(m.Macros.List) != 1 {
 		t.Fatalf("a refused put: %+v", m.Macros)
 	}
 	pg.send(protocol.Message{Type: protocol.TypeMacros})
@@ -101,7 +101,7 @@ func TestAMacrosFileThatDoesNotReadIsReportedOnce(t *testing.T) {
 	}
 	srv, _ := macroBridge(t, s)
 	pg := openPage(t, srv)
-	if m := pg.recv(); m.Config == nil || m.Config.Macros == nil || !strings.HasPrefix(m.Config.Macros.Error, "Robin can't read ") || m.Config.Macros.List == nil {
+	if m := pg.recv(); m.Config == nil || m.Config.Macros == nil || !strings.HasPrefix(m.Config.Macros.Error, "Robin can't read ") || !m.Config.Macros.ReadOnly || m.Config.Macros.List == nil {
 		t.Errorf("the page is not told: %+v", m.Config)
 	}
 
