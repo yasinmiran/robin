@@ -58,3 +58,39 @@ func TestEstimatorPacesBulkUnderTheTarget(t *testing.T) {
 		t.Errorf("chunk at 100 Mbit/s %d bytes, want the 64 KiB ceiling", got)
 	}
 }
+
+// TestEstimatorSharesBulkInTheOrderAsked: two transfers at once, each
+// asking for its next chunk once the last is due, share one allowance,
+// half each, where an allowance each would send twice the bulk rate.
+func TestEstimatorSharesBulkInTheOrderAsked(t *testing.T) {
+	now := time.Unix(0, 0)
+	start := now
+	e, _ := testEstimator(&now, 8_000_000)
+	const rate = 1_000_000 // bytes per second, all of the target on a still screen
+	chunk := e.bulkChunk()
+	var due [2]time.Time
+	var sent [2]int
+	for {
+		i := 0
+		if due[1].Before(due[0]) {
+			i = 1
+		}
+		if due[i].Sub(start) >= time.Second {
+			break
+		}
+		if due[i].After(now) {
+			now = due[i]
+		}
+		due[i] = now.Add(e.reserveBulk(chunk))
+		sent[i] += chunk
+	}
+	total := sent[0] + sent[1]
+	if want := rate + chunk; total < want*95/100 || total > want*105/100 {
+		t.Errorf("%d bytes went out in a second, want about %d", total, want)
+	}
+	for i, n := range sent {
+		if n < total*45/100 || n > total*55/100 {
+			t.Errorf("transfer %d sent %d of %d bytes, want about half", i, n, total)
+		}
+	}
+}
