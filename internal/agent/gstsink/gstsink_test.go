@@ -293,13 +293,15 @@ func TestCloseDuringARestart(t *testing.T) {
 }
 
 func TestQuote(t *testing.T) {
-	for in, want := range map[string]string{
-		`props,node.description="Robin camera"`: `"props,node.description=\"Robin camera\""`,
-		`a\b`:                                   `"a\\b"`,
+	for _, tc := range []struct{ name, in, want string }{
+		{"quotes", `props,node.description="Robin camera"`, `"props,node.description=\"Robin camera\""`},
+		{"a backslash", `a\b`, `"a\\b"`},
 	} {
-		if got := Quote(in); got != want {
-			t.Errorf("Quote(%q) = %q, want %q", in, got, want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Quote(tc.in); got != tc.want {
+				t.Errorf("Quote(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -318,24 +320,28 @@ func TestWhy(t *testing.T) {
 		{"a parse failure", `WARNING: erroneous pipeline: no element "nosuchsink"`, `WARNING: erroneous pipeline: no element "nosuchsink"`},
 		{"no element's error", "one\ntwo\nthree\nfour", "two | three | four"},
 	} {
-		if got := why(tc.msg); got != tc.want {
-			t.Errorf("why of %s = %q, want %q", tc.name, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if got := why(tc.msg); got != tc.want {
+				t.Errorf("why = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
 func TestLastLines(t *testing.T) {
 	for _, tc := range []struct {
-		in   string
-		n    int
-		want string
+		name, in string
+		n        int
+		want     string
 	}{
-		{"a\nb\nc\nd", 2, "c | d"},
-		{"a\nb", 3, "a | b"},
-		{"a", 1, "a"},
+		{"more than n", "a\nb\nc\nd", 2, "c | d"},
+		{"fewer than n", "a\nb", 3, "a | b"},
+		{"one line", "a", 1, "a"},
 	} {
-		if got := lastLines(tc.in, tc.n); got != tc.want {
-			t.Errorf("lastLines(%q, %d) = %q, want %q", tc.in, tc.n, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if got := lastLines(tc.in, tc.n); got != tc.want {
+				t.Errorf("lastLines(%q, %d) = %q, want %q", tc.in, tc.n, got, tc.want)
+			}
+		})
 	}
 }

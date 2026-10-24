@@ -22,18 +22,21 @@ func TestParseLoopbackDevices(t *testing.T) {
 
 func TestCameraDevice(t *testing.T) {
 	for _, tc := range []struct {
+		name    string
 		devices []VideoDevice
 		want    string
 	}{
-		{nil, ""},
-		{[]VideoDevice{{"/dev/video4", "OBS Virtual Camera"}}, "/dev/video4"},
-		{[]VideoDevice{{"/dev/video4", "OBS Virtual Camera"}, {"/dev/video9", "ROBIN"}}, "/dev/video9"},
-		{[]VideoDevice{{"/dev/video2", ""}, {"/dev/video3", "Dummy video device (0x0000)"}}, "/dev/video2"},
+		{"none", nil, ""},
+		{"the only one", []VideoDevice{{"/dev/video4", "OBS Virtual Camera"}}, "/dev/video4"},
+		{"one labelled Robin", []VideoDevice{{"/dev/video4", "OBS Virtual Camera"}, {"/dev/video9", "ROBIN"}}, "/dev/video9"},
+		{"the first of several", []VideoDevice{{"/dev/video2", ""}, {"/dev/video3", "Dummy video device (0x0000)"}}, "/dev/video2"},
 	} {
-		r := &Report{V4L2Loopback: tc.devices}
-		if got := r.CameraDevice(); got != tc.want {
-			t.Errorf("CameraDevice of %q = %q, want %q", tc.devices, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			r := &Report{V4L2Loopback: tc.devices}
+			if got := r.CameraDevice(); got != tc.want {
+				t.Errorf("CameraDevice of %q = %q, want %q", tc.devices, got, tc.want)
+			}
+		})
 	}
 }
 
