@@ -49,7 +49,8 @@ export class Files {
     this.#build(overlay.addSection('files'));
 
     onControl('file-offer', ({ file }) => {
-      // The size is what the user agrees to on Save, so it has to be one.
+      // The size is what the user agrees to on Save, so it must be a whole
+      // number of bytes.
       const size = file?.size ?? 0;
       if (file?.id && Number.isSafeInteger(size) && size >= 0) this.#transfers.offer(file.id, String(file.name ?? ''), size);
     });
