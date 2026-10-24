@@ -35,7 +35,7 @@ const input = new Input(video, typing, document.getElementById('preedit'), sendC
 });
 const cursor = new RemoteCursor(video);
 const session = new Session();
-const sessionControls = sessionSection(overlay.addSection('session'));
+const sessionControls = sessionSection(overlay.addSection('session', { last: true }));
 const privateSwitches = new PrivateSwitches(overlay, sendControl);
 const sharp = new SharpText({ video, overlay, send: sendControl, input });
 
@@ -78,7 +78,11 @@ window.robin = {
   },
   get gesture() { return input.gesture; },
   get private() { return privateSwitches.state; },
-  sharp,
+  sharp: {
+    get state() { return sharp.state; },
+    trace: () => sharp.trace(),
+    stopTrace: () => sharp.stopTrace(),
+  },
   addSection: (name) => overlay.addSection(name),
   detach: () => leave(session.detach()),
   endSession: () => leave(session.end()),
