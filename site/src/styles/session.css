@@ -128,7 +128,7 @@
 
   .local-term {
     position: absolute;
-    left: -2.5rem;
+    left: 0;
     bottom: 0;
     width: min(33rem, 96%);
     margin: 0;
@@ -142,6 +142,14 @@
     border-radius: var(--radius-panel);
     box-shadow: var(--shadow-float);
     white-space: pre-wrap;
+  }
+
+  /* Only beside the copy column is there a gutter for the terminal to
+     overhang; in one column it would run off the left edge. */
+  @media (min-width: 56.25rem) {
+    .local-term {
+      left: -2.5rem;
+    }
   }
 
   @media (max-width: 40rem) {
