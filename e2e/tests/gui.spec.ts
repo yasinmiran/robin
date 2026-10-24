@@ -541,7 +541,7 @@ if (SCENARIO === 'nomux') {
     await testInfo.attach('ssh processes', { body: ssh.join('\n'), contentType: 'text/plain' });
     expect(ssh.filter((a) => a.includes('ControlMaster=yes')), 'a ControlMaster').toEqual([]);
     expect(ssh.filter((a) => / -N .*-L \/\S+\/fwd\d+\.sock:127\.0\.0\.1:\d+ /.test(a)), 'the forward, on a socket in a private directory').toHaveLength(1);
-    expect(ssh.filter((a) => / serve( -v)?$/.test(a)), 'the agent').toHaveLength(1);
+    expect(ssh.filter((a) => / serve( |$)/.test(a)), 'the agent').toHaveLength(1);
     expect(ssh.every((a) => a.includes('ControlPath=none')), 'every ssh keeps clear of any master in the config').toBe(true);
   });
 }
