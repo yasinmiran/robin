@@ -19,6 +19,9 @@ func TestCheckPrivate(t *testing.T) {
 			t.Errorf("%+v: %v", o, err)
 		}
 	}
+}
+
+func TestStartMessageCarriesTheSwitches(t *testing.T) {
 	s, _ := startMessage(Options{Attach: ":0", Curtain: true, Silent: true}, &probe.Report{})
 	if !s.Curtain || !s.Silent {
 		t.Errorf("start %+v leaves the switches out", s)
@@ -31,26 +34,31 @@ func TestPrivateNote(t *testing.T) {
 		name string
 		p    *protocol.Private
 		want []string // in the note; none for no note
+		not  []string // not in it
 	}{
-		{"spawned", nil, nil},
-		{"both off", &protocol.Private{}, []string{"screen and speakers", "--curtain", "--silent", "in the page"}},
-		{"curtain only", &protocol.Private{Silent: no}, []string{"screen shows", "--curtain"}},
-		{"silent only", &protocol.Private{Curtain: no}, []string{"speakers play", "--silent"}},
-		{"neither possible", &protocol.Private{Curtain: no, Silent: no}, nil},
-		{"curtain on", &protocol.Private{Curtain: protocol.PrivateSwitch{On: true}}, nil},
-		{"silent on", &protocol.Private{Silent: protocol.PrivateSwitch{On: true}}, nil},
+		{"spawned", nil, nil, nil},
+		{"both off", &protocol.Private{}, []string{"screen and speakers", "--curtain", "--silent", "in the page"}, nil},
+		{"curtain only", &protocol.Private{Silent: no}, []string{"screen shows", "--curtain"}, []string{"--silent"}},
+		{"silent only", &protocol.Private{Curtain: no}, []string{"speakers play", "--silent"}, []string{"--curtain"}},
+		{"neither possible", &protocol.Private{Curtain: no, Silent: no}, nil, nil},
+		{"curtain on", &protocol.Private{Curtain: protocol.PrivateSwitch{On: true}}, nil, nil},
+		{"silent on", &protocol.Private{Silent: protocol.PrivateSwitch{On: true}}, nil, nil},
 	} {
-		got := privateNote(&protocol.Ready{Private: tc.p})
-		if (got == "") != (len(tc.want) == 0) {
-			t.Errorf("%s: note %q", tc.name, got)
-		}
-		for _, w := range tc.want {
-			if !strings.Contains(got, w) {
-				t.Errorf("%s: note %q lacks %q", tc.name, got, w)
+		t.Run(tc.name, func(t *testing.T) {
+			got := privateNote(&protocol.Ready{Private: tc.p})
+			if (got == "") != (len(tc.want) == 0) {
+				t.Errorf("note %q", got)
 			}
-		}
-		if tc.name == "curtain only" && strings.Contains(got, "--silent") || tc.name == "silent only" && strings.Contains(got, "--curtain") {
-			t.Errorf("%s: note %q offers what the desktop cannot do", tc.name, got)
-		}
+			for _, w := range tc.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("note %q lacks %q", got, w)
+				}
+			}
+			for _, n := range tc.not {
+				if strings.Contains(got, n) {
+					t.Errorf("note %q offers %q, which the desktop cannot do", got, n)
+				}
+			}
+		})
 	}
 }
