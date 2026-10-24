@@ -117,29 +117,47 @@ func startCamera(ctx context.Context, start protocol.Start, newCamera NewCameraF
 	return c, &protocol.Device{Available: true, Where: c.Where()}
 }
 
-// track hands a track the browser sends to the microphone or the camera.
-// It runs on Pion's goroutine, so each plays on its own.
+// track hands a track the browser sends to the microphone or the camera,
+// to play on a goroutine of its own until the track ends.
 func (s *session) track(tr *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+	var device string
+	var play func() error
 	switch {
 	case tr.Kind() == webrtc.RTPCodecTypeAudio && s.mic != nil:
-		go func() {
-			if err := s.mic.Play(tr); err != nil {
-				s.log.Debug("microphone track", "err", err)
-			}
-		}()
+		device = "microphone"
+		play = func() error { return s.mic.Play(tr) }
 	case tr.Kind() == webrtc.RTPCodecTypeVideo && s.camera != nil:
+		device = "camera"
 		p, ssrc := s.currentOrNil(), uint32(tr.SSRC())
-		go func() {
-			err := s.camera.Play(tr, func() {
+		play = func() error {
+			return s.camera.Play(tr, func() {
 				if p != nil {
 					p.RequestKeyframe(ssrc)
 				}
 			})
-			if err != nil {
-				s.log.Debug("camera track", "err", err)
-			}
-		}()
+		}
 	default:
 		s.log.Info("ignoring a track the session did not offer to take", "kind", tr.Kind().String())
+		return
 	}
+	s.playsMu.Lock()
+	defer s.playsMu.Unlock()
+	if s.playsEnded {
+		return
+	}
+	s.plays.Go(func() {
+		if err := play(); err != nil {
+			s.log.Debug(device+" track", "err", err)
+		}
+	})
+}
+
+// endPlays starts no more Plays and waits for those running. Run calls it
+// once the peer is closed, which ends their tracks, and before the
+// microphone and camera close under them.
+func (s *session) endPlays() {
+	s.playsMu.Lock()
+	s.playsEnded = true
+	s.playsMu.Unlock()
+	s.plays.Wait()
 }

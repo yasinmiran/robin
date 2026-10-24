@@ -20,16 +20,31 @@ import (
 )
 
 // fakeMic and fakeCamera count the packets of each track they are given.
+// A Play lingers a while after its track ends, as one still decoding or
+// logging would, and Close notes whether one was still running.
 type fakeMic struct {
 	where   string
 	packets chan int
-	mu      sync.Mutex
-	closed  bool
+	linger  time.Duration
+
+	mu                 sync.Mutex
+	closed             bool
+	playing            int
+	closedWhilePlaying bool
 }
 
 func newFakeMic(where string) *fakeMic { return &fakeMic{where: where, packets: make(chan int, 64)} }
 
 func (m *fakeMic) Play(r RTPReader) error {
+	m.mu.Lock()
+	m.playing++
+	m.mu.Unlock()
+	defer func() {
+		time.Sleep(m.linger)
+		m.mu.Lock()
+		m.playing--
+		m.mu.Unlock()
+	}()
 	n := 0
 	for {
 		if _, _, err := r.ReadRTP(); err != nil {
@@ -47,6 +62,7 @@ func (m *fakeMic) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.closed = true
+	m.closedWhilePlaying = m.closedWhilePlaying || m.playing > 0
 	return nil
 }
 
@@ -54,6 +70,12 @@ func (m *fakeMic) isClosed() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.closed
+}
+
+func (m *fakeMic) wasClosedWhilePlaying() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.closedWhilePlaying
 }
 
 type fakeCamera struct {
@@ -170,10 +192,11 @@ func sendingPage(t *testing.T, h *harness) (pc *webrtc.PeerConnection, mic, came
 
 // TestSessionTakesTheMicrophoneAndCamera: Ready says where each went, the
 // page's tracks reach them, the camera's keyframe requests reach the page,
-// and both are closed when the session ends.
+// and both are closed when the session ends, only once every Play is done.
 func TestSessionTakesTheMicrophoneAndCamera(t *testing.T) {
 	mic := newFakeMic("the private pulseaudio")
 	cam := &fakeCamera{fakeMic: newFakeMic("/dev/video9"), askKeyframe: true}
+	mic.linger, cam.linger = 300*time.Millisecond, 300*time.Millisecond
 	audioAsked := make(chan AudioOptions, 1)
 	sound := newFakeAudio()
 	h := startAgent(t, func(o *Options) {
@@ -247,6 +270,9 @@ func TestSessionTakesTheMicrophoneAndCamera(t *testing.T) {
 	h.waitGone(ready.Display)
 	if !mic.isClosed() || !cam.isClosed() || !sound.closed() {
 		t.Errorf("left open: microphone %v, camera %v, sound server %v", !mic.isClosed(), !cam.isClosed(), !sound.closed())
+	}
+	if mic.wasClosedWhilePlaying() || cam.wasClosedWhilePlaying() {
+		t.Errorf("closed under a running Play: microphone %v, camera %v", mic.wasClosedWhilePlaying(), cam.wasClosedWhilePlaying())
 	}
 }
 

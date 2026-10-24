@@ -175,7 +175,12 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 		stream:  newStream(d.desk, start.FPS, start.MaxWidth, start.MaxHeight, newEncoder, log),
 		cursors: map[uint32]protocol.Cursor{}, mic: mic, camera: camera,
 	}
-	defer s.closePeer()
+	// Registered after the microphone's and camera's Close, so it runs
+	// before them.
+	defer func() {
+		s.closePeer()
+		s.endPlays()
+	}()
 
 	width, height := d.desk.Size()
 	ready := &protocol.Ready{
@@ -258,6 +263,12 @@ type session struct {
 	stream *stream
 	mic    Mic    // nil unless the session takes the browser's microphone
 	camera Camera // and its camera
+
+	// plays runs the Play of each track the browser sends; once playsEnded
+	// is set, under playsMu, no more start.
+	playsMu    sync.Mutex
+	playsEnded bool
+	plays      sync.WaitGroup
 
 	mu   sync.Mutex
 	peer *peer.Peer
