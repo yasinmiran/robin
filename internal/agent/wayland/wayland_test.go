@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/godbus/dbus/v5"
+
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 func TestParseY4MHeader(t *testing.T) {
@@ -106,6 +108,29 @@ func TestMimeListAcceptsGnomeTuple(t *testing.T) {
 	}
 	if got := pickText([]string{"image/png"}); got != "" {
 		t.Errorf("pickText chose %q from no text type", got)
+	}
+}
+
+func TestClipboardMimes(t *testing.T) {
+	all := protocol.Clip{Text: "t", HTML: "<h>", PNG: []byte{1}}
+	if got := mimesOf(all); !slices.Equal(got, append(slices.Clone(textMimes), "text/html", "image/png")) {
+		t.Errorf("mimesOf(all three) = %v", got)
+	}
+	if got := mimesOf(protocol.Clip{PNG: []byte{1}}); !slices.Equal(got, []string{"image/png"}) {
+		t.Errorf("mimesOf(an image) = %v", got)
+	}
+	if got := mimesOf(protocol.Clip{}); got != nil {
+		t.Errorf("mimesOf(nothing) = %v", got)
+	}
+	for mime, want := range map[string]string{
+		"text/plain;charset=utf-8": "t", "UTF8_STRING": "t", "text/html": "<h>", "image/png": "\x01", "image/jpeg": "",
+	} {
+		if got := string(dataFor(all, mime)); got != want {
+			t.Errorf("dataFor(%s) = %q, want %q", mime, got, want)
+		}
+	}
+	if dataFor(all, "image/jpeg") != nil {
+		t.Error("dataFor a type it lacks is not nil")
 	}
 }
 

@@ -219,19 +219,35 @@ func (d *Desktop) Input(m protocol.Control) error { return d.in.apply(m) }
 
 // SetClipboard offers text as the desktop's clipboard.
 func (d *Desktop) SetClipboard(text string) error {
+	return d.SetClipboardContent(protocol.Clip{Text: text})
+}
+
+// SetClipboardContent offers c as the desktop's clipboard, in the MIME
+// types of each format it holds.
+func (d *Desktop) SetClipboardContent(c protocol.Clip) error {
 	if d.clip == nil {
 		return errors.New("the host did not allow clipboard access")
 	}
-	return d.clip.set(text)
+	return d.clip.set(c)
 }
 
-// Clipboard delivers text copied on the desktop; nil when the host did not
-// allow clipboard access.
+// Clipboard delivers the text of what is copied on the desktop; nil when
+// the host did not allow clipboard access.
 func (d *Desktop) Clipboard() <-chan string {
 	if d.clip == nil {
 		return nil
 	}
 	return d.clip.updates
+}
+
+// ClipboardContent delivers what is copied on the desktop, as text, HTML
+// and a PNG image as far as the program copying offers them; nil when the
+// host did not allow clipboard access.
+func (d *Desktop) ClipboardContent() <-chan protocol.Clip {
+	if d.clip == nil {
+		return nil
+	}
+	return d.clip.contents
 }
 
 // Cursor reports once that the pointer is drawn into the frames, so the page

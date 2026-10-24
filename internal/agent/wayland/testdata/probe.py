@@ -3,10 +3,13 @@ stdout, so a test can check injected input in surface coordinates, which
 equal monitor coordinates here.
 
 F2 prints the clipboard's text; F3 sets the clipboard to "from-session".
+F4 prints the clipboard's MIME types and reads its text/html and image/png;
+F5 sets the clipboard to RICH_TEXT, RICH_HTML and RICH_PNG at once.
 Each key press, and each SIGUSR1, moves the picture on by one frame, the way
 a terminal echoes what is typed. --animate repaints the whole window 60
 times a second, for frame rate tests.
 """
+import hashlib
 import json
 import signal
 import sys
@@ -19,6 +22,12 @@ gi.require_version("Gdk", "4.0")
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
 ANIMATE = "--animate" in sys.argv
+
+RICH_TEXT = "rich-from-session"
+RICH_HTML = "<b>rich</b> from-session"
+# Bigger than a pipe's buffer, so the portal has to stream it. The clipboard
+# does not look inside, so it need not decode.
+RICH_PNG = b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 1024
 
 
 def log(**kw):
@@ -89,6 +98,15 @@ class Probe(Gtk.Application):
             self.clipboard.read_text_async(None, self.on_text)
         elif name == "F3":
             self.clipboard.set("from-session")
+        elif name == "F4":
+            log(ev="formats", mimes=list(self.clipboard.get_formats().get_mime_types() or []))
+            for mime in ("text/html", "image/png"):
+                self.clipboard.read_async([mime], GLib.PRIORITY_DEFAULT, None, self.on_read, mime)
+        elif name == "F5":
+            parts = [(RICH_HTML.encode(), "text/html"), (RICH_PNG, "image/png"),
+                     (RICH_TEXT.encode(), "text/plain;charset=utf-8")]
+            self.clipboard.set_content(Gdk.ContentProvider.new_union(
+                [Gdk.ContentProvider.new_for_bytes(mime, GLib.Bytes.new(data)) for data, mime in parts]))
         return True
 
     def on_text(self, cb, res):
@@ -96,6 +114,21 @@ class Probe(Gtk.Application):
             log(ev="clipboard", text=cb.read_text_finish(res))
         except GLib.Error as e:
             log(ev="clipboard-error", error=e.message)
+
+    def on_read(self, cb, res, mime):
+        try:
+            stream, got = cb.read_finish(res)
+            chunks = []
+            while True:
+                b = stream.read_bytes(65536, None)
+                if b.get_size() == 0:
+                    break
+                chunks.append(b.get_data())
+            data = b"".join(chunks)
+            log(ev="read", mime=got, size=len(data), sha256=hashlib.sha256(data).hexdigest(),
+                text=data.decode(errors="replace") if mime == "text/html" else "")
+        except GLib.Error as e:
+            log(ev="read-error", mime=mime, error=e.message)
 
 
 Probe().run([sys.argv[0]])

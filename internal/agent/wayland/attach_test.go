@@ -6,6 +6,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -203,6 +206,51 @@ func TestAttachStreamsAndDrives(t *testing.T) {
 			}
 		case <-time.After(5 * time.Second):
 			t.Error("nothing copied on the desktop reached the clipboard channel")
+		}
+	})
+
+	// HTML and an image travel by their MIME types, both ways, through the
+	// portal.
+	t.Run("rich clipboard", func(t *testing.T) {
+		if d.clip == nil {
+			t.Fatal("clipboard not granted")
+		}
+		png := make([]byte, 300<<10) // more than a pipe holds
+		for i := range png {
+			png[i] = byte(i * 7)
+		}
+		copy(png, "\x89PNG\r\n\x1a\n")
+		clip := protocol.Clip{Text: "rich-from-browser", HTML: "<i>rich</i> from-browser", PNG: png}
+		if err := d.SetClipboardContent(clip); err != nil {
+			t.Fatal(err)
+		}
+		mark := p.mark()
+		tap(t, d, "F4")
+		formats := p.await(t, mark, func(e probeEvent) bool { return e.Ev == "formats" })
+		for _, want := range []string{"text/plain;charset=utf-8", "text/html", "image/png"} {
+			if !slices.Contains(formats.Mimes, want) {
+				t.Errorf("the desktop sees %v on the clipboard, lacking %s", formats.Mimes, want)
+			}
+		}
+		for mime, want := range map[string][]byte{"text/html": []byte(clip.HTML), "image/png": png} {
+			ev := p.await(t, mark, func(e probeEvent) bool { return (e.Ev == "read" || e.Ev == "read-error") && e.Mime == mime })
+			if sum := sha256.Sum256(want); ev.Ev != "read" || ev.SHA256 != hex.EncodeToString(sum[:]) {
+				t.Errorf("the desktop pasted %s as %+v, want %d bytes", mime, ev, len(want))
+			}
+		}
+
+		// Drop what the plain clipboard test left.
+		for len(d.ClipboardContent()) > 0 {
+			<-d.ClipboardContent()
+		}
+		tap(t, d, "F5")
+		select {
+		case got := <-d.ClipboardContent():
+			if got.Text != "rich-from-session" || got.HTML != "<b>rich</b> from-session" || !bytes.Equal(got.PNG, probePNG()) {
+				t.Errorf("desktop copied %q, %q and %d bytes of PNG, want the probe's rich content", got.Text, got.HTML, len(got.PNG))
+			}
+		case <-time.After(10 * time.Second):
+			t.Error("nothing copied on the desktop reached the content channel")
 		}
 	})
 
@@ -449,6 +497,17 @@ func portalSessions(conn *dbus.Conn) []string {
 	return sessions
 }
 
+// probePNG is what probe.py's F5 puts on the clipboard as image/png.
+func probePNG() []byte {
+	b := []byte("\x89PNG\r\n\x1a\n")
+	for range 1024 {
+		for i := range 256 {
+			b = append(b, byte(i))
+		}
+	}
+	return b
+}
+
 func send(t *testing.T, d *Desktop, m protocol.Control) {
 	t.Helper()
 	if err := d.Input(m); err != nil {
@@ -489,6 +548,12 @@ type probeEvent struct {
 	Button int     `json:"button"`
 	Keyval string  `json:"keyval"`
 	Text   string  `json:"text"`
+	// Clipboard formats and reads.
+	Mimes  []string `json:"mimes"`
+	Mime   string   `json:"mime"`
+	Size   int      `json:"size"`
+	SHA256 string   `json:"sha256"`
+	Error  string   `json:"error"`
 }
 
 func startProbe(t *testing.T, args ...string) *probe {
