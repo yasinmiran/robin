@@ -175,6 +175,8 @@
 
   /* One moment on load: the wire runs once along the screen's top edge while
      the tab says Connecting, then the tab turns Connected and the wire fades.
+     As on the session page, the transport, the numbers and the desktop only
+     appear once connected, so the tab widens as the picture arrives.
      Reduced motion, or no animation at all, shows the connected state. */
   @media (prefers-reduced-motion: no-preference) {
     .session-screen .wire {
@@ -189,6 +191,10 @@
     }
     .hud-connected {
       animation: session-connected 1.6s steps(1, end) forwards;
+    }
+    .hud-stat,
+    .session-screen .xterm {
+      animation: session-unconnected 1.6s;
     }
   }
 
@@ -215,6 +221,12 @@
     }
     to {
       visibility: visible;
+    }
+  }
+  @keyframes session-unconnected {
+    from,
+    to {
+      display: none;
     }
   }
 }
