@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -31,6 +32,30 @@ type file struct {
 	Macros  []protocol.Macro `json:"macros"`
 }
 
+// ErrUnreadable marks a macros file that is there but does not read: not
+// JSON the schema takes, too big, not a regular file, or not the user's
+// own. A session leaves such a file as it is and changes nothing until it
+// reads.
+var ErrUnreadable = errors.New("macros file does not read")
+
+// unreadable is the file at path, which does not read because of err.
+type unreadable struct {
+	path string
+	err  error
+}
+
+func (e *unreadable) Error() string {
+	why := e.err
+	if pe, ok := why.(*fs.PathError); ok {
+		why = pe.Err // the path is said already
+	}
+	return fmt.Sprintf("Robin can't read %s (%v). It leaves the file alone and saves no macros until you fix or remove it", e.path, why)
+}
+
+func (e *unreadable) Unwrap() []error { return []error{e.err, ErrUnreadable} }
+
+var errNoPath = errors.New("macros: the store has no path")
+
 // Path is where the macros are kept: robin/macros.json in the user's config
 // directory.
 func Path() (string, error) {
@@ -46,42 +71,38 @@ func Path() (string, error) {
 // afresh, so a change another session made in the meantime is kept. It is
 // safe for concurrent use.
 type Store struct {
-	path    string
-	pathErr error // why there is no path
-	host    string
-	mu      sync.Mutex
+	path string
+	host string
+	// mu serializes this process's changes, each a read, a change and a
+	// write of the file.
+	mu sync.Mutex
 }
 
-// New opens the store at Path for a session to host, the host argument as
-// the user typed it.
-func New(host string) *Store {
-	p, err := Path()
-	return &Store{path: p, pathErr: err, host: host}
-}
-
-// Open opens the store at path for a session to host.
-func Open(path, host string) *Store {
+// New returns the store at path, Path in a session, for a session to host,
+// the host argument as the user typed it. It touches no file.
+func New(path, host string) *Store {
 	return &Store{path: path, host: host}
 }
 
-// Load returns what the page shows, with Error set when the file cannot be
-// read.
-func (s *Store) Load() *protocol.Macros {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// Host is the host this store's session is to.
+func (s *Store) Host() string { return s.host }
+
+// Load returns the macros this session shows. An error that wraps
+// ErrUnreadable means the file is there but does not read.
+func (s *Store) Load() ([]protocol.Macro, error) {
 	all, err := s.read()
-	return s.view(all, err)
+	return s.visible(all), err
 }
 
-// Change makes the page's change and returns what the page shows after it,
-// with Error set when the change was refused or the file could not be
-// read or written. A file that cannot be read is left as it is.
-func (s *Store) Change(c *protocol.MacroChange) *protocol.Macros {
+// Change makes the page's change and returns the macros this session shows
+// after it, or as they stand when the change was refused or the file could
+// not be read or written. A file that does not read is left as it is.
+func (s *Store) Change(c *protocol.MacroChange) ([]protocol.Macro, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	all, err := s.read()
 	if err != nil {
-		return s.view(nil, err)
+		return s.visible(nil), err
 	}
 	next, err := s.apply(all, c)
 	if err == nil {
@@ -90,17 +111,14 @@ func (s *Store) Change(c *protocol.MacroChange) *protocol.Macros {
 	if err == nil {
 		all = next
 	}
-	return s.view(all, err)
+	return s.visible(all), err
 }
 
-func (s *Store) view(all []protocol.Macro, err error) *protocol.Macros {
-	out := &protocol.Macros{Host: s.host, List: []protocol.Macro{}}
-	if err != nil {
-		out.Error = err.Error()
-	}
+func (s *Store) visible(all []protocol.Macro) []protocol.Macro {
+	out := []protocol.Macro{}
 	for _, m := range all {
 		if s.sees(m) {
-			out.List = append(out.List, m)
+			out = append(out, m)
 		}
 	}
 	return out
@@ -144,41 +162,42 @@ func (s *Store) apply(all []protocol.Macro, c *protocol.MacroChange) ([]protocol
 	return next, nil
 }
 
-// errUnreadable says what a session does about a file it cannot read.
-const errUnreadable = "Robin leaves it as it is and saves no macro until it reads"
-
 func (s *Store) read() ([]protocol.Macro, error) {
-	if s.pathErr != nil {
-		return nil, fmt.Errorf("macros are not kept: %w", s.pathErr)
+	if s.path == "" {
+		return nil, errNoPath
 	}
 	// A FIFO would hold the open up; only a regular file is read.
 	st, err := os.Stat(s.path)
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, s.unreadable(err)
 	}
 	if !st.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file; %s", s.path, errUnreadable)
+		return nil, s.unreadable(errors.New("not a regular file"))
 	}
 	f, err := os.Open(s.path)
 	if err != nil {
-		return nil, err
+		return nil, s.unreadable(err)
 	}
 	defer f.Close()
 	b, err := io.ReadAll(io.LimitReader(f, protocol.MaxMacrosBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", s.path, err)
+		return nil, s.unreadable(err)
 	}
 	if len(b) > protocol.MaxMacrosBytes {
-		return nil, fmt.Errorf("%s is over %d KiB; %s", s.path, protocol.MaxMacrosBytes>>10, errUnreadable)
+		return nil, s.unreadable(fmt.Errorf("over %d KiB", protocol.MaxMacrosBytes>>10))
 	}
 	all, err := decode(b)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w; %s", s.path, err, errUnreadable)
+		return nil, s.unreadable(err)
 	}
 	return all, nil
+}
+
+func (s *Store) unreadable(err error) error {
+	return &unreadable{path: s.path, err: err}
 }
 
 // decode reads the file's JSON, which must hold nothing the schema does
@@ -227,6 +246,9 @@ func encode(all []protocol.Macro) ([]byte, error) {
 // or the new one and never a part. The file is 0600 and its directory
 // 0700: what a macro types may be a password.
 func (s *Store) write(all []protocol.Macro) (err error) {
+	if s.path == "" {
+		return errNoPath
+	}
 	b, err := encode(all)
 	if err != nil {
 		return err
@@ -320,15 +342,9 @@ func checkStep(st protocol.MacroStep) error {
 }
 
 func validID(id string) bool {
-	if id == "" || len(id) > protocol.MaxMacroIDBytes {
-		return false
-	}
-	for _, r := range id {
-		if !(r == '-' || r == '_' || r < utf8.RuneSelf && (unicode.IsLetter(r) || unicode.IsDigit(r))) {
-			return false
-		}
-	}
-	return true
+	return id != "" && len(id) <= protocol.MaxMacroIDBytes && !strings.ContainsFunc(id, func(r rune) bool {
+		return !asciiAlnum(r) && r != '-' && r != '_'
+	})
 }
 
 // printable reports whether s is UTF-8 without control characters.
@@ -340,7 +356,9 @@ func printable(s string) bool {
 }
 
 func alnum(s string) bool {
-	return !strings.ContainsFunc(s, func(r rune) bool {
-		return r >= utf8.RuneSelf || !(unicode.IsLetter(r) || unicode.IsDigit(r))
-	})
+	return !strings.ContainsFunc(s, func(r rune) bool { return !asciiAlnum(r) })
+}
+
+func asciiAlnum(r rune) bool {
+	return 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9'
 }

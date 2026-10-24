@@ -15,14 +15,11 @@ import (
 	"github.com/yasinmiran/robin/internal/web"
 )
 
-func macroBridge(t *testing.T, keeper macroKeeper) (*web.Server, *fakeAgent) {
+func macroBridge(t *testing.T, store *macros.Store) (*web.Server, *fakeAgent) {
 	t.Helper()
 	s, ctx := testServer(t)
 	b := newBridge(nil, relay.New(relay.Policy{Transport: relay.Direct}),
-		protocol.Config{ICEServers: []protocol.ICEServer{}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if keeper != nil {
-		b.macros = keeper
-	}
+		protocol.Config{ICEServers: []protocol.ICEServer{}}, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	go b.accept(ctx, s)
 	t.Cleanup(b.close)
 	agent := newFakeAgent()
@@ -32,7 +29,7 @@ func macroBridge(t *testing.T, keeper macroKeeper) (*web.Server, *fakeAgent) {
 
 func TestThePageKeepsItsMacrosThroughTheCLI(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "robin", "macros.json")
-	s, agent := macroBridge(t, macros.Open(path, "alice@box"))
+	s, agent := macroBridge(t, macros.New(path, "alice@box"))
 
 	pg := openPage(t, s)
 	m := pg.recv()
@@ -79,7 +76,7 @@ func TestThePageKeepsItsMacrosThroughTheCLI(t *testing.T) {
 	}
 }
 
-func TestASessionWithoutAKeeperRefusesChanges(t *testing.T) {
+func TestASessionWithoutAStoreRefusesChanges(t *testing.T) {
 	s, _ := macroBridge(t, nil)
 	pg := openPage(t, s)
 	if m := pg.recv(); m.Config == nil || m.Config.Macros != nil {
@@ -92,34 +89,58 @@ func TestASessionWithoutAKeeperRefusesChanges(t *testing.T) {
 }
 
 func TestAMacrosFileThatDoesNotReadIsReportedOnce(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	if err := os.Mkdir(filepath.Join(dir, "robin"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(dir, "robin", "macros.json")
+	path := filepath.Join(t.TempDir(), "macros.json")
 	if err := os.WriteFile(path, []byte("{\x1b[2J"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var stderr bytes.Buffer
-	s := openMacros("box", printableWriter{&stderr})
+	s := openMacros(macros.New(path, "box"), &stderr)
 	out := stderr.String()
-	if !strings.HasPrefix(out, "robin: macros: "+path+": ") || !strings.Contains(out, "leaves it as it is") || strings.Count(out, "\n") != 1 {
+	if !strings.HasPrefix(out, "robin: Robin can't read "+path+" (") || !strings.Contains(out, "leaves the file alone") || strings.Count(out, "\n") != 1 {
 		t.Errorf("stderr %q", out)
 	}
-	if strings.Contains(out, "\x1b") {
-		t.Errorf("a control character from the file reached the terminal: %q", out)
-	}
-	if got := s.Load(); got.Error == "" {
-		t.Errorf("the page is not told")
+	srv, _ := macroBridge(t, s)
+	pg := openPage(t, srv)
+	if m := pg.recv(); m.Config == nil || m.Config.Macros == nil || !strings.HasPrefix(m.Config.Macros.Error, "Robin can't read ") || m.Config.Macros.List == nil {
+		t.Errorf("the page is not told: %+v", m.Config)
 	}
 
 	stderr.Reset()
 	if err := os.WriteFile(path, []byte(`{"version":1,"macros":[]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	openMacros("box", &stderr)
+	openMacros(macros.New(path, "box"), &stderr)
 	if stderr.Len() != 0 {
 		t.Errorf("a file that reads: %q", stderr.String())
+	}
+}
+
+func TestUserMacrosAreInTheConfigDir(t *testing.T) {
+	dir := t.TempDir()
+	for _, v := range []string{"HOME", "XDG_CONFIG_HOME", "AppData"} {
+		t.Setenv(v, dir)
+	}
+	var stderr bytes.Buffer
+	s := userMacros("box", &stderr)
+	if s == nil || s.Host() != "box" || stderr.Len() != 0 {
+		t.Fatalf("userMacros = %v, stderr %q", s, stderr.String())
+	}
+	if _, err := s.Change(&protocol.MacroChange{Put: &protocol.Macro{ID: "a", Name: "A", Steps: []protocol.MacroStep{{Pause: 1}}}}); err != nil {
+		t.Fatal(err)
+	}
+	want, _ := macros.Path()
+	if !strings.HasPrefix(want, dir) {
+		t.Fatalf("the config dir is not the temp dir: %s", want)
+	}
+	if _, err := os.Stat(want); err != nil {
+		t.Errorf("no file at %s: %v", want, err)
+	}
+
+	for _, v := range []string{"HOME", "XDG_CONFIG_HOME", "AppData"} {
+		t.Setenv(v, "")
+	}
+	stderr.Reset()
+	if s := userMacros("box", &stderr); s != nil || !strings.HasPrefix(stderr.String(), "robin: macros are not kept: ") {
+		t.Errorf("without a config dir: %v, %q", s, stderr.String())
 	}
 }

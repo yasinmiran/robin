@@ -7,13 +7,23 @@ import (
 	"github.com/yasinmiran/robin/internal/macros"
 )
 
-// openMacros opens the user's macros for a session to dest, the host
-// argument as typed, and tells the user once when the file does not read:
-// the page then offers none, and nothing overwrites the file.
-func openMacros(dest string, stderr io.Writer) *macros.Store {
-	s := macros.New(dest)
-	if m := s.Load(); m.Error != "" {
-		fmt.Fprintf(stderr, "robin: macros: %s\n", m.Error)
+// userMacros opens the user's macros for a session to dest, the host
+// argument as typed, or returns nil, for a session that keeps none, when
+// the user has no config directory to keep them in.
+func userMacros(dest string, stderr io.Writer) *macros.Store {
+	path, err := macros.Path()
+	if err != nil {
+		fmt.Fprintf(stderr, "robin: macros are not kept: %v\n", err)
+		return nil
+	}
+	return openMacros(macros.New(path, dest), stderr)
+}
+
+// openMacros tells the user once when the macros file does not read: the
+// page then offers none, and nothing overwrites the file.
+func openMacros(s *macros.Store, stderr io.Writer) *macros.Store {
+	if _, err := s.Load(); err != nil {
+		fmt.Fprintf(stderr, "robin: %v\n", err)
 	}
 	return s
 }
