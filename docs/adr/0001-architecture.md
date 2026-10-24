@@ -752,8 +752,13 @@ Pion's read loop, where waiting stalls every data channel. So text goes to
 a goroutine of the session's, and input that arrives while it types (keys,
 pointer, wheel, release and clipboard) queues behind it, or Enter after a
 commit would land first. With nothing to type, input still applies at once
-on the read loop, as before. The queue holds 256 messages; a browser that
-leaves has what it queued dropped and its typing stopped.
+on the read loop, as before. The queue holds 256 messages. Past that, runs
+of pointer moves merge into their last, then input is dropped, and a
+release of every key and button, which the queue never refuses, follows
+whatever was dropped: a 4096-byte CJK commit types for about 4 s on X11,
+long enough for pointer moves alone to fill it, and a key-up lost there
+would leave the key held. A browser that leaves has what it queued
+dropped and its typing stopped.
 
 On X11 each character the keymap lacks borrows one of 16 spare keycodes.
 A commit of more than 16 such characters reuses keycodes faster than

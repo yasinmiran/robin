@@ -89,8 +89,10 @@ func (s *session) control(m protocol.Control) {
 		h.apply(s, m)
 		return
 	}
-	if !s.typing.run(func(context.Context) { h.apply(s, m) }) {
+	if !s.typing.run(m.T, func(context.Context) { h.apply(s, m) }) {
 		s.log.Warn("input dropped: typing has fallen behind", "type", m.T)
+		// It may have been a key-up; the lane never drops a release.
+		s.control(protocol.Control{T: protocol.ControlRelease})
 	}
 }
 

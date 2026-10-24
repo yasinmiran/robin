@@ -16,7 +16,8 @@ func init() {
 }
 
 // maxLane bounds the input waiting behind text. A user cannot get that far
-// ahead of a desktop that keeps up; past it, input is dropped.
+// ahead of a desktop that keeps up; past it, runs of pointer moves merge
+// into their last, and then input is dropped.
 const maxLane = 256
 
 func (s *session) applyText(m protocol.Control) {
@@ -48,9 +49,16 @@ func (s *session) applyText(m protocol.Control) {
 // which would otherwise overtake the text. The zero lane is ready to use.
 type lane struct {
 	mu     sync.Mutex
-	steps  []func(context.Context)
+	steps  []step
 	cancel context.CancelFunc
 	idle   chan struct{} // closed when the goroutine stops; nil when there is none
+}
+
+// step is one thing the lane applies in turn: text to type, or input of
+// type t.
+type step struct {
+	t  protocol.ControlType
+	do func(context.Context)
 }
 
 // queue queues f, which types text, for the lane's goroutine. It reports
@@ -58,13 +66,14 @@ type lane struct {
 func (l *lane) queue(f func(context.Context)) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.push(f)
+	return l.push(step{protocol.ControlText, f})
 }
 
-// run applies input: at once when no text is being typed, and otherwise
-// queued behind it. It reports false when the lane is full and f was
-// dropped.
-func (l *lane) run(f func(context.Context)) bool {
+// run applies input of type t: at once when no text is being typed, and
+// otherwise queued behind it. It reports false when the lane is full and f
+// was dropped. A release, which lets go of every key and button, is never
+// dropped: what a dropped key-up would have let go of must not stay held.
+func (l *lane) run(t protocol.ControlType, f func(context.Context)) bool {
 	l.mu.Lock()
 	if l.idle == nil {
 		l.mu.Unlock()
@@ -72,16 +81,23 @@ func (l *lane) run(f func(context.Context)) bool {
 		return true
 	}
 	defer l.mu.Unlock()
-	return l.push(f)
+	return l.push(step{t, f})
 }
 
-// push queues f, starting the lane's goroutine when there is none. l.mu
+// push queues st, starting the lane's goroutine when there is none. l.mu
 // must be held.
-func (l *lane) push(f func(context.Context)) bool {
-	if len(l.steps) >= maxLane {
-		return false
+func (l *lane) push(st step) bool {
+	release := st.t == protocol.ControlRelease
+	if release && len(l.steps) > 0 && l.steps[len(l.steps)-1].t == protocol.ControlRelease {
+		return true // one release lets go of everything already
 	}
-	l.steps = append(l.steps, f)
+	if len(l.steps) >= maxLane && !release {
+		l.mergeMoves()
+		if len(l.steps) >= maxLane {
+			return false
+		}
+	}
+	l.steps = append(l.steps, st)
 	if l.idle == nil {
 		var ctx context.Context
 		ctx, l.cancel = context.WithCancel(context.Background())
@@ -89,6 +105,21 @@ func (l *lane) push(f func(context.Context)) bool {
 		go l.drain(ctx, l.idle)
 	}
 	return true
+}
+
+// mergeMoves keeps only the last of each run of queued pointer moves:
+// once the lane has fallen this far behind, where the pointer ends up is
+// what counts.
+func (l *lane) mergeMoves() {
+	kept := l.steps[:0]
+	for i, st := range l.steps {
+		if st.t == protocol.ControlMove && i+1 < len(l.steps) && l.steps[i+1].t == protocol.ControlMove {
+			continue
+		}
+		kept = append(kept, st)
+	}
+	clear(l.steps[len(kept):])
+	l.steps = kept
 }
 
 func (l *lane) drain(ctx context.Context, idle chan struct{}) {
@@ -106,10 +137,10 @@ func (l *lane) drain(ctx context.Context, idle chan struct{}) {
 			l.mu.Unlock()
 			return
 		}
-		f := l.steps[0]
+		st := l.steps[0]
 		l.steps = l.steps[1:]
 		l.mu.Unlock()
-		f(ctx)
+		st.do(ctx)
 	}
 }
 
