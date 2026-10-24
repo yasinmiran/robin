@@ -124,8 +124,8 @@ func newTileTracker(log *slog.Logger) *tileTracker {
 }
 
 // close cancels every transfer for good and returns once none is left
-// running: at worst one atlas still being encoded, since that cannot be
-// cancelled.
+// running, which waits at most for the atlases being encoded: an encode
+// cannot be cancelled.
 func (t *tileTracker) close() {
 	t.reset()
 	close(t.stop)
