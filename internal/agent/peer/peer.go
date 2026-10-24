@@ -58,7 +58,10 @@ type Config struct {
 	Audio bool
 
 	MinBitrate, StartBitrate, MaxBitrate int // bits per second
-	Log                                  *slog.Logger
+	// Unpaced sends every packet the moment it is written, as a
+	// comparison for measurements; the agent paces.
+	Unpaced bool
+	Log     *slog.Logger
 }
 
 // Handlers receive the peer's events. Each may be nil. They are called from
@@ -126,11 +129,16 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 	reg := &interceptor.Registry{}
 	bweReady := make(chan cc.BandwidthEstimator, 1)
 	ccf, err := cc.NewInterceptor(func() (cc.BandwidthEstimator, error) {
-		// No pacer: the default one queues without bound, so a burst sent
-		// while the target falls drains for seconds and the delay that adds
-		// keeps the target at its floor. The encoder already holds the rate.
+		// Not Pion's pacer: it queues without bound, so a burst sent while
+		// the target falls drains for seconds and the delay that adds keeps
+		// the target at its floor. The encoder holds the rate; the pacer
+		// only spreads bursts, keyframes above all.
+		var p gcc.Pacer = newPacer(cfg.StartBitrate)
+		if cfg.Unpaced {
+			p = gcc.NewNoOpPacer()
+		}
 		return gcc.NewSendSideBWE(
-			gcc.SendSideBWEPacer(gcc.NewNoOpPacer()),
+			gcc.SendSideBWEPacer(p),
 			gcc.SendSideBWEInitialBitrate(cfg.StartBitrate),
 			gcc.SendSideBWEMinBitrate(cfg.MinBitrate),
 			gcc.SendSideBWEMaxBitrate(cfg.MaxBitrate),
