@@ -33,6 +33,9 @@ export class Input {
   // scale turns CSS pixels into remote pixels: devicePixelRatio when the
   // session asked for HiDPI, 1 otherwise.
   scale = 1;
+  // onPinch, when set, may take a pinch instead of the zoom, and returns
+  // true when it did.
+  onPinch = null;
 
   // text is the hidden text box that holds the keyboard's focus, so input
   // methods and soft keyboards have somewhere to type, and preedit shows
@@ -240,6 +243,7 @@ export class Input {
         break;
       }
       case 'pinch':
+        if (this.onPinch?.(g)) return;
         this.#view.pinch(g.from, g.to);
         this.#showView();
     }

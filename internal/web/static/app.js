@@ -12,6 +12,7 @@ import { Clipboard } from './clipboard.js';
 import { offerDevices } from './devicebar.js';
 import { constrainedBaselineFirst } from './devices.js';
 import { PrivateSwitches } from './private.js';
+import { SharpText } from './sharp.js';
 
 const CONTROL_CHANNEL = 'control';
 const ICE_GRACE_MS = 2000;
@@ -36,6 +37,7 @@ const cursor = new RemoteCursor(video);
 const session = new Session();
 const sessionControls = sessionSection(overlay.addSection('session'));
 const privateSwitches = new PrivateSwitches(overlay, sendControl);
+const sharp = new SharpText({ video, overlay, send: sendControl, input });
 
 let ws = null;
 let pc = null;
@@ -76,6 +78,7 @@ window.robin = {
   },
   get gesture() { return input.gesture; },
   get private() { return privateSwitches.state; },
+  sharp,
   addSection: (name) => overlay.addSection(name),
   detach: () => leave(session.detach()),
   endSession: () => leave(session.end()),
@@ -211,6 +214,7 @@ function createPeer(config) {
   channel.onopen = () => {
     lastControlAt = Date.now();
     input.sendResize();
+    sharp.open();
   };
   channel.onclose = () => input.release();
   channel.onmessage = (e) => {
@@ -291,6 +295,7 @@ function dropPeer() {
   clearInterval(heartbeatTimer);
   input.release();
   devices?.stop();
+  sharp.reset();
   earlyCandidates = [];
   const old = pc;
   pc = null;

@@ -45,6 +45,25 @@ html, body {
   transform-origin: 0 0;
 }
 
+/* Actual size: one picture pixel to one device pixel, placed by sharp.js
+   (actualsize.js), larger than the window when the desktop is. */
+#screen.actual {
+  inset: auto;
+  left: var(--actual-left);
+  top: var(--actual-top);
+  width: var(--actual-width);
+  height: var(--actual-height);
+}
+
+/* Sharp text's tiles, laid over the picture the video shows; the pointer
+   goes through to the video. */
+#tiles {
+  position: fixed;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
 /* The text box that holds the keyboard's focus for input methods and soft
    keyboards. It sits where the pointer last went down, so a candidate list
    opens there, and shows nothing itself. 16px text keeps mobile browsers

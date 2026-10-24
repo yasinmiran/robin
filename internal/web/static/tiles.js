@@ -1,0 +1,164 @@
+// Sharp text: which of the agent's lossless tiles may be shown over the
+// video, from the manifests that come before each frame and the frames the
+// video shows, as internal/protocol/tiles.go defines them. A tile shows
+// only over a frame whose manifest, and those of every frame between the
+// tile's and it, the page has: a frame on screen that is newer than every
+// manifest hides them all until its manifest arrives. Nothing here touches
+// the DOM.
+
+export const TILE_SIZE = 64;
+export const MAX_TILE_BATCH = 256;
+export const TILE_ATLAS_COLUMNS = 16;
+export const TILE_BATCH_LIMIT = 4 * 1048576;
+
+const HEAD = 10; // RTP, generation and count, before the index
+
+// after reports whether RTP timestamp a comes later than b, across the
+// 32-bit wrap.
+export function after(a, b) {
+  return ((a - b) | 0) > 0;
+}
+
+// parseTileBatch reads a tile transfer's payload: the RTP timestamp of the
+// frame its tiles show, their grid's generation, their indexes in atlas
+// order, and the PNG atlas.
+export function parseTileBatch(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length < HEAD) throw new Error('malformed tile batch');
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const n = view.getUint16(8);
+  if (n === 0 || n > MAX_TILE_BATCH || bytes.length < HEAD + 4 * n) throw new Error(`malformed tile batch of ${n} tiles`);
+  const tiles = [];
+  for (let k = 0; k < n; k++) tiles.push(view.getUint32(HEAD + 4 * k));
+  return { rtp: view.getUint32(0), gen: view.getUint32(4), tiles, png: bytes.subarray(HEAD + 4 * n) };
+}
+
+// TileBook keeps the page's account of tiles: the grid, which tiles are on
+// the canvas, which wait for the video to reach their frame, and whether
+// the canvas may be seen. Its methods return what the canvas must do.
+export class TileBook {
+  gen = null;
+  width = 0;
+  height = 0;
+  #cols = 0;
+  #latest = null; // RTP of the newest manifest
+  #onScreen = null; // RTP of the frame the video shows
+  #gone = new Map(); // tile -> RTP of the latest frame that changed it
+  #drawn = new Map(); // tile -> RTP of the batch it was drawn from
+  #waiting = []; // batches whose frame the video has not shown yet
+
+  // visible says the canvas may be seen: the video shows a frame whose
+  // manifest has arrived.
+  get visible() {
+    return this.#onScreen !== null && this.#latest !== null && !after(this.#onScreen, this.#latest);
+  }
+
+  // drawn is how many tiles are on the canvas.
+  get drawn() {
+    return this.#drawn.size;
+  }
+
+  // has reports whether tile i is on the canvas.
+  has(i) {
+    return this.#drawn.has(i);
+  }
+
+  // entries lists the tiles on the canvas, each with the RTP timestamp of
+  // the batch it came from.
+  entries() {
+    return [...this.#drawn];
+  }
+
+  // rect is tile i's place in the desktop.
+  rect(i) {
+    const x = (i % this.#cols) * TILE_SIZE;
+    const y = Math.floor(i / this.#cols) * TILE_SIZE;
+    return { x, y, w: Math.min(TILE_SIZE, this.width - x), h: Math.min(TILE_SIZE, this.height - y) };
+  }
+
+  // manifest takes one frame's manifest. It returns { reset, clear }: reset
+  // when the grid is new and the whole canvas goes, at width by height;
+  // otherwise clear lists the tiles to wipe now. Batches that wait are
+  // dropped when their grid goes.
+  manifest(frame) {
+    const { rtp, gen, w, h } = frame;
+    this.#latest = rtp;
+    if (gen !== this.gen || w !== this.width || h !== this.height) {
+      this.gen = gen;
+      this.width = w;
+      this.height = h;
+      this.#cols = Math.ceil(w / TILE_SIZE);
+      this.#gone.clear();
+      this.#drawn.clear();
+      this.#release(this.#waiting);
+      this.#waiting = [];
+      return { reset: true, clear: [] };
+    }
+    const clear = [];
+    const gone = frame.gone ?? [];
+    for (let k = 0; k + 1 < gone.length; k += 2) {
+      for (let i = gone[k]; i < gone[k + 1]; i++) {
+        this.#gone.set(i, rtp);
+        if (this.#drawn.delete(i)) clear.push(i);
+      }
+    }
+    return { reset: false, clear };
+  }
+
+  // batch takes a parsed tile batch with its decoded atlas in batch.image.
+  // It returns what is due now, as frame does; a batch of another grid
+  // comes straight back as spent.
+  batch(b) {
+    if (b.gen !== this.gen) return { draws: [], spent: [b.image] };
+    this.#waiting.push(b);
+    return this.#due();
+  }
+
+  // frame takes the RTP timestamp of the frame the video now shows. It
+  // returns { draws, spent }: draws are { image, sx, sy, x, y, w, h }, the
+  // atlas square to copy and where it goes, and spent the atlases to close
+  // once they are drawn.
+  frame(rtp) {
+    this.#onScreen = rtp;
+    return this.#due();
+  }
+
+  // reset forgets everything, for a new peer or when tiles go off.
+  reset() {
+    this.gen = null;
+    this.width = this.height = this.#cols = 0;
+    this.#latest = this.#onScreen = null;
+    this.#gone.clear();
+    this.#drawn.clear();
+    this.#release(this.#waiting);
+    this.#waiting = [];
+  }
+
+  #due() {
+    const draws = [];
+    const spent = [];
+    if (this.#onScreen === null) return { draws, spent };
+    const later = [];
+    for (const b of this.#waiting) {
+      if (after(b.rtp, this.#onScreen)) {
+        later.push(b);
+        continue;
+      }
+      b.tiles.forEach((i, k) => {
+        const gone = this.#gone.get(i);
+        if (gone !== undefined && after(gone, b.rtp)) return;
+        const drawn = this.#drawn.get(i);
+        if (drawn !== undefined && after(drawn, b.rtp)) return;
+        this.#drawn.set(i, b.rtp);
+        const r = this.rect(i);
+        draws.push({ image: b.image, sx: (k % TILE_ATLAS_COLUMNS) * TILE_SIZE, sy: Math.floor(k / TILE_ATLAS_COLUMNS) * TILE_SIZE, ...r });
+      });
+      spent.push(b.image);
+    }
+    this.#waiting = later;
+    return { draws, spent };
+  }
+
+  #release(batches) {
+    for (const b of batches) b.image?.close?.();
+  }
+}
