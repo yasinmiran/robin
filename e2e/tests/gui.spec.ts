@@ -518,7 +518,8 @@ if (SCENARIO === 'attach') {
     await pointerLands(100, 100, { x: 1380, y: 100 });
 
     await pick('all');
-    // 2304x800 shrinks to fit the session's 1920x1080 at most.
+    // 2304x800 shrinks to fit the --max-size 1920x1080 run.sh gives this
+    // scenario.
     await expect.poll(videoSize, { message: 'the video shows the whole screen, scaled' }).toMatch(/^19(18|20)x666$/);
     await expect(page.locator('#monitor .label')).toHaveText('All monitors');
 

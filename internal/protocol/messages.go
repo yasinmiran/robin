@@ -86,15 +86,27 @@ type Start struct {
 }
 
 // Start limits the CLI fills in when the user names none, and the agent
-// assumes when a Start leaves them out.
+// assumes when a Start leaves them out. 2560x1440 shows a monitor of that
+// size as it is: scaled to 1920x1080 and back up in the browser, its 13 px
+// text measured 26 dB against the screen, where the same clip sent at its
+// own size measured 40 dB for about the same bitrate.
 const (
-	DefaultMaxWidth  = 1920
-	DefaultMaxHeight = 1080
+	DefaultMaxWidth  = 2560
+	DefaultMaxHeight = 1440
 	DefaultFPS       = 30
 	DefaultMaxKbps   = 10_000
 )
 
-// Hosts with SmallHostCPUs cores or fewer get lower defaults, since
+// Hosts with MidHostCPUs cores or fewer, or that do not say, stop at
+// 1920x1080: openh264 needs up to 17 ms of a core for a busy 1440p frame,
+// half a core at 30 fps.
+const (
+	MidHostCPUs      = 4
+	MidHostMaxWidth  = 1920
+	MidHostMaxHeight = 1080
+)
+
+// Hosts with SmallHostCPUs cores or fewer get lower defaults still, since
 // software H.264 at 1080p30 costs one to two cores.
 const (
 	SmallHostCPUs      = 2

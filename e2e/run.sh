@@ -196,7 +196,8 @@ run_scenario() {
   if [[ $s = attach ]]; then
     log "scenario $s: starting robin's own desktop"
     on_client ssh robinhost robin-live start
-    cli_args="--attach auto $cli_args"
+    # A size below the 2304x800 desktop, so showing all monitors scales.
+    cli_args="--attach auto --max-size 1920x1080 $cli_args"
   fi
   if [[ $s = wayland ]]; then
     log "scenario $s: starting robin's GNOME Wayland session"

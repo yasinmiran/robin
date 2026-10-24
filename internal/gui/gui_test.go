@@ -15,7 +15,8 @@ func TestStartMessageDefaults(t *testing.T) {
 		cpus         int
 		w, h, fps, k int
 	}{
-		{"defaults", Options{}, 8, 1920, 1080, 30, 10_000},
+		{"defaults", Options{}, 8, 2560, 1440, 30, 10_000},
+		{"four cores", Options{}, 4, 1920, 1080, 30, 10_000},
 		{"small host", Options{}, 2, 1280, 720, 20, 10_000},
 		{"unknown cores", Options{}, 0, 1920, 1080, 30, 10_000},
 		{"asked for", Options{MaxWidth: 2560, MaxHeight: 1440, FPS: 60, MaxKbps: 4000}, 2, 2560, 1440, 60, 4000},

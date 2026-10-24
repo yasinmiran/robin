@@ -106,8 +106,10 @@ const (
 	autoHardwareMaxCPUs = 4
 	// autoHardwareMinPixels is the session size above which the GPU encodes
 	// on any host: at 2160p openh264 spends up to 28 ms of CPU a frame on
-	// busy content, ffmpeg's VA-API route 12 ms.
-	autoHardwareMinPixels = 1920*1080 + 1
+	// busy content, ffmpeg's VA-API route 12 ms. At 1440p, the default on
+	// hosts with more than autoHardwareMaxCPUs cores, openh264 needs 5 to
+	// 17 ms, which such a host affords for the latency it saves.
+	autoHardwareMinPixels = 2560*1440 + 1
 )
 
 // AutoEncoder picks the encoder for --encoder auto, for a session of at most
