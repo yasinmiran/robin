@@ -70,6 +70,53 @@ func (p *Peer) takeBulk(dc *webrtc.DataChannel) {
 	})
 }
 
+// takeMedia picks the lines of an applied offer the agent takes media on:
+// the first audio line when Config.Mic asks for the microphone, the first
+// video line when Config.Camera asks for the camera. It stops every other
+// line the page added to send on, so the answer marks it inactive and the
+// page sends nothing there. The agent's own lines, which carry its video
+// and sound, cannot be stopped without their sending side; media the page
+// sends on one is read and dropped.
+func (p *Peer) takeMedia() {
+	var mic, camera *webrtc.RTPReceiver
+	for _, t := range p.pc.GetTransceivers() {
+		if d := t.Direction(); d != webrtc.RTPTransceiverDirectionRecvonly && d != webrtc.RTPTransceiverDirectionSendrecv {
+			continue
+		}
+		switch {
+		case t.Kind() == webrtc.RTPCodecTypeAudio && p.mic && mic == nil:
+			mic = t.Receiver()
+		case t.Kind() == webrtc.RTPCodecTypeVideo && p.camera && camera == nil:
+			camera = t.Receiver()
+		case t.Sender() == nil:
+			if err := t.Stop(); err != nil {
+				p.log.Warn("stop a media line the agent does not take", "err", err)
+			}
+		}
+	}
+	p.mu.Lock()
+	p.taken = [2]*webrtc.RTPReceiver{mic, camera}
+	p.mu.Unlock()
+}
+
+// wanted reports whether r is a line takeMedia took.
+func (p *Peer) wanted(r *webrtc.RTPReceiver) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return r != nil && (r == p.taken[0] || r == p.taken[1])
+}
+
+// drop reads tr until its receiver stops, so what the page sends on a line
+// the agent cannot refuse does not pile up unread.
+func drop(tr *webrtc.TrackRemote) {
+	buf := make([]byte, 1500)
+	for {
+		if _, _, err := tr.Read(buf); err != nil {
+			return
+		}
+	}
+}
+
 // ErrTooManyCandidates means the browser named more than
 // maxRemoteCandidates candidates since its last ICE restart; the candidate
 // was dropped.

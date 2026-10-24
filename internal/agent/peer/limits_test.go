@@ -16,6 +16,7 @@ import (
 	"github.com/pion/transport/v5"
 	"github.com/pion/transport/v5/stdnet"
 	"github.com/pion/webrtc/v4"
+	"github.com/pion/webrtc/v4/pkg/media"
 
 	"github.com/yasinmiran/robin/internal/protocol"
 )
@@ -443,5 +444,150 @@ func TestSecondControlChannelClosesFirst(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("SendControl never reached the second channel")
+	}
+}
+
+// receives reports whether an answer's media section lets the page send
+// media on it.
+func receives(section string) bool {
+	return !strings.HasPrefix(section, "application") &&
+		(strings.Contains(section, "a=recvonly") || strings.Contains(section, "a=sendrecv"))
+}
+
+// line is one media line of a page: its kind and direction.
+type line struct {
+	kind webrtc.RTPCodecType
+	dir  webrtc.RTPTransceiverDirection
+}
+
+// mediaPage builds a page with lines, in order, and a control channel; it
+// returns the page and the tracks it sends.
+func mediaPage(t *testing.T, lines ...line) (*sendingBrowser, []*webrtc.TrackLocalStaticSample) {
+	t.Helper()
+	m := &webrtc.MediaEngine{}
+	if err := m.RegisterDefaultCodecs(); err != nil {
+		t.Fatal(err)
+	}
+	pc, err := webrtc.NewAPI(webrtc.WithMediaEngine(m)).NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pc.Close() })
+	var sending []*webrtc.TrackLocalStaticSample
+	for i, l := range lines {
+		if l.dir == webrtc.RTPTransceiverDirectionRecvonly {
+			if _, err := pc.AddTransceiverFromKind(l.kind, webrtc.RTPTransceiverInit{Direction: l.dir}); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		c := webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2}
+		if l.kind == webrtc.RTPCodecTypeVideo {
+			c = webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: 90000, SDPFmtpLine: H264Fmtp}
+		}
+		tr, err := webrtc.NewTrackLocalStaticSample(c, fmt.Sprintf("line%d", i), "page")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pc.AddTransceiverFromTrack(tr, webrtc.RTPTransceiverInit{Direction: l.dir}); err != nil {
+			t.Fatal(err)
+		}
+		sending = append(sending, tr)
+	}
+	if _, err := pc.CreateDataChannel(protocol.ControlChannel, nil); err != nil {
+		t.Fatal(err)
+	}
+	return &sendingBrowser{pc: pc}, sending
+}
+
+// TestPeerRefusesInboundMedia offers the agent media it did not ask for:
+// a microphone and a camera to a peer that takes neither, extra lines of
+// each to one that takes one of each, and media on the agent's own lines.
+// The answer lets the page send on the lines the peer takes and on the
+// agent's own, which it cannot refuse without their sending side, and
+// only the tracks the peer takes reach Handlers.Track.
+func TestPeerRefusesInboundMedia(t *testing.T) {
+	const (
+		audio = webrtc.RTPCodecTypeAudio
+		video = webrtc.RTPCodecTypeVideo
+		recv  = webrtc.RTPTransceiverDirectionRecvonly
+		send  = webrtc.RTPTransceiverDirectionSendonly
+		both  = webrtc.RTPTransceiverDirectionSendrecv
+	)
+	for _, tc := range []struct {
+		name       string
+		cfg        Config
+		lines      []line
+		allowed    map[int]bool // answer sections that may take media
+		wantTracks int
+	}{
+		{name: "neither taken", lines: []line{{video, recv}, {video, send}, {video, send}}},
+		{
+			name: "one of each taken", cfg: Config{Mic: true, Camera: true},
+			lines:   []line{{video, recv}, {audio, both}, {video, send}, {audio, send}, {video, send}},
+			allowed: map[int]bool{1: true, 2: true}, wantTracks: 2,
+		},
+		{
+			name: "media on the agent's own lines", cfg: Config{Audio: true},
+			lines:   []line{{video, both}, {audio, both}},
+			allowed: map[int]bool{0: true, 1: true},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cands := make(chan protocol.Candidate, 32)
+			tracks := make(chan *webrtc.TrackRemote, 8)
+			tc.cfg.MinBitrate, tc.cfg.StartBitrate, tc.cfg.MaxBitrate, tc.cfg.IncludeLoopback = 100_000, 1_000_000, 5_000_000, true
+			p, err := New(tc.cfg, Handlers{
+				Candidate: func(c protocol.Candidate) { cands <- c },
+				Track:     func(tr *webrtc.TrackRemote, _ *webrtc.RTPReceiver) { tracks <- tr },
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { p.Close() })
+			b, sending := mediaPage(t, tc.lines...)
+			answer := exchange(t, b, p, cands)
+			for i, s := range mediaSections(answer) {
+				if receives(s) && !tc.allowed[i] {
+					t.Errorf("the answer takes media on line %d:\n%s", i, s)
+				}
+			}
+
+			stop := make(chan struct{})
+			var writers sync.WaitGroup
+			t.Cleanup(func() {
+				close(stop)
+				writers.Wait()
+			})
+			writers.Go(func() {
+				for {
+					select {
+					case <-stop:
+						return
+					case <-time.After(20 * time.Millisecond):
+					}
+					for _, tr := range sending {
+						data := []byte{0xf8, 0xff, 0xfe}
+						if tr.Kind() == video {
+							data = []byte{0, 0, 0, 1, 0x65, 0x88, 0x84, 0x21}
+						}
+						tr.WriteSample(media.Sample{Data: data, Duration: 20 * time.Millisecond})
+					}
+				}
+			})
+			got := 0
+			for timeout := time.After(4 * time.Second); ; {
+				select {
+				case <-tracks:
+					got++
+					continue
+				case <-timeout:
+				}
+				break
+			}
+			if got != tc.wantTracks {
+				t.Errorf("%d tracks reached Handlers.Track, want %d", got, tc.wantTracks)
+			}
+		})
 	}
 }

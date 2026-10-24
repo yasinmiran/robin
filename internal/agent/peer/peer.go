@@ -84,8 +84,9 @@ type Handlers struct {
 	// Bulk is asked about each transfer the browser opens; see BulkSink.
 	// Without it every transfer is refused.
 	Bulk func(protocol.Bulk) (BulkSink, error)
-	// Track receives each media track the browser sends. Without it the
-	// tracks are left unread.
+	// Track receives the microphone's and camera's tracks, on the lines
+	// Config.Mic and Config.Camera take. The peer refuses or drops any
+	// other media the browser sends, and all of it without Track.
 	Track func(*webrtc.TrackRemote, *webrtc.RTPReceiver)
 }
 
@@ -100,6 +101,11 @@ type Peer struct {
 	mu      sync.Mutex
 	control *webrtc.DataChannel
 	bwe     cc.BandwidthEstimator
+
+	// taken are the receivers of the microphone and camera lines, as
+	// takeMedia picked them; mu guards them.
+	taken       [2]*webrtc.RTPReceiver
+	mic, camera bool
 
 	remote      remoteCandidates
 	waitingBulk atomic.Int32 // bulk channels the browser opened, before their first frame
@@ -238,7 +244,7 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 		return nil, err
 	}
 	pcRef.Store(pc)
-	p := &Peer{pc: pc, h: h, log: log}
+	p := &Peer{pc: pc, h: h, log: log, mic: cfg.Mic, camera: cfg.Camera}
 
 	select {
 	case p.bwe = <-bweReady:
@@ -312,9 +318,12 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 		log.Info("remote track", "kind", tr.Kind().String(), "codec", tr.Codec().MimeType)
 		// The browser's sender reports reach the interceptors only if read.
 		go drainRTCP(r)
-		if h.Track != nil {
-			h.Track(tr, r)
+		if h.Track == nil || !p.wanted(r) {
+			log.Warn("dropping media the agent did not ask for", "kind", tr.Kind().String())
+			go drop(tr)
+			return
 		}
+		h.Track(tr, r)
 	})
 	pc.OnDataChannel(p.route)
 	return p, nil
@@ -331,6 +340,7 @@ func (p *Peer) Answer(offerSDP string) (string, error) {
 		return "", fmt.Errorf("peer: apply offer: %w", err)
 	}
 	counted()
+	p.takeMedia()
 	answer, err := p.pc.CreateAnswer(nil)
 	if err != nil {
 		return "", fmt.Errorf("peer: create answer: %w", err)
