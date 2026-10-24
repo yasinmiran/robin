@@ -108,6 +108,18 @@ func nodeExists(t *testing.T, name string) bool {
 	return false
 }
 
+// nodeAppears waits a few seconds for a node: PipeWire registers it once
+// the first frame has fixed its format.
+func nodeAppears(t *testing.T, name string) bool {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if nodeExists(t, name) {
+			return true
+		}
+	}
+	return false
+}
+
 // TestPipeWireCamera puts the camera on the user's PipeWire as a node a
 // program reads frames from: black before the browser sends, the
 // browser's pictures while it does, and gone after Close.
@@ -119,7 +131,7 @@ func TestPipeWireCamera(t *testing.T) {
 	}
 	defer c.Close()
 	node := "robin-camera-" + strconv.Itoa(os.Getpid())
-	if !nodeExists(t, node) {
+	if !nodeAppears(t, node) {
 		t.Fatalf("no PipeWire node %s", node)
 	}
 	grabWhen(t, node, "black before the browser sends", func(y, u, v byte) bool { return y <= 24 && near(u, 128) && near(v, 128) })
@@ -166,7 +178,7 @@ func TestPipeWireCameraDiesWithTheAgent(t *testing.T) {
 		t.Fatalf("helper said %q: %v", line, err)
 	}
 	node := "robin-camera-" + strconv.Itoa(cmd.Process.Pid)
-	if !nodeExists(t, node) {
+	if !nodeAppears(t, node) {
 		cmd.Process.Kill()
 		t.Fatalf("the helper's node %s is not there", node)
 	}
