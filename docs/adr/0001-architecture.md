@@ -857,8 +857,11 @@ file, and does it off the inbox's lock with the same 5 s bound, so a
 download folder on an NFS or FUSE mount that stopped answering fails the
 upload rather than freeze the session and its teardown. Cancel,
 failure and the end of the session remove the partial file; only a SIGKILL
-leaves one, and the agent does not sweep the user's download folder for
-names that look like its own.
+leaves one, or a writer still stuck on the disk 5 s after the session ended,
+since the agent exits rather than wait on it for good. The agent does not
+sweep the user's download folder for names that look like its own. A rename
+that finishes after Commit gave up removes the file it just named, so the
+page, told the upload failed, never finds it there under its name.
 
 There is no fsync before the rename. Flushing after the last byte took 15,
 42 and 213 ms for 16 MiB, 256 MiB and 1 GiB on that NVMe disk, all of it on

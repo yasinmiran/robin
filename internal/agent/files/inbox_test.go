@@ -404,6 +404,27 @@ func TestUploadCommitGivesUp(t *testing.T) {
 	}
 }
 
+// A rename that finishes after Commit gave up must not leave the file the
+// page was told failed.
+func TestUploadCommitAgreesWithTheDisk(t *testing.T) {
+	in := testInbox(t)
+	in.timeout = 100 * time.Millisecond
+	slow := 4 * in.timeout
+	in.rename = func(olddirfd int, oldpath string, newdirfd int, newpath string, flags uint) error {
+		time.Sleep(slow)
+		return unix.Renameat2(olddirfd, oldpath, newdirfd, newpath, flags)
+	}
+	_, err := upload(t, in, "late.txt", []byte("late"))
+	if !errors.Is(err, ErrSlowDisk) {
+		t.Errorf("Commit with a rename slower than its bound: %v, want ErrSlowDisk", err)
+	}
+	time.Sleep(slow)
+	waitEmpty(t, in)
+	if names := listing(t, in.Dir()); err != nil && len(names) != 0 {
+		t.Errorf("Commit failed with %v, yet the directory holds %v", err, names)
+	}
+}
+
 // A download dir on a mount that stopped answering must not hold the read
 // loop, nor the session's teardown behind it: Accept gives up, Close is
 // not kept waiting on Accept, and a call that answers late leaves nothing.

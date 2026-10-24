@@ -232,6 +232,9 @@ type Upload struct {
 	cancel     chan struct{} // closed by stop
 	cancelOnce sync.Once
 	failed     atomic.Pointer[error] // the writer's error, for Write to report
+	// outcome settles once whether the writer kept the file or Commit gave
+	// up on it, so that the page is never told one and the disk the other.
+	outcome atomic.Int32
 
 	done  chan struct{} // closed when the writer has finished
 	err   error         // why it failed, once done
@@ -254,6 +257,13 @@ func (u *Upload) Write(p []byte) (int, error) {
 	}
 }
 
+// The outcomes of an upload.
+const (
+	undecided int32 = iota
+	kept            // the writer named the file
+	gaveUp          // Commit stopped waiting, and the file goes
+)
+
 // Commit waits for the writer to drain its queue and gives the file its
 // name, or the name with the first free " (n)": it never replaces a file.
 // It gives up, and the file goes, after the inbox's timeout.
@@ -263,9 +273,15 @@ func (u *Upload) Commit() error {
 	case <-u.done:
 		return u.err
 	case <-time.After(u.in.timeout):
+	}
+	if u.outcome.CompareAndSwap(undecided, gaveUp) {
 		u.stop()
 		return fmt.Errorf("%w: %s took over %v to finish", ErrSlowDisk, u.name, u.in.timeout)
 	}
+	// The writer has just named the file and says so next, with no disk
+	// call between.
+	<-u.done
+	return u.err
 }
 
 // Abort cancels the upload. The writer removes the partial file.
@@ -284,6 +300,8 @@ func (u *Upload) Saved() string {
 func (u *Upload) stop() { u.cancelOnce.Do(func() { close(u.cancel) }) }
 
 func (u *Upload) run() {
+	defer u.in.forget(u)
+	defer unix.Close(u.dir)
 	err := u.drain()
 	if err == nil {
 		u.saved, err = u.keep()
@@ -292,10 +310,8 @@ func (u *Upload) run() {
 		u.f.Close()
 		unix.Unlinkat(u.dir, u.tmp, 0)
 	}
-	unix.Close(u.dir)
 	u.err = err
 	close(u.done)
-	u.in.forget(u)
 }
 
 // drain writes what Write queues until Commit closes the queue.
@@ -330,6 +346,11 @@ func (u *Upload) keep() (string, error) {
 		name := Numbered(u.name, n)
 		err := u.renameNoReplace(name)
 		if err == nil {
+			if !u.outcome.CompareAndSwap(undecided, kept) {
+				// Commit gave up during the rename and failed the upload.
+				unix.Unlinkat(u.dir, name, 0)
+				return "", errAborted
+			}
 			return name, nil
 		}
 		if !errors.Is(err, unix.EEXIST) {

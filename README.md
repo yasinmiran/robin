@@ -378,7 +378,8 @@ which leaves the desktop for `--keep`), and move files, within these bounds:
   rename that fails rather than replace anything. An upload bigger than the
   free space less 256 MiB is refused before a byte is written, four at most
   run at once, and one that is cancelled, fails, or is still running when
-  the session ends is removed.
+  the session ends is removed, unless the disk under it stopped answering
+  (see Known limits).
 - **Reading files**, only those a program running as you on the host offered
   with `robin-send`, and only after a click on Save in the page. `robin-send`
   opens each file itself and hands the session its descriptor over a socket
@@ -604,8 +605,9 @@ to print the comparison the ADR quotes.
 - An upload is not flushed to disk (no fsync) before it gets its name, so a
   power cut in the seconds after one can leave it short.
 - An agent killed with SIGKILL during an upload leaves the partial file in
-  the download folder as `.robin-upload-<random>`. Every other end of a
-  session removes it.
+  the download folder as `.robin-upload-<random>`, and so does a session
+  that ends while the disk under an upload has stopped answering: the agent
+  waits 5 s for it and exits. Every other end of a session removes it.
 - On a filesystem without `RENAME_NOREPLACE` (some FUSE and network ones),
   uploads are named through a hard link instead, and where that is missing
   too they fail.
