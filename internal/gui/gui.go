@@ -44,6 +44,9 @@ type Options struct {
 	Monitor string
 	Audio   bool
 	Encoder string
+	// Mic and Camera offer the browser's microphone and camera to the
+	// host's programs; the page keeps each off until the user turns it on.
+	Mic, Camera bool
 	// HiDPI sizes the remote display in the browser's device pixels.
 	HiDPI bool
 	STUN  []string
@@ -156,6 +159,9 @@ func Run(ctx context.Context, o Options) (err error) {
 	if o.Audio && !ready.Audio {
 		fmt.Fprintf(o.Stderr, "robin: no sound from %s: %s\n", o.Dest, ready.AudioError)
 	}
+	for _, note := range deviceNotes(o.Dest, ready) {
+		fmt.Fprintln(o.Stderr, note)
+	}
 
 	tunnelPort := 0
 	if ready.TunnelAddr != "" && o.Transport != relay.Direct {
@@ -191,9 +197,11 @@ func Run(ctx context.Context, o Options) (err error) {
 	}
 	fmt.Fprintf(o.Stderr, "robin: %s on %s%s; press Ctrl+C to end the session\n", desktop, o.Dest, monitorNote(ready))
 
+	config := protocol.Config{ICEServers: iceServers(start.STUN), HiDPI: o.HiDPI}
+	config.Mic, config.Camera = offeredDevices(ready)
 	b := &bridge{
 		agent: ag.conn, relay: relay.New(relay.Policy{Transport: o.Transport, TunnelPort: tunnelPort}),
-		config: protocol.Config{ICEServers: iceServers(start.STUN), HiDPI: o.HiDPI}, log: log,
+		config: config, log: log,
 	}
 	err = b.run(ctx, srv, m.Done(), serveErr)
 	// Ctrl+C in a terminal reaches ssh too, so the master may die first; a
@@ -230,6 +238,10 @@ func startMessage(o Options, r *probe.Report) (protocol.Start, string) {
 		Version: protocol.Version, MaxWidth: o.MaxWidth, MaxHeight: o.MaxHeight,
 		FPS: o.FPS, MaxKbps: o.MaxKbps, Session: o.Session, STUN: o.STUN,
 		Attach: o.Attach, Monitor: o.Monitor, Audio: o.Audio, Encoder: o.Encoder,
+		Mic: o.Mic, Camera: o.Camera,
+	}
+	if o.Camera {
+		s.CameraDevice = r.CameraDevice()
 	}
 	small := r.CPUs > 0 && r.CPUs <= protocol.SmallHostCPUs
 	if s.MaxWidth <= 0 || s.MaxHeight <= 0 {
