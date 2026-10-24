@@ -151,8 +151,8 @@ func TestCommandStreamsJSONLines(t *testing.T) {
 
 func TestCommandIsBinarySafe(t *testing.T) {
 	m := dial(t)
-	payload := make([]byte, 0, 1<<16)
-	for len(payload) < cap(payload) {
+	var payload []byte
+	for len(payload) < 1<<16 {
 		for b := range 256 {
 			payload = append(payload, byte(b))
 		}
