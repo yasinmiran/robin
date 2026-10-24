@@ -77,8 +77,10 @@ export class TileBook {
 
   // manifest takes one frame's manifest. It returns { reset, clear }: reset
   // when the grid is new and the whole canvas goes, at width by height;
-  // otherwise clear lists the tiles to wipe now. Batches that wait are
-  // dropped when their grid goes.
+  // otherwise clear lists the tiles to wipe now. A tile drawn from that
+  // frame or a later one stays: the manifest came late, behind the batch
+  // that already shows the change. Batches that wait are dropped when their
+  // grid goes.
   manifest(frame) {
     const { rtp, gen, w, h } = frame;
     this.#latest = rtp;
@@ -98,7 +100,10 @@ export class TileBook {
     for (let k = 0; k + 1 < gone.length; k += 2) {
       for (let i = gone[k]; i < gone[k + 1]; i++) {
         this.#gone.set(i, rtp);
-        if (this.#drawn.delete(i)) clear.push(i);
+        const drawn = this.#drawn.get(i);
+        if (drawn === undefined || !after(rtp, drawn)) continue;
+        this.#drawn.delete(i);
+        clear.push(i);
       }
     }
     return { reset: false, clear };

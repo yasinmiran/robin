@@ -86,6 +86,19 @@ test('a manifest clears the tiles its frame changes, at once', () => {
   assert.deepEqual(book.manifest({ ...grid(30), gone: [1, 2] }).clear, [], 'only what is drawn is cleared');
 });
 
+test('a manifest that comes late leaves a tile drawn from its frame or later', () => {
+  const book = new TileBook();
+  book.manifest(grid(10));
+  book.frame(30);
+  // The batch cut after frame 20's change beats frame 20's manifest.
+  book.batch(batch(25, [0, 1]));
+  book.batch(batch(20, [2]));
+  assert.deepEqual(book.manifest({ ...grid(20), gone: [0, 3] }).clear, []);
+  assert.deepEqual(drawnTiles(book), [0, 1, 2]);
+  // A change after the batch still clears it.
+  assert.deepEqual(book.manifest({ ...grid(26), gone: [1, 2] }).clear, [1]);
+});
+
 test('a batch older than a change to its tile draws nothing there', () => {
   const book = new TileBook();
   book.manifest(grid(10));
