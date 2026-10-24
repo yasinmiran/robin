@@ -71,9 +71,12 @@ type Clip struct {
 	segs   []Segment
 	starts []int
 	base   []byte // BGRX, W*H*4
-	// lineH and charW place typed text on the background's text grid.
-	lineH, lineY int
-	charW        float64
+	// lineH, lineY and cellW place typed text on the background's text
+	// grid; glyphs are the cells of its densest line that hold ink, at
+	// srcY, which typing draws one after another.
+	lineH, lineY, cellW int
+	srcY                int
+	glyphs              []int
 }
 
 // NewClip makes a w x h clip over bg from segs. A captured background is at
@@ -112,7 +115,7 @@ func NewClip(bg Background, w, h int, segs ...Segment) (*Clip, error) {
 		}
 		// Editor lines are 18 px apart from y 34 of the screen, in
 		// Liberation Mono 13 px.
-		c.lineH, c.charW = 18, 7.8
+		c.lineH, c.cellW = 18, 8
 		c.lineY = ((34-y0)%18 + 18) % 18
 	case Synthetic:
 		c.base = make([]byte, w*h*4)
@@ -126,11 +129,42 @@ func NewClip(bg Background, w, h int, segs ...Segment) (*Clip, error) {
 				p[0], p[1], p[2] = v, v, v
 			}
 		}
-		c.lineH, c.lineY, c.charW = 24, 0, 9
+		c.lineH, c.lineY, c.cellW = 24, 0, 9
 	default:
 		return nil, fmt.Errorf("vqtest: unknown background %d", bg)
 	}
+	c.findGlyphs()
 	return c, nil
+}
+
+// findGlyphs picks the line with the most inked cells as the one typing
+// copies from.
+func (c *Clip) findGlyphs() {
+	for y := c.lineY; y+c.lineH <= c.H; y += c.lineH {
+		var cells []int
+		for x := 0; x+c.cellW <= c.W; x += c.cellW {
+			if c.inked(x, y) {
+				cells = append(cells, x)
+			}
+		}
+		if len(cells) > len(c.glyphs) {
+			c.srcY, c.glyphs = y, cells
+		}
+	}
+}
+
+// inked reports whether the cell at x, y holds anything but the colour of
+// its top-left pixel.
+func (c *Clip) inked(x, y int) bool {
+	bg := c.base[4*(y*c.W+x) : 4*(y*c.W+x)+3]
+	for r := y; r < y+c.lineH; r++ {
+		for q := x; q < x+c.cellW; q++ {
+			if !bytes.Equal(c.base[4*(r*c.W+q):4*(r*c.W+q)+3], bg) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 var screenOnce = sync.OnceValues(func() (*image.RGBA, error) {
@@ -190,27 +224,27 @@ func (c *Clip) Draw(pix []byte, i int) {
 	}
 }
 
-// typing blanks a line about 45% down the screen and reveals, from its
-// left, the text two lines below it, one character more every third frame.
+// typing blanks part of a line about 45% down the screen and draws a
+// glyph into it every third frame, like keystrokes.
 func (c *Clip) typing(pix []byte, j int) {
 	w := c.W
 	y0 := c.lineY + (c.H*45/100-c.lineY)/c.lineH*c.lineH
 	x0, x1 := c.W/5, c.W*3/5
-	src := y0 + 2*c.lineH
-	if src+c.lineH > c.H {
-		src = y0 - 2*c.lineH
-	}
-	shown := x0 + int(float64(j/3+1)*c.charW)
 	blank := c.base[4*(y0*w+x1) : 4*(y0*w+x1)+4]
-	for y := range c.lineH {
-		row := pix[4*(y0+y)*w:]
-		from := c.base[4*(src+y)*w:]
+	for y := y0; y < y0+c.lineH; y++ {
 		for x := x0; x < x1; x++ {
-			if x < shown {
-				copy(row[4*x:4*x+4], from[4*x:4*x+4])
-			} else {
-				copy(row[4*x:4*x+4], blank)
-			}
+			copy(pix[4*(y*w+x):4*(y*w+x)+4], blank)
+		}
+	}
+	if len(c.glyphs) == 0 {
+		return
+	}
+	// A full line starts over from its left.
+	n, room := j/3+1, max((x1-x0)/c.cellW, 1)
+	for k := (n - 1) / room * room; k < n; k++ {
+		gx, dx := c.glyphs[k%len(c.glyphs)], x0+k%room*c.cellW
+		for y := range c.lineH {
+			copy(pix[4*((y0+y)*w+dx):4*((y0+y)*w+dx+c.cellW)], c.base[4*((c.srcY+y)*w+gx):4*((c.srcY+y)*w+gx+c.cellW)])
 		}
 	}
 }

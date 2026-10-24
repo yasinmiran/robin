@@ -48,6 +48,9 @@ type Result struct {
 	Requests     []Request
 	Stats        ReceiverStats
 	DecodeErrors int
+	// NoPicture counts frames the decoder took without showing anything;
+	// Untagged, pictures shown that named no clip frame.
+	NoPicture, Untagged int
 	// Bytes counts RTP payload bytes received, retransmissions included.
 	Bytes int
 }
@@ -115,6 +118,10 @@ func NewBrowser(net *vnet.Net, clip *Clip, cfg ReceiverConfig) (*Browser, error)
 	se := webrtc.SettingEngine{}
 	se.SetNet(net)
 	se.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
+	// Pion drops SRTP packets more than 64 behind the newest as replays,
+	// which throws most retransmissions away at a few Mbit/s; Chrome keeps
+	// a window of 1024 for them.
+	se.SetSRTPReplayProtectionWindow(srtpReplayWindow)
 	pc, err := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithInterceptorRegistry(reg), webrtc.WithSettingEngine(se)).
 		NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
@@ -219,6 +226,9 @@ func (b *Browser) read(tr *webrtc.TrackRemote) {
 	}
 }
 
+// srtpReplayWindow is the SRTP replay window libwebrtc gives video.
+const srtpReplayWindow = 1024
+
 // pollEvery is how often the receiver's NACK and keyframe timers are run.
 const pollEvery = 10 * time.Millisecond
 
@@ -282,12 +292,14 @@ func (b *Browser) decode() {
 			continue
 		}
 		if img == nil {
+			b.result.NoPicture++
 			b.mu.Unlock()
 			continue
 		}
 		index, ok := FrameIndex(au)
 		if !ok {
 			index = -1
+			b.result.Untagged++
 		}
 		b.result.Shown = append(b.result.Shown, Shown{
 			Index: index, At: shownAt, Key: job.f.Key, Bytes: bytes, Recovered: job.f.Recovered,

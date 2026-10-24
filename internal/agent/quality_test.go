@@ -257,3 +257,52 @@ func TestVideoQuality(t *testing.T) {
 	r := clipRun{clip: clip, fps: 30, link: vqtest.Link{Delay: 10 * time.Millisecond}, open: softwareEncoder(t), preroll: 2 * time.Second}.run(t)
 	t.Logf("\n%s%s", vqtest.Table(r.Spans()), r.Summary())
 }
+
+// matrixSizes are the screens the matrix streams: a 1080p monitor, the
+// 1440p one of the session that prompted it, scaled to the default
+// --max-size as it was, and the same shown at its own size.
+var matrixSizes = []struct {
+	name       string
+	w, h       int
+	maxW, maxH int
+}{
+	{"1080p", 1920, 1080, 1920, 1080},
+	{"1440p-scaled", 2560, 1440, 1920, 1080},
+	{"1440p", 2560, 1440, 2560, 1440},
+}
+
+// matrixLinks are the paths the matrix streams over.
+var matrixLinks = []vqtest.Link{
+	{Name: "fast", Rate: 50_000_000, Queue: 50 * time.Millisecond, Delay: 15 * time.Millisecond, Jitter: time.Millisecond, Loss: 0.001},
+	{Name: "lossy", Rate: 20_000_000, Queue: 50 * time.Millisecond, Delay: 20 * time.Millisecond, Jitter: 2 * time.Millisecond, Loss: 0.01},
+	{Name: "tight", Rate: 4_000_000, Queue: 100 * time.Millisecond, Delay: 30 * time.Millisecond},
+}
+
+// TestVideoQualityMatrix streams a longer clip at each matrix size over
+// each matrix link and prints the numbers the ADR records. It is a
+// measuring aid: set ROBIN_VQ=1, and ROBIN_VQ_SIZE or ROBIN_VQ_LINK to a
+// name to run only that size or link.
+func TestVideoQualityMatrix(t *testing.T) {
+	if os.Getenv("ROBIN_VQ") == "" {
+		t.Skip("set ROBIN_VQ=1")
+	}
+	needVideoHarness(t)
+	for _, size := range matrixSizes {
+		if f := os.Getenv("ROBIN_VQ_SIZE"); f != "" && f != size.name {
+			continue
+		}
+		clip := mustClip(t, vqtest.Captured, size.w, size.h,
+			seconds(vqtest.Still, 6), seconds(vqtest.Typing, 3), seconds(vqtest.Scroll, 3),
+			seconds(vqtest.Drag, 3), seconds(vqtest.Video, 3), seconds(vqtest.Still, 6))
+		for _, link := range matrixLinks {
+			if f := os.Getenv("ROBIN_VQ_LINK"); f != "" && f != link.Name {
+				continue
+			}
+			r := clipRun{
+				clip: clip, fps: 30, maxW: size.maxW, maxH: size.maxH, link: link,
+				open: softwareEncoder(t), preroll: 3 * time.Second,
+			}.run(t)
+			t.Logf("%s over %s (%v):\n%s%s", size.name, link.Name, link, vqtest.Table(r.Spans()), r.Summary())
+		}
+	}
+}

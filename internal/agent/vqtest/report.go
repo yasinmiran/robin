@@ -174,7 +174,8 @@ func formatCounts(m map[string]int) string {
 // Summary is one line about the transport over a whole run.
 func (r *Run) Summary() string {
 	st := r.Result.Stats
-	return fmt.Sprintf("packets %d (dup %d), NACKed %d, recovered %d, abandoned %d, frames %d (keyframes %d), decode errors %d, requests %s",
-		st.Packets, st.Duplicates, st.NACKed, st.Recovered, st.Abandoned, st.Frames, st.Keyframes, r.Result.DecodeErrors,
-		formatCounts(r.Requests()))
+	return fmt.Sprintf("packets %d (dup %d), NACKed %d, recovered %d, abandoned %d, frames %d (keyframes %d), "+
+		"decode errors %d, no picture %d, untagged %d, requests %s",
+		st.Packets, st.Duplicates, st.NACKed, st.Recovered, st.Abandoned, st.Frames, st.Keyframes,
+		r.Result.DecodeErrors, r.Result.NoPicture, r.Result.Untagged, formatCounts(r.Requests()))
 }
