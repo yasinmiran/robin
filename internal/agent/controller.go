@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -172,9 +173,7 @@ var errKeepRanOut = errors.New("agent: the keep window ran out")
 // linger waits for the next controller until the keep window ends. It
 // returns the resumed connection, or an error: errKeepRanOut, ErrNoControllers
 // when none can come back, or why the desktop went away or ctx ended. A
-// controller whose first message is not a matching Resume, or asks what
-// the session cannot give (takeResume), is told so and dropped; the wait
-// goes on.
+// controller admit refuses is dropped; the wait goes on.
 func (s *session) linger(ctx context.Context, cs Controllers, ready *protocol.Ready, desktopDone <-chan error, until time.Time) (*protocol.Conn, error) {
 	type next struct {
 		conn *protocol.Conn
@@ -214,13 +213,7 @@ func (s *session) linger(ctx context.Context, cs Controllers, ready *protocol.Re
 				}
 				return nil, ErrNoControllers
 			}
-			r, err := awaitResume(ctx, a.conn, ready.ID)
-			if err == nil {
-				if err = s.takeResume(r); err != nil {
-					fail(a.conn, err)
-				}
-			}
-			if err != nil {
+			if err := s.admit(ctx, a.conn, ready.ID); err != nil {
 				s.log.Warn("controller refused", "err", err)
 				a.conn.Close()
 				go func() {
@@ -237,6 +230,20 @@ func (s *session) linger(ctx context.Context, cs Controllers, ready *protocol.Re
 			return a.conn, nil
 		}
 	}
+}
+
+// admit reads the handshake of a controller picking up kept session id and
+// does what its Resume asks (takeResume). An error refuses the controller,
+// which has been told why if it is still there to hear it.
+func (s *session) admit(ctx context.Context, conn *protocol.Conn, id string) error {
+	r, err := awaitResume(ctx, conn, id)
+	if err != nil {
+		return err
+	}
+	if err := s.takeResume(r); err != nil {
+		return fail(conn, err)
+	}
+	return nil
 }
 
 // awaitResume reads the handshake of a controller picking up a kept
@@ -256,6 +263,26 @@ func awaitResume(ctx context.Context, conn *protocol.Conn, id string) (protocol.
 		return protocol.Resume{}, fail(conn, fmt.Errorf("no session %q here", m.Resume.ID))
 	}
 	return *m.Resume, nil
+}
+
+// takeResume does what a resuming CLI asks of the session beyond giving it
+// back: it turns on the private session's switches the CLI names, as Start
+// would have, and checks that the session has the devices the CLI offers,
+// which it has only if it started with them. An error refuses the resume
+// and leaves the session as it was.
+func (s *session) takeResume(r protocol.Resume) error {
+	var flags, devices []string
+	if r.Mic && !s.start.Mic {
+		flags, devices = append(flags, "--mic"), append(devices, "a microphone")
+	}
+	if r.Camera && !s.start.Camera {
+		flags, devices = append(flags, "--camera"), append(devices, "a camera")
+	}
+	if len(flags) > 0 {
+		return fmt.Errorf("session %s started without %s, and a kept session keeps the devices it started with: resume it without %s, or end it with robin end and start another",
+			r.ID, strings.Join(devices, " or "), strings.Join(flags, " and "))
+	}
+	return s.private.require(switches{Curtain: r.Curtain, Silent: r.Silent})
 }
 
 // ended tells the controller the session is over on purpose, so it does

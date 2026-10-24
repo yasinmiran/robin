@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -247,5 +248,88 @@ func TestServeGivesUpWithoutAFirstController(t *testing.T) {
 	err := Serve(ctx, none, Options{RunRoot: t.TempDir(), FirstController: 200 * time.Millisecond})
 	if err == nil || !strings.Contains(err.Error(), "no controller connected within") || time.Since(start) > 3*time.Second {
 		t.Fatalf("Serve with no controller: %v after %s", err, time.Since(start))
+	}
+}
+
+func TestTakeResumeRefusesDevicesTheSessionLacks(t *testing.T) {
+	withMic := &session{start: protocol.Start{Mic: true}}
+	if err := withMic.takeResume(protocol.Resume{ID: "ab12", Mic: true}); err != nil {
+		t.Fatalf("a session with a microphone refused --mic: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		s    *session
+		r    protocol.Resume
+		want []string
+	}{
+		{"camera", withMic, protocol.Resume{ID: "ab12", Mic: true, Camera: true},
+			[]string{"session ab12 started without a camera", "resume it without --camera,"}},
+		{"both", &session{}, protocol.Resume{ID: "cd34", Mic: true, Camera: true},
+			[]string{"without a microphone or a camera", "resume it without --mic and --camera,", "robin end"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.s.takeResume(tc.r)
+			for _, want := range tc.want {
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("refusal %v, want it to say %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestTakeResumeRefusesPrivateOnASpawnedDesktop(t *testing.T) {
+	spawned := &session{}
+	if err := spawned.takeResume(protocol.Resume{ID: "ab12"}); err != nil {
+		t.Fatalf("a plain resume: %v", err)
+	}
+	for _, r := range []protocol.Resume{{Curtain: true}, {Silent: true}} {
+		if err := spawned.takeResume(r); err == nil || !strings.Contains(err.Error(), "for a desktop you attach to") {
+			t.Errorf("resume %+v of a spawned desktop: %v", r, err)
+		}
+	}
+}
+
+// TestLingerGivesTheResumeWhatItAsks: a kept attached desktop resumed with
+// --mic it never had is refused and goes on waiting; resumed with
+// --curtain, it draws the curtain before Ready, which says so.
+func TestLingerGivesTheResumeWhatItAsks(t *testing.T) {
+	rig, err := newPrivate(t, protocol.Start{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &session{log: slog.New(slog.NewTextHandler(io.Discard, nil)), private: rig.p, conn: newController(nil)}
+	f := &feed{conns: make(chan *protocol.Conn, 2), changes: make(chan protocol.Session, 4)}
+	ready := &protocol.Ready{Version: protocol.Version, ID: "ab12", Mode: protocol.ModeAttach}
+
+	refused, refusedCLI := pair(t)
+	resumed, resumedCLI := pair(t)
+	f.conns <- refused
+	f.conns <- resumed
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	got := make(chan *protocol.Conn, 1)
+	go func() {
+		c, err := s.linger(ctx, f, ready, nil, time.Now().Add(time.Minute))
+		if err != nil {
+			t.Errorf("linger: %v", err)
+		}
+		got <- c
+	}()
+
+	go refusedCLI.Send(protocol.Message{Type: protocol.TypeResume, Resume: &protocol.Resume{Version: protocol.Version, ID: "ab12", Mic: true}})
+	if m, err := refusedCLI.Recv(ctx); err != nil || m.Type != protocol.TypeError || !strings.Contains(m.Error, "--mic") {
+		t.Fatalf("the CLI that asked for --mic got %+v, %v", m, err)
+	}
+	go resumedCLI.Send(protocol.Message{Type: protocol.TypeResume, Resume: &protocol.Resume{Version: protocol.Version, ID: "ab12", Curtain: true}})
+	m, err := resumedCLI.Recv(ctx)
+	if err != nil || m.Type != protocol.TypeReady || !m.Ready.Resumed || m.Ready.Private == nil || !m.Ready.Private.Curtain.On {
+		t.Fatalf("the CLI that asked for --curtain got %+v, %v", m, err)
+	}
+	if !rig.curtain.isDrawn() {
+		t.Error("Ready says the curtain is on, and it is not drawn")
+	}
+	if c := <-got; c != resumed {
+		t.Errorf("linger resumed %p, want the second controller %p", c, resumed)
 	}
 }

@@ -176,12 +176,16 @@ func (p *private) set(t protocol.ControlType, on bool) {
 	p.wake()
 }
 
+// switches names the private session's switches: those a resuming CLI
+// asks for.
+type switches struct{ Curtain, Silent bool }
+
 // require turns on the switches a resuming CLI asks for, as Start's would
 // be, and waits until they are. A switch it cannot turn on refuses the
 // resume: the error says why, and both switches go back to what the page
 // last asked. A spawned desktop, which has no private session, refuses any.
-func (p *private) require(curtain, silent bool) error {
-	if !curtain && !silent {
+func (p *private) require(want switches) error {
+	if !want.Curtain && !want.Silent {
 		return nil
 	}
 	if p == nil {
@@ -189,7 +193,7 @@ func (p *private) require(curtain, silent bool) error {
 	}
 	p.mu.Lock()
 	wasCurtain, wasSilent := p.wantCurtain, p.wantSilent
-	p.wantCurtain, p.wantSilent = wasCurtain || curtain, wasSilent || silent
+	p.wantCurtain, p.wantSilent = wasCurtain || want.Curtain, wasSilent || want.Silent
 	p.mu.Unlock()
 	p.settleNow()
 	st := p.snapshot()
@@ -198,7 +202,7 @@ func (p *private) require(curtain, silent bool) error {
 		flag string
 		on   bool
 		sw   protocol.PrivateSwitch
-	}{{"--curtain", curtain, st.Curtain}, {"--silent", silent, st.Silent}} {
+	}{{"--curtain", want.Curtain, st.Curtain}, {"--silent", want.Silent, st.Silent}} {
 		if s.on && !s.sw.On {
 			errs = append(errs, fmt.Errorf("%s: %s", s.flag, cmp.Or(s.sw.Unsupported, s.sw.Error, "the session ended")))
 		}
