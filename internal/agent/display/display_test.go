@@ -38,9 +38,20 @@ func TestMain(m *testing.M) {
 		os.Stdout.WriteString("ready " + d.Name + "\n")
 		if os.Getenv(helperCloseEnv) != "" {
 			bufio.NewReader(os.Stdin).ReadString('\n')
+			sleeper := findProcs(func(_ int, cmdline, environ string) bool {
+				return cmdline == "sleep\x001000\x00" && strings.Contains("\x00"+environ, "\x00XAUTHORITY="+d.XAuthority+"\x00")
+			})
+			if len(sleeper) == 0 {
+				os.Stdout.WriteString("no sleep 1000 in the session\n")
+				select {}
+			}
 			go d.Close()
-			// Past the SIGTERM, into the wait for the one that ignores it.
-			time.Sleep(termGrace / 4)
+			// SIGTERM takes the sleep; Close then waits on the one that
+			// ignores it.
+			for len(living(sleeper)) > 0 {
+				time.Sleep(5 * time.Millisecond)
+			}
+			os.Stdout.WriteString("closing\n")
 			syscall.Kill(os.Getpid(), syscall.SIGKILL)
 		}
 		select {}
@@ -394,7 +405,8 @@ func TestAgentDeathDuringCloseKillsEverything(t *testing.T) {
 	if err := helper.Start(); err != nil {
 		t.Fatal(err)
 	}
-	line, _ := bufio.NewReader(stdout).ReadString('\n')
+	lines := bufio.NewReader(stdout)
+	line, _ := lines.ReadString('\n')
 	if !strings.HasPrefix(line, "ready ") {
 		helper.Process.Kill()
 		t.Fatalf("helper: %q", line)
@@ -402,6 +414,14 @@ func TestAgentDeathDuringCloseKillsEverything(t *testing.T) {
 	pids := waitTree(t, dir, filepath.Join(dir, "Xauthority"))
 
 	stdin.Write([]byte("close\n"))
+	if line, _ := lines.ReadString('\n'); line != "closing\n" {
+		helper.Process.Kill()
+		helper.Wait()
+		for _, p := range living(pids) {
+			syscall.Kill(p, syscall.SIGKILL)
+		}
+		t.Fatalf("helper: %q, want it killed while Close waits", line)
+	}
 	helper.Wait()
 	deadline := time.Now().Add(6 * time.Second)
 	var alive []int
