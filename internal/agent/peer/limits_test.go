@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -137,8 +138,8 @@ func TestPeerLeavesMDNSAlone(t *testing.T) {
 
 func ptr[T any](v T) *T { return &v }
 
-// hostCandidate is a host candidate on a loopback port nothing listens on,
-// so the checks the agent sends to it go nowhere.
+// hostCandidate is a host candidate on loopback, which the agent counts
+// and then drops, so it sends no checks there.
 func hostCandidate(port int) protocol.Candidate {
 	return protocol.Candidate{
 		Candidate: fmt.Sprintf("candidate:%d 1 udp 2130706431 127.0.0.1 %d typ host", port, port),
@@ -613,5 +614,157 @@ func TestPeerRefusesInboundMedia(t *testing.T) {
 				t.Errorf("%d tracks reached Handlers.Track, want %d", got, tc.wantTracks)
 			}
 		})
+	}
+}
+
+// browserOffer is the stand-in browser's offer, set as its local
+// description, before its gathering adds candidates.
+func browserOffer(t *testing.T, b *browser, o *webrtc.OfferOptions) string {
+	t.Helper()
+	offer, err := b.pc.CreateOffer(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.pc.SetLocalDescription(offer); err != nil {
+		t.Fatal(err)
+	}
+	return offer.SDP
+}
+
+func boundPeer(t *testing.T) *Peer {
+	t.Helper()
+	p, err := New(Config{MinBitrate: 100_000, StartBitrate: 1_000_000, MaxBitrate: 5_000_000, IncludeLoopback: true}, Handlers{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { p.Close() })
+	return p
+}
+
+// TestPeerCandidateBoundFollowsPionsGeneration: Pion takes a bundle's
+// ICE credentials from the section its BUNDLE group names first, and
+// restarts only when that section's ufrag changes. An offer that keeps
+// that one and changes another section's in every offer must not start
+// a new count each time while Pion keeps every candidate.
+func TestPeerCandidateBoundFollowsPionsGeneration(t *testing.T) {
+	p := boundPeer(t)
+	b := newBrowser(t)
+	sdp := browserOffer(t, b, nil)
+	if !strings.Contains(sdp, "a=group:BUNDLE 0 1\r\n") {
+		t.Fatalf("the stand-in browser's offer bundles otherwise:\n%s", sdp)
+	}
+	ufrag := regexp.MustCompile(`a=ice-ufrag:\S+`)
+	sections := strings.SplitAfter(sdp, "\r\nm=")
+	accepted := 0
+	for i := range 3 {
+		// Section 0's ufrag changes; section 1, which the group names
+		// first, keeps the browser's.
+		zero := ufrag.ReplaceAllString(sections[1], fmt.Sprintf("a=ice-ufrag:gen%dgen%d", i, i))
+		mixed := strings.Replace(sections[0], "a=group:BUNDLE 0 1", "a=group:BUNDLE 1 0", 1) + zero + strings.Join(sections[2:], "")
+		if _, err := p.Answer(mixed); err != nil {
+			break
+		}
+		for j := range maxRemoteCandidates {
+			if p.AddCandidate(hostCandidate(20000+i*maxRemoteCandidates+j)) == nil {
+				accepted++
+			}
+		}
+	}
+	if accepted > maxRemoteCandidates {
+		t.Errorf("took %d candidates over offers that never restarted Pion's ICE, more than %d", accepted, maxRemoteCandidates)
+	}
+}
+
+// TestPeerRefusesAnOddUfrag: every check the agent sends carries the
+// remote ufrag in its USERNAME, so one outside RFC 8839's ice-char puts
+// bytes the page chose in front of whatever the checks reach.
+func TestPeerRefusesAnOddUfrag(t *testing.T) {
+	sdp := browserOffer(t, newBrowser(t), nil)
+	ufrag := regexp.MustCompile(`a=ice-ufrag:\S+`)
+	pwd := regexp.MustCompile(`a=ice-pwd:\S+`)
+	for name, odd := range map[string]string{
+		"a space":        ufrag.ReplaceAllString(sdp, "a=ice-ufrag:ab cd"),
+		"a percent":      ufrag.ReplaceAllString(sdp, "a=ice-ufrag:ab%cd"),
+		"too short":      ufrag.ReplaceAllString(sdp, "a=ice-ufrag:abc"),
+		"too long":       ufrag.ReplaceAllString(sdp, "a=ice-ufrag:"+strings.Repeat("a", 257)),
+		"a short pwd":    pwd.ReplaceAllString(sdp, "a=ice-pwd:"+strings.Repeat("a", 21)),
+		"a pwd with a =": pwd.ReplaceAllString(sdp, "a=ice-pwd:"+strings.Repeat("a", 22)+"="),
+		"no ufrag":       ufrag.ReplaceAllString(sdp, ""),
+	} {
+		if _, err := boundPeer(t).Answer(odd); err == nil {
+			t.Errorf("an offer with %s in its ICE credentials was taken", name)
+		}
+	}
+	if _, err := boundPeer(t).Answer(sdp); err != nil {
+		t.Errorf("the stand-in browser's own offer: %v", err)
+	}
+}
+
+// TestPeerDropsLoopbackRemoteCandidates names a UDP port on the host's
+// loopback, in the offer and trickled: the browser is never there, and
+// services on loopback trust what comes from it, so the agent sends it
+// nothing.
+func TestPeerDropsLoopbackRemoteCandidates(t *testing.T) {
+	p := boundPeer(t)
+	b := newBrowser(t)
+	listen := func() (*net.UDPConn, int) {
+		t.Helper()
+		c, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { c.Close() })
+		return c, c.LocalAddr().(*net.UDPAddr).Port
+	}
+	inOffer, offerPort := listen()
+	trickled, tricklePort := listen()
+
+	sdp := browserOffer(t, b, nil)
+	at := strings.Index(sdp, "a=mid:0\r\n")
+	if at < 0 {
+		t.Fatal("no mid 0 in the offer")
+	}
+	sdp = sdp[:at] + "a=" + hostCandidate(offerPort).Candidate + "\r\n" + sdp[at:]
+	answer, err := p.Answer(sdp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: answer}); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.AddCandidate(hostCandidate(tricklePort)); err != nil {
+		t.Errorf("a trickled loopback candidate: %v", err)
+	}
+	got := make(chan string, 2)
+	for name, c := range map[string]*net.UDPConn{"the offer's": inOffer, "the trickled": trickled} {
+		go func() {
+			c.SetReadDeadline(time.Now().Add(2 * time.Second))
+			if _, err := c.Read(make([]byte, 1500)); err == nil {
+				got <- name
+			}
+		}()
+	}
+	select {
+	case name := <-got:
+		t.Errorf("the agent sent checks to %s loopback candidate", name)
+	case <-time.After(2 * time.Second):
+	}
+}
+
+func TestOutOfReach(t *testing.T) {
+	for addr, want := range map[string]bool{
+		"127.0.0.1": true, "127.8.0.1": true, "::1": true, "::ffff:127.0.0.1": true,
+		"169.254.10.1": true, "fe80::1": true, "224.0.0.251": true, "ff02::fb": true,
+		"0.0.0.0": true, "::": true,
+		"192.168.1.5": false, "10.0.0.2": false, "2001:db8::1": false,
+		"0f8d3d6c-4a5e-4b7c-9c1e-2d3f4a5b6c7d.local": false,
+	} {
+		c := fmt.Sprintf("candidate:1 1 udp 2130706431 %s 50000 typ host", addr)
+		if got := outOfReach(c); got != want {
+			t.Errorf("outOfReach(%s) = %v, want %v", c, got, want)
+		}
+	}
+	if outOfReach("candidate:1 1 udp") {
+		t.Error("a malformed candidate taken for one out of reach; Pion refuses it")
 	}
 }

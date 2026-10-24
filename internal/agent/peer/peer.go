@@ -337,14 +337,14 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 // Answer applies an offer and returns the answer SDP. A later offer on the
 // same peer is a renegotiation, typically the browser's ICE restart.
 func (p *Peer) Answer(offerSDP string) (string, error) {
-	counted, err := p.remote.offer(offerSDP)
+	sdp, commit, err := p.remote.offer(offerSDP)
 	if err != nil {
 		return "", err
 	}
-	if err := p.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: offerSDP}); err != nil {
+	if err := p.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: sdp}); err != nil {
 		return "", fmt.Errorf("peer: apply offer: %w", err)
 	}
-	counted()
+	commit()
 	p.takeMedia()
 	answer, err := p.pc.CreateAnswer(nil)
 	if err != nil {
@@ -358,7 +358,8 @@ func (p *Peer) Answer(offerSDP string) (string, error) {
 
 // AddCandidate applies a browser candidate. An empty candidate marks the end
 // of the browser's gathering. Past maxRemoteCandidates since the last ICE
-// restart it drops the candidate and returns ErrTooManyCandidates.
+// restart it drops the candidate and returns ErrTooManyCandidates. One at
+// an address the browser is never at counts, and is dropped.
 func (p *Peer) AddCandidate(c protocol.Candidate) error {
 	if c.Candidate != "" {
 		if warn, err := p.remote.add(c.Candidate); err != nil {
@@ -366,6 +367,10 @@ func (p *Peer) AddCandidate(c protocol.Candidate) error {
 				p.log.Warn("dropping the browser's candidates past the bound", "max", maxRemoteCandidates)
 			}
 			return err
+		}
+		if outOfReach(c.Candidate) {
+			p.log.Debug("dropping a candidate at loopback, link-local or no unicast address")
+			return nil
 		}
 	}
 	return p.pc.AddICECandidate(webrtc.ICECandidateInit{

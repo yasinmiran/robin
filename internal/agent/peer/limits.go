@@ -3,6 +3,7 @@ package peer
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -107,19 +108,41 @@ type remoteCandidates struct {
 	warned bool
 }
 
-// offer checks the candidates offerSDP names. The count it returns applies
-// them once the offer has been applied, so an offer Pion refuses changes
-// nothing.
-func (rc *remoteCandidates) offer(offerSDP string) (apply func(), err error) {
-	ufrag, named := "", map[string]bool{}
+// offer checks offerSDP's ICE credentials and counts the candidates it
+// names. It returns the offer to apply, without the candidates the agent
+// never checks (see outOfReach), and commit, which records the count once
+// the offer has applied, so an offer Pion refuses changes nothing.
+//
+// Pion takes a bundle's credentials from one section and starts a new
+// generation only when that section's ufrag changes; it checks no other
+// section against it. An offer whose sections disagree is refused, so the
+// ufrag counted is the one Pion holds.
+func (rc *remoteCandidates) offer(offerSDP string) (sdp string, commit func(), err error) {
+	var ufrag, pwd string
+	named := map[string]bool{}
+	var kept strings.Builder
 	for line := range strings.Lines(offerSDP) {
-		line = strings.TrimRight(line, "\r\n")
-		if v, ok := strings.CutPrefix(line, "a=ice-ufrag:"); ok && ufrag == "" {
-			ufrag = v
+		text := strings.TrimRight(line, "\r\n")
+		if v, ok := strings.CutPrefix(text, "a=ice-ufrag:"); ok {
+			if err := sameCredential(&ufrag, v, minUfrag); err != nil {
+				return "", nil, fmt.Errorf("peer: the offer's ice-ufrag %w", err)
+			}
 		}
-		if v, ok := strings.CutPrefix(line, "a="); ok && strings.HasPrefix(v, "candidate:") {
-			named[v] = true
+		if v, ok := strings.CutPrefix(text, "a=ice-pwd:"); ok {
+			if err := sameCredential(&pwd, v, minPwd); err != nil {
+				return "", nil, fmt.Errorf("peer: the offer's ice-pwd %w", err)
+			}
 		}
+		if c, ok := strings.CutPrefix(text, "a="); ok && strings.HasPrefix(c, "candidate:") {
+			named[c] = true
+			if outOfReach(c) {
+				continue
+			}
+		}
+		kept.WriteString(line)
+	}
+	if ufrag == "" || pwd == "" {
+		return "", nil, errors.New("peer: the offer names no ICE credentials")
 	}
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
@@ -134,11 +157,12 @@ func (rc *remoteCandidates) offer(offerSDP string) (apply func(), err error) {
 		n += len(rc.seen)
 	}
 	if n > maxRemoteCandidates {
-		return nil, fmt.Errorf("peer: the offer brings the browser's candidates to %d, more than %d", n, maxRemoteCandidates)
+		return "", nil, fmt.Errorf("peer: the offer brings the browser's candidates to %d, more than %d", n, maxRemoteCandidates)
 	}
-	return func() {
+	return kept.String(), func() {
 		rc.mu.Lock()
 		defer rc.mu.Unlock()
+		// A ufrag is never empty, so the first offer always restarts.
 		if restart {
 			rc.ufrag, rc.seen, rc.warned = ufrag, map[string]bool{}, false
 		}
@@ -146,6 +170,49 @@ func (rc *remoteCandidates) offer(offerSDP string) (apply func(), err error) {
 			rc.seen[c] = true
 		}
 	}, nil
+}
+
+// RFC 8839's bounds on ice-ufrag and ice-pwd, in ice-char.
+const (
+	minUfrag, minPwd = 4, 22
+	maxCredential    = 256
+)
+
+// sameCredential checks v, one ice-ufrag or ice-pwd line of an offer:
+// min to maxCredential of RFC 8839's ice-char, and the same as *seen, what
+// earlier lines gave, if any. Every check the agent sends carries the
+// browser's ufrag, so nothing else goes there.
+func sameCredential(seen *string, v string, min int) error {
+	odd := func(r rune) bool {
+		return !('a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9' || r == '+' || r == '/')
+	}
+	switch {
+	case len(v) < min || len(v) > maxCredential || strings.ContainsFunc(v, odd):
+		return fmt.Errorf("is not %d to %d letters, digits, + and /", min, maxCredential)
+	case *seen != "" && v != *seen:
+		return errors.New("differs between sections")
+	}
+	*seen = v
+	return nil
+}
+
+// outOfReach reports whether candidate c names an address the browser is
+// never at: the host's own loopback, a link-local address, which the
+// agent's checks would reach only on its own link, or no unicast address
+// at all. The browser on another machine cannot be there, and what listens
+// on the host's loopback trusts it; the tunnel comes in peer-reflexive, not
+// named. A name, which Pion does not resolve, is left to it.
+func outOfReach(c string) bool {
+	f := strings.Fields(c)
+	if len(f) < 5 {
+		return false
+	}
+	ip, err := netip.ParseAddr(f[4])
+	if err != nil {
+		return false
+	}
+	ip = ip.Unmap()
+	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsMulticast() || ip.IsUnspecified()
 }
 
 // add counts one trickled candidate, or refuses it once the generation has
