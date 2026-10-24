@@ -265,4 +265,16 @@ func TestQuote(t *testing.T) {
 	if got := lastLines("a\nb\nc\nd", 2); got != "c | d" {
 		t.Errorf("lastLines = %q", got)
 	}
+	// What gst-launch-1.0 1.24 prints when pipewiresink finds no PipeWire.
+	const noPipeWire = "ERROR: from element /GstPipeline:pipeline0/GstPipeWireSink:pipewiresink0: Failed to connect\n" +
+		"Additional debug info:\n" +
+		"../src/gst/gstpipewiresink.c(860): gst_pipewire_sink_open (): /GstPipeline:pipeline0/GstPipeWireSink:pipewiresink0\n" +
+		"ERROR: pipeline doesn't want to preroll.\n" +
+		"Failed to set pipeline to PAUSED."
+	if got, want := why(noPipeWire), "ERROR: from element /GstPipeline:pipeline0/GstPipeWireSink:pipewiresink0: Failed to connect"; got != want {
+		t.Errorf("why = %q, want %q", got, want)
+	}
+	if got := why("WARNING: erroneous pipeline: no element \"nosuchsink\""); got != `WARNING: erroneous pipeline: no element "nosuchsink"` {
+		t.Errorf("why of a parse failure = %q", got)
+	}
 }

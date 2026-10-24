@@ -234,19 +234,32 @@ func (c *child) stop() {
 	}
 }
 
-// reason describes how the child ended, with the end of what it said.
+// reason describes how the child ended, with what it said about why.
 func (c *child) reason() string {
 	status := "exited"
 	if c.err != nil {
 		status = c.err.Error()
 	}
 	if msg := strings.TrimSpace(c.stderr.String()); msg != "" {
-		return "gst-launch-1.0 " + status + ": " + lastLines(msg, 3)
+		return "gst-launch-1.0 " + status + ": " + why(msg)
 	}
 	return "gst-launch-1.0 " + status
 }
 
-// lastLines keeps the last n lines of s, which is where gst says why.
+// why picks gst's reason out of what it printed: the first error an element
+// posted, which the lines after it only restate ("pipeline doesn't want to
+// preroll"), or else the last lines, where a pipeline that does not parse
+// says so.
+func why(msg string) string {
+	for _, line := range strings.Split(msg, "\n") {
+		if strings.HasPrefix(line, "ERROR: from element ") {
+			return line
+		}
+	}
+	return lastLines(msg, 3)
+}
+
+// lastLines keeps the last n lines of s.
 func lastLines(s string, n int) string {
 	lines := strings.Split(s, "\n")
 	if len(lines) > n {
