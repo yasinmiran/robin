@@ -39,6 +39,15 @@ images), `ROBIN_E2E_SUBNET` and `ROBIN_E2E_HOST_IP`:
 ROBIN_E2E_ID=robin-e2e-2 ROBIN_E2E_SUBNET=10.89.43.0/24 ROBIN_E2E_HOST_IP=10.89.43.10 make e2e
 ```
 
+`ROBIN_E2E_COVER=<dir>` collects coverage, as `make cover-e2e` does with a
+CLI and agent built with `-cover`. The host's sshd sets
+`GOCOVERDIR=/cover` in every session (`SetEnv` in `host/sshd_config`), and
+`run.sh` mounts `<dir>/<scenario>/agent` there; the CLI gets
+`GOCOVERDIR=<dir>/<scenario>/cli`, and the Chrome project saves the page's
+V8 coverage in `<dir>/<scenario>/page`. A `-cover` binary writes its data
+only when it exits normally, so a scenario that fails before its SIGINT
+teardown hands in little or nothing.
+
 ## Scenarios
 
 Each scenario gets a fresh host container, so blocked UDP or a leftover agent
@@ -206,7 +215,7 @@ Open a trace with `npx playwright show-trace <zip>` from `e2e/` (after
 - `tests/gui.spec.ts`: the X11 scenarios. `tests/wayland.spec.ts`: the
   Wayland one. `tests/selftest.spec.ts`: the harness.
 - `tests/helpers/`: the CLI runner, the frame sampler, page-to-display
-  coordinate mapping, and host checks. Host checks use their own ssh
+  coordinate mapping, page coverage, and host checks. Host checks use their own ssh
   connections (`ControlPath=none`), never the CLI's master.
 
 ## Rootless podman notes

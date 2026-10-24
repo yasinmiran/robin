@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Cli } from './helpers/cli';
 import { pagePoint } from './helpers/coords';
+import { savePageCoverage, startPageCoverage } from './helpers/cover';
 import { CHANGED_FLOOR, isNonBlack, sampleFrame, waitForStillFrame } from './helpers/frames';
 import * as host from './helpers/host';
 
@@ -73,6 +74,7 @@ test.beforeAll(async ({ browser }, testInfo) => {
     recordVideo: { dir: path.join(OUT, 'video'), size: { width: 1280, height: 720 } },
   });
   page = await context.newPage();
+  await startPageCoverage(page);
   const consoleLog = fs.createWriteStream(path.join(OUT, 'console.log'), { flags: 'a' });
   page.on('console', (m) => consoleLog.write(`${new Date().toISOString()} ${m.type()} ${m.text()}\n`));
   page.on('pageerror', (e) => consoleLog.write(`${new Date().toISOString()} pageerror ${e.stack ?? e}\n`));
@@ -121,6 +123,7 @@ test.afterEach(async ({}, testInfo) => {
 
 test.afterAll(async () => {
   await cli?.stop();
+  await savePageCoverage(page, 'gui');
   await context?.close(); // flushes the page video
 });
 

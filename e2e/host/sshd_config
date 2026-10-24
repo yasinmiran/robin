@@ -19,5 +19,8 @@ StreamLocalBindUnlink yes
 X11Forwarding no
 PrintMotd no
 LogLevel VERBOSE
+# Where an agent built with -cover writes its coverage (make cover-e2e
+# mounts a directory there); other binaries ignore it.
+SetEnv GOCOVERDIR=/cover
 
 Subsystem sftp internal-sftp

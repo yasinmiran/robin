@@ -9,6 +9,11 @@
 # to the repo root). ROBIN_RESTART_TIMEOUT_MS, ROBIN_SIGINT_PID_ONLY and ROBIN_CLI_ARGS
 # (extra flags for `robin gui`, which always runs with -v) pass through
 # to the tests. Artifacts land in e2e/out/<scenario>/.
+#
+# ROBIN_E2E_COVER, a directory, collects coverage per scenario in
+# <dir>/<scenario>/: the CLI's and the agent's GOCOVERDIR data in cli/ and
+# agent/ (from binaries built with -cover, as make cover-e2e does) and
+# Chrome's coverage of the page in page/.
 set -euo pipefail
 
 E2E=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -29,6 +34,8 @@ WLHOST_IMG=localhost/$NET-wlhost
 
 ROBIN_BIN=${ROBIN_BIN:-bin/robin-linux-amd64}
 [[ $ROBIN_BIN = /* ]] || ROBIN_BIN=$ROOT/$ROBIN_BIN
+COVER=${ROBIN_E2E_COVER:-}
+[[ -z $COVER || $COVER = /* ]] || COVER=$PWD/$COVER
 
 ALL_SCENARIOS=(direct blocked restart attach wayland webkit firefox)
 
@@ -94,17 +101,19 @@ EOF
   chmod 644 "$KEYS/client.pub"
 }
 
-# start_host [image]: the X11 host unless another image is named. PipeWire
-# and mutter share frames through /dev/shm, so the Wayland host gets more.
+# start_host [image [extra podman run args...]]: the X11 host unless another
+# image is named. PipeWire and mutter share frames through /dev/shm, so the
+# Wayland host gets more.
 start_host() {
-  local shm=256m
-  [[ ${1:-} = "$WLHOST_IMG" ]] && shm=512m
+  local image=${1:-$HOST_IMG} shm=256m
+  (($# == 0)) || shift
+  [[ $image = "$WLHOST_IMG" ]] && shm=512m
   podman run -d --name "$HOST_CTR" --hostname robinhost \
     --network "$NET" --ip "$HOST_IP" \
     --init --cap-add NET_ADMIN --shm-size "$shm" --stop-timeout 2 \
     -v "$KEYS/ssh_host_ed25519_key:/etc/ssh/robin/ssh_host_ed25519_key:ro" \
     -v "$KEYS/client.pub:/etc/ssh/authorized_keys.d/robin:ro" \
-    "${1:-$HOST_IMG}" >/dev/null
+    "$@" "$image" >/dev/null
 }
 
 # start_client <artifact dir> [extra podman run args...]
@@ -158,13 +167,26 @@ run_scenario() {
     project=$s
     expect=direct
   fi
+  local image=$HOST_IMG
   if [[ $s = wayland ]]; then
-    start_host "$WLHOST_IMG"
+    image=$WLHOST_IMG
     spec=tests/wayland.spec.ts
-  else
-    start_host
   fi
-  start_client "$dir" -v "$ROBIN_BIN:/usr/local/bin/robin:ro"
+  # sshd sets GOCOVERDIR=/cover in every session on the host, so a cover
+  # agent writes there.
+  local host_cover=() client_cover=() env_cover=()
+  if [[ -n $COVER ]]; then
+    local c=$COVER/$s
+    rm -rf "$c"
+    mkdir -p "$c/cli" "$c/agent" "$c/page"
+    # The agent writes as robin, a subordinate uid out here.
+    chmod 0777 "$c/agent"
+    host_cover=(-v "$c/agent:/cover")
+    client_cover=(-v "$c:/work/cover")
+    env_cover=(GOCOVERDIR=/work/cover/cli ROBIN_E2E_COVER=/work/cover)
+  fi
+  start_host "$image" "${host_cover[@]}"
+  start_client "$dir" -v "$ROBIN_BIN:/usr/local/bin/robin:ro" "${client_cover[@]}"
   wait_for_sshd
   if [[ $s = blocked ]]; then
     log "scenario $s: dropping non-loopback UDP on the host"
@@ -181,7 +203,7 @@ run_scenario() {
     on_client ssh robinhost robin-wayland start
     cli_args="--attach auto $cli_args"
   fi
-  on_client env SCENARIO="$expect" ROBIN_E2E_BROWSER="$project" \
+  on_client env "${env_cover[@]}" SCENARIO="$expect" ROBIN_E2E_BROWSER="$project" \
     ROBIN_RESTART_TIMEOUT_MS="${ROBIN_RESTART_TIMEOUT_MS:-15000}" ROBIN_SIGINT_PID_ONLY="${ROBIN_SIGINT_PID_ONLY:-0}" \
     ROBIN_CLI_ARGS="$cli_args" \
     npx playwright test --project="$project" "$spec" || status=$?

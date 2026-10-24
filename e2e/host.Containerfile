@@ -21,7 +21,7 @@ RUN userdel -r ubuntu \
  && useradd -m -u 1000 -U -s /bin/bash robin \
  && usermod -p '*' robin \
  && mkdir -p /run/sshd /etc/ssh/robin /etc/ssh/authorized_keys.d \
- && install -d -m 1777 /tmp/.X11-unix \
+ && install -d -m 1777 /tmp/.X11-unix /cover \
  && install -d -o robin -g robin -m 0700 /run/user/1000 \
  && rm -f /etc/ssh/ssh_host_* /etc/ssh/sshd_config.d/*
 

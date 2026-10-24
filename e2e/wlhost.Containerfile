@@ -20,6 +20,7 @@ RUN cp -a /home/ubuntu /home/robin && rm -rf /home/ubuntu \
  && groupmod -n robin ubuntu \
  && usermod -p '*' robin \
  && mkdir -p /run/sshd /etc/ssh/robin /etc/ssh/authorized_keys.d /usr/local/lib/robin \
+ && install -d -m 1777 /cover \
  && rm -f /etc/ssh/ssh_host_* /etc/ssh/sshd_config.d/*
 
 COPY sshd_config /etc/ssh/sshd_config
