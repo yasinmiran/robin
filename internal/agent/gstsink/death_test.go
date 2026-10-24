@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -28,7 +29,7 @@ func runHelper() {
 // TestChildDiesWithTheAgent kills an agent with SIGKILL, which runs no
 // cleanup, and checks the kernel took its pipeline down with it.
 func TestChildDiesWithTheAgent(t *testing.T) {
-	fake(t, "deaf")
+	fake(t, "lone")
 	cmd := exec.Command(os.Args[0], "-test.run=^$")
 	cmd.Env = append(os.Environ(), helperEnv+"=1")
 	out, err := cmd.StdoutPipe()
@@ -44,10 +45,18 @@ func TestChildDiesWithTheAgent(t *testing.T) {
 		cmd.Process.Kill()
 		t.Fatalf("helper said %q: %v", line, err)
 	}
+	pid, err := strconv.Atoi(f[1])
+	if err != nil {
+		cmd.Process.Kill()
+		t.Fatal(err)
+	}
+	// The child leads its own group: whatever the kernel missed goes here,
+	// so a failing run leaves nothing on the machine either.
+	t.Cleanup(func() { syscall.Kill(-pid, syscall.SIGKILL) })
 	cmd.Process.Kill()
 	cmd.Wait()
 	eventually(t, "the pipeline to die with the agent", func() bool {
-		b, err := os.ReadFile("/proc/" + f[1] + "/stat")
+		b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
 		return err != nil || strings.Contains(string(b), ") Z ")
 	})
 }

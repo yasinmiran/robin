@@ -20,7 +20,9 @@ import (
 //	short   append FAKE_GST_BYTES of stdin to out, then exit, as gst does
 //	        when the program reading its node goes away
 //	brief   outlive startGrace a little, then fail the same way
-//	deaf    ignore stdin closing and SIGTERM, and wait to be killed
+//	deaf    ignore stdin closing and SIGTERM, and wait to be killed, in a
+//	        child of its own so Close has a group to kill
+//	lone    the same as one process, as gst-launch-1.0 is
 const fakeGst = `#!/bin/sh
 echo $$ >>"$FAKE_GST_DIR/pids"
 case $FAKE_GST in
@@ -29,6 +31,7 @@ fail) echo 'WARNING: erroneous pipeline: no element "nosuchsink"' >&2; exit 1 ;;
 short) head -c "$FAKE_GST_BYTES" >>"$FAKE_GST_DIR/out"; echo 'ERROR: PipeWire link to remote node was destroyed' >&2; exit 1 ;;
 brief) sleep 0.15; echo 'ERROR: PipeWire link to remote node was destroyed' >&2; exit 1 ;;
 deaf) trap '' TERM; exec 0</dev/null; sleep 1000 ;;
+lone) trap '' TERM; exec sleep 1000 </dev/null ;;
 esac
 `
 
