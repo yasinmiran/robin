@@ -44,6 +44,9 @@ type Options struct {
 	Monitor string
 	Audio   bool
 	Encoder string
+	// Curtain and Silent start an attached desktop's private session with
+	// that switch on; see protocol.Private.
+	Curtain, Silent bool
 	// HiDPI sizes the remote display in the browser's device pixels.
 	HiDPI bool
 	STUN  []string
@@ -79,6 +82,9 @@ func Run(ctx context.Context, o Options) (err error) {
 	log := o.Log
 	if log == nil {
 		log = slog.Default()
+	}
+	if err := checkPrivate(o); err != nil {
+		return err
 	}
 
 	log.Info("connecting", "dest", o.Dest)
@@ -190,6 +196,9 @@ func Run(ctx context.Context, o Options) (err error) {
 		desktop = "attached to " + ready.Display
 	}
 	fmt.Fprintf(o.Stderr, "robin: %s on %s%s; press Ctrl+C to end the session\n", desktop, o.Dest, monitorNote(ready))
+	if note := privateNote(ready); note != "" {
+		fmt.Fprintln(o.Stderr, note)
+	}
 
 	b := &bridge{
 		agent: ag.conn, relay: relay.New(relay.Policy{Transport: o.Transport, TunnelPort: tunnelPort}),
@@ -230,6 +239,7 @@ func startMessage(o Options, r *probe.Report) (protocol.Start, string) {
 		Version: protocol.Version, MaxWidth: o.MaxWidth, MaxHeight: o.MaxHeight,
 		FPS: o.FPS, MaxKbps: o.MaxKbps, Session: o.Session, STUN: o.STUN,
 		Attach: o.Attach, Monitor: o.Monitor, Audio: o.Audio, Encoder: o.Encoder,
+		Curtain: o.Curtain, Silent: o.Silent,
 	}
 	small := r.CPUs > 0 && r.CPUs <= protocol.SmallHostCPUs
 	if s.MaxWidth <= 0 || s.MaxHeight <= 0 {

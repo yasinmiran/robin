@@ -65,6 +65,8 @@ func runGUI(args []string) int {
 	attach := fs.String("attach", "", `stream a desktop already running on the host instead of starting one: an X11 display such as ":0", "auto" for your active session, or "wayland"`)
 	monitor := fs.String("monitor", protocol.MonitorPrimary, `X11 desktops attached to with --attach: the monitor to show first, by name (such as DP-1) or number (1, 2, ...), "primary", or "all" for every monitor as one picture; the page switches between them. Wayland shows the monitor picked in its sharing dialog`)
 	audio := fs.Bool("audio", true, "stream the desktop's sound as well")
+	curtain := fs.Bool("curtain", false, "desktops attached to with --attach: black out the host's screen while the page still shows it; it does not lock the host's keyboard")
+	silent := fs.Bool("silent", false, "desktops attached to with --attach: keep the host's speakers quiet while the page still plays the sound")
 	hidpi := fs.Bool("hidpi", false, "size the remote display in device pixels: sharper on HiDPI screens, more to encode (raise --max-size to go native)")
 	encoder := fs.String("encoder", protocol.EncoderAuto, "video encoder on the host: auto (the GPU where the host has one and it pays, else software), software, vaapi or nvenc")
 	stun := fs.String("stun", defaultSTUN, `comma-separated STUN servers for NAT traversal, or "none"`)
@@ -111,6 +113,7 @@ func runGUI(args []string) int {
 		Dest: dest, SSHPath: *sshPath, SSHArgs: sshArgs,
 		Transport: t, MaxWidth: w, MaxHeight: h, FPS: *fps, MaxKbps: *maxKbps,
 		Session: *session, Attach: *attach, Monitor: *monitor, Audio: *audio, Encoder: *encoder, HiDPI: *hidpi, STUN: parseSTUN(*stun),
+		Curtain: *curtain, Silent: *silent,
 		Listen: *listen, NoBrowser: *noBrowser, Verbose: *verbose,
 		Stdout: os.Stdout, Stderr: os.Stderr, Log: log,
 	})
