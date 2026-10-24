@@ -56,6 +56,18 @@ test('an image the agent may still name by id alone is never forgotten', () => {
   assert.equal(el.style.cursor, 'url(data:image/png;base64,AAAA) 0 0, default');
 });
 
+test('an image outlives as many newer ones as the agent can send while it still counts it', () => {
+  // The worst case: the agent held 63 others when it sent the target, so
+  // 63 of those and 63 new ones may still follow it.
+  const el = element();
+  const c = new RemoteCursor(el);
+  for (let id = 1; id <= 63; id++) c.apply({ id, png: 'AAAA' });
+  c.apply({ id: 'target', png: 'iVBORw==' });
+  for (let id = 1; id <= 126; id++) c.apply({ id: 1000 + id, png: 'AAAA' });
+  c.apply({ id: 'target' });
+  assert.equal(el.style.cursor, 'url(data:image/png;base64,iVBORw==) 0 0, default');
+});
+
 test('an image that is not base64, or a hot spot that is not a pixel, is dropped', () => {
   const el = element();
   const c = new RemoteCursor(el);
