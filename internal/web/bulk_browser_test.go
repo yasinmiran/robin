@@ -41,7 +41,7 @@ func TestBrowserBulk(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	a := &bulkAgent{got: map[string]*heldSink{}, sent: make(chan struct{})}
+	a := &bulkAgent{got: map[string]*heldSink{}, sent: make(chan struct{}), cancelled: make(chan struct{})}
 	served := make(chan error, 1)
 	go func() {
 		b, err := s.Accept(ctx)
@@ -79,17 +79,15 @@ func TestBrowserBulk(t *testing.T) {
 		t.Fatal("the agent's transfers to the page never finished")
 	}
 	// The cancelled upload's sink learns of it once its stalled write ends.
-	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
-		a.mu.Lock()
-		c := a.got["cancel"]
-		done := c != nil && c.abort != nil
-		a.mu.Unlock()
-		if done {
-			break
-		}
+	select {
+	case <-a.cancelled:
+	case <-time.After(10 * time.Second):
+		t.Error("the cancelled upload's sink was never aborted")
 	}
 	cancel()
-	<-served
+	if err := <-served; err != nil {
+		t.Errorf("agent: %v", err)
+	}
 	t.Logf("page to agent: %d bytes in %d ms; refused %q, aborted %q, over the limit %q", r.Size, r.UploadMs, r.Refused, r.Aborted, r.TooLarge)
 
 	a.mu.Lock()
@@ -135,6 +133,7 @@ type bulkAgent struct {
 	got                map[string]*heldSink // by transfer ID
 	echoErr, refuseErr error
 	sent               chan struct{}
+	cancelled          chan struct{} // closed once the "cancel" sink is aborted
 }
 
 // heldSink keeps an upload. One with ID "cancel" stalls its first write
@@ -174,6 +173,9 @@ func (s *heldSink) Abort(err error) {
 	s.a.mu.Lock()
 	defer s.a.mu.Unlock()
 	s.abort = err
+	if s.h.ID == "cancel" {
+		close(s.a.cancelled)
+	}
 }
 
 func (a *bulkAgent) play(ctx context.Context, b *Browser) error {
@@ -181,8 +183,12 @@ func (a *bulkAgent) play(ctx context.Context, b *Browser) error {
 	if err := b.Send(protocol.Message{Type: protocol.TypeConfig, Config: &protocol.Config{ICEServers: []protocol.ICEServer{}}}); err != nil {
 		return err
 	}
-	var p *peer.Peer
-	p, err := peer.New(peer.Config{IncludeLoopback: true, MinBitrate: 100_000, StartBitrate: 1_000_000, MaxBitrate: 5_000_000}, peer.Handlers{
+	// p is declared first because the handlers use it.
+	var (
+		p   *peer.Peer
+		err error
+	)
+	p, err = peer.New(peer.Config{IncludeLoopback: true, MinBitrate: 100_000, StartBitrate: 1_000_000, MaxBitrate: 5_000_000}, peer.Handlers{
 		Candidate: func(c protocol.Candidate) { b.Send(protocol.Message{Type: protocol.TypeCandidate, Candidate: &c}) },
 		// Heartbeat like the real agent, or the page treats the link as stalled.
 		ControlOpen: func() {
