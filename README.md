@@ -296,11 +296,27 @@ list. On a shared client, use `--no-browser` and open the printed URL yourself.
 
 ```sh
 make test     # unit and integration tests; the encoders against real openh264 and libopus on linux/amd64
+make test-js  # the page's pure modules under node --test (make test runs it where node is installed)
 make test-x   # capture, input, display, sound server and agent session tests against Xvfb and pulseaudio, in podman
 make test-wayland  # Wayland attach against headless GNOME 46, GNOME 49 and KDE Plasma 6.7, in podman
 make e2e      # the whole thing: podman host, Playwright and Chrome client
 make check    # all four
+make cover    # all four again with coverage, merged, checked against coverage-baseline.txt
 ```
+
+`make cover` runs every suite with coverage and merges it in
+`.cache/cover/`: the unit tests (the cgo-tagged encoder packages included),
+the test-x and test-wayland binaries, and e2e with the CLI and the agent
+built with `-cover`. Every Go suite instruments the whole module, so a
+session test in `internal/agent` counts for `x11` and `peer` too. It prints
+statement coverage per file and per package (`summary.txt`, with
+`merged.out` and `cover.html` beside it), and line coverage per script of
+the page (`page.txt`), from Chrome in e2e and from `make test-js`. It fails
+when a package falls more than 0.5 points below its line in
+`coverage-baseline.txt`; `make cover-baseline` rewrites that file from the
+last run, which only main does. `make cover-unit cover-report` gives a quick
+look without containers. A suite that fails still hands in what it
+covered, and `make cover` fails after the report.
 
 `make test-wayland` boots three desktops, each in its own container with a
 virtual monitor, PipeWire and the desktop's own portal: mutter 46 on Ubuntu
@@ -420,6 +436,12 @@ to print the comparison the ADR quotes.
   Safari, attached to an X11 desktop over Tailscale. Building the agents
   from a Mac is untried.
 - One browser per session; a second tab is refused until the first closes.
+- `make cover` counts only runs that end normally. A test binary that
+  times out or panics, and a CLI or agent that is killed, hand in nothing,
+  so a failing e2e scenario lowers the numbers, and without a GPU render
+  node the KDE run of test-wayland adds none. The page is measured in
+  Chrome and Node only; the Firefox and WebKit scenarios count for the Go
+  side.
 - Hardware encoding answers a keyframe request about 35 ms later than
   software and adds a few milliseconds to every frame, which is the price on
   the hosts and sizes where `auto` picks it. The NVENC route is untested on

@@ -593,6 +593,62 @@ browser's repeats on as presses would double them. Wheel input goes as
 discrete steps, one per 100 browser pixels as on X11: smooth scroll's sign
 differs between GNOME and KDE, discrete steps do not.
 
+### Coverage: every suite, merged per package
+
+Most of the agent runs only where there is a display or a sound server, so
+the unit tests alone undercount it badly: on 2026-10-24 they read
+`internal/agent/x11` at 7.8% and `internal/agent/wayland` at 13.6%, which
+says nothing about what test-x, test-wayland and e2e exercise. `make cover`
+runs them all with coverage and merges the result.
+
+- Every Go suite instruments the whole module: `-coverpkg=./...` for the
+  unit tests and the test-x and test-wayland binaries, and `go build
+  -cover`'s default, the main module, for the e2e CLI and agent. A
+  statement counts wherever a test reached it, so the agent session tests
+  credit `x11` and `peer`, not only `internal/agent`.
+- The merge (`internal/tools/covercheck`) keys blocks by position and calls
+  one covered when any profile ran it. That also settles the modes: the
+  race-built container binaries count in atomic mode, everything else in
+  set mode, and the merged profile is set mode for `go tool cover`. A
+  package's number includes every file some build compiles, so
+  `internal/agent/h264` counts both its openh264 file and its stub.
+- The agent finds `GOCOVERDIR` through the e2e host's own sshd, `SetEnv
+  GOCOVERDIR=/cover`, with the run's directory mounted there. A `-cover`
+  binary writes its counters only when it returns from main or calls
+  `os.Exit`; each scenario's SIGINT teardown ends both the CLI and the agent
+  that way, and anything killed hands in nothing.
+- The cover agent reaches the CLI through `go build -overlay`, which swaps
+  `internal/agentbin/agents/robin-agent-linux-amd64.gz` in that one build.
+  No source file knows about coverage, and `$(AGENTS)` never holds a cover
+  agent for a release build to embed.
+- The page is measured the way V8 reports it, from Chrome in e2e
+  (Playwright's `page.coverage`, which only Chromium has) and from Node in
+  `make test-js` (`NODE_V8_COVERAGE`), one format that
+  `internal/tools/pagecover` merges. It counts lines rather than statements,
+  which would take a JavaScript parser: a line holds code unless it is
+  blank, a comment or closing brackets, and is covered when any of it ran.
+- `coverage-baseline.txt` holds a number per package, written only from
+  main. A package more than 0.5 points below its line fails `make cover`,
+  and so does one that has vanished, until the baseline is rewritten; a new
+  package passes until main records it. Per package rather than per file,
+  so moving code between files never trips it.
+- Node 18 decides whether `static/stats.js` is an ES module from the
+  nearest `package.json` above that file, not above the test importing it,
+  so `internal/web/static/package.json` says `"type": "module"`. The page
+  embed lists its file types, so neither that file nor `static/test/` is
+  served.
+
+The first full run, on 2026-10-24 with warm build and image caches, took
+7 min 40 s: test-x 50 s, test-wayland 2.5 min across GNOME 46, GNOME 49 and
+KDE, the seven e2e scenarios 4.3 min, and the unit tests seconds from Go's
+test cache (about 30 s cold). The unit tests alone cover 48.4% of the
+module's 5158 statements, test-x and test-wayland bring that to 80.6%, and
+e2e to 85.4%; e2e on its own covers 64.0% of the 4591 statements its two
+binaries link. `x11` goes from 7.8% to 85.9% and `wayland` from 13.6% to
+76.9%. Every scenario handed in CLI and agent data, and the five that run
+Chrome the page's as well. Of the page's 569 code lines, Node's unit tests
+of two modules cover 9.8% and the merged run 87.2%.
+
 ## Verification parked
 
 Two checks were parked by decision on 2026-10-18. Both needed hardware the
