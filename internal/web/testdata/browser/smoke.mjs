@@ -228,22 +228,43 @@ async function sections(page, scheme) {
     `${scheme}: a feature adds its own section to the status tab (${JSON.stringify(got)})`);
 }
 
-// keys checks the keys section lists the built-in keys and the macros the
-// Config carries, and shows the macro editor, pinning the tab out while it
-// is open.
+// keys checks the keys section starts folded behind its toggle, lists the
+// built-in keys and the macros the Config carries once open, holds the tab
+// out while it is open, and fits a phone's width, long names included.
 async function keys(page, scheme) {
   await page.mouse.move(640, 10);
   const hud = page.locator('#hud');
+  const toggle = page.locator('#keys');
+  const folded = await toggle.getAttribute('aria-expanded') === 'false'
+    && !(await hud.getByRole('button', { name: 'Ctrl+Alt+Delete' }).isVisible());
+  check(folded, `${scheme}: the keys section starts folded away`);
+  await toggle.click();
   const shown = await hud.getByRole('button', { name: 'Ctrl+Alt+Delete' }).isVisible()
-    && await hud.getByRole('button', { name: 'Terminal', exact: true }).isVisible();
-  check(shown, `${scheme}: the keys section shows the built-in keys and the CLI's macros`);
+    && await hud.getByRole('button', { name: 'Terminal', exact: true }).isVisible()
+    && await toggle.getAttribute('aria-expanded') === 'true';
+  check(shown, `${scheme}: open, the keys section shows the built-in keys and the CLI's macros`);
   await hud.getByRole('button', { name: 'Edit Terminal' }).click();
-  await page.mouse.move(640, 400);
-  await page.waitForTimeout(3000); // past the tuck delay
-  const out = await page.evaluate(() => !document.getElementById('hud').classList.contains('tucked'));
-  check(out, `${scheme}: the tab stays out while a macro is edited`);
+  const pinned = await page.evaluate(() => document.getElementById('keys-section').hasAttribute('data-pinned')
+    && !document.getElementById('hud').classList.contains('tucked'));
+  check(pinned, `${scheme}: the open keys section holds the tab out`);
   await hud.screenshot({ path: join(shots, `hud-keys-${scheme}.png`) });
   await hud.getByRole('button', { name: 'Cancel' }).click();
+
+  const was = page.viewportSize();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await hud.getByRole('button', { name: /^Edit Restart/ }).click();
+  const outside = await page.evaluate(() => [...document.querySelectorAll('#keys-section button, #keys-section li')]
+    .filter((el) => el.offsetParent && el.getBoundingClientRect().right > innerWidth)
+    .map((el) => el.textContent || el.title));
+  check(outside.length === 0, `${scheme}: at 390 px every key, macro and step stays on the screen (${JSON.stringify(outside)})`);
+  await page.screenshot({ path: join(shots, `keys-phone-${scheme}.png`) });
+  await hud.getByRole('button', { name: 'Cancel' }).click();
+  await page.setViewportSize(was);
+
+  await page.mouse.move(640, 10);
+  await toggle.click();
+  const unpinned = await page.evaluate(() => !document.getElementById('keys-section').hasAttribute('data-pinned'));
+  check(unpinned, `${scheme}: folded, the keys section lets the tab tuck`);
 }
 
 // exerciseControls sends what TestBrowserSmoke expects on the data channel.

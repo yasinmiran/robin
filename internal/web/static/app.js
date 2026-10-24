@@ -33,7 +33,9 @@ const clipboard = new Clipboard({ send: sendControl, bulk: toAgent, propose: (li
 const input = new Input(video, typing, document.getElementById('preedit'), sendControl, () => channel?.readyState === 'open', {
   paste: (data) => clipboard.paste(data),
 });
-const keys = new Keys({ overlay, send: sendControl, live: () => channel?.readyState === 'open', signal: sendSignal, input });
+const keys = new Keys({
+  overlay, toggle: document.getElementById('keys'), send: sendControl, live: () => channel?.readyState === 'open', signal: sendSignal, input,
+});
 const cursor = new RemoteCursor(video);
 const session = new Session();
 const sessionControls = sessionSection(overlay.addSection('session'));

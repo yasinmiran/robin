@@ -83,13 +83,16 @@ export function utf8Bytes(s) {
 // CLI's unicode.IsControl sees them.
 const printable = (s) => typeof s === 'string' && !/[\u0000-\u001f\u007f-\u009f]/.test(s);
 
+// typesText reports whether a KeyboardEvent.key is the one character the
+// key types, as opposed to a name such as Enter or F4.
+const typesText = (k) => [...k].length === 1 && printable(k);
+
 // checkMacro says what would make the CLI refuse m, as macros.Check does,
 // or returns '' for a macro it takes.
 export function checkMacro(m) {
   if (typeof m.id !== 'string' || !new RegExp(`^[A-Za-z0-9_-]{1,${MAX_MACRO_ID_BYTES}}$`).test(m.id)) return 'The macro has no usable ID';
-  if (!printable(m.name) || !m.name.trim() || utf8Bytes(m.name) > MAX_MACRO_NAME_BYTES) {
-    return `Give the macro a name of up to ${MAX_MACRO_NAME_BYTES} bytes`;
-  }
+  const why = checkName(m.name);
+  if (why) return why;
   if (m.host !== undefined && (!printable(m.host) || utf8Bytes(m.host) > MAX_MACRO_HOST_BYTES)) return 'This host’s name is too long to pin a macro to';
   if (!Array.isArray(m.steps) || !m.steps.length) return 'Add a step: record keys, add text or a pause';
   if (m.steps.length > MAX_MACRO_STEPS) return `A macro takes ${MAX_MACRO_STEPS} steps at most`;
@@ -98,6 +101,14 @@ export function checkMacro(m) {
     if (why) return `Step ${i + 1}: ${why}`;
   }
   if (utf8Bytes(JSON.stringify(m)) > MAX_MACROS_BYTES) return `The macro is over the ${MAX_MACROS_BYTES / 1024} KiB the file holds`;
+  return '';
+}
+
+// checkName says what is wrong with a macro's name, or returns ''.
+export function checkName(name) {
+  if (typeof name !== 'string' || !name.trim()) return 'Name the macro to save it';
+  if (!printable(name)) return 'A name takes no line breaks or other control characters';
+  if (utf8Bytes(name) > MAX_MACRO_NAME_BYTES) return `Shorten the name to ${MAX_MACRO_NAME_BYTES} bytes or fewer`;
   return '';
 }
 
@@ -121,12 +132,13 @@ export function newId(now = Date.now(), random = Math.random) {
   return `${now.toString(36)}-${Math.floor(random() * 2 ** 40).toString(36)}`;
 }
 
-// Recorder turns the keys pressed while recording into chord steps: each
-// key that is not a modifier, with the modifiers held as it went down, and
-// modifiers pressed and let go with no other key, such as Super alone.
-// It takes key and text messages as Input would send them, which go
-// nowhere else meanwhile; text, from an input method or a soft keyboard,
-// becomes a text step.
+// Recorder turns the keys pressed while recording into steps. A key that
+// types one character, alone or with Shift, is text, so a typed command is
+// one step and not one per letter. Any other key is a chord with the
+// modifiers held as it went down, and modifiers pressed and let go with no
+// other key, such as Super alone, are a chord of their own. It takes key
+// and text messages as Input would send them, which go nowhere else
+// meanwhile; text, from an input method or a soft keyboard, is text too.
 export class Recorder {
   #held = new Map(); // code -> key, in the order pressed
   #lone = []; // modifiers pressed since every key was up, while no chord went out
@@ -159,6 +171,10 @@ export class Recorder {
     const keys = [];
     for (const [c, held] of this.#held) {
       if (c !== code && MODIFIERS.has(held)) keys.push({ key: held, code: c });
+    }
+    if (typesText(k) && keys.every((m) => m.key === 'Shift')) {
+      this.#onStep({ text: k });
+      return;
     }
     keys.push({ key: k, code });
     this.#onStep({ keys: keys.slice(-MAX_MACRO_CHORD_KEYS) });
@@ -259,7 +275,8 @@ function keyMessage(k, down) {
   return { t: 'key', key: k.key, code: k.code ?? '', down, repeat: false };
 }
 
-function wait(ms, signal) {
+// wait waits ms, or less once signal aborts.
+export function wait(ms, signal) {
   return new Promise((resolve) => {
     const done = () => {
       clearTimeout(timer);

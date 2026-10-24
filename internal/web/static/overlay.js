@@ -59,6 +59,7 @@ export class Overlay {
   #fullscreen = document.getElementById('fullscreen');
   #sound = document.getElementById('sound');
   #keyboard = document.getElementById('keyboard');
+  #keys = document.getElementById('keys');
   #monitors = this.#hud.querySelector('.monitors');
   #monitorButton = document.getElementById('monitor');
   #monitorMenu = document.getElementById('monitor-menu');
@@ -203,7 +204,7 @@ export class Overlay {
     this.#notice.textContent = body;
     this.#notice.hidden = false;
     this.#closeMonitorMenu(false);
-    for (const el of [this.#transport, this.#picture, this.#fullscreen, this.#sound, this.#keyboard, this.#monitors, this.#sections]) {
+    for (const el of [this.#transport, this.#picture, this.#fullscreen, this.#sound, this.#keyboard, this.#keys, this.#monitors, this.#sections]) {
       if (el) el.hidden = true;
     }
     this.#scrim.hidden = false;

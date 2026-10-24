@@ -970,18 +970,27 @@ if (SCENARIO === 'attach') {
 }
 
 if (SCENARIO === 'direct') {
-  // showKeys brings the status tab out, where the keys section is.
+  // showKeys brings the status tab out and opens the keys section folded
+  // in it.
   const showKeys = async () => {
     await page.mouse.move(640, 5);
+    const toggle = page.locator('#keys');
+    if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
     await expect(page.locator('#hud').getByRole('button', { name: 'Ctrl+Alt+Delete', exact: true })).toBeVisible();
   };
+  // macrosFile is where the CLI under test keeps the macros.
+  const macrosFile = () => path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'robin', 'macros.json');
 
   test('macros: a macro recorded in the page outlives a reload, kept by the CLI, and plays into the xterm', async ({}, testInfo) => {
     testInfo.setTimeout(120_000);
     const n = Date.now().toString(36);
     const file = `/tmp/robin-e2e-macro-${n}`;
     const marker = '/tmp/robin-e2e-macro-T';
-    await host.ssh(`rm -f ${file} ${marker}`);
+    const sentinel = `/tmp/robin-e2e-macro-after-${n}`;
+    await host.ssh(`rm -f ${file} ${marker} ${sentinel}`);
+    // A client container kept from an earlier run keeps its macros too.
+    const saved = macrosFile();
+    fs.rmSync(saved, { force: true });
     await expect.poll(host.terminal, { message: 'an xterm is mapped', timeout: 15_000 }).not.toBeNull();
     await host.focusTerminal();
     const hud = page.locator('#hud');
@@ -991,33 +1000,39 @@ if (SCENARIO === 'direct') {
     await hud.getByLabel('Text to type').fill(`echo robin-macro-${n} > ${file}; `);
     await hud.getByRole('button', { name: 'Add text', exact: true }).click();
 
-    // While recording, keys go into the macro and never to the xterm.
+    // While recording, keys go into the macro and never to the xterm. The
+    // typed letters join the text before them; Enter is a key of its own.
     await hud.getByRole('button', { name: 'Record keys', exact: true }).click();
     await page.keyboard.type(`touch ${marker.slice(0, -1)}`, { delay: 20 });
     await page.keyboard.press('Shift+KeyT');
     await page.keyboard.press('Enter');
     await hud.getByRole('button', { name: 'Stop recording', exact: true }).click();
     const steps = await hud.locator('.steps li span').allTextContents();
+    expect(steps.length, `the steps ${JSON.stringify(steps)}`).toBe(2);
     expect(steps[0], 'the text step').toMatch(/^“echo robin-macro-.*…”$/);
-    expect(steps.slice(1, 4), 'the first chords').toEqual(['T', 'O', 'U']);
-    expect(steps.slice(-2), 'the last chords').toEqual(['Shift+T', 'Enter']);
-    await page.waitForTimeout(1_000);
-    expect(await host.exists(marker), 'the recorded keys reached the xterm').toBe(false);
+    expect(steps[1], 'the last chord').toBe('Enter');
 
     await hud.getByRole('button', { name: 'Save', exact: true }).click();
     const play = hud.getByRole('button', { name: 'E2E touch', exact: true });
     await expect(play, 'the saved macro').toBeVisible();
     await expect(hud.locator('.macro-editor')).toBeHidden();
 
+    // Anything the recording let through would have reached the xterm
+    // before a line typed now does.
+    await host.focusTerminal();
+    await page.keyboard.type(`touch ${sentinel}`, { delay: 20 });
+    await page.keyboard.press('Enter');
+    await expect.poll(() => host.exists(sentinel), { message: `${sentinel} on the host`, timeout: 10_000 }).toBe(true);
+    expect(await host.exists(marker), 'the recorded keys reached the xterm').toBe(false);
+
     // The CLI wrote it, private, with the text in plain text as the page
     // said it would be.
-    const saved = path.join(os.homedir(), '.config', 'robin', 'macros.json');
     expect(fs.statSync(saved).mode & 0o777, 'macros.json mode').toBe(0o600);
     expect(fs.statSync(path.dirname(saved)).mode & 0o777, 'its directory mode').toBe(0o700);
     const kept = JSON.parse(fs.readFileSync(saved, 'utf8'));
     expect(kept.version).toBe(1);
     expect(kept.macros.map((m: { name: string }) => m.name)).toEqual(['E2E touch']);
-    expect(kept.macros[0].steps[0]).toEqual({ text: `echo robin-macro-${n} > ${file}; ` });
+    expect(kept.macros[0].steps[0]).toEqual({ text: `echo robin-macro-${n} > ${file}; touch ${marker}` });
 
     await page.reload();
     await expect.poll(() => state(page), { message: 'connected after the reload', timeout: 20_000 }).toBe('connected');

@@ -32,44 +32,48 @@ test('chords and steps read as people write them', () => {
   assert.equal(stepLabel({ pause: 500 }), 'Wait 500 ms');
 });
 
-test('checkMacro refuses what the CLI refuses', () => {
+test('checkMacro refuses what the CLI refuses', async (t) => {
   const chord = { keys: [k('Control', 'ControlLeft'), k('l', 'KeyL')] };
-  assert.equal(checkMacro(macro([chord, { text: 'é\n' }, { pause: 1 }], { host: 'alice@box' })), '');
-  assert.equal(checkMacro(macro([{ text: 'x'.repeat(MAX_MACRO_TEXT_BYTES) }, { pause: MAX_MACRO_PAUSE_MS }])), '');
-  assert.equal(checkMacro(macro(Array(MAX_MACRO_STEPS).fill(chord))), '');
-  assert.equal(checkMacro({ ...macro([chord]), name: 'é'.repeat(32) }), '');
-  assert.equal(checkMacro(macro([{ keys: [k('a', '')] }])), '', 'a key without a code');
+  const accepted = [
+    ['every kind of step, pinned', macro([chord, { text: 'é\n' }, { pause: 1 }], { host: 'alice@box' })],
+    ['text and a pause at their caps', macro([{ text: 'x'.repeat(MAX_MACRO_TEXT_BYTES) }, { pause: MAX_MACRO_PAUSE_MS }])],
+    ['as many steps as a macro takes', macro(Array(MAX_MACRO_STEPS).fill(chord))],
+    ['a name at its cap', { ...macro([chord]), name: 'é'.repeat(32) }],
+    ['a key without a code', macro([{ keys: [k('a', '')] }])],
+    ['an empty chord beside text', macro([{ keys: [], text: 'x' }])],
+  ];
+  for (const [name, m] of accepted) {
+    await t.test(`takes ${name}`, () => assert.equal(checkMacro(m), ''));
+  }
 
   const refused = [
-    [{ ...macro([chord]), id: '' }, /no usable ID/],
-    [{ ...macro([chord]), id: 'a/b' }, /no usable ID/],
-    [{ ...macro([chord]), id: 'x'.repeat(33) }, /no usable ID/],
-    [{ ...macro([chord]), name: '  ' }, /a name of up to 64 bytes/],
-    [{ ...macro([chord]), name: 'é'.repeat(33) }, /a name/],
-    [{ ...macro([chord]), name: 'a\nb' }, /a name/],
-    [{ ...macro([chord]), name: 7 }, /a name/],
-    [macro([chord], { host: 'x'.repeat(256) }), /too long to pin/],
-    [macro([]), /Add a step/],
-    [{ id: 'm1', name: 'M' }, /Add a step/],
-    [macro(Array(MAX_MACRO_STEPS + 1).fill(chord)), /100 steps at most/],
-    [macro([chord, {}]), /^Step 2: a step is one chord/],
-    [macro([{ keys: [], text: 'x' }]), ''],
-    [macro([{ keys: [k('a')], pause: 5 }]), /a step is one/],
-    [macro([{ keys: Array(9).fill(k('a')) }]), /8 keys at most/],
-    [macro([{ keys: [k('')] }]), /no usable name/],
-    [macro([{ keys: [k('\u001b', 'Escape')] }]), /no usable name/],
-    [macro([{ keys: [k('x'.repeat(33), 'KeyX')] }]), /no usable name/],
-    [macro([{ keys: [k('a', 'Key-A')] }]), /no usable code/],
-    [macro([{ keys: [k('a', 'K'.repeat(33))] }]), /no usable code/],
-    [macro([{ text: 'x'.repeat(MAX_MACRO_TEXT_BYTES + 1) }]), /16 KiB at most/],
-    [macro([{ pause: -5 }]), /1 to 60000 ms/],
-    [macro([{ pause: 1.5 }]), /1 to 60000 ms/],
-    [macro([{ pause: MAX_MACRO_PAUSE_MS + 1 }]), /1 to 60000 ms/],
-    [macro(Array(20).fill({ text: 'x'.repeat(MAX_MACRO_TEXT_BYTES) })), new RegExp(`over the ${MAX_MACROS_BYTES / 1024} KiB`)],
+    ['no ID', { ...macro([chord]), id: '' }, /no usable ID/],
+    ['an ID with a slash', { ...macro([chord]), id: 'a/b' }, /no usable ID/],
+    ['a long ID', { ...macro([chord]), id: 'x'.repeat(33) }, /no usable ID/],
+    ['a blank name', { ...macro([chord]), name: '  ' }, /^Name the macro to save it$/],
+    ['a name that is no string', { ...macro([chord]), name: 7 }, /^Name the macro to save it$/],
+    ['a long name', { ...macro([chord]), name: 'é'.repeat(33) }, /^Shorten the name to 64 bytes or fewer$/],
+    ['a name with a line break', { ...macro([chord]), name: 'a\nb' }, /no line breaks/],
+    ['a host too long to pin to', macro([chord], { host: 'x'.repeat(256) }), /too long to pin/],
+    ['no steps', macro([]), /Add a step/],
+    ['no step list', { id: 'm1', name: 'M' }, /Add a step/],
+    ['too many steps', macro(Array(MAX_MACRO_STEPS + 1).fill(chord)), /100 steps at most/],
+    ['an empty step', macro([chord, {}]), /^Step 2: a step is one chord/],
+    ['a step of two kinds', macro([{ keys: [k('a')], pause: 5 }]), /a step is one/],
+    ['a chord of nine keys', macro([{ keys: Array(9).fill(k('a')) }]), /8 keys at most/],
+    ['a key without a name', macro([{ keys: [k('')] }]), /no usable name/],
+    ['a control character key', macro([{ keys: [k('\u001b', 'Escape')] }]), /no usable name/],
+    ['a long key', macro([{ keys: [k('x'.repeat(33), 'KeyX')] }]), /no usable name/],
+    ['a code with punctuation', macro([{ keys: [k('a', 'Key-A')] }]), /no usable code/],
+    ['a long code', macro([{ keys: [k('a', 'K'.repeat(33))] }]), /no usable code/],
+    ['long text', macro([{ text: 'x'.repeat(MAX_MACRO_TEXT_BYTES + 1) }]), /16 KiB at most/],
+    ['a negative pause', macro([{ pause: -5 }]), /1 to 60000 ms/],
+    ['a fractional pause', macro([{ pause: 1.5 }]), /1 to 60000 ms/],
+    ['a long pause', macro([{ pause: MAX_MACRO_PAUSE_MS + 1 }]), /1 to 60000 ms/],
+    ['more than the file holds', macro(Array(20).fill({ text: 'x'.repeat(MAX_MACRO_TEXT_BYTES) })), new RegExp(`over the ${MAX_MACROS_BYTES / 1024} KiB`)],
   ];
-  for (const [m, want] of refused) {
-    if (want === '') assert.equal(checkMacro(m), '', JSON.stringify(m));
-    else assert.match(checkMacro(m), want, JSON.stringify(m).slice(0, 80));
+  for (const [name, m, want] of refused) {
+    await t.test(`refuses ${name}`, () => assert.match(checkMacro(m), want));
   }
 });
 
@@ -95,13 +99,24 @@ function record(events) {
 test('recording takes each key with the modifiers held as it went down', () => {
   const { steps } = record([
     down('Control', 'ControlLeft'), down('Alt', 'AltLeft'), down('t', 'KeyT'), up('t', 'KeyT'), up('Alt', 'AltLeft'), up('Control', 'ControlLeft'),
-    down('e', 'KeyE'), up('e', 'KeyE'), down('Shift', 'ShiftLeft'), down('R', 'KeyR'), up('R', 'KeyR'), up('Shift', 'ShiftLeft'),
+    down('Control', 'ControlLeft'), down('Shift', 'ShiftLeft'), down('R', 'KeyR'), up('R', 'KeyR'), up('Shift', 'ShiftLeft'), up('Control', 'ControlLeft'),
+    down('F4', 'F4'), up('F4', 'F4'),
   ]);
   assert.deepEqual(steps, [
     { keys: [k('Control', 'ControlLeft'), k('Alt', 'AltLeft'), k('t', 'KeyT')] },
-    { keys: [k('e', 'KeyE')] },
-    { keys: [k('Shift', 'ShiftLeft'), k('R', 'KeyR')] },
+    { keys: [k('Control', 'ControlLeft'), k('Shift', 'ShiftLeft'), k('R', 'KeyR')] },
+    { keys: [k('F4')] },
   ]);
+});
+
+test('a key that types a character, alone or with Shift, is text', () => {
+  const { steps } = record([
+    down('e', 'KeyE'), up('e', 'KeyE'), down(' ', 'Space'), up(' ', 'Space'), down('é', 'Quote'), up('é', 'Quote'),
+    down('Shift', 'ShiftLeft'), down('R', 'KeyR'), up('R', 'KeyR'), up('Shift', 'ShiftLeft'),
+    down('Alt', 'AltLeft'), down('a', 'KeyA'), up('a', 'KeyA'), up('Alt', 'AltLeft'),
+  ]);
+  assert.deepEqual(steps, [{ text: 'e' }, { text: ' ' }, { text: 'é' }, { text: 'R' }, { keys: [k('Alt', 'AltLeft'), k('a', 'KeyA')] }],
+    'Shift let go after typing is no chord of its own');
 });
 
 test('modifiers pressed and let go alone are a chord of their own', () => {
@@ -118,12 +133,12 @@ test('recording skips repeats, keys it never saw go down, and keys a chord canno
   const { steps, r } = record([
     up('x', 'KeyX'), down('a', 'KeyA'), down('a', 'KeyA', true), down('a', 'KeyA'), up('a', 'KeyA'), down('', ''), down('y'.repeat(33), 'KeyY'),
   ]);
-  assert.deepEqual(steps, [{ keys: [k('a', 'KeyA')] }]);
+  assert.deepEqual(steps, [{ text: 'a' }]);
   // A window that lost the keyboard never sends the releases; lift starts over.
   r.key(down('Control', 'ControlLeft'));
   r.lift();
   r.key(down('b', 'KeyB'));
-  assert.deepEqual(steps.at(-1), { keys: [k('b', 'KeyB')] });
+  assert.deepEqual(steps.at(-1), { text: 'b' });
   r.key(up('b', 'KeyB'));
   r.key(up('Control', 'ControlLeft'));
   assert.equal(steps.length, 2);
@@ -149,6 +164,7 @@ test('a chord holds at most eight keys, the last ones pressed', () => {
 function clocked({ live = () => true } = {}) {
   const log = [];
   const sleeps = [];
+  let woken = null;
   const player = new Player({
     send: (m) => log.push(m.t === 'key' ? `${m.down ? '+' : '-'}${m.key}` : `text:${m.text.length}`),
     live,
@@ -156,22 +172,25 @@ function clocked({ live = () => true } = {}) {
       log.push(`wait ${ms}`);
       sleeps.push({ ms, resolve });
       signal.addEventListener('abort', resolve);
+      woken?.();
     }),
   });
-  const tick = async () => {
-    for (let i = 0; i < 10; i++) await null;
-  };
-  // run resolves every sleep as it comes until the play ends.
+  // asleep resolves once the player waits in a sleep the test has not ended.
+  const asleep = () => (sleeps.length ? Promise.resolve() : new Promise((resolve) => { woken = resolve; }));
+  // run ends every sleep as it comes until the play ends.
   const run = async (played) => {
     let done = false;
-    played.then(() => { done = true; });
-    while (!done) {
-      await tick();
-      sleeps.shift()?.resolve();
+    played.then(() => {
+      done = true;
+      woken?.();
+    });
+    for (;;) {
+      await asleep();
+      if (done) return played;
+      sleeps.shift().resolve();
     }
-    return played;
   };
-  return { player, log, sleeps, tick, run };
+  return { player, log, sleeps, asleep, run };
 }
 
 test('a macro plays its steps with the gaps between them', async () => {
@@ -193,9 +212,9 @@ test('a macro plays its steps with the gaps between them', async () => {
 });
 
 test('stop ends a macro at once and lets go of what it holds', async () => {
-  const { player, log, tick } = clocked();
+  const { player, log, asleep } = clocked();
   const played = player.play([{ keys: [k('Alt', 'AltLeft'), k('Tab')] }, { keys: [k('a', 'KeyA')] }], 'm1');
-  await tick();
+  await asleep();
   assert.equal(player.playing, 'm1');
   assert.deepEqual(log, ['+Alt', '+Tab', `wait ${CHORD_HOLD_MS}`]);
   player.stop();
@@ -207,9 +226,9 @@ test('stop ends a macro at once and lets go of what it holds', async () => {
 });
 
 test('a long pause ends with stop', async () => {
-  const { player, log, tick } = clocked();
+  const { player, log, asleep } = clocked();
   const played = player.play([{ pause: MAX_MACRO_PAUSE_MS }, { text: 'never' }], 'm1');
-  await tick();
+  await asleep();
   player.stop();
   assert.equal(await played, 'stopped');
   assert.deepEqual(log, [`wait ${MAX_MACRO_PAUSE_MS}`]);
@@ -217,20 +236,20 @@ test('a long pause ends with stop', async () => {
 
 test('a closed channel ends a macro, which sends nothing more', async () => {
   let open = true;
-  const { player, log, sleeps, tick } = clocked({ live: () => open });
+  const { player, log, sleeps, asleep } = clocked({ live: () => open });
   const played = player.play([{ keys: [k('a', 'KeyA')] }, { keys: [k('b', 'KeyB')] }], 'm1');
-  await tick();
+  await asleep();
   open = false;
   sleeps.shift().resolve();
   assert.equal(await played, 'stopped');
   assert.deepEqual(log, ['+a', `wait ${CHORD_HOLD_MS}`]);
 
   open = true;
-  const { player: p2, log: log2, sleeps: s2, tick: t2 } = clocked({ live: () => open });
+  const { player: p2, log: log2, sleeps: s2, asleep: asleep2 } = clocked({ live: () => open });
   const second = p2.play([{ keys: [k('a', 'KeyA')] }, { keys: [k('b', 'KeyB')] }], 'm2');
-  await t2();
+  await asleep2();
   s2.shift().resolve();
-  await t2();
+  await asleep2();
   open = false;
   s2.shift().resolve();
   assert.equal(await second, 'stopped');
@@ -238,9 +257,9 @@ test('a closed channel ends a macro, which sends nothing more', async () => {
 });
 
 test('playing another macro ends the one playing', async () => {
-  const { player, log, tick, run } = clocked();
+  const { player, log, asleep, run } = clocked();
   const first = player.play([{ keys: [k('Shift', 'ShiftLeft'), k('A', 'KeyA')] }], 'one');
-  await tick();
+  await asleep();
   const second = player.play([{ keys: [k('b', 'KeyB')] }], 'two');
   assert.equal(player.playing, 'two');
   assert.equal(await first, 'stopped');
