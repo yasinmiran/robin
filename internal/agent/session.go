@@ -18,9 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/pion/ice/v4"
@@ -46,6 +44,12 @@ type Options struct {
 	// RunRoot holds one private directory per live session. Directories left
 	// by sessions whose process is gone are removed on start.
 	RunRoot string
+	// RunDir is this session's own directory, when the caller made it (a
+	// daemon's, named by session id). Empty makes one under RunRoot.
+	RunDir string
+	// Keep is how long the session waits for a controller to come back
+	// after one left without bye. Zero ends it with its controller.
+	Keep time.Duration
 	// StateDir keeps what outlives a session, such as the Wayland portal's
 	// restore token. Empty keeps nothing.
 	StateDir string
@@ -62,11 +66,23 @@ type Options struct {
 // says bye, the channel closes or goes silent, the desktop goes away, or ctx
 // ends. Everything it started is torn down before it returns.
 func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
+	return Serve(ctx, Stdio(r, w), o)
+}
+
+// Serve runs one session for the controllers cs yields, one at a time: the
+// first sends Start, each later one Resume. It returns when a controller
+// says bye, the last one leaves and o.Keep runs out with no other, the
+// desktop goes away, or ctx ends. Everything it started is torn down before
+// it returns.
+func Serve(ctx context.Context, cs Controllers, o Options) error {
 	log := o.Log
 	if log == nil {
 		log = slog.Default()
 	}
-	conn := protocol.NewConn(r, w, protocol.DefaultPingInterval, protocol.DefaultIdleTimeout)
+	conn, err := cs.Next(ctx)
+	if err != nil {
+		return err
+	}
 	defer conn.Close()
 
 	start, err := awaitStart(ctx, conn)
@@ -77,7 +93,7 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 	if err != nil {
 		return fail(conn, err)
 	}
-	runDir, err := makeRunDir(o.RunRoot)
+	runDir, err := prepareRunDir(o)
 	if err != nil {
 		return fail(conn, err)
 	}
@@ -153,7 +169,7 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 	}
 
 	s := &session{
-		conn: conn, desk: d.desk, start: start, log: log, tcpMux: tcpMux, cert: cert, audio: audio != nil,
+		conn: newController(conn), desk: d.desk, start: start, log: log, tcpMux: tcpMux, cert: cert, audio: audio != nil,
 		stream:  newStream(d.desk, start.FPS, start.MaxWidth, start.MaxHeight, newEncoder, log),
 		cursors: map[uint32]protocol.Cursor{},
 	}
@@ -164,6 +180,7 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 		Version: protocol.Version, AgentBuild: o.Build, Display: d.name, Session: d.session,
 		Width: width, Height: height, TunnelAddr: ln.Addr().String(),
 		Mode: d.mode, Audio: audio != nil, AudioError: audioErr, Encoder: encoderName, EncoderError: encoderErr,
+		ID: filepath.Base(runDir), Keep: int(o.Keep / time.Second),
 	}
 	if mm, ok := d.desk.(desktop.MultiMonitor); ok {
 		ms := mm.MonitorState()
@@ -192,44 +209,14 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 		run(func(ctx context.Context) { s.forwardAudio(ctx, audio) })
 	}
 
-	msgs := make(chan protocol.Message)
-	go func() {
-		defer close(msgs)
-		for {
-			m, err := conn.Recv(ctx)
-			if err != nil {
-				return
-			}
-			select {
-			case msgs <- m:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case err := <-d.done:
-			return fail(conn, fmt.Errorf("desktop went away: %w", err))
-		case m, ok := <-msgs:
-			if !ok {
-				if err := conn.Err(); err != nil && !errors.Is(err, io.EOF) {
-					return err
-				}
-				return nil
-			}
-			if done, err := s.handle(m); done || err != nil {
-				return err
-			}
-		}
-	}
+	return s.serve(ctx, cs, ready, d.done, o.Keep, protocol.Session{
+		ID: ready.ID, PID: os.Getpid(), Build: o.Build, Mode: d.mode, Display: d.name, Desktop: d.session,
+		Keep: ready.Keep, Started: time.Now(),
+	})
 }
 
 type session struct {
-	conn   *protocol.Conn
+	conn   *controller
 	desk   desktop.Desktop
 	start  protocol.Start
 	log    *slog.Logger
@@ -605,30 +592,7 @@ func fit(w, h, maxW, maxH int) (int, int) {
 }
 
 // fail tells the CLI why the session is ending, then returns err.
-func fail(conn *protocol.Conn, err error) error {
+func fail(conn sender, err error) error {
 	conn.Send(protocol.Message{Type: protocol.TypeError, Error: err.Error()})
 	return err
-}
-
-// makeRunDir creates this session's private directory under root, after
-// sweeping directories whose owning process no longer exists.
-func makeRunDir(root string) (string, error) {
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return "", err
-	}
-	entries, _ := os.ReadDir(root)
-	for _, e := range entries {
-		pid, err := strconv.Atoi(e.Name())
-		if err != nil || pid == os.Getpid() {
-			continue
-		}
-		if syscall.Kill(pid, 0) == syscall.ESRCH {
-			os.RemoveAll(filepath.Join(root, e.Name()))
-		}
-	}
-	dir := filepath.Join(root, strconv.Itoa(os.Getpid()))
-	if err := os.Mkdir(dir, 0o700); err != nil {
-		return "", err
-	}
-	return dir, nil
 }

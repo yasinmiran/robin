@@ -1,8 +1,8 @@
 #!/bin/sh
 # Runs the X-dependent tests of internal/agent, internal/agent/display and
-# internal/agent/x11, and the sound server tests of internal/agent/audio,
-# inside a container with Xvfb and pulseaudio. Extra arguments go to every
-# test binary:
+# internal/agent/x11, the sound server tests of internal/agent/audio, and
+# the session daemon's lifetime tests of cmd/robin-agent, inside a container
+# with Xvfb and pulseaudio. Extra arguments go to every test binary:
 #
 #   internal/agent/x11/testdata/xtest.sh
 #   internal/agent/x11/testdata/xtest.sh -test.run=Clipboard
@@ -33,17 +33,23 @@ for pkg in display x11 .; do
 	go test ${XTEST_GOFLAGS--race} $coverflags -c -o "$out/$(basename "$(cd "internal/agent/$pkg" && pwd)").test" "./internal/agent/$pkg"
 done
 # The audio tests encode with libopus, so they link statically with the
-# agent's toolchain, where the race detector is not available.
+# agent's toolchain, where the race detector is not available. The agent
+# command's tests run the agent itself, which needs openh264 too.
 target=$(uname -m)-linux-musl
 zig=$(toolchain/zig.sh)
 prefix=$(toolchain/opus.sh "$target")
-ZIG_GLOBAL_CACHE_DIR=${ZIG_GLOBAL_CACHE_DIR:-$root/.cache/toolchain/zig} CGO_ENABLED=1 \
-	CC="$zig cc -target $target" CGO_CFLAGS="-I$prefix/include" CGO_LDFLAGS="-L$prefix/lib" \
+h264=$(toolchain/openh264.sh "$target")
+export ZIG_GLOBAL_CACHE_DIR=${ZIG_GLOBAL_CACHE_DIR:-$root/.cache/toolchain/zig}
+CGO_ENABLED=1 CC="$zig cc -target $target" CGO_CFLAGS="-I$prefix/include" CGO_LDFLAGS="-L$prefix/lib" \
 	go test -tags opus $coverflags -c -o "$out/audio.test" ./internal/agent/audio
+CGO_ENABLED=1 CC="$zig cc -target $target" CXX="$zig c++ -target $target" \
+	CGO_CFLAGS="-I$h264/include -I$prefix/include" CGO_LDFLAGS="-L$h264/lib -L$prefix/lib" \
+	go test -tags openh264,opus,netgo,osusergo $coverflags -c \
+	-ldflags "-linkmode external -extldflags -static" -o "$out/robin-agent.test" ./cmd/robin-agent
 podman run --rm --init --name "robin-xtest-$$" -v "$out:/t:ro" ${cover:+-v "$cover:/cover"} -e "XTEST_COVER=${cover:+/cover}" "$id" sh -c '
 	cd /tmp
 	status=0
-	for t in /t/display.test /t/x11.test /t/agent.test /t/audio.test; do
+	for t in /t/display.test /t/x11.test /t/agent.test /t/audio.test /t/robin-agent.test; do
 		echo "== $t"
 		profile=
 		[ -z "$XTEST_COVER" ] || profile=-test.coverprofile=$XTEST_COVER/$(basename "$t" .test).out

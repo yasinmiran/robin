@@ -54,6 +54,7 @@ type Message struct {
 	Candidate *Candidate `json:"candidate,omitempty"`
 	Error     string     `json:"error,omitempty"`
 	Notice    *Notice    `json:"notice,omitempty"`
+	Resume    *Resume    `json:"resume,omitempty"`
 }
 
 // Start asks the agent to bring up a display and get ready for an offer.
@@ -131,6 +132,12 @@ type Ready struct {
 	// picture.
 	Monitors []Monitor `json:"monitors,omitempty"`
 	Monitor  string    `json:"monitor,omitempty"`
+	// ID names the session for Resume, and Keep is how many seconds the host
+	// keeps the desktop after its controller goes without Bye; 0 means it
+	// ends with the controller. Resumed marks the Ready a Resume earned.
+	ID      string `json:"id,omitempty"`
+	Keep    int    `json:"keep,omitempty"`
+	Resumed bool   `json:"resumed,omitempty"`
 }
 
 // Notice is something the user has to do or know before the desktop is ready.
@@ -157,6 +164,9 @@ type Config struct {
 	// HiDPI asks the page to size the remote display in device pixels
 	// rather than CSS pixels.
 	HiDPI bool `json:"hidpi,omitempty"`
+	// Keep is Ready.Keep, so the page knows whether the desktop would
+	// survive a Detach.
+	Keep int `json:"keep,omitempty"`
 }
 
 // ICEServer mirrors the browser's RTCIceServer.

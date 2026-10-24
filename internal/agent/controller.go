@@ -1,0 +1,289 @@
+//go:build linux
+
+package agent
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strconv"
+	"sync/atomic"
+	"syscall"
+	"time"
+
+	"github.com/yasinmiran/robin/internal/protocol"
+)
+
+// Controllers yields each connection a CLI makes to the session, in turn:
+// the one SSH exec channel when the agent runs on stdio, or the connections
+// a daemon accepts on its socket.
+type Controllers interface {
+	// Next blocks until the next controller connects. It returns an error
+	// once no more can, which ends a session that has no controller.
+	Next(ctx context.Context) (*protocol.Conn, error)
+	// Changed is told whenever the session's state changes: the desktop is
+	// up, a controller came or went. A daemon records it for the probe.
+	Changed(protocol.Session)
+}
+
+// ErrNoControllers is what Next returns when the session will never get
+// another controller.
+var ErrNoControllers = errors.New("agent: no more controllers")
+
+// Stdio yields one controller, speaking on r and w, and no more.
+func Stdio(r io.Reader, w io.Writer) Controllers {
+	return &stdio{conn: protocol.NewConn(r, w, protocol.DefaultPingInterval, protocol.DefaultIdleTimeout)}
+}
+
+type stdio struct {
+	conn *protocol.Conn
+	used bool
+}
+
+func (s *stdio) Next(ctx context.Context) (*protocol.Conn, error) {
+	if s.used {
+		return nil, ErrNoControllers
+	}
+	s.used = true
+	return s.conn, nil
+}
+
+func (s *stdio) Changed(protocol.Session) {}
+
+// controller is the session's current controller connection, swapped on a
+// resume. Its methods go to whichever connection is current, from any
+// goroutine.
+type controller struct {
+	cur atomic.Pointer[protocol.Conn]
+}
+
+func newController(c *protocol.Conn) *controller {
+	ctl := &controller{}
+	ctl.cur.Store(c)
+	return ctl
+}
+
+// Send writes m to the current controller.
+func (c *controller) Send(m protocol.Message) error { return c.cur.Load().Send(m) }
+
+// sender is what fail needs: the whole connection or the session's view of it.
+type sender interface{ Send(protocol.Message) error }
+
+// serve runs the session's message loop for controller after controller,
+// until one says bye, the keep window runs out with none attached, the
+// desktop goes away or ctx ends. ready is sent again to each controller that
+// resumes.
+func (s *session) serve(ctx context.Context, cs Controllers, ready *protocol.Ready, desktopDone <-chan error, keep time.Duration, state protocol.Session) error {
+	state.Connected = true
+	cs.Changed(state)
+	conn := s.conn.cur.Load()
+	for {
+		bye, err := s.relay(ctx, conn, desktopDone)
+		if err != nil {
+			return err
+		}
+		if bye {
+			s.ended(conn, "the CLI ended the session")
+			return nil
+		}
+		s.closePeer()
+		conn.Close()
+		if keep <= 0 {
+			return nil
+		}
+		until := time.Now().Add(keep)
+		s.log.Info("controller gone; keeping the desktop", "until", until.Format(time.RFC3339))
+		state.Connected, state.Until = false, &until
+		cs.Changed(state)
+		conn, err = s.linger(ctx, cs, ready, desktopDone, until)
+		if err != nil {
+			return err
+		}
+		if conn == nil {
+			s.log.Info("keep window ran out; ending the session")
+			return nil
+		}
+		state.Connected, state.Until = true, nil
+		cs.Changed(state)
+	}
+}
+
+// relay serves one controller until it says bye (true) or goes away (false,
+// nil). The desktop dying or ctx ending is an error that ends the session.
+func (s *session) relay(ctx context.Context, conn *protocol.Conn, desktopDone <-chan error) (bool, error) {
+	msgs := make(chan protocol.Message)
+	go func() {
+		defer close(msgs)
+		for {
+			m, err := conn.Recv(ctx)
+			if err != nil {
+				return
+			}
+			select {
+			case msgs <- m:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	for {
+		select {
+		case <-ctx.Done():
+			s.ended(conn, "the agent was told to stop")
+			return false, ctx.Err()
+		case err := <-desktopDone:
+			return false, fail(conn, fmt.Errorf("desktop went away: %w", err))
+		case m, ok := <-msgs:
+			if !ok {
+				if ctx.Err() != nil {
+					s.ended(conn, "the agent was told to stop")
+					return false, ctx.Err()
+				}
+				s.log.Info("controller disconnected", "why", conn.Err())
+				return false, nil
+			}
+			if done, err := s.handle(m); done || err != nil {
+				return done, err
+			}
+		}
+	}
+}
+
+// linger waits for the next controller until the keep window ends. It
+// returns the resumed connection, nil when the window ran out, or an error
+// when the desktop went away or ctx ended. A controller whose first message
+// is not a matching Resume is told so and dropped; the wait goes on.
+func (s *session) linger(ctx context.Context, cs Controllers, ready *protocol.Ready, desktopDone <-chan error, until time.Time) (*protocol.Conn, error) {
+	type next struct {
+		conn *protocol.Conn
+		err  error
+	}
+	waitCtx, stopWait := context.WithCancel(ctx)
+	defer stopWait()
+	arrivals := make(chan next, 1)
+	go func() {
+		c, err := cs.Next(waitCtx)
+		arrivals <- next{c, err}
+	}()
+	expiry := time.NewTimer(time.Until(until))
+	defer expiry.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case err := <-desktopDone:
+			return nil, fmt.Errorf("desktop went away: %w", err)
+		case <-expiry.C:
+			return nil, nil
+		case a := <-arrivals:
+			if a.err != nil {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				// Nobody can come back: ending now wastes nothing.
+				return nil, nil
+			}
+			if err := awaitResume(ctx, a.conn, ready.ID); err != nil {
+				s.log.Warn("controller refused", "err", err)
+				a.conn.Close()
+				go func() {
+					c, err := cs.Next(waitCtx)
+					arrivals <- next{c, err}
+				}()
+				continue
+			}
+			s.conn.cur.Store(a.conn)
+			resumed := *ready
+			resumed.Resumed = true
+			if err := a.conn.Send(protocol.Message{Type: protocol.TypeReady, Ready: &resumed}); err != nil {
+				return nil, err
+			}
+			s.log.Info("controller resumed the session")
+			return a.conn, nil
+		}
+	}
+}
+
+// awaitResume reads the handshake of a controller picking up a kept
+// session: a Resume for this session at this protocol version.
+func awaitResume(ctx context.Context, conn *protocol.Conn, id string) error {
+	ctx, cancel := context.WithTimeoutCause(ctx, startTimeout, errors.New("no resume message from the CLI"))
+	defer cancel()
+	m, err := conn.Recv(ctx)
+	switch {
+	case err != nil:
+		return err
+	case m.Type != protocol.TypeResume || m.Resume == nil:
+		return fail(conn, fmt.Errorf("expected resume, got %q", m.Type))
+	case m.Resume.Version != protocol.Version:
+		return fail(conn, fmt.Errorf("the CLI speaks protocol %d, this agent %d", m.Resume.Version, protocol.Version))
+	case m.Resume.ID != id:
+		return fail(conn, fmt.Errorf("no session %q here", m.Resume.ID))
+	}
+	return nil
+}
+
+// ended tells the controller the session is over on purpose, so it does
+// not try to come back.
+func (s *session) ended(conn *protocol.Conn, why string) {
+	if err := conn.Send(protocol.Message{Type: protocol.TypeEnded, Error: why}); err != nil {
+		s.log.Debug("send ended", "err", err)
+	}
+}
+
+// prepareRunDir returns this session's private directory: o.RunDir when the
+// caller made one, else a fresh one named by pid under o.RunRoot. Either
+// way, directories left by sessions whose process is gone are removed.
+func prepareRunDir(o Options) (string, error) {
+	root := o.RunRoot
+	if o.RunDir != "" {
+		root = filepath.Dir(o.RunDir)
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return "", err
+	}
+	sweepRunRoot(root, o.RunDir)
+	if o.RunDir != "" {
+		return o.RunDir, nil
+	}
+	dir := filepath.Join(root, strconv.Itoa(os.Getpid()))
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// sweepRunRoot removes every session directory under root but keep whose
+// owner is gone: a directory named by a pid, or one holding a session.json
+// naming one, that no process has.
+func sweepRunRoot(root, keep string) {
+	entries, _ := os.ReadDir(root)
+	for _, e := range entries {
+		dir := filepath.Join(root, e.Name())
+		if dir == keep || !e.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			pid = sessionPID(dir)
+		}
+		if pid == 0 || pid == os.Getpid() {
+			continue
+		}
+		if syscall.Kill(pid, 0) == syscall.ESRCH {
+			os.RemoveAll(dir)
+		}
+	}
+}
+
+// sessionPID reads the daemon pid out of dir's session.json, or 0.
+func sessionPID(dir string) int {
+	st, err := ReadSession(dir)
+	if err != nil {
+		return 0
+	}
+	return st.PID
+}
