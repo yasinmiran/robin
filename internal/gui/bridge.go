@@ -283,6 +283,13 @@ func (b *bridge) close() {
 	}
 }
 
+// maxLogLine is the most of one line prefixWriter holds back waiting for its
+// newline; beyond it the line is shown in pieces, so a host that writes
+// without newlines cannot fill the client's memory. It is the size of the
+// tail kept of the agent's log for errors, and a real log line is a few
+// hundred bytes.
+const maxLogLine = 8 << 10
+
 // prefixWriter prefixes each line written to w.
 func prefixWriter(w io.Writer, prefix string) io.Writer {
 	return &linePrefixer{w: w, prefix: []byte(prefix)}
@@ -300,13 +307,16 @@ func (l *linePrefixer) Write(p []byte) (int, error) {
 	defer l.mu.Unlock()
 	l.partial = append(l.partial, p...)
 	for {
-		i := bytes.IndexByte(l.partial, '\n')
-		if i < 0 {
+		var line []byte
+		if i := bytes.IndexByte(l.partial, '\n'); i >= 0 {
+			line, l.partial = l.partial[:i+1], l.partial[i+1:]
+		} else if len(l.partial) > maxLogLine {
+			line, l.partial = append(l.partial[:maxLogLine:maxLogLine], '\n'), l.partial[maxLogLine:]
+		} else {
 			return len(p), nil
 		}
-		if _, err := fmt.Fprintf(l.w, "%s%s", l.prefix, l.partial[:i+1]); err != nil {
+		if _, err := fmt.Fprintf(l.w, "%s%s", l.prefix, line); err != nil {
 			return 0, err
 		}
-		l.partial = l.partial[i+1:]
 	}
 }
