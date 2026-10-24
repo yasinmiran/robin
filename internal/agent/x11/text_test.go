@@ -5,10 +5,10 @@ package x11
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -45,7 +45,7 @@ func TestTypeText(t *testing.T) {
 			want = append(want, xproto.Keysym(s))
 		}
 	}
-	if got := typedSyms(evs); fmt.Sprint(got) != fmt.Sprint(want) {
+	if got := typedSyms(evs); !slices.Equal(got, want) {
 		t.Errorf("typed\n got %x\nwant %x", got, want)
 	}
 	for _, e := range evs {
@@ -61,29 +61,49 @@ func TestTypeText(t *testing.T) {
 // for it to settle first.
 func TestTypeWaitsForSpares(t *testing.T) {
 	tx := startX(t, "sleep 1000")
-	start := time.Now()
+	o := newObserver(t, tx)
 	if err := tx.c.Type(t.Context(), cjk(0, maxSpareKeys)); err != nil {
 		t.Fatal(err)
 	}
-	// Every spare keycode was pressed just now, so the next one waits, and
-	// the wait ends with the context.
-	ctx, cancel := context.WithTimeout(t.Context(), spareSettle/10)
+	// Every spare keycode holds a character now. pressedAt says when, so
+	// the waits below take no part of their length from how fast this
+	// machine typed those.
+	pressedAt := func(at time.Time) {
+		k := &tx.c.kb
+		k.mu.Lock()
+		defer k.mu.Unlock()
+		for i := range k.spares {
+			k.spares[i].usedAt = at
+		}
+	}
+
+	// A keycode that settles an hour from now: the next character waits,
+	// and the wait ends with the context.
+	pressedAt(time.Now().Add(time.Hour))
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
 	defer cancel()
 	if err := tx.c.Type(ctx, cjk(maxSpareKeys, 1)); !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("Type past its deadline = %v", err)
 	}
+
+	pressed := time.Now()
+	pressedAt(pressed)
 	if err := tx.c.Type(t.Context(), cjk(maxSpareKeys, 1)); err != nil {
 		t.Fatal(err)
 	}
-	if d := time.Since(start); d < spareSettle {
+	if d := time.Since(pressed); d < spareSettle {
 		t.Errorf("rebinding a spare keycode came %v after its last press, want at least %v", d, spareSettle)
 	}
 
-	// A cancelled context stops between characters.
+	// A context that has ended types nothing.
+	o.drain()
 	ctx, cancel = context.WithCancel(t.Context())
 	cancel()
 	if err := tx.c.Type(ctx, "ab"); !errors.Is(err, context.Canceled) {
 		t.Errorf("Type with a cancelled context = %v", err)
+	}
+	if evs := o.keys(t); len(evs) != 0 {
+		t.Errorf("Type with a cancelled context typed %v", evs)
 	}
 	tx.assertNothingHeld(t)
 }

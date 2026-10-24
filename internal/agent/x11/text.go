@@ -25,6 +25,9 @@ const spareSettle = 50 * time.Millisecond
 func (c *Conn) Type(ctx context.Context, text string) error {
 	k := &c.kb
 	for _, r := range text {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		sym, ok := keysym.Text(r)
 		if !ok {
 			continue
@@ -44,9 +47,6 @@ func (c *Conn) Type(ctx context.Context, text string) error {
 				return ctx.Err()
 			case <-t.C:
 			}
-		}
-		if err := ctx.Err(); err != nil {
-			return err
 		}
 	}
 	return nil
