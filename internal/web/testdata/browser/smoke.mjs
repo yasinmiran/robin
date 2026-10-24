@@ -163,6 +163,7 @@ async function connects(scheme) {
 
   if (scheme === 'dark') await exerciseControls(page);
   await sections(page, scheme);
+  await keys(page, scheme);
 
   await page.mouse.move(640, 10);
   await page.waitForTimeout(400);
@@ -225,6 +226,24 @@ async function sections(page, scheme) {
   });
   check(got.inHud && got.belowRow && got.shown && got.emptyHeight === 0 && /added twice/.test(got.twice),
     `${scheme}: a feature adds its own section to the status tab (${JSON.stringify(got)})`);
+}
+
+// keys checks the keys section lists the built-in keys and the macros the
+// Config carries, and shows the macro editor, pinning the tab out while it
+// is open.
+async function keys(page, scheme) {
+  await page.mouse.move(640, 10);
+  const hud = page.locator('#hud');
+  const shown = await hud.getByRole('button', { name: 'Ctrl+Alt+Delete' }).isVisible()
+    && await hud.getByRole('button', { name: 'Terminal', exact: true }).isVisible();
+  check(shown, `${scheme}: the keys section shows the built-in keys and the CLI's macros`);
+  await hud.getByRole('button', { name: 'Edit Terminal' }).click();
+  await page.mouse.move(640, 400);
+  await page.waitForTimeout(3000); // past the tuck delay
+  const out = await page.evaluate(() => !document.getElementById('hud').classList.contains('tucked'));
+  check(out, `${scheme}: the tab stays out while a macro is edited`);
+  await hud.screenshot({ path: join(shots, `hud-keys-${scheme}.png`) });
+  await hud.getByRole('button', { name: 'Cancel' }).click();
 }
 
 // exerciseControls sends what TestBrowserSmoke expects on the data channel.

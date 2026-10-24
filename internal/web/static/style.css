@@ -498,6 +498,100 @@ body[data-dropping]::after {
   font-weight: 400;
 }
 
+/* Keys and macros: a labelled row of chord buttons, a row of the user's
+   macros, and the editor below them while one is made or changed. */
+.keys-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 80ch;
+}
+.keys-row + .keys-row { margin-top: 4px; }
+.keys-label {
+  flex: none;
+  width: 52px;
+  color: var(--ink-soft);
+  font-weight: 400;
+  line-height: 24px;
+}
+.keys-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.section .keys-row .key { font-variant-numeric: normal; }
+.macro-group { display: inline-flex; }
+.section .macro-group .macro { border-radius: 6px 0 0 6px; }
+.section .macro-group .edit {
+  padding: 0 7px;
+  color: var(--ink-soft);
+  border-left: 1px solid var(--veil);
+  border-radius: 0 6px 6px 0;
+}
+.section .macro[data-playing] { color: #fff; background: var(--ok); }
+.section .record[data-recording] { color: #fff; background: var(--down); }
+.macro-editor {
+  display: grid;
+  gap: 6px;
+  max-width: 60ch;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--veil-edge);
+  border-radius: 8px;
+  user-select: text;
+}
+.editor-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.editor-row.actions { justify-content: flex-end; }
+.macro-editor input,
+.macro-editor textarea {
+  min-width: 0;
+  padding: 3px 6px;
+  color: var(--ink);
+  background: var(--veil-edge);
+  border: 0;
+  border-radius: 6px;
+  font: 400 13px/18px var(--ui);
+}
+.macro-editor input:focus-visible,
+.macro-editor textarea:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.macro-editor .macro-name { flex: 1 1 18ch; }
+.macro-editor .pause { width: 9ch; }
+.macro-editor .macro-text { flex: 1 1 30ch; resize: vertical; }
+.macro-editor .pin { display: inline-flex; align-items: center; gap: 4px; font-weight: 400; }
+.macro-editor .pin input { accent-color: var(--ok); }
+.macro-editor .hint { margin: 0; color: var(--ink-soft); font-weight: 400; }
+.steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 30vh;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.steps li {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 8px;
+  border: 1px solid var(--veil-edge);
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.section .steps .remove { height: 22px; padding: 0 6px; color: var(--ink-soft); background: none; }
+.keys-note {
+  max-width: 60ch;
+  margin: 6px 0 0;
+  color: var(--ink-soft);
+  font-weight: 400;
+}
+
 .notice {
   max-width: 42ch;
   margin: 6px 0 4px;

@@ -12,6 +12,7 @@ import { Clipboard } from './clipboard.js';
 import { offerDevices } from './devicebar.js';
 import { constrainedBaselineFirst } from './devices.js';
 import { PrivateSwitches } from './private.js';
+import { Keys } from './keys.js';
 
 const CONTROL_CHANNEL = 'control';
 const ICE_GRACE_MS = 2000;
@@ -32,6 +33,7 @@ const clipboard = new Clipboard({ send: sendControl, bulk: toAgent, propose: (li
 const input = new Input(video, typing, document.getElementById('preedit'), sendControl, () => channel?.readyState === 'open', {
   paste: (data) => clipboard.paste(data),
 });
+const keys = new Keys({ overlay, send: sendControl, live: () => channel?.readyState === 'open', signal: sendSignal, input });
 const cursor = new RemoteCursor(video);
 const session = new Session();
 const sessionControls = sessionSection(overlay.addSection('session'));
@@ -134,8 +136,11 @@ function connect(token) {
   };
 }
 
+// sendSignal sends a message to the CLI, and says whether it went.
 function sendSignal(m) {
-  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m));
+  if (ws?.readyState !== WebSocket.OPEN) return false;
+  ws.send(JSON.stringify(m));
+  return true;
 }
 
 function sendControl(c) {
@@ -148,8 +153,12 @@ async function onSignal(m) {
       input.scale = m.config?.hidpi ? window.devicePixelRatio || 1 : 1;
       session.configure(m.config);
       sessionControls.keep.hidden = !session.canKeep;
+      keys.configure(m.config?.macros);
       // After a reconnect there is no peer; the CLI's new config asks for one.
       if (!pc) createPeer(m.config ?? {});
+      break;
+    case 'macros':
+      keys.changed(m.macros);
       break;
     case 'reconnecting':
       // The CLI lost the host and is redialing; the peer connection it
@@ -212,7 +221,10 @@ function createPeer(config) {
     lastControlAt = Date.now();
     input.sendResize();
   };
-  channel.onclose = () => input.release();
+  channel.onclose = () => {
+    input.release();
+    keys.stop();
+  };
   channel.onmessage = (e) => {
     lastControlAt = Date.now();
     // A heartbeat-triggered restart may never change iceConnectionState.
@@ -290,6 +302,7 @@ function dropPeer() {
   clearInterval(statsTimer);
   clearInterval(heartbeatTimer);
   input.release();
+  keys.stop();
   devices?.stop();
   earlyCandidates = [];
   const old = pc;

@@ -1,5 +1,5 @@
-// Just enough of a DOM for files.js, clipboard.js and devicebar.js under
-// node: elements that hold children, attributes and click listeners, a
+// Just enough of a DOM for files.js, clipboard.js, devicebar.js and keys.js
+// under node: elements that hold children, attributes and click listeners, a
 // window and a body, and animation frames on timers. installDom puts it on
 // globalThis.
 
@@ -68,6 +68,7 @@ export function installDom() {
       return el;
     },
     createElementNS: (_, tag) => new FakeElement(tag),
+    createTextNode: (textContent) => ({ textContent }),
   };
   globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0);
   // The page's long timers, clearing rows and revoking URLs, must not keep

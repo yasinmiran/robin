@@ -33,6 +33,9 @@ export class Input {
   // scale turns CSS pixels into remote pixels: devicePixelRatio when the
   // session asked for HiDPI, 1 otherwise.
   scale = 1;
+  // capture, while set, takes every key message in place of the remote,
+  // as a macro being recorded does.
+  capture = null;
 
   // text is the hidden text box that holds the keyboard's focus, so input
   // methods and soft keyboards have somewhere to type, and preedit shows
@@ -276,6 +279,13 @@ export class Input {
       code = code === 'MetaRight' ? 'ControlRight' : 'ControlLeft';
     }
     const msg = { t: 'key', key, code, down, repeat: e.repeat };
+
+    // The release of a key the remote saw pressed still goes there.
+    if (this.capture && (down || !this.#held.has(code))) {
+      e.preventDefault();
+      this.capture(msg);
+      return;
+    }
 
     // Let the browser run its paste shortcut so the paste event carries the
     // local clipboard; the key itself goes out once the clipboard has.
