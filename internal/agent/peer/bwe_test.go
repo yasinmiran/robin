@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -63,7 +64,7 @@ func TestBulkSharesTheLinkWithVideo(t *testing.T) {
 	const link = 3_000_000
 	var disconnects atomic.Int32
 	var failed atomic.Bool
-	l := newShapedLink(t, 2_000_000, link, Handlers{State: func(s webrtc.PeerConnectionState) {
+	l := newShapedLink(t, Config{StartBitrate: 2_000_000}, link, Handlers{State: func(s webrtc.PeerConnectionState) {
 		switch s {
 		case webrtc.PeerConnectionStateDisconnected:
 			disconnects.Add(1)
@@ -128,12 +129,45 @@ wait:
 	}
 }
 
+// TestCongestionControlHoldsThroughAStillScreen streams until the target
+// settles, sits still for 20 s with a refresh every 500 ms, and streams
+// again. Over the still spell GCC used to raise its target 8% a second to
+// the ceiling, which the first motion then overflowed, or to fall to a
+// fraction of the link. The target must come out of the spell where it
+// went in, and the first second of motion must deliver most of the link.
+// ROBIN_FEED_WHILE_LIMITED=1 feeds GCC as Pion would, to see it fail.
+func TestCongestionControlHoldsThroughAStillScreen(t *testing.T) {
+	if testing.Short() {
+		t.Skip("takes about 30 s")
+	}
+	const link = 3_000_000
+	feed := os.Getenv("ROBIN_FEED_WHILE_LIMITED") != ""
+	l := newShapedLink(t, Config{StartBitrate: 2_000_000, FeedWhileLimited: feed}, link, Handlers{})
+	time.Sleep(8 * time.Second)
+	before := int(l.target.Load())
+	l.still.Store(true)
+	time.Sleep(20 * time.Second)
+	after := int(l.target.Load())
+	l.still.Store(false)
+	received := l.received.Load()
+	time.Sleep(time.Second)
+	delivered := int(l.received.Load()-received) * 8
+	t.Logf("%d kbit/s link: target %d kbit/s before 20 s still, %d after; the first second of motion delivered %d kbit/s",
+		link/1000, before/1000, after/1000, delivered/1000)
+	if after < before*7/10 || after > before*13/10 {
+		t.Errorf("the target went from %d kbit/s to %d over the still spell", before/1000, after/1000)
+	}
+	if delivered < link*6/10 {
+		t.Errorf("the first second of motion delivered %d kbit/s on a %d kbit/s link", delivered/1000, link/1000)
+	}
+}
+
 // streamOverShapedLink runs a peer over a virtual link of linkBps for 14 s and
 // returns the controller's final target and the rate delivered over the last
 // 4 s.
 func streamOverShapedLink(t *testing.T, startBps, linkBps, dropTo, dropAtS int) (target, delivered int) {
 	t.Helper()
-	l := newShapedLink(t, startBps, linkBps, Handlers{})
+	l := newShapedLink(t, Config{StartBitrate: startBps}, linkBps, Handlers{})
 	for s := 1; s <= 10; s++ {
 		time.Sleep(time.Second)
 		if dropTo > 0 && s == dropAtS {
@@ -154,14 +188,18 @@ type shapedLink struct {
 	// target is the congestion controller's target; received counts the
 	// video bytes the browser got.
 	target, received atomic.Int64
+	// still sends a refresh every 500 ms instead of frames the size of
+	// the target, as a still screen does.
+	still atomic.Bool
 }
 
 // newShapedLink connects the peers over a link of linkBps with a 100 ms
 // queue toward the browser, like a congested access link, and streams
 // frames sized to whatever the congestion controller allows, as the
-// agent's encoder does. It returns once video arrives. h may add handlers;
-// the browser accepts bulk transfers and discards them.
-func newShapedLink(t *testing.T, startBps, linkBps int, h Handlers) *shapedLink {
+// agent's encoder does. cfg gives the start rate and any comparison; it
+// returns once video arrives. h may add handlers; the browser accepts bulk
+// transfers and discards them.
+func newShapedLink(t *testing.T, cfg Config, linkBps int, h Handlers) *shapedLink {
 	t.Helper()
 	wan, err := vnet.NewRouter(&vnet.RouterConfig{
 		CIDR: "10.0.0.0/24", MinDelay: 10 * time.Millisecond, LoggerFactory: logging.NewDefaultLoggerFactory(),
@@ -193,11 +231,12 @@ func newShapedLink(t *testing.T, startBps, linkBps int, h Handlers) *shapedLink 
 	}
 	t.Cleanup(func() { wan.Stop() })
 
-	l.target.Store(int64(startBps))
+	l.target.Store(int64(cfg.StartBitrate))
 	cands := make(chan protocol.Candidate, 32)
 	h.Candidate = func(c protocol.Candidate) { cands <- c }
 	h.Bitrate = func(bps int) { l.target.Store(int64(bps)) }
-	l.p, err = New(Config{Net: agentNet, MinBitrate: 100_000, StartBitrate: startBps, MaxBitrate: 8_000_000}, h)
+	cfg.Net, cfg.MinBitrate, cfg.MaxBitrate = agentNet, 100_000, 8_000_000
+	l.p, err = New(cfg, h)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,13 +278,20 @@ func newShapedLink(t *testing.T, startBps, linkBps int, h Handlers) *shapedLink 
 	t.Cleanup(func() { close(stop) })
 	go func() {
 		const fps = 30
-		for {
+		for i := 0; ; i++ {
 			select {
 			case <-stop:
 				return
 			case <-time.After(time.Second / fps):
 			}
-			au := make([]byte, max(int(l.target.Load())/8/fps, 64))
+			size := max(int(l.target.Load())/8/fps, 64)
+			if l.still.Load() {
+				if i%(fps/2) != 0 {
+					continue
+				}
+				size = 20_000
+			}
+			au := make([]byte, size)
 			copy(au, []byte{0, 0, 0, 1, 0x65})
 			l.p.WriteFrame(au, time.Second/fps)
 		}

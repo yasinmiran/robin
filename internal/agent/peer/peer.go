@@ -64,10 +64,15 @@ type Config struct {
 	Mic, Camera bool
 
 	MinBitrate, StartBitrate, MaxBitrate int // bits per second
-	// Unpaced sends every packet the moment it is written, as a
-	// comparison for measurements; the agent paces.
+	// Unpaced sends every packet and every bulk chunk the moment it is
+	// written, as a comparison for measurements; the agent paces.
 	Unpaced bool
-	Log     *slog.Logger
+	// FeedWhileLimited hands GCC the browser's feedback while the agent
+	// sends too little to test the link, as Pion does on its own, and
+	// SoundBehindVideo queues sound with video in the pacer: comparisons
+	// for measurements, which the agent does neither of.
+	FeedWhileLimited, SoundBehindVideo bool
+	Log                                *slog.Logger
 }
 
 // Handlers receive the peer's events. Each may be nil. They are called from
@@ -99,7 +104,7 @@ type Peer struct {
 
 	mu      sync.Mutex
 	control *webrtc.DataChannel
-	bwe     cc.BandwidthEstimator
+	bwe     *estimator
 }
 
 // New builds the peer connection and its video track. Nothing is sent until
@@ -133,7 +138,7 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 	}
 
 	reg := &interceptor.Registry{}
-	bweReady := make(chan cc.BandwidthEstimator, 1)
+	bweReady := make(chan *estimator, 1)
 	ccf, err := cc.NewInterceptor(func() (cc.BandwidthEstimator, error) {
 		// Not Pion's pacer: it queues without bound, so a burst sent while
 		// the target falls drains for seconds and the delay that adds keeps
@@ -143,33 +148,23 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 		if !cfg.Unpaced {
 			p = newPacer(cfg.StartBitrate)
 		}
-		e, err := gcc.NewSendSideBWE(
-			gcc.SendSideBWEPacer(p),
-			gcc.SendSideBWEInitialBitrate(cfg.StartBitrate),
-			gcc.SendSideBWEMinBitrate(cfg.MinBitrate),
-			gcc.SendSideBWEMaxBitrate(cfg.MaxBitrate),
-		)
-		if err != nil {
-			p.Close()
-			return nil, err
-		}
-		return e, nil
+		return newEstimator(cfg, p, log, time.Now)
 	})
 	if err != nil {
 		return nil, err
 	}
-	ccf.OnNewPeerConnection(func(_ string, e cc.BandwidthEstimator) { bweReady <- e })
+	ccf.OnNewPeerConnection(func(_ string, e cc.BandwidthEstimator) { bweReady <- e.(*estimator) })
 	reg.Add(ccf)
 	if err := webrtc.ConfigureTWCCHeaderExtensionSender(m, reg); err != nil {
 		return nil, err
 	}
 	// Registered after the TWCC and congestion-control interceptors so
 	// retransmissions carry transport sequence numbers and count as sent.
-	var bwe atomic.Pointer[cc.BandwidthEstimator]
+	var bwe atomic.Pointer[estimator]
 	reg.Add(&nackResponderFactory{
 		budget: func() int {
 			if e := bwe.Load(); e != nil {
-				return (*e).GetTargetBitrate()
+				return e.GetTargetBitrate()
 			}
 			return cfg.StartBitrate
 		},
@@ -231,7 +226,7 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 
 	select {
 	case p.bwe = <-bweReady:
-		bwe.Store(&p.bwe)
+		bwe.Store(p.bwe)
 	case <-time.After(5 * time.Second):
 		pc.Close()
 		return nil, errors.New("peer: congestion controller did not start")
