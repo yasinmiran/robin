@@ -200,8 +200,14 @@ func TestClipboardRichContent(t *testing.T) {
 
 	// Browser to X: every format offered, the image big enough for INCR.
 	clip := protocol.Clip{Text: "plain ✓", HTML: "<b>bold ✓</b>", PNG: pngLike(3 << 20)}
-	if err := c.SetClipboardContent(clip); err != nil {
-		t.Fatal(err)
+	// The session sets the clipboard on a data channel's read loop, so this
+	// is how long a paste from the browser holds that loop.
+	for i := range 3 {
+		start := time.Now()
+		if err := c.SetClipboardContent(clip); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("SetClipboardContent %d took %v", i+1, time.Since(start))
 	}
 	targets := xclip(t, tx, "", "-o", "-t", "TARGETS")
 	for _, want := range []string{"TARGETS", "UTF8_STRING", "STRING", "text/plain;charset=utf-8", "text/html", "image/png"} {
