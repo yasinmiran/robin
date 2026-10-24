@@ -30,6 +30,13 @@ func attachX11(ctx context.Context, start protocol.Start, log *slog.Logger) (*op
 	if err != nil {
 		return nil, fmt.Errorf("attach to X11 display %s: %w", start.Attach, err)
 	}
+	openCurtain := func(hold Hold) (curtain, error) {
+		c, err := x11.OpenCurtain(start.Attach, xauth, func(u x11.GammaUndo) error { return hold(x11.GammaStep, u) }, log)
+		if err != nil {
+			return nil, err // not c: a nil *x11.Curtain would be a non-nil curtain
+		}
+		return c, nil
+	}
 	if xauth == "" {
 		xauth = "none (host-based access)"
 	}
@@ -62,6 +69,7 @@ func attachX11(ctx context.Context, start protocol.Start, log *slog.Logger) (*op
 				x.Close()
 			})
 		},
+		openCurtain: openCurtain,
 	}, nil
 }
 

@@ -24,6 +24,9 @@ type openedDesktop struct {
 	// when that cannot be observed.
 	done  <-chan error
 	close func()
+	// openCurtain readies a curtain over an attached desktop's screens, or
+	// says why there can be none; nil for a spawned desktop.
+	openCurtain func(Hold) (curtain, error)
 }
 
 // openDesktop spawns a headless display or attaches to a running desktop,
@@ -79,5 +82,12 @@ func attachWayland(ctx context.Context, start protocol.Start, stateDir string, n
 	return &openedDesktop{
 		desk: w, mode: protocol.ModeAttach, name: protocol.AttachWayland, done: w.Done(),
 		close: func() { w.Close() },
+		openCurtain: func(hold Hold) (curtain, error) {
+			c, err := wayland.OpenCurtain(func(u wayland.MutterUndo) error { return hold(wayland.MutterStep, u) }, log)
+			if err != nil {
+				return nil, err // not c: a nil *wayland.Curtain would be a non-nil curtain
+			}
+			return c, nil
+		},
 	}, nil
 }

@@ -55,7 +55,13 @@ type Options struct {
 	Encoders map[string]NewEncoderFunc
 	// NewAudio captures the desktop's sound; nil when this build has none.
 	NewAudio NewAudioFunc
-	Log      *slog.Logger
+	// Keeper starts the child that undoes a private session's changes if
+	// the agent dies; without it an attached desktop gets no private session.
+	Keeper []string
+	// Silence makes an attached desktop's room silent; nil when this build
+	// cannot.
+	Silence SilenceFunc
+	Log     *slog.Logger
 }
 
 // Run serves one session over r and w (the SSH exec channel) until the CLI
@@ -158,12 +164,17 @@ func Run(ctx context.Context, r io.Reader, w io.Writer, o Options) error {
 		cursors: map[uint32]protocol.Cursor{},
 	}
 	defer s.closePeer()
+	if s.private, err = openPrivate(d, start, o, audio, s.sendPrivate, log); err != nil {
+		return fail(conn, err)
+	}
+	defer s.private.close()
 
 	width, height := d.desk.Size()
 	ready := &protocol.Ready{
 		Version: protocol.Version, AgentBuild: o.Build, Display: d.name, Session: d.session,
 		Width: width, Height: height, TunnelAddr: ln.Addr().String(),
 		Mode: d.mode, Audio: audio != nil, AudioError: audioErr, Encoder: encoderName, EncoderError: encoderErr,
+		Private: s.private.snapshot(),
 	}
 	if mm, ok := d.desk.(desktop.MultiMonitor); ok {
 		ms := mm.MonitorState()
@@ -237,6 +248,9 @@ type session struct {
 	cert   *webrtc.Certificate
 	audio  bool
 	stream *stream
+	// private is an attached desktop's curtain and silent room; nil for a
+	// spawned one.
+	private *private
 
 	mu   sync.Mutex
 	peer *peer.Peer
@@ -330,6 +344,7 @@ func (s *session) currentPeer() (*peer.Peer, error) {
 		ControlOpen: func() {
 			s.sendCurrentCursor()
 			s.sendMonitors()
+			s.sendPrivate()
 		},
 		Keyframe: s.stream.requestKeyframe,
 		Bitrate:  s.stream.setBitrate,

@@ -1,0 +1,356 @@
+//go:build linux
+
+package agent
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"sync"
+	"time"
+
+	"github.com/yasinmiran/robin/internal/agent/keeper"
+	"github.com/yasinmiran/robin/internal/agent/peer"
+	"github.com/yasinmiran/robin/internal/protocol"
+)
+
+// A private session hides an attached desktop from the room it sits in: the
+// curtain blacks out its screens and the silent room keeps its speakers
+// quiet, while the stream still shows and plays both. Every change goes
+// through a keeper first, so an agent that is killed still gives the room
+// its screens and speakers back.
+
+// Hold hands a keeper what undoes a change, for the undo of kind, before
+// the change is made; an error means the change must not be made.
+type Hold func(kind string, undo any) error
+
+// curtain blacks out a desktop's screens; see x11.Curtain and
+// wayland.Curtain.
+type curtain interface {
+	Draw() error
+	Lift() error
+	Close() error
+}
+
+// Room keeps the room's speakers quiet while the session still hears them;
+// see audio.Room.
+type Room interface {
+	// Monitor is the source the session records while the room is silent.
+	Monitor() string
+	// Gone is closed when the room is no longer silent, on its own; Err
+	// then says why.
+	Gone() <-chan struct{}
+	Err() error
+	Close() error
+}
+
+// SilenceFunc makes the attached desktop's room silent. ctx bounds the
+// start only.
+type SilenceFunc func(ctx context.Context, hold Hold, log *slog.Logger) (Room, error)
+
+// follower is an AudioSource that can record another source than the one it
+// started on: the silent room's monitor, or "" for its own again.
+type follower interface {
+	Follow(source string) error
+}
+
+// Keeper step IDs: one change of each kind at a time.
+const (
+	curtainStep = "curtain"
+	silentStep  = "silent"
+)
+
+// roomTimeout bounds making the room silent.
+const roomTimeout = 10 * time.Second
+
+type private struct {
+	log     *slog.Logger
+	keeper  *keeper.Client
+	curtain curtain // nil when the desktop cannot have one
+	silence SilenceFunc
+	capture follower // nil when the session records no sound
+	send    func()   // tells the page the state
+
+	mu    sync.Mutex
+	state protocol.Private
+	want  protocol.Private // the switches the page asked for last; only On counts
+	room  Room
+
+	kick chan struct{}
+	stop chan struct{}
+	done chan struct{}
+}
+
+// openPrivate readies the private session of an attached desktop, with the
+// switches Start turns on already on; it returns nil for a spawned one. send
+// tells the page the state, from the session's own goroutines.
+func openPrivate(d *openedDesktop, start protocol.Start, o Options, audio AudioSource, send func(), log *slog.Logger) (*private, error) {
+	if d.mode != protocol.ModeAttach {
+		return nil, nil
+	}
+	p := &private{
+		log: log, silence: o.Silence, send: send,
+		kick: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{}),
+	}
+	p.capture, _ = audio.(follower)
+	switch {
+	case len(o.Keeper) == 0:
+		why := "this agent has no keeper to undo the change if it dies"
+		p.state.Curtain.Unsupported, p.state.Silent.Unsupported = why, why
+	default:
+		p.keeper = keeper.New(o.Keeper, nil)
+		if d.openCurtain == nil {
+			p.state.Curtain.Unsupported = "this desktop cannot be darkened"
+		} else if c, err := d.openCurtain(p.hold(curtainStep)); err != nil {
+			p.state.Curtain.Unsupported = err.Error()
+			log.Info("no curtain", "why", err)
+		} else {
+			p.curtain = c
+		}
+		if p.silence == nil {
+			p.state.Silent.Unsupported = "this agent was built without sound"
+		}
+	}
+	p.want = p.state
+	p.want.Curtain.On, p.want.Silent.On = start.Curtain, start.Silent
+	p.settle()
+	go p.run()
+	for _, s := range []struct {
+		flag string
+		on   bool
+		sw   protocol.PrivateSwitch
+	}{{"--curtain", start.Curtain, p.state.Curtain}, {"--silent", start.Silent, p.state.Silent}} {
+		if s.on && !s.sw.On {
+			p.close()
+			return nil, fmt.Errorf("%s: %s", s.flag, firstOf(s.sw.Unsupported, s.sw.Error))
+		}
+	}
+	return p, nil
+}
+
+func firstOf(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+// hold is the Hold for the change id.
+func (p *private) hold(id string) Hold {
+	return func(kind string, undo any) error { return p.keeper.Hold(id, kind, undo) }
+}
+
+// snapshot is the state for Ready and the page; nil for a spawned desktop.
+func (p *private) snapshot() *protocol.Private {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	st := p.state
+	return &st
+}
+
+// set asks for a switch from the page. The change happens on the private
+// session's own goroutine, since the control handlers run on the peer's
+// read loop, which must not wait on an X or sound server.
+func (p *private) set(t protocol.ControlType, on bool) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	switch t {
+	case protocol.ControlCurtain:
+		p.want.Curtain.On = on
+	case protocol.ControlSilent:
+		p.want.Silent.On = on
+	}
+	p.mu.Unlock()
+	select {
+	case p.kick <- struct{}{}:
+	default:
+	}
+}
+
+func (p *private) run() {
+	defer close(p.done)
+	for {
+		var gone <-chan struct{}
+		p.mu.Lock()
+		if p.room != nil {
+			gone = p.room.Gone()
+		}
+		p.mu.Unlock()
+		select {
+		case <-p.stop:
+			return
+		case <-p.kick:
+			p.settle()
+		case <-gone:
+			p.roomGone()
+		}
+		p.send()
+	}
+}
+
+// settle turns each switch the way the page last asked, as far as it can.
+func (p *private) settle() {
+	p.mu.Lock()
+	want, st := p.want, p.state
+	p.mu.Unlock()
+	if want.Curtain.On != st.Curtain.On && st.Curtain.Unsupported == "" {
+		p.switchCurtain(want.Curtain.On)
+	}
+	if want.Silent.On != st.Silent.On && st.Silent.Unsupported == "" {
+		p.switchSilent(want.Silent.On)
+	}
+}
+
+func (p *private) switchCurtain(on bool) {
+	var err error
+	if on {
+		if err = p.curtain.Draw(); err != nil {
+			// Draw put back what it could.
+			p.keeper.Drop(curtainStep)
+		}
+	} else if err = p.curtain.Lift(); err == nil {
+		p.keeper.Drop(curtainStep)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.state.Curtain.Error = ""
+	if err != nil {
+		p.state.Curtain.Error = err.Error()
+		p.log.Warn("curtain", "on", on, "err", err)
+		return
+	}
+	p.state.Curtain.On = on
+	p.log.Info("curtain", "on", on)
+}
+
+func (p *private) switchSilent(on bool) {
+	var err error
+	if on {
+		ctx, cancel := context.WithTimeout(context.Background(), roomTimeout)
+		var r Room
+		r, err = p.silence(ctx, p.hold(silentStep), p.log)
+		cancel()
+		if err != nil {
+			p.keeper.Drop(silentStep)
+		} else {
+			p.follow(r.Monitor())
+			p.mu.Lock()
+			p.room = r
+			p.mu.Unlock()
+		}
+	} else {
+		err = p.closeRoom()
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.state.Silent.Error = ""
+	if err != nil {
+		p.state.Silent.Error = err.Error()
+		p.log.Warn("silent room", "on", on, "err", err)
+		return
+	}
+	p.state.Silent.On = on
+	p.log.Info("silent room", "on", on)
+}
+
+// follow points the session's capture at source; a session that cannot
+// follow carries on without the room's sound, which the log says.
+func (p *private) follow(source string) {
+	if p.capture == nil {
+		return
+	}
+	if err := p.capture.Follow(source); err != nil {
+		p.log.Warn("silent room: the session cannot record the room's sound", "err", err)
+	}
+}
+
+// closeRoom gives the room its speakers back, the capture first, since
+// closing removes the source it records.
+func (p *private) closeRoom() error {
+	p.mu.Lock()
+	r := p.room
+	p.mu.Unlock()
+	if r == nil {
+		return nil
+	}
+	p.follow("")
+	if err := r.Close(); err != nil {
+		return err
+	}
+	p.keeper.Drop(silentStep)
+	p.mu.Lock()
+	p.room = nil
+	p.mu.Unlock()
+	return nil
+}
+
+// roomGone takes in a silent room that ended underneath the session.
+func (p *private) roomGone() {
+	p.mu.Lock()
+	r := p.room
+	p.mu.Unlock()
+	why := r.Err()
+	err := p.closeRoom()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.state.Silent.On, p.want.Silent.On = false, false
+	p.state.Silent.Error = errors.Join(why, err).Error()
+}
+
+// close gives the room back its screens and speakers and ends the keeper,
+// which undoes whatever could not be.
+func (p *private) close() {
+	if p == nil {
+		return
+	}
+	select {
+	case <-p.stop:
+		return
+	default:
+	}
+	close(p.stop)
+	select {
+	case <-p.done:
+	case <-time.After(roomTimeout + time.Second):
+		// A switch still waits on a server; the keeper undoes what it held.
+	}
+	if p.curtain != nil {
+		if err := p.curtain.Close(); err != nil {
+			p.log.Warn("curtain: lift", "err", err)
+		} else {
+			p.keeper.Drop(curtainStep)
+		}
+	}
+	if err := p.closeRoom(); err != nil {
+		p.log.Warn("silent room: give the speakers back", "err", err)
+	}
+	if p.keeper != nil {
+		if err := p.keeper.Close(); err != nil {
+			p.log.Warn("keeper", "err", err)
+		}
+	}
+}
+
+func init() {
+	for _, t := range []protocol.ControlType{protocol.ControlCurtain, protocol.ControlSilent} {
+		handleControl(t, func(s *session, m protocol.Control) { s.private.set(m.T, m.On) })
+	}
+}
+
+// sendPrivate tells the page the private session's state.
+func (s *session) sendPrivate() {
+	st := s.private.snapshot()
+	p := s.currentOrNil()
+	if st == nil || p == nil {
+		return
+	}
+	if err := p.SendControl(protocol.Control{T: protocol.ControlPrivate, Private: st}); err != nil && !errors.Is(err, peer.ErrNoControl) {
+		s.log.Debug("send private", "err", err)
+	}
+}
