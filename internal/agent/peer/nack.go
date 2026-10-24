@@ -32,7 +32,8 @@ const (
 
 // nackResponderFactory builds the responder for each peer connection.
 // budget reports the current target bitrate in bits per second. lost, if
-// set, is called when a NACK names a packet too old to send again: the
+// set, is called at most once per nackLostGap when a NACK names a packet
+// the responder no longer holds or that is too old to send again: the
 // browser cannot decode past it until a keyframe, and asks for one only
 // after 3 s without a frame.
 type nackResponderFactory struct {

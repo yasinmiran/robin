@@ -40,7 +40,8 @@ const minKeyframeGap = 300 * time.Millisecond
 const refreshEvery = 500 * time.Millisecond
 
 // stream captures, encodes and sends frames at up to fps while a peer is
-// attached. An idle screen costs one cheap DAMAGE check per tick.
+// attached. An idle screen costs one cheap DAMAGE check per tick and an
+// encode of the unchanged picture every refreshEvery.
 type stream struct {
 	desk desktop.Desktop
 	fps  int
@@ -185,7 +186,11 @@ func (s *stream) run(ctx context.Context) {
 		if force {
 			s.keyframe.Store(false)
 			lastKey = now
-			s.log.Info("keyframe", "w", w, "h", h, "bytes", len(au), "kbps", appliedBitrate/1000)
+			attrs := []any{"w", w, "h", h, "bytes", len(au), "kbps", appliedBitrate / 1000}
+			if q, ok := enc.(interface{ QP() int }); ok {
+				attrs = append(attrs, "qp", q.QP())
+			}
+			s.log.Info("keyframe", attrs...)
 		}
 		stale = len(au) == 0
 		if stale {

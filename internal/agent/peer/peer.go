@@ -162,7 +162,12 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 			}
 			return cfg.StartBitrate
 		},
-		lost: h.Keyframe,
+		lost: func() {
+			log.Info("keyframe requested", "by", "a NACK for a packet too old to resend")
+			if h.Keyframe != nil {
+				h.Keyframe()
+			}
+		},
 	})
 	if err := webrtc.ConfigureRTCPReports(reg); err != nil {
 		return nil, err
