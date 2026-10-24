@@ -804,9 +804,12 @@ the offer was read failed on GNOME 46: mutter's clipboard manager reads
 every new offer at once, so the probe window then pasted the old text, the
 next paste read nothing, and xdg-desktop-portal crashed, leaving the remote
 desktop session behind. The timed version passes on GNOME 46, GNOME 49 and
-KDE Plasma 6.7. Ctrl+V does not paste in a terminal, an image on the
-clipboard cannot be put back, and a clipboard manager keeps the pasted
-text in its history; all three are known limits.
+KDE Plasma 6.7, though GNOME 46's xdg-desktop-portal still died twice when
+the probe read the clipboard at the moment the put-back offered anew; the
+attach test reads from half a second after a put-back is due. Ctrl+V does
+not paste in a terminal, an image on the clipboard cannot be put back, and
+a clipboard manager keeps the pasted text in its history; all three are
+known limits.
 
 ### The page types through a hidden text box
 
