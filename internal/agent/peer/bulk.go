@@ -16,11 +16,6 @@ import (
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
-// minBulkChunk is the smallest chunk a paced sender sends. It sizes
-// chunks to a burst of its allowance, so that a chunk does not overflow a
-// shallow bottleneck the way a 64 KiB one would at a few Mbit/s.
-const minBulkChunk = 4 << 10
-
 // closeGrace is how long a failed send waits for the channel to report its
 // close before giving the send error as the reason.
 const closeGrace = 5 * time.Second
@@ -84,7 +79,7 @@ func (p *Peer) SendBulk(ctx context.Context, h protocol.Bulk, r io.Reader) error
 // bulkPace is what paces a bulk sender: how much to send at once, and how
 // long to wait before sending it.
 type bulkPace interface {
-	bulkChunk(minBytes, maxBytes int) int
+	bulkChunk() int
 	reserveBulk(n int) time.Duration
 }
 
@@ -155,7 +150,7 @@ func (s *bulkSender) send(ctx context.Context, h protocol.Bulk, r io.Reader) err
 	for {
 		size := protocol.BulkChunkSize
 		if s.pace != nil {
-			size = s.pace.bulkChunk(minBulkChunk, protocol.BulkChunkSize)
+			size = s.pace.bulkChunk()
 		}
 		n, err := io.ReadFull(src, buf[:size])
 		if n > 0 {

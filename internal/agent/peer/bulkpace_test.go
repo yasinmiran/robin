@@ -21,12 +21,12 @@ func TestEstimatorPacesBulkUnderTheTarget(t *testing.T) {
 			now := time.Unix(0, 0)
 			e, f := testEstimator(&now, 8_000_000)
 			feed(t, e, f, &now, tc.mediaBps, 3*time.Second, 0)
-			chunk := e.bulkChunk(4<<10, 64<<10)
+			chunk := e.bulkChunk()
 			if want := int(tc.wantBytes * bulkBurst.Seconds()); chunk < want*9/10 || chunk > want*11/10 {
 				t.Errorf("chunk %d bytes, want about %d", chunk, want)
 			}
-			// A second of chunks, asked for at once by two senders, is due
-			// over about a second at the bulk rate, less the burst.
+			// A second of chunks, asked for at once, is due over about a
+			// second at the bulk rate, less the burst.
 			var last time.Duration
 			n := int(tc.wantBytes) / chunk
 			for range n {
@@ -39,7 +39,7 @@ func TestEstimatorPacesBulkUnderTheTarget(t *testing.T) {
 			// Waiting it out leaves no debt, and an idle stretch banks no
 			// more than a burst.
 			now = now.Add(10 * time.Second)
-			chunk = e.bulkChunk(4<<10, 64<<10)
+			chunk = e.bulkChunk()
 			if d := e.reserveBulk(chunk); d != 0 {
 				t.Errorf("after a pause a chunk waits %v", d)
 			}
@@ -50,11 +50,11 @@ func TestEstimatorPacesBulkUnderTheTarget(t *testing.T) {
 	}
 	now := time.Unix(0, 0)
 	e, _ := testEstimator(&now, 1_000_000)
-	if got := e.bulkChunk(4<<10, 64<<10); got != 4<<10 {
+	if got := e.bulkChunk(); got != 4<<10 {
 		t.Errorf("chunk at 1 Mbit/s %d bytes, want the 4 KiB floor", got)
 	}
 	e.target = 100_000_000
-	if got := e.bulkChunk(4<<10, 64<<10); got != 64<<10 {
+	if got := e.bulkChunk(); got != 64<<10 {
 		t.Errorf("chunk at 100 Mbit/s %d bytes, want the 64 KiB ceiling", got)
 	}
 }
