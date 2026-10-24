@@ -7,14 +7,15 @@ xterm and pulseaudio. Nothing is mocked between the two, so a pass means SSH
 bootstrap, the agent, H.264 encode and decode, Opus, WebRTC, input, clipboard,
 resize and teardown all worked over a real network. The `wayland` scenario
 swaps the host for a headless GNOME Wayland session, reached the same way,
-and the `firefox` and `webkit` scenarios swap Chrome for Playwright's own
-Firefox and WebKit.
+the `firefox` and `webkit` scenarios swap Chrome for Playwright's own
+Firefox and WebKit, `nomux` runs the CLI without a ControlMaster as on
+Windows, and `touch` makes Chrome a touch screen.
 
 ## Running
 
 ```sh
 # build bin/robin-linux-amd64 first (the repo Makefile does)
-e2e/run.sh                # direct, blocked, restart, attach, wayland, webkit, firefox
+e2e/run.sh                # direct, blocked, restart, attach, wayland, webkit, firefox, nomux, touch
 e2e/run.sh direct         # one scenario
 e2e/run.sh selftest       # the harness itself, no CLI needed
 ROBIN_BIN=/path/to/robin e2e/run.sh restart
@@ -62,8 +63,10 @@ cannot leak into the next one. The tests run in order against one session.
 | `wayland` | open, Wayland host image | `--attach auto` finds the `robin` user's GNOME Wayland session (`robin-wayland start`: mutter with a 1280x720 virtual monitor, PipeWire with pipewire-pulse, the GNOME portal and a fullscreen probe window, started over ssh before the CLI), the portal's consent dialog is answered once, and a second run restores without it; see below |
 | `firefox` | open | the direct scenario in Playwright's Firefox with the OpenH264 plugin: every check passes |
 | `webkit` | open | the direct scenario in Playwright's WebKit (Safari's WebRTC stack): H.264 negotiates and decodes, keyboard, clipboard, resize, sound, UDP and teardown work; see below for what it cannot show |
+| `nomux` | UDP dropped (except loopback) before the CLI starts | the `blocked` checks with `--ssh-mux=false`, the way the CLI runs on Windows: no ControlMaster runs on the client, the agent and the tunnel's `ssh -N -L 127.0.0.1:<port>:...` are ssh processes of their own, and ICE-TCP through that forward carries the session |
+| `touch` | open | Chrome as a touch screen (`isMobile`, `hasTouch`), fingers sent through the DevTools protocol; see below |
 
-The four X11 scenarios also check, in this order:
+The X11 scenarios of `tests/gui.spec.ts` also check, in this order:
 
 1. **Frames**: a non-black frame within 20 s of the URL appearing, and
    `framesDecoded` grows after the host retitles the xterm (damage that does not
@@ -90,9 +93,15 @@ The four X11 scenarios also check, in this order:
    noise played on the host with `paplay` through the session's sound server
    raises Chrome's `totalAudioEnergy`. Nothing wrote to `~/.config/pulse`.
 9. **Transport**: per the table above, from `robin.stats()`.
-10. **Teardown**: SIGINT to the CLI's process group (what Ctrl-C does) makes it
+10. **Input method** (Chrome only): with the xterm clicked, `echo `, then what
+   Chrome sends for an input method (a `Process` key, a composition that the
+   page shows under its status tab, and the committed `日本語ü`), then
+   ` > /tmp/robin-e2e-ime-<scenario>` and Enter, writes `日本語ü` to that
+   file on the host: characters the keymap lacks typed through spare keys.
+11. **Teardown**: SIGINT to the CLI's process group (what Ctrl-C does) makes it
    exit 0 within 10 s, after which no `Xvfb`, `robin-agent`, `openbox`,
-   `xterm` or `pulseaudio` runs as `robin` and the agent's run dir is gone. Stdout must have held
+   `xterm` or `pulseaudio` runs as `robin`, the agent's run dir is gone, and
+   no ssh the CLI started runs on the client. Stdout must have held
    nothing but the URL. Set `ROBIN_SIGINT_PID_ONLY=1` to signal only the CLI.
    In `attach` the agent and its run dir go while the `robin` user's desktop stays:
    `robin-live state` (the same Xvfb, openbox and xterm, display size,
@@ -106,6 +115,23 @@ told about LEFT (1280x800, primary) and RIGHT (1024x768) and starts on LEFT;
 choosing RIGHT and then all from the status tab's menu turns the video into
 1024x768 and then the whole 2304x800 screen scaled to fit, and the pointer
 lands within 2 px of the matching pixel of the monitor shown.
+
+The `touch` scenario runs `tests/touch.spec.ts` against the X11 host, with
+a 1024x640 touch screen. In order:
+
+1. **Status tab**: the keyboard button shows, the text box does not take the
+   focus (which would raise a soft keyboard), and the tab does not tuck away.
+2. **Tap**: the X pointer lands within 2 px of the pixel under the finger.
+3. **Pinch**: two fingers spreading from 200 to 400 px zoom the picture 2x in
+   the page while the video keeps its size, a tap then lands within 2 px of
+   the pixel the zoomed picture shows there, and pinching in goes back to 1x.
+4. **Scroll**: after `seq 200` in the xterm, two fingers dragged down scroll
+   it back, which changes the xterm region of the picture.
+5. **Soft keyboard**: the keyboard button focuses the text box; text typed
+   as a soft keyboard does (each letter as input, a word composed) makes
+   `echo touch-ü > /tmp/robin-e2e-touch` run on the host; pressed again,
+   the button lets go.
+6. **Teardown**: as in the X11 scenarios.
 
 The `wayland` scenario runs `tests/wayland.spec.ts` instead, since its host
 has no X server for xdotool to ask. The probe window logs the input it gets
@@ -212,8 +238,9 @@ Open a trace with `npx playwright show-trace <zip>` from `e2e/` (after
   `Host robinhost` in `/root/.ssh/config` (with `HostKeyAlias robinhost` and a
   pre-filled known_hosts), the CLI at `/usr/local/bin/robin`, and runs as
   root so the root-owned key mounts stay readable.
-- `tests/gui.spec.ts`: the X11 scenarios. `tests/wayland.spec.ts`: the
-  Wayland one. `tests/selftest.spec.ts`: the harness.
+- `tests/gui.spec.ts`: the X11 scenarios. `tests/touch.spec.ts`: the touch
+  screen. `tests/wayland.spec.ts`: the Wayland one. `tests/selftest.spec.ts`:
+  the harness.
 - `tests/helpers/`: the CLI runner, the frame sampler, page-to-display
   coordinate mapping, page coverage, and host checks. Host checks use their own ssh
   connections (`ControlPath=none`), never the CLI's master.

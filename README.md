@@ -27,9 +27,10 @@ make
 That fetches a pinned zig toolchain and builds openh264 and libopus the first
 time (about half a minute, cached under `.cache/`), builds static agents for
 linux/amd64 and linux/arm64, and embeds both in `bin/robin`. `make dist`
-cross-builds the CLI for macOS and Linux on amd64 and arm64 into `dist/`. The
-CLI itself is pure Go; only the agents need the C toolchain, and the build
-downloads it, so there is nothing to install by hand on Linux or macOS.
+cross-builds the CLI for macOS, Linux and Windows on amd64 and arm64 into
+`dist/`. The CLI itself is pure Go; only the agents need the C toolchain, and
+the build downloads it, so there is nothing to install by hand on Linux or
+macOS.
 
 ## Usage
 
@@ -45,8 +46,11 @@ robin gui --attach wayland workstation              # your GNOME or Plasma sessi
 Your `~/.ssh/config`, agent, `ProxyJump`, `ProxyCommand`, certificates and
 password or 2FA prompts all work as they do for plain `ssh`, because it is
 plain `ssh`: one ControlMaster connection carries the probe, the agent upload,
-the agent itself and the tunnel. The browser tab can be reloaded; the remote
-session survives until you press Ctrl+C in the terminal.
+the agent itself and the tunnel. Windows' OpenSSH has no ControlMaster, so
+there each of them opens a connection of its own (see
+[What the client needs](#what-the-client-needs)). The browser tab can be
+reloaded; the remote session survives until you press Ctrl+C in the
+terminal.
 
 With `--attach`, nothing new is started: the agent streams a desktop that is
 already running on the host, usually the one you are logged in to at the
@@ -97,6 +101,7 @@ host cannot provide sound the session runs without it, and the CLI says why.
 | `--no-browser` | | print the page URL on stdout instead of opening a browser |
 | `--listen` | `127.0.0.1:0` | address for the local page; loopback only |
 | `--ssh` | `ssh` | the ssh client to drive |
+| `--ssh-mux` | `true`, `false` on Windows | carry everything over one ControlMaster connection; `--ssh-mux=false` gives the probe, the upload, the agent and the tunnel an ssh connection each, as on Windows |
 | `-v` | | log the CLI and the agent to stderr |
 
 ## What the host needs
@@ -227,9 +232,35 @@ The measurements and the reasons behind the design are in the
 
 ## What the client needs
 
-macOS or Linux with OpenSSH (ControlMaster support, so not the Windows
-build), and a browser that decodes H.264 in WebRTC. What the end-to-end
-tests prove for each:
+OpenSSH and a browser that decodes H.264 in WebRTC, on one of:
+
+- **macOS or Linux**, where one ControlMaster connection carries the whole
+  session.
+- **Windows 10 or 11**, with the OpenSSH client Windows ships
+  (`ssh.exe` on `PATH`). It has no ControlMaster, so the CLI runs the probe,
+  the upload, the agent and the tunnel as an ssh each, and each logs in on
+  its own: with a key or `ssh-agent` that goes unnoticed, while a password or
+  2FA prompt comes three times a session, five when the agent is uploaded. The tunnel listens on a loopback TCP
+  port, as Windows' OpenSSH forwards no unix sockets. `make dist` builds
+  `robin-windows-amd64.exe` and `robin-windows-arm64.exe`; the page opens in
+  the default browser.
+- **Android**, in [Termux](https://termux.dev) with its `openssh` package:
+  `dist/robin-linux-arm64` runs there as it is, and the page opens in
+  Android's browser through `termux-open-url` (from `termux-tools`). The page
+  takes touch: a tap clicks, a long press right clicks, one finger drags,
+  two fingers scroll, and pinching zooms and pans the picture on the phone
+  without resizing the desktop. The keyboard button in the status tab raises
+  the soft keyboard.
+
+iOS and iPadOS cannot be clients. The CLI has to run beside the browser,
+because the page is served on loopback only, and nothing on iOS lets a user
+run a program that drives `ssh` and listens on loopback for the browser.
+
+Input methods work in any of these browsers: the keyboard's focus rests in
+a hidden text box, so text an input method composes (CJK, or an accent
+built from a dead key) goes to the remote desktop once it is committed, and
+shows under the status tab while it is being composed. What the end-to-end
+tests prove for each browser:
 
 - **Chrome** runs every scenario: picture, input, latency, sound,
   clipboard, resize, transports, attach and Wayland. Edge shares its engine.
@@ -248,7 +279,8 @@ tests prove for each:
 
 ## How it works
 
-1. `ssh -M` opens the one connection everything else uses.
+1. `ssh -M` opens the one connection everything else uses. Without
+   ControlMaster, on Windows, each step below opens its own.
 2. A POSIX shell probe reports the distro, architecture, live sessions, GPU,
    which spawn-mode tools exist, and a directory where the agent can run.
 3. The agent for that architecture is uploaded over SFTP, verified by
@@ -287,14 +319,25 @@ connections carrying the session's credentials; the X display is protected by
 a fresh cookie in a 0600 file; the session's sound server listens only on a
 socket inside the run directory; the agent and its run directory are 0700.
 Input from the page is limited to what a keyboard, a pointer and a clipboard
-can do in that session. The agent also listens for bulk transfers from the
+can do in that session. Text from an input method or a soft keyboard types
+what keys could type: through spare keycodes on X11 and, on Wayland, as
+keysyms for ASCII and as a paste for the rest. That paste puts the text on
+the desktop's clipboard for about a second, where any program on the desktop
+can read it and a clipboard manager there keeps it in its history, before
+the clipboard gets back the text it held. The agent also listens for bulk transfers from the
 page, but takes only kinds a feature has registered, and no feature has yet,
 so it refuses every one.
 
 One exposure is on the client side: to open your browser the CLI hands the
-page URL, token included, to `open` or `xdg-open`, so for that moment another
-user logged in to the same client machine could read it from the process
-list. On a shared client, use `--no-browser` and open the printed URL yourself.
+page URL, token included, to `open`, `xdg-open`, `rundll32` on Windows or
+`termux-open-url` on Android, so for that moment another user logged in to
+the same client machine could read it from the process list. On a shared
+client, use `--no-browser` and open the printed URL yourself. Without
+ControlMaster (Windows, or `--ssh-mux=false`) the ICE-TCP tunnel's client end
+is a loopback TCP port rather than a socket in a private directory, so
+another user of the client machine can connect to it; what answers is the
+agent's ICE-TCP listener, which takes nothing without the session's ICE
+credentials, and the DTLS fingerprint is pinned as before.
 
 ## Testing
 
@@ -330,7 +373,8 @@ sits at those screens, so the harness answers the consent dialog itself:
 through mutter's own remote desktop interface on GNOME, and by pressing
 Approve through the accessibility bus on KDE, paths only the tests use. It
 checks that the first session asks and the second restores without asking,
-that frames arrive and change, pointer, keys and held-key repeat, the
+that frames arrive and change, pointer, keys and held-key repeat, text
+typed as keysyms or pasted with the clipboard put back after, the
 clipboard both ways, view-only grants (GNOME only; KDE has none), and that
 no `gst-launch-1.0` or portal session outlives the agent, whether it closes
 or is killed. A tone played into each session's PipeWire must come out of
@@ -342,10 +386,13 @@ node, and is skipped, with a line saying so, on a machine without one.
 UDP, UDP blocked on the host from the start, UDP blocked mid-session, and
 `--attach auto` against a two-monitor desktop the test user already has
 running, where the page has to start on the primary monitor and switch to
-the other and to both. Each
+the other and to both. A fifth, `nomux`, is the blocked one with
+`--ssh-mux=false`, the Windows way, and checks no ControlMaster ran and no ssh
+outlives the CLI. Each
 asserts that decoded frames are not black and change after typing, that
 keystrokes after a 20 s pause reach the screen within 400 ms, that typed
-text runs in the remote shell, pointer position, clipboard both ways, resize,
+text runs in the remote shell, as does text an input method commits in
+Chrome, pointer position, clipboard both ways, resize,
 that sound played on the host is heard once the speaker is on, which
 transport ICE picked, and that nothing survives the CLI; for the attached
 desktop that means a resize leaves its screen alone and it outlives the session
@@ -360,6 +407,10 @@ must leave no agent, `gst-launch-1.0` or portal session and a 0600 restore
 token, and a second run must start without asking. The `firefox` and
 `webkit` scenarios repeat the direct one in Playwright's own Firefox and
 WebKit builds; see the client section above for what each of them proves.
+The `touch` scenario runs Chrome as a touch screen: taps and a pinch-zoomed
+tap must put the X pointer within 2 px of the pixel under the finger, two
+fingers must scroll the xterm back, and the keyboard button's soft keyboard
+must type a command that runs.
 See [e2e/README.md](e2e/README.md). Rootless containers cannot shape bandwidth,
 so congestion control is tested separately over a shaped virtual link
 (`go test ./internal/agent/peer -run Congestion`).
@@ -373,7 +424,9 @@ link while video streams, to measure how the two share it. `go test
 `internal/web/static/test`, and, with the browser smoke test's dependencies
 installed, sends bulk transfers both ways between Chrome and the agent's own
 peer, which is where the page's SHA-256 and flow control meet the real
-thing.
+thing. It also drives an input method in desktop Chrome and taps, a long
+press, a two-finger scroll, a pinch and the soft keyboard in Chrome as a
+phone, and checks what the page sends for each.
 
 The hardware encoders are tested against stand-in tools everywhere, and
 against the real GPU wherever `make test` runs on a host that has one along
@@ -394,9 +447,14 @@ to print the comparison the ADR quotes.
 - Attaching to Wayland needs someone at the host's screen to approve it the
   first time. It works through the portal's remote desktop interface, which
   GNOME and KDE Plasma have; wlroots compositors such as Sway do not.
-- On Wayland, characters only type if the host's keyboard layout has them:
-  the compositor drops any other keysym, and there is no spare keycode to
-  bind one to as on X11. Paste such text through the clipboard instead.
+- On Wayland, a key only types if the host's keyboard layout has its
+  character: the compositor drops any other keysym, and there is no spare
+  keycode to bind one to as on X11. Text from an input method or a soft
+  keyboard goes in as keysyms when it is all ASCII and as a paste with
+  Ctrl+V otherwise, so it lands wherever Ctrl+V pastes: not in a terminal,
+  which pastes with Ctrl+Shift+V, and only as text the clipboard held is put
+  back a second later; an image there is lost. A host layout without Latin
+  letters drops the ASCII keysyms too.
 - GNOME drops the first key event of each remote session, and now and then
   the first pointer event. The agent spends both on input that does
   nothing, so you should not notice, but it is why mutter logs `No keycode
@@ -443,8 +501,22 @@ to print the comparison the ADR quotes.
   needs another 7 to 9 s to get its rate back. On the agent, a transfer
   whose receiver stops reading holds up keyboard and pointer input with
   it, since every data channel shares one SCTP receive window.
-- Keys map by character, so text arrives right whatever the client layout,
-  but IME composition (CJK input) is not forwarded.
+- Keys map by character, so text arrives right whatever the client layout.
+  An input method's text arrives when it is committed: the composition shows
+  in the page, not in the remote program, which gets no preedit of its own.
+  On X11, committed text with more than 16 characters the keymap lacks
+  types at about 16 such characters every 50 ms, while the keycodes it
+  borrows settle.
+- Touch maps onto one pointer: one finger is the mouse, so panning a zoomed
+  picture takes two fingers, and there is no momentum or double tap. A soft
+  keyboard has no Ctrl, Alt, Esc or arrow keys to send.
+- The Android client has been checked in Chrome's phone emulation only, and
+  the Windows client in cross-builds, `go vet` and the `nomux` scenario's
+  forced mode on Linux. Neither has run on the real thing.
+- Without ControlMaster a dropped network ends the session when the agent's
+  connection goes quiet for its idle timeout, not at once, and every
+  `LocalForward` in your ssh config for that host comes up with the
+  tunnel's own ssh; one that fails takes the tunnel with it.
 - The status tab reads 0 fps on an idle screen. Nothing is sent when nothing
   changes; that is not a stall.
 - Through the SSH tunnel video is TCP inside TCP, so a lossy link shows
