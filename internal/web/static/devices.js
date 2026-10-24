@@ -41,7 +41,7 @@ export class DeviceSwitch {
   #state = 'off';
   #why = '';
   #track = null;
-  #wanted = false;
+  #attempt = 0;
 
   constructor(io) {
     this.#io = io;
@@ -61,17 +61,18 @@ export class DeviceSwitch {
 
   async on() {
     if (this.#state === 'on' || this.#state === 'starting') return;
-    this.#wanted = true;
+    const attempt = ++this.#attempt;
+    // Turning the switch off, or off and on again, supersedes this start.
+    const superseded = () => attempt !== this.#attempt;
     this.#set('starting');
     let track;
     try {
       track = await this.#io.acquire();
     } catch (err) {
-      if (this.#wanted) this.#block(err);
+      if (!superseded()) this.#block(err);
       return;
     }
-    // Turned off while the browser asked: the user has changed their mind.
-    if (!this.#wanted) {
+    if (superseded()) {
       track.stop();
       return;
     }
@@ -79,12 +80,13 @@ export class DeviceSwitch {
       await this.#io.send(track);
     } catch (err) {
       track.stop();
-      if (this.#wanted) this.#block(err);
+      if (!superseded()) this.#block(err);
       return;
     }
-    if (!this.#wanted) {
+    if (superseded()) {
       track.stop();
-      await this.#io.send(null).catch(() => {});
+      // A later start puts its own track on the sender; only an off leaves it.
+      if (this.#state === 'off') await this.#io.send(null).catch(() => {});
       return;
     }
     this.#track = track;
@@ -96,7 +98,7 @@ export class DeviceSwitch {
   }
 
   async off() {
-    this.#wanted = false;
+    this.#attempt++;
     const track = this.#track;
     this.#track = null;
     if (this.#state === 'off') return;

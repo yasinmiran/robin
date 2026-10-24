@@ -171,3 +171,49 @@ test('Constrained Baseline in mode 1 goes first, the rest keep their order', () 
   assert.deepEqual(constrainedBaselineFirst([vp8, rtx, high, mode0, cb]), [cb, vp8, rtx, high, mode0]);
   assert.equal(constrainedBaselineFirst([vp8, rtx, { mimeType: 'video/H264' }]), null);
 });
+
+test('switched off and on again while the browser asks, only the second track is sent', async () => {
+  const r = rig();
+  const first = r.sw.on();
+  await r.sw.off();
+  const second = r.sw.on();
+  assert.equal(r.pending.length, 2);
+  const stale = await r.grant();
+  await first;
+  assert.ok(stale.stopped, 'the first answer is stopped');
+  assert.equal(r.sw.state, 'starting');
+  const track = await r.grant();
+  await second;
+  assert.equal(r.sw.state, 'on');
+  assert.ok(!track.stopped);
+  assert.deepEqual(r.sent, [track]);
+});
+
+test('switched off and on again while the first track goes on the sender, the second stays on', async () => {
+  const sent = [];
+  const tracks = [];
+  let release;
+  const held = new Promise((resolve) => (release = resolve));
+  const sw = new DeviceSwitch({
+    acquire: async () => {
+      const t = new FakeTrack();
+      tracks.push(t);
+      return t;
+    },
+    send: async (track) => {
+      sent.push(track);
+      if (track === tracks[0]) await held;
+    },
+  });
+  const first = sw.on();
+  await settle();
+  await sw.off();
+  const second = sw.on();
+  await second;
+  release();
+  await first;
+  assert.equal(sw.state, 'on');
+  assert.ok(tracks[0].stopped, 'the first track is stopped');
+  assert.ok(!tracks[1].stopped, 'the second track is live');
+  assert.equal(sent.at(-1), tracks[1], 'the sender ends with the second track');
+});
