@@ -64,7 +64,9 @@ That desktop stays shared: whoever sits at the machine sees the pointer move.
 It keeps its own resolution, too. Your browser window scales the picture
 instead of resizing the screen, and a desktop larger than `--max-size` (a 4K
 monitor) is scaled down to fit, with the pointer mapped back onto the
-full-size screen.
+full-size screen. Scaled text is soft: a 2560x1440 monitor squeezed into
+1920x1080 and stretched back by the browser loses its small text, which
+is why 2560x1440 is the default where the host has the cores for it.
 
 A desktop of several monitors shows one of them at a time, starting with the
 primary one; `--monitor` picks another by name (`--monitor DP-2`) or by its
@@ -84,7 +86,7 @@ host cannot provide sound the session runs without it, and the CLI says why.
 | Flag | Default | |
 |---|---|---|
 | `--transport` | `auto` | `direct` for UDP only, `tunnel` to force the SSH path |
-| `--max-size` | `1920x1080` | largest remote resolution; the display follows your window up to this. 1280x720 on hosts with two cores or fewer |
+| `--max-size` | `2560x1440` | largest remote resolution; the display follows your window up to this, and a larger attached desktop is scaled down to it. 1920x1080 on hosts with four cores or fewer, 1280x720 with two or fewer |
 | `--fps` | `30` | frame rate cap (20 on small hosts) |
 | `--hidpi` | off | size the remote display in the browser's device pixels: sharp text on Retina screens, about four times the pixels to encode. Raise `--max-size` to go fully native |
 | `--max-kbps` | `10000` | video bitrate ceiling; congestion control works below it |
@@ -181,7 +183,7 @@ robin gui --encoder software build-box     # never the GPU
 
 By default the CLI picks the encoder from the probe. It takes the GPU when
 the host can drive it and the GPU pays for the latency it adds: on hosts
-with four cores or fewer, and for sessions above 1920x1080 when ffmpeg can
+with four cores or fewer, and for sessions above 2560x1440 when ffmpeg can
 drive the GPU. VA-API comes before NVENC. Everywhere else it stays in
 software. If the GPU it picked fails on the host, the session carries on in
 software, and `-v` shows which encoder was picked, why, and why it fell back.
@@ -199,8 +201,9 @@ of this against the probe before it deploys anything and says what is
 missing; the agent then tries each route the host offers on a test frame,
 ffmpeg first, and if none works the error lists why each one failed.
 
-That is why `auto` leaves a 1080p session on a bigger host in software: on
-a reasonably fast CPU the GPU saves little. On an i7-13800H with its iGPU,
+That is why `auto` leaves a 1080p or 1440p session on a bigger host in
+software: on a reasonably fast CPU the GPU saves little, and openh264
+needs 5 to 17 ms of CPU for a 1440p frame. On an i7-13800H with its iGPU,
 a session scrolling a terminal cost about a fifth of a core at 1440x900 and
 about one core at 3840x2160 with either encoder: copying each frame out to
 the tool eats most of what the GPU saves. It pays where openh264 is the
@@ -321,6 +324,16 @@ when a package falls more than 0.5 points below its line in
 last run, which only main does. `make cover-unit cover-report` gives a quick
 look without containers. A suite that fails still hands in what it
 covered, and `make cover` fails after the report.
+
+`make test` also streams a 15 s clip of a 1080p screen of small text,
+still and moving, through the agent's stream loop, peer and openh264 to a
+stand-in for Chrome's video receiver (`internal/agent/vqtest`), and fails
+if the browser would have had to ask for a keyframe. `ROBIN_VQ=1` with
+`go test -tags openh264 -run TestVideoQualityMatrix ./internal/agent/`
+(in the toolchain `make test` sets up) runs the longer clip at 1080p and
+1440p over three shaped links and prints, per stretch of the clip, what
+was sent, what was shown and how it scored against the screen;
+`ROBIN_VQ_SIZE`, `ROBIN_VQ_LINK` and `ROBIN_VQ_VARIANT` pick the rows.
 
 `make test-wayland` boots three desktops, each in its own container with a
 virtual monitor, PipeWire and the desktop's own portal: mutter 46 on Ubuntu
@@ -448,6 +461,18 @@ to print the comparison the ADR quotes.
 - The status tab reads about 2 fps on an idle screen. A still picture is
   sent again every half second, a few hundred bytes each, so the browser
   never times out waiting for one; that is not a stall.
+- After a still stretch, the first seconds of motion can come at a low
+  bitrate. Congestion control (Pion's GCC) answers a hint of congestion by
+  dropping its target to 0.85 times the rate it received, and on a still
+  screen that rate is a few kbit/s; in the agent's measurements the target
+  fell from about 3 Mbit/s to between 0.3 and 1.2 in some runs and climbed
+  back at about 8% a second.
+- Below about 4 Mbit/s a busy 1440p picture drops to a few frames a second,
+  by design (text stays legible rather than the frame rate high), and
+  congestion control can still overshoot the link during video, which
+  costs a freeze of up to about a second before a keyframe repairs it.
+- Hardware encoding stays at Constrained Baseline, which every browser
+  decodes; High profile measured at most 5% smaller on an Intel iGPU.
 - Through the SSH tunnel video is TCP inside TCP, so a lossy link shows
   head-of-line stalls that direct UDP would not.
 - Safari's picture is checked by hand only: the WebKit the tests drive on
