@@ -50,6 +50,7 @@ type Listener struct {
 	dir   string
 	agent string
 	ln    net.Listener
+	uid   int // the only user whose controllers are admitted
 	log   *slog.Logger
 	conns chan *protocol.Conn
 }
@@ -77,7 +78,7 @@ func Listen(dir, agent string, log *slog.Logger) (*Listener, error) {
 		ln.Close()
 		return nil, err
 	}
-	l := &Listener{dir: dir, agent: agent, ln: ln, log: log, conns: make(chan *protocol.Conn)}
+	l := &Listener{dir: dir, agent: agent, ln: ln, uid: os.Getuid(), log: log, conns: make(chan *protocol.Conn)}
 	go l.accept()
 	return l, nil
 }
@@ -113,7 +114,7 @@ func (l *Listener) accept() {
 // admit hands one connection to the session, if it is ours and the session
 // wants a controller now.
 func (l *Listener) admit(c net.Conn) {
-	if err := checkPeer(c); err != nil {
+	if err := checkPeer(c, l.uid); err != nil {
 		l.log.Warn("controller refused", "err", err)
 		c.Close()
 		return
@@ -133,9 +134,9 @@ func (l *Listener) admit(c net.Conn) {
 	}
 }
 
-// checkPeer accepts only a connection from a process of this uid: the run
+// checkPeer accepts only a connection from a process of uid: the run
 // directory already keeps everyone else out, and this makes sure of it.
-func checkPeer(c net.Conn) error {
+func checkPeer(c net.Conn, uid int) error {
 	uc, ok := c.(*net.UnixConn)
 	if !ok {
 		return fmt.Errorf("daemon: not a unix connection: %T", c)
@@ -154,7 +155,7 @@ func checkPeer(c net.Conn) error {
 	if credErr != nil {
 		return fmt.Errorf("daemon: peer credentials: %w", credErr)
 	}
-	return checkUID(cred, os.Getuid())
+	return checkUID(cred, uid)
 }
 
 func checkUID(cred *syscall.Ucred, us int) error {

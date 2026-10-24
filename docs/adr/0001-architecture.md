@@ -880,8 +880,14 @@ in rootless podman, with nothing on the workstation itself.
   The stranger's `robin-agent end`, aimed at another user's kept session
   through a run link to that user's run root, fails on the 0700 root with
   `permission denied`, and opened up, on the signal with `operation not
-  permitted`; the session lives on and its owner's end still works. No
-  weakness turned up, so nothing in the agent changed.
+  permitted`; the session lives on and its owner's end still works.
+- "Before a byte it sent is read" is checked, not assumed: a unix socket
+  closed with data still unread resets its peer's connection, where one
+  closed after a read gives EOF. Unit tests under plain `make test` set the
+  listener's uid to another, write first, and expect the reset; a read
+  ahead of either peer check turns it into EOF and fails them. In test-x,
+  `ROBIN_XTEST` turns a missing root or `robin-stranger` into a failure of
+  these tests rather than a skip.
 
 ### Files: into the download folder, out on a click
 

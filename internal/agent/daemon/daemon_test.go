@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -238,35 +239,71 @@ func TestCheckPeerWantsAUnixConnection(t *testing.T) {
 	c, peer := net.Pipe()
 	defer c.Close()
 	defer peer.Close()
-	if err := checkPeer(c); err == nil || !strings.Contains(err.Error(), "not a unix connection") {
+	if err := checkPeer(c, os.Getuid()); err == nil || !strings.Contains(err.Error(), "not a unix connection") {
 		t.Fatalf("checkPeer on a pipe: %v", err)
 	}
 }
 
-// TestCheckPeerOfAConnectionAlreadyGone: a controller that hung up before
-// the check has no credentials to read and is refused.
-func TestCheckPeerOfAConnectionAlreadyGone(t *testing.T) {
+// A controller that dialed and hung up before the check still passes it:
+// the kernel keeps a peer's credentials from when it connected. Only a
+// connection already closed on our side has none to read.
+func TestCheckPeerOfAControllerThatHungUp(t *testing.T) {
 	dir := privateDir(t)
 	ln, err := net.Listen("unix", filepath.Join(dir, SocketFile))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	go func() {
-		if c, err := net.Dial("unix", filepath.Join(dir, SocketFile)); err == nil {
-			c.Close()
-		}
-	}()
+	cli, err := net.Dial("unix", filepath.Join(dir, SocketFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli.Close()
 	c, err := ln.Accept()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := checkPeer(c); err != nil {
-		t.Fatalf("checkPeer of a live connection: %v", err)
+	if err := checkPeer(c, os.Getuid()); err != nil {
+		t.Fatalf("checkPeer of a controller that hung up: %v", err)
 	}
 	c.Close()
-	if err := checkPeer(c); err == nil {
-		t.Fatal("checkPeer of a closed connection passed")
+	if err := checkPeer(c, os.Getuid()); err == nil {
+		t.Fatal("checkPeer of a connection closed on our side passed")
+	}
+}
+
+// A controller of another uid is turned away before a byte of what it
+// sent is read: a unix socket closed with data still unread resets its
+// peer's connection, where one closed after a read reads as EOF there.
+func TestAdmitRefusesAnotherUIDBeforeReading(t *testing.T) {
+	dir := privateDir(t)
+	ln, err := net.Listen("unix", filepath.Join(dir, SocketFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	cli, err := net.Dial("unix", filepath.Join(dir, SocketFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cli.Close()
+	if _, err := cli.Write(hostile(t)); err != nil {
+		t.Fatal(err)
+	}
+	c, err := ln.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logged agenttest.LockedBuffer
+	other := os.Getuid() + 1
+	l := &Listener{uid: other, log: slog.New(slog.NewTextHandler(&logged, nil))}
+	l.admit(c)
+	cli.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if n, err := cli.Read(make([]byte, 1)); !errors.Is(err, syscall.ECONNRESET) {
+		t.Fatalf("the refused controller read %d bytes: %v, want a reset", n, err)
+	}
+	if want := fmt.Sprintf("connection from uid %d, not %d", os.Getuid(), other); !strings.Contains(logged.String(), want) {
+		t.Fatalf("the log, want %q:\n%s", want, logged.String())
 	}
 }
 
