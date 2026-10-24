@@ -32,9 +32,9 @@ func attachX11(ctx context.Context, start protocol.Start, log *slog.Logger) (*op
 	}
 	cookieFile := xauth
 	openCurtain := func(hold Hold) (curtain, error) {
-		c, err := x11.OpenCurtain(start.Attach, cookieFile, func(u x11.GammaUndo) error { return hold(x11.GammaStep, u) }, log)
+		c, err := x11.OpenCurtain(start.Attach, cookieFile, hold, log)
 		if err != nil {
-			return nil, err // not c: a nil *x11.Curtain would be a non-nil curtain
+			return nil, err // not c: a nil *gamma.Curtain would be a non-nil curtain
 		}
 		return c, nil
 	}

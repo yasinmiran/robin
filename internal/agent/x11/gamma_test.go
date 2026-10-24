@@ -9,16 +9,23 @@ import (
 	"log/slog"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/jezek/xgb/randr"
+
+	"github.com/yasinmiran/robin/internal/agent/gamma"
 )
 
 // Xvfb keeps a 256-entry ramp per CRTC and hands back what was set, though
 // it shows nothing. Its ramps start as all zeros, the curtain's own state,
-// so each test sets a ramp of its own first.
+// so each test sets a ramp of its own first. The curtain's state machine is
+// tested in package gamma; these test it over RandR.
+
+// checkWait bounds a wait for the curtain's once-a-second check.
+const checkWait = 3 * time.Second
 
 // gammaPeer reads and writes the display's ramps from the tests' own
 // connection, as night light or xrandr --gamma would.
@@ -29,14 +36,18 @@ type gammaPeer struct {
 
 func (p gammaPeer) crtcs() []randr.Crtc {
 	p.t.Helper()
-	crtcs, err := gammaCrtcs(p.tx.peer, p.tx.root)
+	list, err := (&screens{x: p.tx.peer, root: p.tx.root}).CRTCs()
 	if err != nil {
 		p.t.Fatal(err)
 	}
-	if len(crtcs) == 0 {
-		p.t.Fatal("Xvfb lists no CRTC with a gamma ramp")
+	if len(list) == 0 {
+		p.t.Fatal("Xvfb lists no CRTC that drives a screen")
 	}
-	return crtcs
+	var out []randr.Crtc
+	for _, c := range list {
+		out = append(out, randr.Crtc(c.ID))
+	}
+	return out
 }
 
 // set gives every CRTC a ramp that rises to top, and returns it.
@@ -84,7 +95,7 @@ func (p gammaPeer) want(what string, ramp []uint16) {
 
 func (p gammaPeer) waitFor(what string, ramp []uint16) {
 	p.t.Helper()
-	deadline := time.Now().Add(3 * curtainCheck)
+	deadline := time.Now().Add(checkWait)
 	for {
 		ok := true
 		for _, got := range p.red() {
@@ -109,9 +120,13 @@ type holds struct {
 	err  error
 }
 
-func (h *holds) hold(u GammaUndo) error {
+func (h *holds) hold(kind string, undo any) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	u, ok := undo.(GammaUndo)
+	if kind != GammaStep || !ok {
+		return errors.New("not a GammaUndo for " + GammaStep)
+	}
 	h.list = append(h.list, u)
 	return h.err
 }
@@ -150,9 +165,6 @@ func TestCurtainDarkensAndGivesTheScreensBack(t *testing.T) {
 	if u.Display != tx.d.Name || u.XAuthority != tx.d.XAuthority || len(u.Ramps) != len(p.crtcs()) || !slices.Equal(u.Ramps[0].Red, linear) {
 		t.Fatalf("the keeper holds %s %s with %d ramps, want the linear ramp of each of %d CRTCs", u.Display, u.XAuthority, len(u.Ramps), len(p.crtcs()))
 	}
-	if err := c.Draw(); err != nil {
-		t.Fatal(err)
-	}
 
 	// Night light sets a warmer ramp while the curtain is drawn: the screens
 	// go dark again, and the new ramp is the one lifting puts back.
@@ -166,9 +178,6 @@ func TestCurtainDarkensAndGivesTheScreensBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.want("Lift", night)
-	if err := c.Lift(); err != nil {
-		t.Fatal(err)
-	}
 
 	linear = p.set(65535)
 	if err := c.Draw(); err != nil {
@@ -181,33 +190,8 @@ func TestCurtainDarkensAndGivesTheScreensBack(t *testing.T) {
 	p.want("Close", linear)
 }
 
-// While nothing else touches the ramps, the curtain's checks change nothing
-// and tell the keeper nothing new.
-func TestCurtainLeavesADarkScreenAlone(t *testing.T) {
-	tx := startX(t, "sleep 1000")
-	p := gammaPeer{t, tx}
-	linear := p.set(65535)
-	var h holds
-	c, err := OpenCurtain(tx.d.Name, tx.d.XAuthority, h.hold, quietLog())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
-	if err := c.Draw(); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(5 * curtainCheck / 2)
-	p.want("two checks", make([]uint16, len(linear)))
-	h.mu.Lock()
-	n := len(h.list)
-	h.mu.Unlock()
-	if n != 1 {
-		t.Errorf("the keeper was told %d times, want once", n)
-	}
-}
-
 // An X server that goes away under a drawn curtain leaves it nothing to
-// lift, and says so.
+// lift: its next check says so, and so does Close.
 func TestCurtainWhenTheServerGoes(t *testing.T) {
 	tx := startX(t, "sleep 1000")
 	gammaPeer{t, tx}.set(65535)
@@ -219,7 +203,14 @@ func TestCurtainWhenTheServerGoes(t *testing.T) {
 		t.Fatal(err)
 	}
 	tx.d.Close()
-	time.Sleep(3 * curtainCheck / 2)
+	select {
+	case <-c.Changed():
+		if c.Leak() == nil {
+			t.Error("the curtain's check over a display that is gone found nothing amiss")
+		}
+	case <-time.After(checkWait):
+		t.Fatal("the curtain's check said nothing of a display that is gone")
+	}
 	closed := make(chan error, 1)
 	go func() { closed <- c.Close() }()
 	select {
@@ -248,8 +239,8 @@ func TestCurtainStaysOpenWhenTheKeeperRefuses(t *testing.T) {
 	p.want("a refused Draw", linear)
 }
 
-// The keeper's undo, run after the curtain's connection is gone without
-// lifting, as when the agent is killed.
+// The keeper's undo, on its own connection and with what a curtain handed
+// it, puts back the ramps a curtain left dark, as when the agent is killed.
 func TestUndoGammaAfterTheCurtainIsGone(t *testing.T) {
 	tx := startX(t, "sleep 1000")
 	p := gammaPeer{t, tx}
@@ -262,14 +253,10 @@ func TestUndoGammaAfterTheCurtainIsGone(t *testing.T) {
 	if err := c.Draw(); err != nil {
 		t.Fatal(err)
 	}
-	c.mu.Lock()
-	c.drawn = false
-	close(c.stop)
-	c.mu.Unlock()
-	<-c.done
-	c.x.Close()
-	p.want("the agent's death", make([]uint16, len(linear)))
-
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	p.set(0) // as the agent's death leaves them
 	data, err := json.Marshal(h.last(t))
 	if err != nil {
 		t.Fatal(err)
@@ -289,6 +276,22 @@ func TestUndoGammaAfterTheCurtainIsGone(t *testing.T) {
 	}
 }
 
+// The undo's deadline holds on the connection, so a server that stops
+// answering cannot keep the keeper waiting past it.
+func TestUndoGammaKeepsToItsDeadline(t *testing.T) {
+	tx := startX(t, "sleep 1000")
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	data, _ := json.Marshal(GammaUndo{Display: tx.d.Name, XAuthority: tx.d.XAuthority})
+	start := time.Now()
+	if err := UndoGamma(ctx, data); err == nil || !strings.Contains(err.Error(), "timeout") {
+		t.Errorf("UndoGamma past its deadline: %v", err)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("UndoGamma past its deadline took %v", d)
+	}
+}
+
 // Ramps for a CRTC that went away, or that changed its ramp's size, are
 // passed over rather than forced onto whatever is there now.
 func TestUndoGammaSkipsWhatNoLongerFits(t *testing.T) {
@@ -297,7 +300,7 @@ func TestUndoGammaSkipsWhatNoLongerFits(t *testing.T) {
 	linear := p.set(65535)
 	crtc := uint32(p.crtcs()[0])
 	short := make([]uint16, len(linear)/2)
-	data, _ := json.Marshal(GammaUndo{Display: tx.d.Name, XAuthority: tx.d.XAuthority, Ramps: []Ramp{
+	data, _ := json.Marshal(GammaUndo{Display: tx.d.Name, XAuthority: tx.d.XAuthority, Ramps: []gamma.Ramp{
 		{CRTC: crtc, Red: short, Green: short, Blue: short},
 		{CRTC: crtc + 1000, Red: make([]uint16, len(linear)), Green: make([]uint16, len(linear)), Blue: make([]uint16, len(linear))},
 	}})
@@ -305,6 +308,20 @@ func TestUndoGammaSkipsWhatNoLongerFits(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.want("an undo that fits nothing", linear)
+}
+
+// Each screen is named by its output, for a curtain that cannot cover it.
+func TestScreensNameTheirOutputs(t *testing.T) {
+	tx := startX(t, "sleep 1000")
+	list, err := (&screens{x: tx.peer, root: tx.root}).CRTCs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range list {
+		if c.Output == "" {
+			t.Errorf("CRTC %d drives an output with no name", c.ID)
+		}
+	}
 }
 
 func TestOpenCurtainNeedsTheDisplay(t *testing.T) {

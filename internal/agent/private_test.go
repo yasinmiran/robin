@@ -75,8 +75,40 @@ func undone(t *testing.T, dir string) string {
 	return strings.TrimSpace(string(b))
 }
 
+// fakeLeak is the Leak and Changed of a fake switch.
+type fakeLeak struct {
+	mu      sync.Mutex
+	leak    error
+	changed chan struct{}
+}
+
+func (l *fakeLeak) Leak() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.leak
+}
+
+func (l *fakeLeak) Changed() <-chan struct{} {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.changed == nil {
+		l.changed = make(chan struct{}, 1)
+	}
+	return l.changed
+}
+
+// leaks has the switch report err.
+func (l *fakeLeak) leaks(err error) {
+	l.mu.Lock()
+	l.leak = err
+	l.mu.Unlock()
+	l.Changed()
+	l.changed <- struct{}{}
+}
+
 type fakeCurtain struct {
 	hold Hold
+	fakeLeak
 
 	mu               sync.Mutex
 	drawn, closed    bool
@@ -367,6 +399,38 @@ func TestPrivateRoomGoneUnderneath(t *testing.T) {
 	}
 	if r.capture.followed() != "fake.monitor," || !room.closed {
 		t.Fatalf("capture followed %q, room closed %v", r.capture.followed(), room.closed)
+	}
+}
+
+// What a switch that is on fails to hide reaches the page as its error,
+// and goes once the switch hides it again.
+func TestPrivateTellsThePageWhatLeaks(t *testing.T) {
+	r, err := newPrivate(t, protocol.Start{Curtain: true, Silent: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := func(what string) protocol.Private {
+		t.Helper()
+		select {
+		case st := <-r.sent:
+			return st
+		case <-time.After(5 * time.Second):
+			t.Fatalf("the page heard nothing of %s", what)
+			return protocol.Private{}
+		}
+	}
+	r.curtain.leaks(errors.New("HDMI-1 has no gamma ramp"))
+	if st := next("a screen left lit"); !st.Curtain.On || st.Curtain.Error != "HDMI-1 has no gamma ramp" || st.Silent.Error != "" {
+		t.Fatalf("with a screen left lit: %+v", st)
+	}
+	r.curtain.leaks(nil)
+	if st := next("the screen dark again"); st.Curtain.Error != "" {
+		t.Fatalf("with every screen dark: %+v", st)
+	}
+	r.set(protocol.ControlCurtain, false)
+	r.curtain.leaks(errors.New("too late"))
+	if st := next("a lifted curtain's leak"); st.Curtain.Error != "" {
+		t.Fatalf("a lifted curtain reports %+v", st)
 	}
 }
 

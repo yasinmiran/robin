@@ -25,12 +25,21 @@ import (
 // the change is made; an error means the change must not be made.
 type Hold func(kind string, undo any) error
 
-// curtain blacks out a desktop's screens; see x11.Curtain and
-// wayland.Curtain.
+// leaker is a switch of a private session that can fail to hide all it
+// should while it is on.
+type leaker interface {
+	// Leak says what the room can still see or hear, or nil.
+	Leak() error
+	// Changed is signalled whenever Leak changes.
+	Changed() <-chan struct{}
+}
+
+// curtain blacks out a desktop's screens; see gamma.Curtain.
 type curtain interface {
 	Draw() error
 	Lift() error
 	Close() error
+	leaker
 }
 
 // Room keeps the room's speakers quiet while the session still hears them;
@@ -175,6 +184,10 @@ func (p *private) set(t protocol.ControlType, on bool) {
 
 func (p *private) run() {
 	defer close(p.done)
+	var curtainLeak <-chan struct{}
+	if p.curtain != nil {
+		curtainLeak = p.curtain.Changed()
+	}
 	for {
 		var gone <-chan struct{}
 		p.mu.Lock()
@@ -189,6 +202,8 @@ func (p *private) run() {
 			p.settle()
 		case <-gone:
 			p.roomGone()
+		case <-curtainLeak:
+			p.leaked(&p.state.Curtain, p.curtain)
 		}
 		p.send()
 	}
@@ -204,6 +219,20 @@ func (p *private) settle() {
 	}
 	if want.Silent.On != st.Silent.On && st.Silent.Unsupported == "" {
 		p.switchSilent(want.Silent.On)
+	}
+}
+
+// leaked tells the page, on sw, what the switch l fails to hide while on.
+func (p *private) leaked(sw *protocol.PrivateSwitch, l leaker) {
+	err := l.Leak()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !sw.On {
+		return
+	}
+	sw.Error = ""
+	if err != nil {
+		sw.Error = err.Error()
 	}
 }
 

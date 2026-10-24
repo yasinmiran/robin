@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/godbus/dbus/v5"
 
+	"github.com/yasinmiran/robin/internal/agent/gamma"
 	"github.com/yasinmiran/robin/internal/agent/wayland/wltest"
 )
 
@@ -73,14 +75,19 @@ func privateBus(t *testing.T) *dbus.Conn {
 	return conn
 }
 
+// checkWait bounds a wait for the curtain's once-a-second check.
+const checkWait = 3 * time.Second
+
 // fakeMutter serves the part of org.gnome.Mutter.DisplayConfig a curtain
 // uses, with mutter's signatures, and refuses a stale serial as mutter does.
+// Each CRTC drives an output DP-<n>, where n counts from 1, unless its mode
+// is -1.
 type fakeMutter struct {
-	mu     sync.Mutex
-	serial uint32
-	crtcs  []mutterCrtc
-	ramps  map[uint32][3][]uint16
-	sets   int
+	mu      sync.Mutex
+	serial  uint32
+	crtcs   []mutterCrtc
+	outputs []mutterOutput
+	ramps   map[uint32][3][]uint16
 }
 
 func newFakeMutter(t *testing.T, bus *dbus.Conn, modes ...int32) *fakeMutter {
@@ -89,6 +96,11 @@ func newFakeMutter(t *testing.T, bus *dbus.Conn, modes ...int32) *fakeMutter {
 	for i, mode := range modes {
 		f.crtcs = append(f.crtcs, mutterCrtc{ID: uint32(i), Mode: mode, Width: 1280, Height: 720, Properties: map[string]dbus.Variant{}})
 		f.ramps[uint32(i)] = linear(256, 65535)
+		on := int32(i)
+		if mode < 0 {
+			on = -1
+		}
+		f.outputs = append(f.outputs, mutterOutput{ID: uint32(i), CRTC: on, Name: fmt.Sprintf("DP-%d", i+1), Properties: map[string]dbus.Variant{}})
 	}
 	if err := bus.Export(f, displayConfigPath, displayConfigIface); err != nil {
 		t.Fatal(err)
@@ -112,7 +124,7 @@ var errStale = dbus.NewError("org.freedesktop.DBus.Error.AccessDenied", []any{"T
 func (f *fakeMutter) GetResources() (uint32, []mutterCrtc, []mutterOutput, []mutterMode, int32, int32, *dbus.Error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.serial, f.crtcs, []mutterOutput{{Name: "Meta-0", Properties: map[string]dbus.Variant{}}}, []mutterMode{{Width: 1280, Height: 720, Rate: 60}}, 8192, 8192, nil
+	return f.serial, f.crtcs, f.outputs, []mutterMode{{Width: 1280, Height: 720, Rate: 60}}, 8192, 8192, nil
 }
 
 func (f *fakeMutter) GetCrtcGamma(serial, crtc uint32) ([]uint16, []uint16, []uint16, *dbus.Error) {
@@ -138,7 +150,6 @@ func (f *fakeMutter) SetCrtcGamma(serial, crtc uint32, red, green, blue []uint16
 		return dbus.NewError("org.freedesktop.DBus.Error.InvalidArgs", []any{"Invalid crtc id"})
 	}
 	f.ramps[crtc] = [3][]uint16{red, green, blue}
-	f.sets++
 	return nil
 }
 
@@ -159,7 +170,7 @@ func (f *fakeMutter) red(crtc uint32) []uint16 {
 
 func (f *fakeMutter) waitRed(t *testing.T, crtc uint32, want []uint16) {
 	t.Helper()
-	deadline := time.Now().Add(3 * curtainCheck)
+	deadline := time.Now().Add(checkWait)
 	for !slices.Equal(f.red(crtc), want) {
 		if time.Now().After(deadline) {
 			t.Fatalf("CRTC %d's red ramp ends %v, want %v", crtc, f.red(crtc)[250:], want[250:])
@@ -174,9 +185,13 @@ type mutterHolds struct {
 	err  error
 }
 
-func (h *mutterHolds) hold(u MutterUndo) error {
+func (h *mutterHolds) hold(kind string, undo any) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	u, ok := undo.(MutterUndo)
+	if kind != MutterStep || !ok {
+		return errors.New("not a MutterUndo for " + MutterStep)
+	}
 	h.list = append(h.list, u)
 	return h.err
 }
@@ -215,9 +230,6 @@ func TestMutterCurtainDarkensAndGivesTheScreensBack(t *testing.T) {
 	if u := h.last(t); len(u.Ramps) != 2 || u.Ramps[0].CRTC != 0 || u.Ramps[1].CRTC != 2 || !slices.Equal(u.Ramps[0].Red, lin[0]) {
 		t.Fatalf("the keeper holds %d ramps, want the linear ramps of CRTCs 0 and 2", len(u.Ramps))
 	}
-	if err := c.Draw(); err != nil {
-		t.Fatal(err)
-	}
 
 	// Night light, with a new serial: the screen goes dark again, and the
 	// new ramp is the one lifting puts back.
@@ -233,9 +245,6 @@ func TestMutterCurtainDarkensAndGivesTheScreensBack(t *testing.T) {
 	}
 	f.waitRed(t, 0, lin[0])
 	f.waitRed(t, 2, night[0])
-	if err := c.Lift(); err != nil {
-		t.Fatal(err)
-	}
 	if err := c.Draw(); err != nil {
 		t.Fatal(err)
 	}
@@ -261,6 +270,8 @@ func TestMutterCurtainStaysOpenWhenTheKeeperRefuses(t *testing.T) {
 	}
 }
 
+// The keeper's undo, on its own connection and with what a curtain handed
+// it, puts back the ramps a curtain left dark, as when the agent is killed.
 func TestUndoMutterAfterTheCurtainIsGone(t *testing.T) {
 	f := newFakeMutter(t, privateBus(t), 0)
 	var h mutterHolds
@@ -271,13 +282,10 @@ func TestUndoMutterAfterTheCurtainIsGone(t *testing.T) {
 	if err := c.Draw(); err != nil {
 		t.Fatal(err)
 	}
-	c.mu.Lock()
-	c.drawn = false
-	close(c.stop)
-	c.mu.Unlock()
-	<-c.done
-	c.conn.Close()
-	f.set(0, [3][]uint16{make([]uint16, 256), make([]uint16, 256), make([]uint16, 256)}) // a new serial meanwhile
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.set(0, [3][]uint16{make([]uint16, 256), make([]uint16, 256), make([]uint16, 256)}) // dark, as the agent's death leaves it, with a new serial
 
 	data, _ := json.Marshal(h.last(t))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -288,6 +296,30 @@ func TestUndoMutterAfterTheCurtainIsGone(t *testing.T) {
 	f.waitRed(t, 0, linear(256, 65535)[0])
 	if err := UndoMutter(ctx, []byte("[")); err == nil {
 		t.Error("UndoMutter took broken data")
+	}
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	if err := UndoMutter(expired, data); err == nil {
+		t.Error("UndoMutter ran past its deadline")
+	}
+}
+
+// A screen whose ramp mutter keeps to itself would stay lit behind the
+// curtain, so there is no curtain, and the other screens are left alone.
+func TestMutterCurtainRefusesAScreenWithoutGamma(t *testing.T) {
+	f := newFakeMutter(t, privateBus(t), 0, 0)
+	f.set(1, [3][]uint16{{}, {}, {}})
+	var h mutterHolds
+	_, err := OpenCurtain(h.hold, discard())
+	var u gamma.Uncovered
+	if !errors.As(err, &u) || len(u) != 1 || u[0] != "DP-2" {
+		t.Fatalf("OpenCurtain over a screen without gamma: %v", err)
+	}
+	if !strings.Contains(err.Error(), "DP-2") {
+		t.Errorf("the error %q does not name the screen", err)
+	}
+	if got := f.red(0); !slices.Equal(got, linear(256, 65535)[0]) || len(h.list) != 0 {
+		t.Fatal("OpenCurtain changed the screens")
 	}
 }
 

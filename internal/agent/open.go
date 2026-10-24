@@ -83,9 +83,9 @@ func attachWayland(ctx context.Context, start protocol.Start, stateDir string, n
 		desk: w, mode: protocol.ModeAttach, name: protocol.AttachWayland, done: w.Done(),
 		close: func() { w.Close() },
 		openCurtain: func(hold Hold) (curtain, error) {
-			c, err := wayland.OpenCurtain(func(u wayland.MutterUndo) error { return hold(wayland.MutterStep, u) }, log)
+			c, err := wayland.OpenCurtain(hold, log)
 			if err != nil {
-				return nil, err // not c: a nil *wayland.Curtain would be a non-nil curtain
+				return nil, err // not c: a nil *gamma.Curtain would be a non-nil curtain
 			}
 			return c, nil
 		},
