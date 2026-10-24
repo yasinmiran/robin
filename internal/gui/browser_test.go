@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"testing"
 	"time"
@@ -41,6 +42,11 @@ func TestBrowserCommand(t *testing.T) {
 // TestOpenBrowserTermux runs openBrowser with a termux-open-url on PATH, as
 // Termux has, and checks the URL reaches it whole.
 func TestOpenBrowserTermux(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		// Elsewhere openBrowser runs the platform's own opener, which would
+		// open a real browser.
+		t.Skip("termux-open-url is looked up on Linux only")
+	}
 	dir := t.TempDir()
 	opened := filepath.Join(dir, "opened")
 	script := "#!/bin/sh\nprintf %s \"$1\" > \"$0.tmp\" && mv \"$0.tmp\" " + opened + "\n"
