@@ -55,7 +55,8 @@ func (b *Browser) Send(m protocol.Message) error {
 }
 
 // Recv returns the next message from the page. The page may only send
-// offers, candidates, detach and bye; anything else closes the connection.
+// offers, candidates, detach, bye and a change to the user's macros;
+// anything else closes the connection.
 func (b *Browser) Recv(ctx context.Context) (protocol.Message, error) {
 	select {
 	case m := <-b.in:
@@ -114,7 +115,7 @@ func decode(typ websocket.MessageType, p []byte) (protocol.Message, error) {
 		return protocol.Message{}, fmt.Errorf("web: browser sent malformed JSON: %w", err)
 	}
 	switch m.Type {
-	case protocol.TypeOffer, protocol.TypeCandidate, protocol.TypeDetach, protocol.TypeBye:
+	case protocol.TypeOffer, protocol.TypeCandidate, protocol.TypeDetach, protocol.TypeBye, protocol.TypeMacros:
 		return m, nil
 	}
 	return protocol.Message{}, fmt.Errorf("web: browser may not send %q", m.Type)

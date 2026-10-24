@@ -42,6 +42,13 @@ var (
 	errPageEnded = errors.New("the page ended the session")
 )
 
+// macroKeeper keeps the user's key macros for the page, as *macros.Store
+// does.
+type macroKeeper interface {
+	Load() *protocol.Macros
+	Change(*protocol.MacroChange) *protocol.Macros
+}
+
 // bridge relays signaling between whichever page is connected and the agent.
 // A page that goes away (reload, closed tab) costs the agent its peer
 // connection but not its display. The page outlives the agent connection
@@ -51,6 +58,9 @@ type bridge struct {
 	relay  *relay.Relay
 	config protocol.Config
 	log    *slog.Logger
+	// macros, when set before accept, hands every Config the macros as
+	// they are then and makes the page's changes to them.
+	macros macroKeeper
 
 	mu    sync.Mutex
 	cur   *web.Browser
@@ -99,8 +109,28 @@ func (b *bridge) accept(ctx context.Context, srv browsers) {
 }
 
 func (b *bridge) sendConfig(br *web.Browser) {
-	if err := br.Send(protocol.Message{Type: protocol.TypeConfig, Config: &b.config}); err != nil {
+	config := b.config
+	if b.macros != nil {
+		config.Macros = b.macros.Load()
+	}
+	if err := br.Send(protocol.Message{Type: protocol.TypeConfig, Config: &config}); err != nil {
 		b.log.Warn("send config", "err", err)
+	}
+}
+
+// changeMacros makes the page's change to the macros and tells the page
+// what it shows now. The page names no file and asks for one change; the
+// keeper checks it before anything is written.
+func (b *bridge) changeMacros(br *web.Browser, c *protocol.MacroChange) {
+	got := &protocol.Macros{List: []protocol.Macro{}, Error: "this session keeps no macros"}
+	if b.macros != nil {
+		got = b.macros.Change(c)
+	}
+	if got.Error != "" {
+		b.log.Warn("macros not changed", "err", got.Error)
+	}
+	if err := br.Send(protocol.Message{Type: protocol.TypeMacros, Macros: got}); err != nil {
+		b.log.Debug("send macros", "err", err)
 	}
 }
 
@@ -248,6 +278,9 @@ func (b *bridge) fromBrowser(ctx context.Context, br *web.Browser, done chan<- s
 		case protocol.TypeBye:
 			// The CLI ends the session, and waits for the host to say so.
 			b.decided(errPageEnded)
+			continue
+		case protocol.TypeMacros:
+			b.changeMacros(br, m.MacroChange)
 			continue
 		}
 		agent := b.currentAgent()
