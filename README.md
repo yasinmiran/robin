@@ -128,6 +128,37 @@ host cannot provide sound the session runs without it, and the CLI says why.
 | `--ssh` | `ssh` | the ssh client to drive |
 | `-v` | | log the CLI and the agent to stderr |
 
+## Files and the clipboard
+
+Files go to the host when you drop them anywhere on the page, pick them with
+Upload files in the status tab, or paste them. They land in your download
+folder there: `$XDG_DOWNLOAD_DIR`, else the one `~/.config/user-dirs.dirs`
+names, else `~/Downloads`, which is created if it is missing. Nothing on the
+host is ever replaced; a second `report.pdf` becomes `report (1).pdf`, and the
+status tab shows the name it got.
+
+Getting a file from the host starts on the host:
+
+```sh
+robin-send report.pdf build/*.log                # in a terminal of the desktop Robin started
+~/.cache/robin/robin-agent-* send report.pdf     # anywhere else on the host, an attached desktop or ssh
+```
+
+The page lists each offer by name and size, and nothing downloads until you
+click Save; Dismiss turns it down. `robin-send` stays until every file it
+offered has been saved or declined, prints which, and exits non-zero unless
+all were saved. Ctrl+C there withdraws whatever is still on offer. Programs in
+a spawned desktop have `robin-send` on their `PATH` and `ROBIN_FILES_SOCK`
+naming their session; anywhere else the agent offers to the one session it
+finds running, and refuses to guess between several.
+
+The clipboard carries plain text, HTML and PNG images both ways, up to
+16 MiB at a time, so a screenshot copied on one side pastes as a picture on
+the other. One PNG pasted into the page goes to the host's clipboard as an
+image. Any other file you paste there becomes an upload instead, because a
+browser's clipboard has no way to hand a file on as a file, and the browser
+only takes what the host copies while the page has focus.
+
 ## What the host needs
 
 Linux on x86_64 or arm64, an SSH server you can log in to, and for the
@@ -269,7 +300,7 @@ connection, and a browser that decodes H.264 in WebRTC. What the end-to-end
 tests prove for each:
 
 - **Chrome** runs every scenario: picture, input, latency, sound,
-  clipboard, resize, transports, attach and Wayland. Edge shares its engine.
+  clipboard, files, resize, transports, attach and Wayland. Edge shares its engine.
 - **Firefox** passes every check of the direct scenario, latency and sound
   included, given Cisco's OpenH264 plugin. Firefox downloads it by itself
   on first use (it shows under Add-ons and themes, Plugins); a Firefox that
@@ -307,9 +338,9 @@ tests prove for each:
    PulseAudio or PipeWire sink, read over the PulseAudio protocol in Go, and
    goes out as Opus from libopus. Keyboard, pointer, clipboard and resize
    come back over a data channel and go in through XTest and RandR, or the
-   portal on Wayland. Payloads too big for that channel have a transfer
-   layer of their own, a data channel each and a SHA-256 checked at the far
-   end, which no feature uses yet.
+   portal on Wayland. Files, images and anything else too big for that
+   channel travel in a transfer layer of their own, a data channel each and
+   a SHA-256 checked at the far end.
 6. The CLI serves the page on loopback and relays offer, answer and
    candidates between it and the agent, adding one passive TCP candidate that
    leads into an SSH forward to the agent.
@@ -328,12 +359,33 @@ the host, the agent's ICE-TCP listener binds loopback and only accepts ICE
 connections carrying the session's credentials; the X display is protected by
 a fresh cookie in a 0600 file; the session's sound server listens only on a
 socket inside the run directory; the agent and its run directory are 0700.
-Input from the page is limited to what a keyboard, a pointer and a clipboard
-can do in that session, plus two words about the session itself: End
-session, which the CLI carries out as it does Ctrl+C, and Disconnect, keep
-desktop, which leaves the desktop for `--keep`. The agent also listens for
-bulk transfers from the page, but takes only kinds a feature has registered,
-and no feature has yet, so it refuses every one.
+The page can do on the host what a keyboard, a pointer and a clipboard can do
+in that session, say two words about the session itself (End session,
+which the CLI carries out as it does Ctrl+C, and Disconnect, keep desktop,
+which leaves the desktop for `--keep`), and move files, within these bounds:
+
+- **Writing files**, into the download folder and nowhere else. A name has to
+  be a single path component of UTF-8, at most 255 bytes, neither `.` nor
+  `..`, with no control characters and none of the invisible marks that
+  reorder text. The bytes go to a new file of a temporary name, opened so
+  that it can be neither an existing file nor a symlink, and the file gets
+  its name only after every byte arrived and the SHA-256 matched, through a
+  rename that fails rather than replace anything. An upload bigger than the
+  free space less 256 MiB is refused before a byte is written, four at most
+  run at once, and one that is cancelled, fails, or is still running when
+  the session ends is removed.
+- **Reading files**, only those a program running as you on the host offered
+  with `robin-send`, and only after a click on Save in the page. `robin-send`
+  opens each file itself and hands the session its descriptor over a socket
+  in the 0700 run directory, which also checks that the caller's uid is
+  yours, so the page never names a path on the host and the session reads
+  nothing its sender could not. Offers end when `robin-send` exits.
+- **The clipboard**, as text, HTML or a PNG image, up to 16 MiB.
+
+File names from the host appear in the page as text, never as markup. Words
+from the page that reach a terminal on the host, a refusal's reason printed
+by `robin-send`, have their control characters replaced first. Bulk transfers
+of any kind the agent has not registered are refused.
 
 A kept session is reached through a unix socket in its 0700 run directory,
 and the daemon accepts a connection only from a process of its own uid
@@ -390,7 +442,8 @@ through mutter's own remote desktop interface on GNOME, and by pressing
 Approve through the accessibility bus on KDE, paths only the tests use. It
 checks that the first session asks and the second restores without asking,
 that frames arrive and change, pointer, keys and held-key repeat, the
-clipboard both ways, view-only grants (GNOME only; KDE has none), and that
+clipboard both ways in each of its MIME types (text, `text/html` and an
+`image/png` bigger than a pipe holds), view-only grants (GNOME only; KDE has none), and that
 no `gst-launch-1.0` or portal session outlives the agent, whether it closes
 or is killed. A tone played into each session's PipeWire must come out of
 the agent's capture through `pipewire-pulse`. KWin screencasts only when it
@@ -408,7 +461,13 @@ text runs in the remote shell, pointer position, clipboard both ways, resize,
 that sound played on the host is heard once the speaker is on, which
 transport ICE picked, and that nothing survives the CLI; for the attached
 desktop that means a resize leaves its screen alone and it outlives the session
-with the same processes, autorepeat and keymaps. A fifth scenario, `wayland`,
+with the same processes, autorepeat and keymaps. `direct` and `attach`
+also upload files from the status tab and by a drop, twice under one name
+so the second lands as `(1)`, offer one from the host (`robin-send` typed
+in the spawned xterm, `robin-agent send` over ssh for the attached desktop)
+under a name full of markup that the page must show as text and save only
+on a click, and paste an image and HTML into the host's clipboard and back.
+A fifth scenario, `wayland`,
 runs the same CLI and browser against the headless GNOME session of
 `make test-wayland` over sshd: `--attach auto` picks it, the CLI waits while
 the harness answers the consent dialog, and Chrome then has to show the
@@ -427,7 +486,14 @@ Bulk transfers run between two Pion peers in one process, both ways, along
 with the ones that must fail: oversized, corrupt, truncated, refused and
 cancelled, including a cancel while the sender waits for its queue to drain
 (`go test ./internal/agent/peer -run Bulk`). One goes through the shaped
-link while video streams, to measure how the two share it. `go test
+link while video streams, to measure how the two share it. Uploads have
+units of their own in `internal/agent/files`: every name and collision
+rule, a symlink in the way, a full disk (writes to `/dev/full`), a disk
+that stops (the transfer fails instead of holding the read loop), cancel
+and the end of a session, and the offer socket's checks. `make test-x`
+then runs good, corrupt, truncated, cancelled and badly named uploads, offers
+and the rich clipboard through a whole agent session, and the X11 targets
+with INCR both ways against `xclip`. `go test
 ./internal/web` runs the page's DOM-free modules under `node --test`, from
 `internal/web/static/test`, and, with the browser smoke test's dependencies
 installed, sends bulk transfers both ways between Chrome and the agent's own
@@ -495,7 +561,6 @@ to print the comparison the ADR quotes.
   browser instead.
 - Attached, the sound is the monitor of whatever output was the default when
   the session started, and the host's own speakers keep playing it.
-- Clipboard is plain text up to 255 KiB in each direction.
 - A kept desktop survives its connection only where logind leaves user
   processes alone on logout (the default) or a user systemd manager can
   hold it (`KillUserProcesses=yes` with `systemd-run` and, for your last
@@ -510,12 +575,42 @@ to print the comparison the ADR quotes.
 - Reconnecting keeps the desktop, not the picture: the browser builds a
   fresh peer connection each time, so the first second after a reconnect is
   a new keyframe, and anything held down in the page is released.
-- Bulk transfers, the layer file and rich clipboard transfers are to use,
-  are not paced against the video. On a 3 Mbit/s link a 2 MiB transfer
-  takes about 9 s, the picture drops to about 1 Mbit/s meanwhile and
-  needs another 7 to 9 s to get its rate back. On the agent, a transfer
-  whose receiver stops reading holds up keyboard and pointer input with
-  it, since every data channel shares one SCTP receive window.
+- The clipboard carries plain text, HTML and PNG images, 16 MiB in all at
+  a time; anything else on it (RTF, JPEG, a file manager's file list) stays
+  behind. An image bigger than that is left out and its text still goes.
+  Copied on X11, `TEXT` alone is not read, since it may come as
+  `COMPOUND_TEXT`.
+- A single PNG pasted into the page becomes an image on the host's
+  clipboard, even when it was a file named `something.png` copied in a file
+  manager; any other pasted file is uploaded instead.
+- The browser puts what the host copies on its own clipboard only while the
+  page has focus; copied while you are in another window, it waits for the
+  next copy.
+- Files and clipboard content travel unpaced against the video. On a
+  3 Mbit/s link a 2 MiB transfer takes about 9 s, the picture drops to about
+  1 Mbit/s meanwhile and needs another 7 to 9 s to get its rate back, and a
+  host copy of a big image costs the same. A newer copy on the host cancels
+  the transfer of an older one still under way.
+- A file is at most 4 GiB either way. The page holds a download in memory
+  until the last byte is in, then hands it to the browser's downloads, so
+  the browser has to have room for it; uploads stream from disk.
+- An upload is not flushed to disk (no fsync) before it gets its name, so a
+  power cut in the seconds after one can leave it short.
+- An agent killed with SIGKILL during an upload leaves the partial file in
+  the download folder as `.robin-upload-<random>`. Every other end of a
+  session removes it.
+- On a filesystem without `RENAME_NOREPLACE` (some FUSE and network ones),
+  uploads are named through a hard link instead, and where that is missing
+  too they fail.
+- In an attached desktop `robin-send` is not on the `PATH`; run the agent
+  itself, `~/.cache/robin/robin-agent-* send FILE` (or wherever the agent
+  directory is, see What the host needs). With two sessions on the host it
+  has to run inside the one it means.
+- Files in Safari are untested: the WebKit the tests drive cannot show the
+  picture to click through, so the file and rich clipboard checks skip
+  there. Firefox runs them, with the pasted image handed to the page
+  directly, since Firefox keeps no script's `DataTransfer` in a synthetic
+  paste event.
 - Keys map by character, so text arrives right whatever the client layout,
   but IME composition (CJK input) is not forwarded.
 - The status tab reads 0 fps on an idle screen. Nothing is sent when nothing
