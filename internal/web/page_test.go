@@ -39,6 +39,17 @@ func TestPageLimitsMatchTheAgent(t *testing.T) {
 	}{
 		{"ime.js", "MAX_TEXT_BYTES", protocol.MaxTextBytes},
 		{"bulkframe.js", "CHUNK_SIZE", protocol.BulkChunkSize},
+		// What the page saves the CLI checks again, and refuses past these.
+		{"macro.js", "MAX_MACROS", protocol.MaxMacros},
+		{"macro.js", "MAX_MACRO_STEPS", protocol.MaxMacroSteps},
+		{"macro.js", "MAX_MACRO_CHORD_KEYS", protocol.MaxMacroChordKeys},
+		{"macro.js", "MAX_MACRO_NAME_BYTES", protocol.MaxMacroNameBytes},
+		{"macro.js", "MAX_MACRO_TEXT_BYTES", protocol.MaxMacroTextBytes},
+		{"macro.js", "MAX_MACRO_PAUSE_MS", protocol.MaxMacroPauseMs},
+		{"macro.js", "MAX_MACRO_KEY_BYTES", protocol.MaxMacroKeyBytes},
+		{"macro.js", "MAX_MACRO_HOST_BYTES", protocol.MaxMacroHostBytes},
+		{"macro.js", "MAX_MACROS_BYTES", protocol.MaxMacrosBytes},
+		{"macro.js", "MACRO_ID_CHARS", protocol.MacroIDChars},
 	} {
 		got, err := pageConst(filepath.Join("static", c.file), c.name)
 		if err != nil {
