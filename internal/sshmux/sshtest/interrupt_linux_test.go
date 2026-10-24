@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"strings"
@@ -49,29 +50,28 @@ func TestCtrlC(t *testing.T) {
 		t.Skip("this test runs with SIGINT ignored, which every child inherits")
 	}
 	plain := cat(t, `exec cat`)
-	if err := CtrlC(plain.Process); err == nil {
-		t.Fatal("a cat that dies of SIGINT passed")
+	if err := CtrlC(plain.Process); err == nil || !strings.Contains(err.Error(), "does not ignore SIGINT") {
+		t.Fatalf("a cat that dies of SIGINT: %v", err)
 	}
 	plain.Wait()
 	if err := CtrlC(plain.Process); !errors.Is(err, os.ErrProcessDone) {
 		t.Fatalf("a cat that is gone: %v", err)
 	}
+	if err := interruptIgnored(1 << 30); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("a pid above any pid_max: %v", err)
+	}
 }
 
 func TestIgnoresInterrupt(t *testing.T) {
-	for _, tc := range []struct {
-		status string
-		want   bool
-		err    string
-	}{
-		{"Name:\tssh\nSigIgn:\t0000000000000002\nSigCgt:\t0000000000000000\n", true, ""},
-		{"SigIgn:\t0000000000001000\n", false, ""},
-		{"SigIgn:\tzz\n", false, "SigIgn: "},
-		{"Name:\tssh\n", false, "no SigIgn"},
+	for _, tc := range []struct{ status, err string }{
+		{"Name:\tssh\nSigIgn:\t0000000000000002\nSigCgt:\t0000000000000000\n", ""},
+		{"SigIgn:\t0000000000001000\n", "does not ignore SIGINT"},
+		{"SigIgn:\tzz\n", "SigIgn: "},
+		{"Name:\tssh\n", "no SigIgn"},
 	} {
-		got, err := ignoresInterrupt(tc.status)
-		if got != tc.want || (err == nil) != (tc.err == "") || (err != nil && !strings.Contains(err.Error(), tc.err)) {
-			t.Errorf("ignoresInterrupt(%q) = %v, %v; want %v, %q", tc.status, got, err, tc.want, tc.err)
+		err := ignoresInterrupt(tc.status)
+		if (err == nil) != (tc.err == "") || (err != nil && !strings.Contains(err.Error(), tc.err)) {
+			t.Errorf("ignoresInterrupt(%q) = %v, want %q", tc.status, err, tc.err)
 		}
 	}
 }

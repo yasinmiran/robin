@@ -1,6 +1,7 @@
 package sshtest
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -14,18 +15,15 @@ func interruptIgnored(pid int) error {
 	if err != nil {
 		return err
 	}
-	ignored, err := ignoresInterrupt(string(status))
-	switch {
-	case err != nil:
+	if err := ignoresInterrupt(string(status)); err != nil {
 		return fmt.Errorf("pid %d: %w", pid, err)
-	case !ignored:
-		return fmt.Errorf("pid %d does not ignore SIGINT", pid)
 	}
 	return nil
 }
 
-// ignoresInterrupt reads the SigIgn line of a /proc/<pid>/status.
-func ignoresInterrupt(status string) (bool, error) {
+// ignoresInterrupt fails unless the SigIgn line of a /proc/<pid>/status
+// has SIGINT.
+func ignoresInterrupt(status string) error {
 	for line := range strings.Lines(status) {
 		mask, ok := strings.CutPrefix(line, "SigIgn:")
 		if !ok {
@@ -33,9 +31,12 @@ func ignoresInterrupt(status string) (bool, error) {
 		}
 		bits, err := strconv.ParseUint(strings.TrimSpace(mask), 16, 64)
 		if err != nil {
-			return false, fmt.Errorf("SigIgn: %w", err)
+			return fmt.Errorf("SigIgn: %w", err)
 		}
-		return bits&(1<<(syscall.SIGINT-1)) != 0, nil
+		if bits&(1<<(syscall.SIGINT-1)) == 0 {
+			return errors.New("does not ignore SIGINT")
+		}
+		return nil
 	}
-	return false, fmt.Errorf("no SigIgn in the status")
+	return errors.New("no SigIgn in the status")
 }
