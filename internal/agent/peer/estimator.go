@@ -64,8 +64,9 @@ func newEstimator(cfg Config, pacer gcc.Pacer, log *slog.Logger, now func() time
 	return e, nil
 }
 
-// AddStream sends sound around the pacer's queue: an Opus packet is a few
-// hundred bytes that must not wait behind a keyframe.
+// AddStream tells the pacer which extension carries each stream's
+// transport-wide sequence number, and sends sound ahead of its queue: an
+// Opus packet is a few hundred bytes that must not wait behind a keyframe.
 func (e *estimator) AddStream(info *interceptor.StreamInfo, w interceptor.RTPWriter) interceptor.RTPWriter {
 	if p, ok := e.pacer.(*pacer); ok {
 		for _, ext := range info.RTPHeaderExtensions {
