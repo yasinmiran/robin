@@ -1,4 +1,4 @@
-export const SECTIONS = ["Getting started", "Guides", "Internals", "Project"] as const;
+export const SECTIONS = ["Start", "Use", "Reference", "Design", "Project"] as const;
 
 export type Section = (typeof SECTIONS)[number];
 
@@ -17,14 +17,14 @@ export interface NavGroup {
 export interface HeaderLink {
   label: string;
   href: string;
-  /** Sections whose pages mark this link as the current one. */
+  /** Sections whose pages mark this link as the current one, besides the page it opens. */
   sections: readonly Section[];
 }
 
 export const HEADER_LINKS: readonly HeaderLink[] = [
-  { label: "Guide", href: "/introduction", sections: ["Getting started", "Guides"] },
-  { label: "Flags", href: "/using#flag-reference", sections: [] },
-  { label: "How it works", href: "/how-it-works", sections: ["Internals"] },
+  { label: "Guide", href: "/introduction", sections: ["Start", "Use"] },
+  { label: "Flags", href: "/flags", sections: [] },
+  { label: "How it works", href: "/how-it-works", sections: ["Design"] },
   { label: "Roadmap", href: "/roadmap", sections: ["Project"] },
 ];
 
@@ -74,8 +74,13 @@ export function neighbours(
   return { prev: sorted[at - 1], next: sorted[at + 1] };
 }
 
-/** currentHeaderLink names the header link for the section a page sits in. */
-export function currentHeaderLink(section: Section | undefined): string | undefined {
+/**
+ * currentHeaderLink names the header link a page marks as current: the link
+ * that opens it, else the one for its section.
+ */
+export function currentHeaderLink(slug: string | undefined, section: Section | undefined): string | undefined {
+  const opens = slug === undefined ? undefined : HEADER_LINKS.find((link) => link.href === docHref(slug));
+  if (opens) return opens.label;
   if (!section) return undefined;
   return HEADER_LINKS.find((link) => link.sections.includes(section))?.label;
 }

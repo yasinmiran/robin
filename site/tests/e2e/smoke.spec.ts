@@ -39,7 +39,8 @@ test("the homepage shows what Robin is", async ({ page }) => {
 
 for (const [path, title, heading] of [
   ["/install", "Install and build", "What the host needs"],
-  ["/using", "Using Robin", "Flag reference"],
+  ["/using", "Using Robin", "The page"],
+  ["/flags", "Flags", "Picture"],
 ] as const) {
   test(`${path} reads as a docs page`, async ({ page }) => {
     const noErrors = failOnErrors(page);
@@ -58,8 +59,15 @@ for (const [path, title, heading] of [
   });
 }
 
+test("the flags page has its own header link", async ({ page }) => {
+  await page.goto("/flags");
+  const header = page.getByRole("navigation", { name: "Main" });
+  await expect(header.getByRole("link", { name: "Flags" })).toHaveAttribute("aria-current", "true");
+  await expect(header.getByRole("link", { name: "Guide" })).not.toHaveAttribute("aria-current");
+});
+
 test("each flag has an anchor", async ({ page }) => {
-  await page.goto("/using#flag-max-size");
+  await page.goto("/flags#flag-max-size");
   await expect(page.locator("#flag-max-size")).toBeInViewport();
   await expect(page.locator("#flag-max-size")).toContainText("default 1920x1080");
 });

@@ -13,7 +13,7 @@ interface Props {
 }
 
 const { groups, current, section, home } = Astro.props;
-const active = currentHeaderLink(section);
+const active = currentHeaderLink(current, section);
 ---
 
 <header

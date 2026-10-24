@@ -1,7 +1,7 @@
 ---
 title: Using Robin
-description: The gui command, spawning versus attaching, sizes and HiDPI, monitors, transports, encoders, sound, the page, and every flag.
-section: Guides
+description: The gui command, spawning versus attaching, sizes and HiDPI, monitors, transports, encoders, sound and the page.
+section: Use
 order: 1
 ---
 
@@ -20,6 +20,8 @@ robin gui --no-browser lab-node
 robin gui --attach auto workstation
 robin gui --attach wayland workstation
 ```
+
+[Flags](/flags) lists every flag with its default.
 
 ## SSH
 
@@ -48,6 +50,10 @@ The session gets a sensible locale even when SSH brought none. The agent keeps a
 `--fps` caps the frame rate: 30 by default, 20 on small hosts. Below the cap, frames go out only when the screen changes, so the status tab reads 0 fps on an idle screen, which is not a stall.
 
 `--hidpi` sizes a spawned display in your browser's device pixels instead of CSS pixels. On a Retina screen that gives sharp text at about four times the pixels to encode. Raise `--max-size` with it if you want the display fully native.
+
+<Callout type="note" title="When the picture looks soft or blocky.">
+Two things are worth checking today. An attached monitor larger than `--max-size` is scaled down, and the default is 1920x1080, so a 2560x1440 monitor arrives shrunk; `--max-size 2560x1440` sends it at its own size, at the cost of more pixels to encode. On a Retina or other HiDPI client screen, a spawned desktop renders in device pixels with `--hidpi` and a raised `--max-size`. Blockiness while the screen is changing, when the link's estimate dips, is a known weak spot with planned work: see [crisp video in motion](/roadmap#crisp-video-in-motion) and [sharp text](/roadmap#sharp-text) on the Roadmap.
+</Callout>
 
 ## Monitors
 
@@ -92,84 +98,3 @@ Only one browser holds a session at a time. A second tab is refused, with a note
 Keys are sent by character. The agent finds the key and shift level that produce each character on the remote keymap, and on X11 binds a spare keycode when the keymap lacks one, so text arrives right whatever your local layout. Named keys such as Enter, arrows, function keys and modifiers are held until you release them. On a Mac, Cmd is sent as Control. IME composition, as used for CJK input, is not forwarded.
 
 The clipboard carries plain text, up to 255 KiB in each direction. Your paste shortcut in the page sends the local clipboard to the remote before the key itself, so the remote program pastes what you just copied. Text copied on the remote is written to your local clipboard when the page has focus and permission.
-
-## Flag reference
-
-Flags take one dash or two (`-v`, `--max-size`). `robin gui -h` prints the same list.
-
-### Picture
-
-<Flags>
-<Flag name="--max-size" arg="WxH" def="`1920x1080`, or `1280x720` on hosts with 2 cores or fewer">
-Largest remote resolution, as WxH.
-</Flag>
-<Flag name="--fps" arg="N" def="`30`, or `20` on small hosts">
-Frame rate cap.
-</Flag>
-<Flag name="--hidpi" def="off">
-Size the remote display in device pixels: sharper on HiDPI screens, more to encode; raise `--max-size` to go native.
-</Flag>
-<Flag name="--max-kbps" arg="N" def="`10000`">
-Video bitrate ceiling in kbit/s; congestion control works below it.
-</Flag>
-<Flag name="--encoder" arg="MODE" def="`auto`">
-Video encoder on the host: `auto` (the GPU where the host has one and it pays, else software), `software`, `vaapi` or `nvenc`.
-</Flag>
-</Flags>
-
-### Desktop
-
-<Flags>
-<Flag name="--session" arg="CMD" def="the lightest desktop found">
-Command to run in the spawned display, such as `startxfce4`.
-</Flag>
-<Flag name="--attach" arg="TARGET" def="none (spawn)">
-Stream a desktop already running on the host: `auto` for your active session, `wayland` for your Wayland session, or an X11 display such as `:0`.
-</Flag>
-<Flag name="--monitor" arg="MONITOR" def="`primary`">
-For X11 desktops attached with `--attach`: the monitor to show first, by name (such as `DP-1`), by number (`1`, `2`, ...), `primary`, or `all` for every monitor as one picture; the page switches between them. Wayland shows the monitor picked in its sharing dialog.
-</Flag>
-<Flag name="--audio" def="`true`">
-Stream the desktop's sound; `--audio=false` leaves it out.
-</Flag>
-</Flags>
-
-### Network
-
-<Flags>
-<Flag name="--transport" arg="MODE" def="`auto`">
-Media path: `auto` (direct UDP, SSH tunnel as fallback), `direct`, or `tunnel`.
-</Flag>
-<Flag name="--stun" arg="SERVERS" def="`stun:stun.l.google.com:19302`">
-Comma-separated STUN servers for NAT traversal, or `none`.
-</Flag>
-<Flag name="--listen" arg="ADDR" def="`127.0.0.1:0`">
-Loopback address for the browser page.
-</Flag>
-</Flags>
-
-### Client
-
-<Flags>
-<Flag name="--no-browser" def="off">
-Print the page URL on stdout instead of opening a browser.
-</Flag>
-<Flag name="--ssh" arg="PATH" def="`ssh`">
-The ssh client to use.
-</Flag>
-<Flag name="-v" def="off">
-Verbose logging to stderr, including the agent's log.
-</Flag>
-</Flags>
-
-### Passing options to ssh
-
-<Flags>
-<Flag name="--" arg="ssh-args...">
-Everything after `--` is handed to `ssh` as it is, as in `robin gui build-box -- -p 2222 -i ~/.ssh/other_key`. Flags for `robin` go before the destination.
-</Flag>
-</Flags>
-
-<Callout type="note" title="When the picture looks soft or blocky.">
-Two things are worth checking today. An attached monitor larger than `--max-size` is scaled down, and the default is 1920x1080, so a 2560x1440 monitor arrives shrunk; `--max-size 2560x1440` sends it at its own size, at the cost of more pixels to encode. On a Retina or other HiDPI client screen, a spawned desktop renders in device pixels with `--hidpi` and a raised `--max-size`. Blockiness while the screen is changing, when the link's estimate dips, is a known weak spot with planned work: see [crisp video in motion](/roadmap#crisp-video-in-motion) and [sharp text](/roadmap#sharp-text) on the Roadmap.
-</Callout>

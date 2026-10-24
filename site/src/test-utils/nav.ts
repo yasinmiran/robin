@@ -2,15 +2,15 @@ import type { NavGroup } from "@/lib/nav";
 
 export const groups: NavGroup[] = [
   {
-    label: "Getting started",
+    label: "Start",
     items: [
-      { slug: "introduction", title: "Introduction", section: "Getting started", order: 1 },
-      { slug: "install", title: "Install and build", section: "Getting started", order: 3 },
+      { slug: "introduction", title: "Introduction", section: "Start", order: 1 },
+      { slug: "install", title: "Install and build", section: "Start", order: 3 },
     ],
   },
   {
-    label: "Guides",
-    items: [{ slug: "sound", title: "Sound", section: "Guides", order: 4 }],
+    label: "Use",
+    items: [{ slug: "sound", title: "Sound", section: "Use", order: 4 }],
   },
 ];
 

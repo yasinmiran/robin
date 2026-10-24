@@ -12,12 +12,12 @@ describe("SidebarNav", () => {
   it("lists every page under its section", () => {
     render(<SidebarNav groups={groups} />);
     const nav = screen.getByRole("navigation", { name: "Docs" });
-    const started = within(nav).getByRole("list", { name: "Getting started" });
+    const started = within(nav).getByRole("list", { name: "Start" });
     expect(within(started).getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual([
       "/introduction",
       "/install",
     ]);
-    expect(within(nav).getByRole("list", { name: "Guides" })).toHaveTextContent("Sound");
+    expect(within(nav).getByRole("list", { name: "Use" })).toHaveTextContent("Sound");
   });
 
   it("marks the page being read", () => {
