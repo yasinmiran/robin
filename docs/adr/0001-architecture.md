@@ -669,7 +669,9 @@ checks the limit before it opens a channel, the receiver before it shows
 the header to the feature, which may still refuse for reasons of its own.
 Kinds nobody registered are refused, as are data before the header, chunks
 over 64 KiB, bytes past the declared size, an end that comes early and a
-hash that does not match; the sink being written to hears why.
+hash that does not match; the sink being written to hears why. The
+verdict goes out before the sink's abort, so a refused sender does not wait
+on the sink's cleanup to learn of it.
 
 Flow control is the WebRTC kind on both sides. A sender stops queuing at
 1 MiB of `bufferedAmount` and goes on at 256 KiB, on `bufferedamountlow`,
@@ -696,7 +698,8 @@ has to pace itself under the target. A probe found one more coupling worth
 knowing: Pion gives an association one receive window for all its channels,
 so a sink on the agent that stopped reading held a control message back for
 as long as the probe waited, 3 s, and a sink has to keep up or fail the
-transfer rather than stall it.
+transfer rather than stall it. Its commit and abort run on the same read
+loop and stall everything the same way.
 
 ### Features register what they handle
 
@@ -704,7 +707,8 @@ Several features are built in parallel (docs/plan-horizon-parity.md), and
 each needs control messages, bulk kinds or a place in the status tab. So
 nothing switches on message types any more. On the agent, each control type
 and bulk kind maps to a handler its feature registers from `init` in its
-own file (`handleControl`, `handleBulk`); the page has `onControl` in
+own file (`handleControl`, `handleBulk`), and a unit test fails for any
+handled bulk kind without a limit; the page has `onControl` in
 `control.js` and `onBulk` in `bulk.js`, and `Overlay.addSection` gives a
 feature its own part of the status tab without touching `index.html`. The
 peer routes data channels by label, closing any it does not know, and hands
