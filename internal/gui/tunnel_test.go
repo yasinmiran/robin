@@ -20,8 +20,8 @@ import (
 	"github.com/yasinmiran/robin/internal/sshmux"
 )
 
-// fakeForward is the SSH forward's local end, a unix socket whose listener
-// the test holds.
+// fakeForward is a dialer standing in for the SSH forward's local end: a
+// unix socket whose listener the test holds.
 type fakeForward struct{ sock string }
 
 func (f fakeForward) Dial() (net.Conn, error) { return net.Dial("unix", f.sock) }
@@ -237,15 +237,26 @@ func TestTunnelBoundsPendingConnections(t *testing.T) {
 	spliced(t, accepted, check)
 }
 
-// TestTunnelWithoutAForward: a check that passes while the forward is gone,
-// as between two SSH connections, is dropped like any other.
-func TestTunnelWithoutAForward(t *testing.T) {
-	tun := &tunnel{ln: loopback(t), log: slog.New(slog.DiscardHandler), firstCheck: time.Second,
-		fwd: fakeForward{filepath.Join(t.TempDir(), "gone.sock")}}
-	go tun.serve()
-	defer tun.Close()
-	tun.answered(iceAnswer("agentufrag", "agentpasswordagentpasswo"))
-	refused(t, "a check with no forward to take it", dialTunnel(t, tun, framedCheck(t, "agentufrag:brws", "agentpasswordagentpasswo")))
+// TestTunnelRefusesWithoutAWorkingForward: a check that passes is dropped
+// like any other while there is no forward to take it: none yet, after a
+// first forward that failed under Auto, whose listener the browser still
+// knows, or one whose socket is gone, as between two SSH connections.
+func TestTunnelRefusesWithoutAWorkingForward(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		fwd  dialer
+	}{
+		{"no forward", nil},
+		{"forward socket gone", fakeForward{filepath.Join(t.TempDir(), "gone.sock")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tun := &tunnel{ln: loopback(t), log: slog.New(slog.DiscardHandler), firstCheck: time.Second, fwd: tc.fwd}
+			go tun.serve()
+			defer tun.Close()
+			tun.answered(iceAnswer("agentufrag", "agentpasswordagentpasswo"))
+			refused(t, "a check with no forward to take it", dialTunnel(t, tun, framedCheck(t, "agentufrag:brws", "agentpasswordagentpasswo")))
+		})
+	}
 }
 
 // TestOpenTunnel: Direct sets up no tunnel, and a forward that fails is

@@ -35,12 +35,16 @@ const maxCheckBytes = 512
 // the browser's in practice, and a spliced connection no longer counts.
 const maxPending = 16
 
-// Accept backoff, as net/http's: a listener out of file descriptors is
-// tried again after 5 ms, doubling up to a second.
+// A listener out of file descriptors is tried again after acceptRetryFirst,
+// doubling up to acceptRetryMax, so a moment without descriptors costs one
+// connection, not the tunnel.
 const (
 	acceptRetryFirst = 5 * time.Millisecond
 	acceptRetryMax   = time.Second
 )
+
+// dialer opens a connection through the SSH forward: a *sshmux.Forward.
+type dialer interface{ Dial() (net.Conn, error) }
 
 // tunnel is the client end of the ICE-TCP fallback: a loopback TCP listener
 // whose connections are spliced into an SSH forward to the agent's listener.
@@ -57,9 +61,9 @@ type tunnel struct {
 	firstCheck time.Duration
 
 	mu      sync.Mutex
-	fwd     interface{ Dial() (net.Conn, error) } // nil while there is none
-	creds   relay.Credentials                     // of the agent's last answer
-	pending []net.Conn                            // still to send their check, oldest first
+	fwd     dialer            // nil while there is none
+	creds   relay.Credentials // of the agent's last answer
+	pending []net.Conn        // still to send their check, oldest first
 }
 
 // openTunnel sets the tunnel up for transport: none for Direct, and for
