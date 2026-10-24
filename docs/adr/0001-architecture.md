@@ -1047,9 +1047,10 @@ through `HOME`, `TMPDIR`, the git state or zig's install path shows as a
 difference; the first version of the check shared all of those with the
 copy and could not have seen one. `REPRO_TOOLCHAIN=1` extends it to the C
 libraries from source, `REPRO_SELFTEST=1` proves the comparison notices a
-difference at all, and `make test-agents` (part of `make test` and `make
-repro`) checks the agents this tree builds for the checkout, the
-toolchain cache, the home directory, Go's directories, the pinned Go
+difference at all, and `make test-agents` (part of `make check` and `make
+repro`; `make test` skips the test without agents, so a fresh clone's
+unit tests need no toolchain) checks the agents this tree builds for the
+checkout, the toolchain cache, the home directory, Go's directories, the pinned Go
 version and the exact set of build settings, so a leak that comes back is
 caught without the double build. Nothing checks it on every merge yet:
 the repository has no CI.

@@ -131,7 +131,7 @@ bin/robin-linux-amd64: agents $(GOSRC) go.mod go.sum Makefile $(VERSION_FILE) | 
 
 # Unit and integration tests. The encoder packages are tested against the real
 # openh264 and libopus on linux/amd64 hosts; everywhere else they build as stubs.
-test: test-agents
+test:
 	$(GO) test ./...
 ifeq ($(HOST_OS)/$(HOST_ARCH),linux/amd64)
 	@set -e; $(call zig_env,amd64) \
@@ -140,7 +140,8 @@ endif
 
 # The agents this tree builds, scanned for anything of the builder: paths,
 # an unpinned Go, a build setting the recipes do not set. Without agents
-# the test skips; here they are required.
+# the test skips; here they are required. make test stays free of the
+# toolchain, so this runs with make check and make repro.
 test-agents: agents
 	ROBIN_REQUIRE_AGENTS=1 $(GO) test ./internal/agentbin
 
@@ -164,7 +165,7 @@ test-wayland:
 	internal/agent/wayland/testdata/wltest.sh
 
 # Everything: unit, X, Wayland and end-to-end.
-check: test test-x test-wayland e2e
+check: test test-agents test-x test-wayland e2e
 
 e2e: bin/robin-linux-amd64
 	ROBIN_BIN=$(CURDIR)/bin/robin-linux-amd64 e2e/run.sh $(SCENARIOS)

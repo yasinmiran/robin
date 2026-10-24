@@ -568,10 +568,12 @@ the downloads, which checks the C side from source and takes a few minutes
 longer; that is the mode a release is verified with. `REPRO_SELFTEST=1
 make repro` builds the copy with another `VERSION` and passes only when the
 comparison notices, so the check is known not to be vacuous. `make
-test-agents`, which `make test` and `make repro` run, scans the agents
-this tree builds for the checkout, the toolchain cache, the home
-directory, Go's own directories, a Go other than the pinned one and any
-build setting the Makefile does not set, so a leak fails `make test` too.
+test-agents`, which `make check` and `make repro` run, builds the agents
+and scans them for the checkout, the toolchain cache, the home directory,
+Go's own directories, a Go other than the pinned one and any build
+setting the Makefile does not set. `make test` runs the same test but
+skips it when no agents have been built, so it stays free of the
+toolchain.
 
 macOS as a build host is expected to produce the same bytes, since zig
 carries its own libc and the Go side is pure, but that has not yet been
