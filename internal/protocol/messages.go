@@ -9,7 +9,7 @@ package protocol
 
 // Version is bumped on any incompatible change to the messages in this package.
 // The CLI refuses an agent that reports a different version.
-const Version = 1
+const Version = 2
 
 // ControlChannel is the label of the data channel that carries Control messages.
 const ControlChannel = "control"
