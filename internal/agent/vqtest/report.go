@@ -16,6 +16,9 @@ type Sent struct {
 	// QP is the encoder's average quantiser for the frame, 0 when it does
 	// not say.
 	QP int
+	// Target is the congestion controller's target when it was encoded,
+	// in bits per second.
+	Target int
 }
 
 // Run is everything one pass of a clip produced.
@@ -36,6 +39,8 @@ type Span struct {
 	SentFrames int
 	Keyframes  int // sent
 	KbpsSent   float64
+	// KbpsTarget is the mean target the frames were encoded against.
+	KbpsTarget float64
 	MeanQP     float64
 	Shown      int
 	FPS        float64
@@ -91,6 +96,7 @@ func (r *Run) span(name string, from, to int, moving bool) Span {
 		}
 		s.SentFrames++
 		bytes += f.Bytes
+		s.KbpsTarget += float64(f.Target) / 1000
 		if f.Key {
 			s.Keyframes++
 		}
@@ -101,6 +107,9 @@ func (r *Run) span(name string, from, to int, moving bool) Span {
 	}
 	if qps > 0 {
 		s.MeanQP /= float64(qps)
+	}
+	if s.SentFrames > 0 {
+		s.KbpsTarget /= float64(s.SentFrames)
 	}
 	s.KbpsSent = float64(8*bytes) / s.Seconds / 1000
 	begin, end := r.at(from), r.at(to)
@@ -149,11 +158,11 @@ func (r *Run) Requests() map[string]int {
 // Table renders spans one per line.
 func Table(spans []Span) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%-10s %6s %6s %5s %5s %8s %5s %5s %7s %7s %6s %6s %6s %7s %6s %s\n",
-		"span", "frames", "shown", "fps", "keys", "kbps", "qp", "psnr", "minpsnr", "ssim", "minss", "tile", "last", "freeze", "lag", "requests")
+	fmt.Fprintf(&b, "%-10s %6s %6s %5s %5s %8s %7s %5s %5s %7s %7s %6s %6s %6s %7s %6s %s\n",
+		"span", "frames", "shown", "fps", "keys", "kbps", "target", "qp", "psnr", "minpsnr", "ssim", "minss", "tile", "last", "freeze", "lag", "requests")
 	for _, s := range spans {
-		fmt.Fprintf(&b, "%-10s %6d %6d %5.1f %5d %8.0f %5.1f %5.1f %7.1f %7.4f %6.3f %6.3f %6.3f %7s %6s %s\n",
-			s.Name, s.SentFrames, s.Shown, s.FPS, s.Keyframes, s.KbpsSent, s.MeanQP, s.PSNR, s.MinPSNR, s.SSIM,
+		fmt.Fprintf(&b, "%-10s %6d %6d %5.1f %5d %8.0f %7.0f %5.1f %5.1f %7.1f %7.4f %6.3f %6.3f %6.3f %7s %6s %s\n",
+			s.Name, s.SentFrames, s.Shown, s.FPS, s.Keyframes, s.KbpsSent, s.KbpsTarget, s.MeanQP, s.PSNR, s.MinPSNR, s.SSIM,
 			s.MinSSIM, s.WorstTile, s.Last.SSIM, s.MaxFreeze.Round(time.Millisecond), s.Lag.Round(time.Millisecond),
 			formatCounts(s.Requests))
 	}

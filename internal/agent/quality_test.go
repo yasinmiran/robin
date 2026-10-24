@@ -7,6 +7,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -92,7 +94,8 @@ type tagging struct {
 
 type taggedEncoder struct {
 	Encoder
-	t *tagging
+	t      *tagging
+	target int
 }
 
 func (t *tagging) newEncoder(w, h, fps, bitrate int) (Encoder, error) {
@@ -100,7 +103,12 @@ func (t *tagging) newEncoder(w, h, fps, bitrate int) (Encoder, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &taggedEncoder{Encoder: e, t: t}, nil
+	return &taggedEncoder{Encoder: e, t: t, target: bitrate}, nil
+}
+
+func (e *taggedEncoder) SetBitrate(bps int) error {
+	e.target = bps
+	return e.Encoder.SetBitrate(bps)
 }
 
 func (e *taggedEncoder) Encode(img *yuv.I420, ts time.Duration, keyframe bool) ([]byte, error) {
@@ -114,7 +122,7 @@ func (e *taggedEncoder) Encode(img *yuv.I420, ts time.Duration, keyframe bool) (
 		qp = q.QP()
 	}
 	e.t.mu.Lock()
-	e.t.sent = append(e.t.sent, vqtest.Sent{Index: i, Bytes: len(au), Key: vqtest.IsKeyframe(au), QP: qp})
+	e.t.sent = append(e.t.sent, vqtest.Sent{Index: i, Bytes: len(au), Key: vqtest.IsKeyframe(au), QP: qp, Target: e.target})
 	e.t.mu.Unlock()
 	return vqtest.Tag(au, i), nil
 }
@@ -131,6 +139,10 @@ type clipRun struct {
 	// preroll is how long the blank screen streams after the first
 	// picture, letting congestion control settle before the clip.
 	preroll time.Duration
+	// tune changes the stream's policies before it starts.
+	tune func(*stream)
+	// unpaced sends without the peer's pacer.
+	unpaced bool
 }
 
 func softwareEncoder(t *testing.T) NewEncoderFunc {
@@ -185,6 +197,9 @@ func (c clipRun) run(t *testing.T) *vqtest.Run {
 		maxW, maxH = c.clip.W, c.clip.H
 	}
 	s := newStream(desk, c.fps, maxW, maxH, tag.newEncoder, log)
+	if c.tune != nil {
+		c.tune(s)
+	}
 
 	maxBitrate := max(c.maxKbps*1000, startBitrate)
 	if c.maxKbps == 0 {
@@ -192,7 +207,8 @@ func (c clipRun) run(t *testing.T) *vqtest.Run {
 	}
 	cands := make(chan protocol.Candidate, 64)
 	p, err := peer.New(peer.Config{
-		Net: net.Agent, MinBitrate: minBitrate, StartBitrate: min(startBitrate, maxBitrate), MaxBitrate: maxBitrate, Log: log,
+		Net: net.Agent, MinBitrate: minBitrate, StartBitrate: min(startBitrate, maxBitrate), MaxBitrate: maxBitrate,
+		Unpaced: c.unpaced, Log: log,
 	}, peer.Handlers{
 		Candidate: func(pc protocol.Candidate) { cands <- pc },
 		Keyframe:  s.requestKeyframe,
@@ -278,31 +294,71 @@ var matrixLinks = []vqtest.Link{
 	{Name: "tight", Rate: 4_000_000, Queue: 100 * time.Millisecond, Delay: 30 * time.Millisecond},
 }
 
+// variant is a way of streaming the matrix compares: what the agent does
+// now, or what it did before a change, so the ADR's before and after
+// numbers can be measured again.
+type variant struct {
+	name string
+	edit func(t *testing.T, c *clipRun)
+}
+
+var variants = []variant{
+	{"current", func(*testing.T, *clipRun) {}},
+	{"no-refresh", func(_ *testing.T, c *clipRun) { c.tune = func(s *stream) { s.refresh = 0 } }},
+	{"refresh-250ms", func(_ *testing.T, c *clipRun) { c.tune = func(s *stream) { s.refresh = 250 * time.Millisecond } }},
+	{"refresh-1s", func(_ *testing.T, c *clipRun) { c.tune = func(s *stream) { s.refresh = time.Second } }},
+	{"unpaced", func(_ *testing.T, c *clipRun) { c.unpaced = true }},
+	{"unpaced-no-refresh", func(_ *testing.T, c *clipRun) {
+		c.unpaced = true
+		c.tune = func(s *stream) { s.refresh = 0 }
+	}},
+	{"maxqp-51", func(t *testing.T, c *clipRun) { c.open = paramsEncoder(t, func(p *h264.Params) { p.MaxQP = 51 }) }},
+	{"maxqp-44", func(t *testing.T, c *clipRun) { c.open = paramsEncoder(t, func(p *h264.Params) { p.MaxQP = 44 }) }},
+	{"maxqp-40", func(t *testing.T, c *clipRun) { c.open = paramsEncoder(t, func(p *h264.Params) { p.MaxQP = 40 }) }},
+	{"maxqp-36", func(t *testing.T, c *clipRun) { c.open = paramsEncoder(t, func(p *h264.Params) { p.MaxQP = 36 }) }},
+	{"max-20mbps", func(_ *testing.T, c *clipRun) { c.maxKbps = 20_000 }},
+}
+
 // TestVideoQualityMatrix streams a longer clip at each matrix size over
 // each matrix link and prints the numbers the ADR records. It is a
-// measuring aid: set ROBIN_VQ=1, and ROBIN_VQ_SIZE or ROBIN_VQ_LINK to a
-// name to run only that size or link.
+// measuring aid: set ROBIN_VQ=1, and ROBIN_VQ_SIZE, ROBIN_VQ_LINK or
+// ROBIN_VQ_VARIANT to a comma-separated list of names to pick sizes, links
+// and variants; the default variant is "current".
 func TestVideoQualityMatrix(t *testing.T) {
 	if os.Getenv("ROBIN_VQ") == "" {
 		t.Skip("set ROBIN_VQ=1")
 	}
 	needVideoHarness(t)
+	picked := func(env, name, fallback string) bool {
+		list := os.Getenv(env)
+		if list == "" {
+			list = fallback
+		}
+		return list == "" || slices.Contains(strings.Split(list, ","), name)
+	}
 	for _, size := range matrixSizes {
-		if f := os.Getenv("ROBIN_VQ_SIZE"); f != "" && f != size.name {
+		if !picked("ROBIN_VQ_SIZE", size.name, "") {
 			continue
 		}
 		clip := mustClip(t, vqtest.Captured, size.w, size.h,
 			seconds(vqtest.Still, 6), seconds(vqtest.Typing, 3), seconds(vqtest.Scroll, 3),
 			seconds(vqtest.Drag, 3), seconds(vqtest.Video, 3), seconds(vqtest.Still, 6))
 		for _, link := range matrixLinks {
-			if f := os.Getenv("ROBIN_VQ_LINK"); f != "" && f != link.Name {
+			if !picked("ROBIN_VQ_LINK", link.Name, "") {
 				continue
 			}
-			r := clipRun{
-				clip: clip, fps: 30, maxW: size.maxW, maxH: size.maxH, link: link,
-				open: softwareEncoder(t), preroll: 3 * time.Second,
-			}.run(t)
-			t.Logf("%s over %s (%v):\n%s%s", size.name, link.Name, link, vqtest.Table(r.Spans()), r.Summary())
+			for _, v := range variants {
+				if !picked("ROBIN_VQ_VARIANT", v.name, "current") {
+					continue
+				}
+				c := clipRun{
+					clip: clip, fps: 30, maxW: size.maxW, maxH: size.maxH, link: link,
+					open: softwareEncoder(t), preroll: 3 * time.Second,
+				}
+				v.edit(t, &c)
+				r := c.run(t)
+				t.Logf("%s over %s (%v), %s:\n%s%s", size.name, link.Name, link, v.name, vqtest.Table(r.Spans()), r.Summary())
+			}
 		}
 	}
 }
