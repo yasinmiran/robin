@@ -30,7 +30,8 @@ test("the homepage shows what Robin is", async ({ page }) => {
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
     "Robin: Your eyes and hands on any Linux box you can ssh to.",
   );
-  await expect(page.getByRole("img", { name: /A Robin session in the browser/ })).toBeVisible();
+  const stage = page.getByRole("figure", { name: /^Your terminal runs robin gui alice@build-box/ });
+  await expect(stage.getByRole("img", { name: /A Robin session in the browser/ })).toBeVisible();
   await expect(page.getByText("Connected", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Install" })).toHaveAttribute("href", "/install");
   await expect(page.locator('link[rel="icon"]')).toHaveAttribute("href", "/favicon.svg");

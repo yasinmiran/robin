@@ -90,7 +90,10 @@ const runsHtml = runs
         </div>
       </div>
 
-      <div class="session-stage">
+      <figure class="session-stage">
+        <figcaption class="sr-only">
+          Your terminal runs robin gui alice@build-box, and the desktop it opened appears in your browser.
+        </figcaption>
         <div
           class="session-screen"
           role="img"
@@ -119,9 +122,9 @@ a desktop on build-box, over SSH and WebRTC
 alice@build-box:~$ <span class="xterm-cursor">_</span></pre>
           </div>
         </div>
-        <pre class="local-term" aria-label="Your terminal"><span class="code-prompt">$ </span>{command}
+        <pre class="local-term"><span class="code-prompt">$ </span>{command}
 <span class="code-comment">robin: :2 on alice@build-box; press Ctrl+C to end the session</span></pre>
-      </div>
+      </figure>
     </section>
 
     <section class="border-t border-border py-14 nav:py-16" aria-labelledby="flow-heading">
