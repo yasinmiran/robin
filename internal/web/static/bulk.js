@@ -12,6 +12,16 @@ const MAX_REASON = 1024;
 
 const receivers = new Map();
 
+// BulkRefused is the far side turning a transfer down; reason is in its
+// own words.
+export class BulkRefused extends Error {
+  constructor(reason) {
+    super(`bulk transfer refused: ${reason}`);
+    this.name = 'BulkRefused';
+    this.reason = reason;
+  }
+}
+
 // onBulk registers accept for transfers of kind from the agent. accept is
 // called with the header and returns a sink, or throws to refuse; its
 // message reaches the agent. A sink has write(chunk), commit() and
@@ -77,7 +87,7 @@ class Outbound {
         // Junk is a refusal like any other.
       }
       if (v?.t === 'done') this.#end(DONE);
-      else this.#end(new Error(`bulk transfer refused: ${v?.t === 'error' ? v.error : 'malformed verdict'}`));
+      else this.#end(new BulkRefused(v?.t === 'error' ? v.error : 'malformed verdict'));
     });
     channel.addEventListener('close', () => this.#end(new Error('bulk transfer cancelled')));
     signal?.addEventListener('abort', () => this.#end(signal.reason));
@@ -101,7 +111,7 @@ class Outbound {
   // throwIfStopped throws why the transfer cannot go on. Before the end
   // frame, a done is a refusal too.
   throwIfStopped() {
-    if (this.#reason === DONE) throw new Error('bulk transfer refused: receiver finished before the end');
+    if (this.#reason === DONE) throw new BulkRefused('receiver finished before the end');
     if (this.#reason !== null) throw this.#reason;
   }
 

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
-import { Inbound, acceptBulk, onBulk, sendBulk } from '../bulk.js';
+import { BulkRefused, Inbound, acceptBulk, onBulk, sendBulk } from '../bulk.js';
 import { CHUNK_SIZE, registerKind } from '../bulkframe.js';
 import { FakeChannel, FakePeer } from './fakes.js';
 
@@ -87,7 +87,12 @@ test('sendBulk refuses what the agent could not take before opening a channel', 
 
 test('the far side refusing rejects with its reason', async () => {
   const pc = new FakePeer(acceptBulk);
-  await assert.rejects(sendBulk(pc, { kind: 'test', id: 'refuse' }, new Blob(['abc'])), /refused: not today/);
+  await assert.rejects(sendBulk(pc, { kind: 'test', id: 'refuse' }, new Blob(['abc'])), (err) => {
+    assert.ok(err instanceof BulkRefused);
+    assert.equal(err.reason, 'not today');
+    assert.match(err.message, /refused: not today/);
+    return true;
+  });
 });
 
 // answering opens transfers to a far end that answers each frame with reply.

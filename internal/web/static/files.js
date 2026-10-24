@@ -268,6 +268,8 @@ function save(blob, name) {
   setTimeout(() => URL.revokeObjectURL(url), REVOKE_AFTER_MS);
 }
 
+// reasonOf is why a transfer failed, in the far side's words when it
+// refused.
 function reasonOf(err) {
-  return String(err?.message ?? err).replace(/^bulk transfer refused: /, '');
+  return String(err?.reason ?? err?.message ?? err);
 }
