@@ -12,6 +12,9 @@ import (
 // Control characters other than newline and tab, and bytes that are not
 // UTF-8, become visible escapes, so an error message or a log line cannot
 // move the cursor, retitle the window or send the terminal other commands.
+// So do the invisible marks that reorder text and the Unicode line and
+// paragraph separators, the set the agent refuses in a file name, so a host
+// cannot make a path or a command it prints read as another.
 func printable(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); {
@@ -21,6 +24,8 @@ func printable(s string) string {
 			fmt.Fprintf(&b, `\x%02x`, s[i])
 		case unicode.IsControl(r) && r != '\n' && r != '\t':
 			fmt.Fprintf(&b, `\x%02x`, r)
+		case unicode.In(r, unicode.Zl, unicode.Zp, unicode.Bidi_Control):
+			fmt.Fprintf(&b, `\u%04x`, r)
 		default:
 			b.WriteString(s[i : i+n])
 		}
