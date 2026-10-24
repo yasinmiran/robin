@@ -819,7 +819,15 @@ hands the URL to the default browser as it is, where `cmd /c start` would
 parse it as a command line first. Termux on Android runs the linux/arm64
 CLI unchanged and opens the page with `termux-open-url` when it is on
 `PATH`. `make dist` builds both Windows CLIs, and `GOOS=windows go vet` and
-the test binaries build. iOS cannot be a client: the page is served on the
+the test binaries build. Signals needed no code: Ctrl+C reaches every
+process on the console, the ssh children included, as it reaches the
+terminal's process group on Unix, and Go delivers a closed console window
+as SIGTERM, which the CLI already ends on. A forward's ssh is asked to exit
+with SIGTERM, which lets it end a `ProxyCommand` it started, and killed on
+Windows, which cannot send one. The local paths that assume Unix (the
+control socket's directory, `-F /dev/null` for sessions over the master)
+belong to the ControlMaster mode only; remote paths were already built with
+`path`, not `filepath`. iOS cannot be a client: the page is served on the
 client's loopback, so the CLI runs on the same device as the browser, and
 iOS gives a user nothing that runs it.
 
