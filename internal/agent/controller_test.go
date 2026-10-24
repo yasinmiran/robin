@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -192,5 +193,41 @@ func TestSessionFileRoundTrip(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, SessionFile), []byte("{not json"), 0o600)
 	if _, err := ReadSession(dir); err == nil {
 		t.Error("ReadSession took malformed JSON")
+	}
+}
+
+func TestSweepRunRootTrustsSessionJSONOverTheName(t *testing.T) {
+	root := t.TempDir()
+	mk := func(name string) string {
+		dir := filepath.Join(root, name)
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	// An all-digit id names a live daemon in its session.json; the name is
+	// no pid.
+	live := mk("12345678")
+	WriteSession(live, protocol.Session{ID: "12345678", PID: os.Getppid()})
+	// A daemon still starting has a socket and no session.json yet.
+	starting := mk("23456789")
+	ln, err := net.Listen("unix", filepath.Join(starting, SocketFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	// A dead daemon's session.json wins over a name that is a live pid.
+	dead := mk(strconv.Itoa(os.Getpid()))
+	WriteSession(dead, protocol.Session{ID: "x", PID: deadPID(t)})
+
+	sweepRunRoot(root, filepath.Join(root, "other"))
+
+	for _, kept := range []string{live, starting} {
+		if _, err := os.Lstat(kept); err != nil {
+			t.Errorf("%s was swept: %v", filepath.Base(kept), err)
+		}
+	}
+	if _, err := os.Lstat(dead); !errors.Is(err, os.ErrNotExist) {
+		t.Error("a dead daemon's directory survived because its name is a live pid")
 	}
 }

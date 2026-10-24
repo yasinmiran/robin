@@ -25,7 +25,7 @@ import (
 
 // Names of the files in a session's run directory, beside session.json.
 const (
-	SocketFile = "ctl.sock"
+	SocketFile = agent.SocketFile
 	LogFile    = "agent.log"
 )
 

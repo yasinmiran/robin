@@ -77,13 +77,20 @@ func Start(ctx context.Context, sp Spawn) (id, dir string, err error) {
 	return id, dir, nil
 }
 
+// newID draws a session id: eight lowercase hex digits, the first of them
+// a letter, so no id reads as a pid to anything that names directories by
+// one.
 func newID() (string, error) {
 	b := make([]byte, 4)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	return hex.EncodeToString(b), nil
+	id := []byte(hex.EncodeToString(b))
+	id[0] = idLetters[b[0]%uint8(len(idLetters))]
+	return string(id), nil
 }
+
+const idLetters = "abcdef"
 
 // command builds the daemon's process. Setsid puts it in a session of its
 // own with stdio on /dev/null; it opens its log itself, so systemd-run's

@@ -14,6 +14,10 @@ import (
 // holds its protocol.Session, as one line of JSON for the probe's sed.
 const SessionFile = "session.json"
 
+// SocketFile is the name of the control socket a session daemon listens
+// on in its run directory, beside SessionFile.
+const SocketFile = "ctl.sock"
+
 // WriteSession records s in dir, replacing the file in one rename so a
 // reader never sees half of it.
 func WriteSession(dir string, s protocol.Session) error {

@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -467,4 +468,16 @@ func waitGone(t *testing.T, dir string) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("%s is still there", dir)
+}
+
+func TestNewIDNeverReadsAsAPid(t *testing.T) {
+	for i := 0; i < 2000; i++ {
+		id, err := newID()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := strconv.Atoi(id); err == nil || len(id) != 8 || strings.Trim(id, "0123456789abcdef") != "" {
+			t.Fatalf("id %q", id)
+		}
+	}
 }
