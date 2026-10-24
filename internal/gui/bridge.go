@@ -154,8 +154,9 @@ func (b *bridge) reconnecting() {
 }
 
 // fromAgent relays the agent's messages to the page until the connection
-// ends. An error message the agent sent before leaving is the reason it
-// left; without one it went silently.
+// ends. An error message the agent sent as its last word is the reason it
+// left; one it went on talking after was about an offer, not the session.
+// Without any it went silently.
 func (b *bridge) fromAgent(ctx context.Context, agent signaling) error {
 	var last string
 	for {
@@ -175,6 +176,8 @@ func (b *bridge) fromAgent(ctx context.Context, agent signaling) error {
 		case protocol.TypeError:
 			b.log.Warn("agent reported", "err", m.Error)
 			last = m.Error
+		default:
+			last = ""
 		}
 		out, err := b.relay.FromAgent(m)
 		if err != nil {
