@@ -1,0 +1,14 @@
+---
+import { withLead } from "@/lib/html";
+
+interface Props {
+  type?: "note" | "warning" | "limit";
+  /** The bold run-in that names the subject, such as "Shared client." */
+  title?: string;
+}
+
+const { type = "note", title } = Astro.props;
+const body = withLead(await Astro.slots.render("default"), title);
+---
+
+<div class:list={["callout", `callout-${type}`]} set:html={body} />

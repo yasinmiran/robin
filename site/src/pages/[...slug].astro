@@ -1,0 +1,98 @@
+---
+import { getCollection, render } from "astro:content";
+
+import { SidebarNav } from "@/components/SidebarNav";
+import { Toc } from "@/components/Toc";
+import { components } from "@/components/mdx";
+import { Separator } from "@/components/ui/separator";
+import Base from "@/layouts/Base.astro";
+import { docHref, groupDocs, neighbours, toDocLinks } from "@/lib/nav";
+import { tocItems } from "@/lib/toc";
+
+export async function getStaticPaths() {
+  const entries = await getCollection("docs");
+  const docs = toDocLinks(entries);
+  return entries.map((entry) => ({ params: { slug: entry.id }, props: { entry, docs } }));
+}
+
+const { entry, docs } = Astro.props;
+const { Content, headings } = await render(entry);
+const groups = groupDocs(docs);
+const toc = tocItems(headings);
+const { prev, next } = neighbours(docs, entry.id);
+---
+
+<Base
+  title={entry.data.title}
+  description={entry.data.description}
+  groups={groups}
+  current={entry.id}
+  section={entry.data.section}
+>
+  <div
+    class="mx-auto grid max-w-[90rem] grid-cols-1 nav:grid-cols-[var(--spacing-sidebar)_minmax(0,1fr)] toc:grid-cols-[var(--spacing-sidebar)_minmax(0,1fr)_var(--spacing-toc)]"
+  >
+    <aside
+      class="sidebar sticky top-14 hidden h-[calc(100dvh-3.5rem)] overflow-y-auto overscroll-contain border-r border-sidebar-border bg-sidebar py-6 nav:block"
+    >
+      <SidebarNav groups={groups} current={entry.id} />
+    </aside>
+
+    <main id="content" tabindex="-1" class="min-w-0 px-5 pt-8 pb-16 outline-none nav:px-14 nav:pt-10 nav:pb-20">
+      <article data-pagefind-body>
+        <p class="mb-3 text-sm text-muted-foreground" data-pagefind-ignore>{entry.data.section}</p>
+        <h1 class="mb-3 max-w-[42rem] text-3xl font-bold tracking-[-0.018em] text-balance">{entry.data.title}</h1>
+        <p class="mb-8 max-w-[42rem] text-lg text-muted-foreground">{entry.data.description}</p>
+        {
+          toc.length > 0 && (
+            <details class="mb-8 max-w-[42rem] border-y border-border py-3 text-sm toc:hidden" data-pagefind-ignore>
+              <summary class="cursor-pointer font-[650] text-muted-foreground">On this page</summary>
+              <Toc items={toc} spy={false} showLabel={false} className="mt-3" />
+            </details>
+          )
+        }
+        <div class="prose">
+          <Content components={components} />
+        </div>
+      </article>
+
+      {
+        (prev || next) && (
+          <nav aria-label="Previous and next" class="mt-16 max-w-[42rem]" data-pagefind-ignore>
+            <Separator />
+            <div class="grid grid-cols-2 gap-4 pt-6">
+              {prev && (
+                <a href={docHref(prev.slug)} rel="prev" class="group flex flex-col gap-0.5 rounded-md py-1 no-underline">
+                  <span class="text-xs text-muted-foreground">Previous</span>
+                  <span class="font-semibold text-primary underline-offset-[0.18em] group-hover:underline">
+                    {prev.title}
+                  </span>
+                </a>
+              )}
+              {next && (
+                <a
+                  href={docHref(next.slug)}
+                  rel="next"
+                  class="group col-start-2 flex flex-col items-end gap-0.5 rounded-md py-1 text-right no-underline"
+                >
+                  <span class="text-xs text-muted-foreground">Next</span>
+                  <span class="font-semibold text-primary underline-offset-[0.18em] group-hover:underline">
+                    {next.title}
+                  </span>
+                </a>
+              )}
+            </div>
+          </nav>
+        )
+      }
+    </main>
+
+    {
+      toc.length > 0 && (
+        <aside class="sticky top-14 hidden max-h-[calc(100dvh-3.5rem)] self-start overflow-y-auto py-10 pr-6 toc:block">
+          <Toc client:idle items={toc} />
+        </aside>
+      )
+    }
+  </div>
+</Base>

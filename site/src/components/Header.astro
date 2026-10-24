@@ -1,0 +1,45 @@
+---
+import { Lockup, Mark } from "@/components/Logo";
+import { MobileNav } from "@/components/MobileNav";
+import { Search } from "@/components/Search";
+import { ThemeToggle } from "@/components/ThemeToggle";
+import { HEADER_LINKS, type NavGroup, type Section, currentHeaderLink } from "@/lib/nav";
+
+interface Props {
+  groups: NavGroup[];
+  current?: string;
+  section?: Section;
+  home: boolean;
+}
+
+const { groups, current, section, home } = Astro.props;
+const active = currentHeaderLink(section);
+---
+
+<header
+  class="sticky top-0 z-40 flex h-14 items-center gap-3 border-b border-border bg-background px-4 nav:gap-8 nav:px-6"
+>
+  <div class="flex nav:hidden">
+    <MobileNav client:media="(max-width: 56.1875rem)" groups={groups} current={current} />
+  </div>
+  <a href="/" class="flex h-full items-center text-foreground" aria-label="Robin home">
+    {home ? <Mark size={24} /> : <Lockup size={24} />}
+  </a>
+  <nav aria-label="Main" class="hidden gap-1 text-sm nav:flex">
+    {
+      HEADER_LINKS.map((link) => (
+        <a
+          href={link.href}
+          aria-current={link.label === active ? "true" : undefined}
+          class="rounded-md px-3 py-2 font-medium text-muted-foreground no-underline hover:bg-accent hover:text-foreground aria-[current]:font-semibold aria-[current]:text-foreground"
+        >
+          {link.label}
+        </a>
+      ))
+    }
+  </nav>
+  <div class="ml-auto flex items-center gap-2">
+    <Search client:load />
+    <ThemeToggle client:load />
+  </div>
+</header>

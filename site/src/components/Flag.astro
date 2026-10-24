@@ -1,0 +1,43 @@
+---
+import { codeSegments, flagId } from "@/lib/flags";
+
+interface Props {
+  name: string;
+  /** The argument it takes, such as WxH. */
+  arg?: string;
+  /** The default; text in backticks renders as code. */
+  def?: string;
+  id?: string;
+}
+
+const { name, arg, def, id = flagId(name) } = Astro.props;
+---
+
+<div class="flag" id={id}>
+  <dt>
+    <span class="flag-name"
+      >{name}{arg && <> <span class="flag-arg">{arg}</span></>}<a
+        class="flag-anchor"
+        href={`#${id}`}
+        aria-label={`Link to ${name}`}>#</a
+      ></span
+    >
+    {
+      def && (
+        <span class="flag-default">
+          default{" "}
+          {codeSegments(def).map((segment) =>
+            segment.code ? (
+              <code>
+                {segment.text.split(/(?<=:)/).map((part, index) => (index > 0 ? [<wbr />, part] : part))}
+              </code>
+            ) : (
+              segment.text
+            ),
+          )}
+        </span>
+      )
+    }
+  </dt>
+  <dd><slot /></dd>
+</div>

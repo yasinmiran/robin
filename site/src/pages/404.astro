@@ -1,0 +1,30 @@
+---
+import { getCollection } from "astro:content";
+
+import { SearchBox } from "@/components/Search";
+import Base from "@/layouts/Base.astro";
+import { groupDocs, toDocLinks } from "@/lib/nav";
+
+const groups = groupDocs(toDocLinks(await getCollection("docs")));
+---
+
+<Base title="No page at this address" description="There is no Robin docs page at this address." groups={groups} noindex>
+  <main id="content" tabindex="-1" class="mx-auto max-w-[76rem] px-5 pt-14 pb-24 outline-none sm:px-6 nav:pt-20">
+    <div class="max-w-[42rem]">
+      <h1 class="mb-3 text-3xl font-bold tracking-[-0.018em]">No page at this address</h1>
+      <p class="mb-8 text-lg text-muted-foreground">
+        <span class="js-only">Nothing lives at <code class="not-found-path text-foreground"></code>. </span>Search
+        the docs, or start from one of the pages below.
+      </p>
+      <SearchBox client:load />
+      <ul class="mt-8 flex flex-wrap gap-x-6 gap-y-2">
+        <li><a class="link" href="/install">Install and build</a></li>
+        <li><a class="link" href="/using#flag-reference">Flags</a></li>
+        <li><a class="link" href="/known-limits">Known limits</a></li>
+      </ul>
+    </div>
+  </main>
+  <script>
+    for (const el of document.querySelectorAll(".not-found-path")) el.textContent = location.pathname;
+  </script>
+</Base>

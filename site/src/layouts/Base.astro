@@ -1,0 +1,63 @@
+---
+import "@/styles/global.css";
+
+import textFont from "@fontsource-variable/atkinson-hyperlegible-next/files/atkinson-hyperlegible-next-latin-wght-normal.woff2?url";
+
+import Header from "@/components/Header.astro";
+import type { NavGroup, Section } from "@/lib/nav";
+import { themeScript } from "@/lib/theme";
+
+interface Props {
+  /** Page title; the site name is appended. Omit it for the homepage. */
+  title?: string;
+  description: string;
+  groups: NavGroup[];
+  current?: string;
+  section?: Section;
+  home?: boolean;
+  /** Keep the page out of search engines (the 404 page). */
+  noindex?: boolean;
+}
+
+const { title, description, groups, current, section, home = false, noindex = false } = Astro.props;
+const fullTitle = title ? `${title} | Robin` : "Robin: your eyes and hands on any Linux box you can ssh to";
+const canonical = Astro.site && !noindex ? new URL(Astro.url.pathname, Astro.site).href : undefined;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script is:inline set:html={themeScript} />
+    <title>{fullTitle}</title>
+    <meta name="description" content={description} />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f7f9fa" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#171e23" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preload" href={textFont} as="font" type="font/woff2" crossorigin />
+    {canonical && <link rel="canonical" href={canonical} />}
+    {noindex && <meta name="robots" content="noindex" />}
+    <meta property="og:site_name" content="Robin" />
+    <meta property="og:type" content={home ? "website" : "article"} />
+    <meta property="og:title" content={title ?? "Robin"} />
+    <meta property="og:description" content={description} />
+    {canonical && <meta property="og:url" content={canonical} />}
+    <meta name="twitter:card" content="summary" />
+  </head>
+  <body class="min-h-dvh">
+    <a
+      href="#content"
+      class="sr-only-focusable fixed top-2 left-2 z-[60] rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground no-underline"
+      >Skip to content</a
+    >
+    <Header groups={groups} current={current} section={section} home={home} />
+    <slot />
+    <script>
+      import { watchAllOverflow } from "@/lib/overflow";
+
+      watchAllOverflow();
+    </script>
+  </body>
+</html>

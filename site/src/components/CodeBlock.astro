@@ -1,0 +1,28 @@
+---
+// Stands in for <pre> in MDX: Shiki's markup, scrolling sideways in a
+// focusable region with an edge fade, and a Copy tab hanging from the top.
+import { CopyButton } from "@/components/CopyButton";
+import { codeText } from "@/lib/html";
+
+interface Props {
+  class?: string;
+  "data-language"?: string;
+}
+
+const { class: className, "data-language": language } = Astro.props;
+const html = await Astro.slots.render("default");
+const label = language === "sh" || language === "bash" ? "Shell commands" : "Code";
+---
+
+<div class="code-wrap" data-overflow="none">
+  <pre
+    class={className}
+    data-language={language}
+    data-scroller
+    tabindex="0"
+    role="region"
+    aria-label={label}
+    set:html={html}
+  />
+  <CopyButton client:visible code={codeText(html)} label={`Copy ${label.toLowerCase()}`} />
+</div>

@@ -1,0 +1,272 @@
+---
+import { getCollection } from "astro:content";
+
+import { CopyButton } from "@/components/CopyButton";
+import { Lockup } from "@/components/Logo";
+import { buttonVariants } from "@/components/ui/button";
+import Base from "@/layouts/Base.astro";
+import { codeText } from "@/lib/html";
+import { groupDocs, toDocLinks } from "@/lib/nav";
+
+const groups = groupDocs(toDocLinks(await getCollection("docs")));
+
+const command = "robin gui alice@build-box";
+
+const steps = [
+  {
+    name: "Connect",
+    text: "opens one connection. The probe, the upload, the agent and the tunnel all ride it.",
+    code: "ssh -M",
+  },
+  {
+    name: "Probe",
+    text: "A shell probe reports the distro, architecture, live sessions, GPU and a directory the agent can run from.",
+  },
+  {
+    name: "Deploy",
+    text: "The static agent for that architecture goes up over SFTP and is checked by SHA-256 before it runs.",
+  },
+  {
+    name: "Start",
+    text: "The agent starts Xvfb and a session, or attaches to the desktop you are already logged in to.",
+  },
+  {
+    name: "Stream",
+    text: "Video and sound reach your browser over WebRTC; keys, pointer and clipboard come back. Without UDP, it all rides SSH.",
+  },
+];
+
+const needs = [
+  {
+    term: "The host",
+    text: "Linux on x86_64 or arm64 and an SSH login. For a new desktop, Xvfb and a window manager; to attach, only the desktop.",
+  },
+  { term: "Your machine", text: "macOS or Linux with OpenSSH, and a browser that decodes H.264 in WebRTC." },
+  {
+    term: "Afterwards",
+    text: "Nothing. When the SSH channel closes, the agent stops everything it started and removes its files.",
+  },
+];
+
+const runs = [
+  ["a new desktop on build-box", "robin gui alice@build-box"],
+  ["the desktop you are logged in to there", "robin gui --attach auto workstation"],
+  ["anything after -- goes to ssh", "robin gui build-box -- -p 2222 -i ~/.ssh/other_key"],
+  ["print the URL instead of opening a browser", "robin gui --no-browser lab-node"],
+];
+const runsHtml = runs
+  .map(
+    ([comment, line]) =>
+      `<span class="code-comment"># ${comment}</span>\n<span class="code-prompt">$ </span>${line}`,
+  )
+  .join("\n\n");
+---
+
+<Base
+  description="robin gui <host> opens a desktop from that host in your browser. The host needs only the SSH access you already have: no server to install, no ports to open, no root."
+  groups={groups}
+  home
+>
+  <main id="content" tabindex="-1" class="mx-auto max-w-[76rem] px-5 outline-none sm:px-6">
+    <section class="grid grid-cols-1 items-center gap-12 pt-10 pb-14 nav:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] nav:gap-16 nav:pt-18 nav:pb-24">
+      <div>
+        <Lockup size={44} className="mb-7 h-9 w-auto text-foreground sm:mb-9 sm:h-11" />
+        <h1 class="mb-5 text-display font-bold tracking-[-0.022em] text-balance">
+          <span class="sr-only">Robin: </span>Your eyes and hands on any Linux box you can ssh to.
+        </h1>
+        <p class="mb-8 max-w-[34rem] text-lg text-muted-foreground">
+          <code class="text-foreground">robin gui &lt;host&gt;</code> opens a desktop from that host in your browser. The
+          host needs only the SSH access you already have: no server to install, no ports to open, no root.
+        </p>
+        <div
+          class="flex h-12 max-w-none items-center overflow-hidden rounded-panel border border-code-border bg-code pl-4 font-mono text-[0.9375rem] text-code-foreground sm:max-w-[26rem]"
+        >
+          <span class="min-w-0 flex-1 truncate"><span class="code-prompt mr-[0.75ch]">$</span>{command}</span>
+          <CopyButton client:visible code={command} variant="field" label="Copy command" />
+        </div>
+        <div class="mt-5 flex items-center gap-3">
+          <a href="/install" class={buttonVariants({ size: "lg" })}>Install</a>
+          <a href="/how-it-works" class={buttonVariants({ size: "lg", variant: "ghost" })}>How it works</a>
+        </div>
+      </div>
+
+      <div class="session-stage">
+        <div
+          class="session-screen"
+          role="img"
+          aria-label="A Robin session in the browser: a terminal on build-box's desktop, with the status tab hanging from the top edge reading Connected, Direct UDP, 1920 by 1080 at 30 fps"
+        >
+          <div class="wire" aria-hidden="true"></div>
+          <div class="hud" aria-hidden="true">
+            <span class="hud-state">
+              <span class="hud-connecting"><i class="hud-dot"></i>Connecting</span>
+              <span class="hud-connected"><i class="hud-dot"></i>Connected</span>
+            </span>
+            <span class="hud-glyph hide-narrow">
+              <svg viewBox="0 0 16 16"><path d="M3 8h10"></path><circle cx="2.5" cy="8" r="1.5"></circle><circle cx="13.5" cy="8" r="1.5"></circle></svg>Direct UDP
+            </span>
+            <span>1920 <span class="hud-unit">×</span> 1080</span>
+            <span>30 <span class="hud-unit">fps</span></span>
+            <span class="hide-narrow">4.2 <span class="hud-unit">Mb/s</span></span>
+            <svg viewBox="0 0 16 16"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"></path></svg>
+          </div>
+          <div class="xterm" aria-hidden="true">
+            <div class="xterm-bar">alice@build-box: ~</div>
+            <pre>alice@build-box:~$ uname -srm
+Linux 6.8.0-45-generic x86_64
+alice@build-box:~$ echo "a desktop on $(hostname), over SSH and WebRTC"
+a desktop on build-box, over SSH and WebRTC
+alice@build-box:~$ <span class="xterm-cursor">_</span></pre>
+          </div>
+        </div>
+        <pre class="local-term" aria-label="Your terminal"><span class="code-prompt">$ </span>{command}
+<span class="code-comment">robin: :2 on alice@build-box; press Ctrl+C to end the session</span></pre>
+      </div>
+    </section>
+
+    <section class="border-t border-border py-14 nav:py-16" aria-labelledby="flow-heading">
+      <h2 id="flow-heading" class="mb-2 text-2xl font-[650] tracking-[-0.012em]">What happens when you run it</h2>
+      <p class="mb-10 max-w-[42rem] text-muted-foreground">
+        Your own <code>ssh</code> does the connecting, so your config, keys, jump hosts and 2FA prompts work as they always
+        do.
+      </p>
+      <ol class="flow">
+        {
+          steps.map((step, index) => (
+            <li>
+              <span class="flow-num" aria-hidden="true">
+                {index + 1}
+              </span>
+              <b>{step.name}</b>
+              {step.code && <code>{step.code}</code>} {step.text}
+            </li>
+          ))
+        }
+      </ol>
+    </section>
+
+    <section
+      class="grid grid-cols-1 items-start gap-12 border-t border-border py-14 nav:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] nav:gap-16 nav:py-16"
+      aria-labelledby="needs-heading"
+    >
+      <div>
+        <h2 id="needs-heading" class="mb-2 text-2xl font-[650] tracking-[-0.012em]">What it needs</h2>
+        <p class="mb-8 text-muted-foreground">Nothing is installed for good, on either side.</p>
+        <dl class="needs">
+          {
+            needs.map((need) => (
+              <div>
+                <dt>{need.term}</dt>
+                <dd>{need.text}</dd>
+              </div>
+            ))
+          }
+        </dl>
+      </div>
+      <div class="code-wrap mt-0" data-overflow="none">
+        <pre class="code-surface" data-scroller tabindex="0" role="region" aria-label="Shell commands"><code
+            set:html={runsHtml}
+          /></pre>
+        <CopyButton client:visible code={codeText(runsHtml)} label="Copy shell commands" />
+      </div>
+    </section>
+  </main>
+</Base>
+
+<style>
+  /* The steps are a sequence, so they are numbered; the wire joining them is
+     the status tab's direct glyph stretched across the row. */
+  .flow {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.5rem;
+    padding-left: 2.75rem;
+    font-size: var(--text-sm);
+    line-height: 1.55;
+    color: var(--muted-foreground);
+  }
+  .flow::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0.8125rem;
+    width: 2px;
+    background: var(--border);
+  }
+  .flow li {
+    position: relative;
+  }
+  .flow b {
+    display: block;
+    margin-bottom: 0.25rem;
+    font-size: var(--text-base);
+    font-weight: 650;
+    color: var(--foreground);
+  }
+  .flow-num {
+    position: absolute;
+    top: 0;
+    left: -2.75rem;
+    display: grid;
+    place-items: center;
+    width: 1.625rem;
+    height: 1.625rem;
+    font-size: var(--text-xs);
+    font-weight: 700;
+    color: var(--foreground);
+    background: var(--background);
+    border: 2px solid var(--foreground);
+    border-radius: 50%;
+  }
+  .flow li:last-child .flow-num {
+    color: var(--primary-foreground);
+    background: var(--primary);
+    border-color: var(--primary);
+  }
+  @media (min-width: 56.25rem) {
+    .flow {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 2rem;
+      padding-left: 0;
+    }
+    .flow::before {
+      top: 0.8125rem;
+      bottom: auto;
+      left: 0.8125rem;
+      right: calc((100% - 8rem) / 5 - 0.8125rem);
+      width: auto;
+      height: 2px;
+    }
+    .flow li {
+      padding-top: 2.625rem;
+    }
+    .flow-num {
+      left: 0;
+    }
+  }
+
+  .needs > div {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.25rem;
+    padding: 1rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .needs > div:first-child {
+    padding-top: 0;
+  }
+  .needs dt {
+    font-weight: 650;
+  }
+  .needs dd {
+    color: var(--muted-foreground);
+  }
+  @media (min-width: 40rem) {
+    .needs > div {
+      grid-template-columns: 9rem minmax(0, 1fr);
+      gap: 1.5rem;
+    }
+  }
+</style>
