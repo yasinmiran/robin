@@ -259,6 +259,26 @@ body:has(#hud[data-state="reconnecting"]) #wire { opacity: 1; }
 .section { margin-top: 6px; }
 .section:empty { display: none; }
 
+/* The session's buttons: text buttons in a row, quiet until hovered. */
+.section[data-section="session"] {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.section[data-section="session"] button {
+  padding: 4px 8px;
+  color: var(--ink-soft);
+  background: none;
+  border: 1px solid var(--veil-edge);
+  border-radius: 7px;
+  font: inherit;
+  cursor: pointer;
+}
+.section[data-section="session"] button:hover { color: var(--ink); background: var(--veil-edge); }
+.section[data-section="session"] button:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.section[data-section="session"] button:disabled { color: var(--ink-soft); opacity: 0.5; cursor: default; }
+#hud:not([data-state="connected"]) .section[data-section="session"] { display: none; }
+
 .notice {
   max-width: 42ch;
   margin: 6px 0 4px;

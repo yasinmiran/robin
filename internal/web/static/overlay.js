@@ -29,6 +29,14 @@ const NOTICES = {
     'This link is incomplete',
     'Open the full link Robin printed, including the part after the #.',
   ],
+  kept: [
+    'Desktop kept',
+    'The desktop is still running on the host. Run robin gui there again to pick it up, or robin end to end it.',
+  ],
+  ended: [
+    'Session ended',
+    'You ended the session; the desktop on the host is gone.',
+  ],
 };
 
 export class Overlay {

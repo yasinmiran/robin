@@ -5,6 +5,7 @@ import { RemoteCursor } from './cursor.js';
 import { dispatchControl, onControl } from './control.js';
 import { acceptBulk, onBulk, sendBulk } from './bulk.js';
 import { BULK_CHANNEL, registerKind } from './bulkframe.js';
+import { Session } from './session.js';
 
 const CONTROL_CHANNEL = 'control';
 const ICE_GRACE_MS = 2000;
@@ -20,6 +21,8 @@ const overlay = new Overlay();
 const sampler = new StatsSampler();
 const input = new Input(video, sendControl, () => channel?.readyState === 'open');
 const cursor = new RemoteCursor(video);
+const session = new Session();
+const sessionControls = sessionSection(overlay.addSection('session'));
 
 let ws = null;
 let pc = null;
@@ -46,6 +49,8 @@ window.robin = {
   get monitors() { return monitors; },
   showMonitor: (name) => showMonitor(name),
   addSection: (name) => overlay.addSection(name),
+  detach: () => leave(session.detach()),
+  endSession: () => leave(session.end()),
   bulk: {
     registerKind,
     onBulk,
@@ -96,7 +101,7 @@ function connect(token) {
     return;
   }
   ws.onopen = () => { wsOpened = true; };
-  ws.onclose = () => end(wsOpened ? 'closed' : 'refused');
+  ws.onclose = () => end(session.closeReason(wsOpened));
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
     // Signals apply in arrival order: a candidate must not race its answer.
@@ -116,9 +121,19 @@ async function onSignal(m) {
   switch (m.type) {
     case 'config':
       input.scale = m.config?.hidpi ? window.devicePixelRatio || 1 : 1;
+      session.configure(m.config);
+      sessionControls.keep.hidden = !session.canKeep;
+      // After a reconnect there is no peer; the CLI's new config asks for one.
       if (!pc) createPeer(m.config ?? {});
       break;
+    case 'reconnecting':
+      // The CLI lost the host and is redialing; the peer connection it
+      // relayed is dead, and the next config brings a new one.
+      dropPeer();
+      setState('reconnecting');
+      break;
     case 'answer': {
+      if (!pc) break;
       await pc.setRemoteDescription({ type: 'answer', sdp: m.sdp });
       const early = earlyCandidates;
       earlyCandidates = [];
@@ -126,6 +141,7 @@ async function onSignal(m) {
       break;
     }
     case 'candidate':
+      if (!pc) break;
       // A candidate can overtake the answer it belongs to; hold it until then.
       if (pc.signalingState === 'have-local-offer') earlyCandidates.push(m.candidate);
       else await addCandidate(m.candidate);
@@ -247,13 +263,61 @@ function setState(s) {
   overlay.setState(s);
 }
 
-function end(reason) {
-  if (state === 'ended') return;
+// dropPeer closes the peer connection and forgets it, keeping the page and
+// its socket for the next one. The old connection's events must not reach
+// handlers that now expect none.
+function dropPeer() {
   clearTimeout(iceGraceTimer);
   clearInterval(statsTimer);
   clearInterval(heartbeatTimer);
   input.release();
+  earlyCandidates = [];
+  const old = pc;
+  pc = null;
+  channel = null;
+  if (!old) return;
+  old.oniceconnectionstatechange = null;
+  old.onicecandidate = null;
+  old.onnegotiationneeded = null;
+  old.ontrack = null;
+  old.ondatachannel = null;
+  old.close();
+}
+
+// leave sends the page's last word to the CLI and waits for the socket to
+// close, which ends the page with the matching notice.
+function leave(signal) {
+  if (state === 'ended') return;
+  sendSignal(signal);
+  sessionControls.keep.disabled = sessionControls.end.disabled = true;
+}
+
+// sessionSection fills the status tab's session part: a button that leaves
+// the desktop running for a later robin gui, shown when the host keeps it,
+// and one that ends the session.
+function sessionSection(section) {
+  const keep = document.createElement('button');
+  keep.type = 'button';
+  keep.id = 'detach';
+  keep.dataset.keys = 'local';
+  keep.textContent = 'Disconnect, keep desktop';
+  keep.title = 'Close this page and Robin, leaving the desktop running on the host for robin gui to pick up again';
+  keep.hidden = true;
+  keep.addEventListener('click', () => leave(session.detach()));
+  const end = document.createElement('button');
+  end.type = 'button';
+  end.id = 'end';
+  end.dataset.keys = 'local';
+  end.textContent = 'End session';
+  end.title = 'End the session and the desktop on the host';
+  end.addEventListener('click', () => leave(session.end()));
+  section.append(keep, end);
+  return { keep, end };
+}
+
+function end(reason) {
+  if (state === 'ended') return;
+  dropPeer();
   setState('ended');
   overlay.showNotice(reason);
-  pc?.close();
 }
