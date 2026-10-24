@@ -45,8 +45,10 @@ html, body {
   transform-origin: 0 0;
 }
 
-/* Actual size: one picture pixel to one device pixel, placed by sharp.js
-   (actualsize.js), larger than the window when the desktop is. */
+/* Actual size: each picture pixel a whole number of device pixels, placed
+   by sharp.js (actualsize.js), larger than the window when the desktop is.
+   Scaled by whole pixels, the tiles and a video at the desktop's own size
+   stay crisp without smoothing. */
 #screen.actual {
   inset: auto;
   left: var(--actual-left);
@@ -54,6 +56,8 @@ html, body {
   width: var(--actual-width);
   height: var(--actual-height);
 }
+#screen.actual.whole,
+#tiles.actual { image-rendering: pixelated; }
 
 /* Sharp text's tiles, laid over the picture the video shows; the pointer
    goes through to the video. */
@@ -462,8 +466,8 @@ body[data-dropping]::after {
 .devices .device[data-state="starting"] { color: var(--wait); }
 .devices .device[data-state="blocked"] { color: var(--down); }
 
-/* The private session's switches: a small track that fills when on.
-   Scoped to their row, so they win over the plain section buttons. */
+/* The status tab's switches (switches.js): a small track that fills when
+   on. Scoped to their row, so they win over the plain section buttons. */
 .switches {
   display: flex;
   flex-wrap: wrap;
@@ -484,9 +488,10 @@ body[data-dropping]::after {
   white-space: nowrap;
   cursor: pointer;
 }
-.switches .switch:hover { background: var(--veil-edge); box-shadow: none; }
+.switches .switch:not([aria-disabled="true"]):hover { background: var(--veil-edge); box-shadow: none; }
 .switches .switch:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 .switches .switch[aria-busy="true"] { cursor: progress; }
+.switches .switch[aria-disabled="true"] { color: var(--ink-soft); box-shadow: none; cursor: default; }
 .switches .switch .track {
   position: relative;
   width: 24px;
@@ -514,6 +519,13 @@ body[data-dropping]::after {
   max-width: 42ch;
   margin: 2px 0 0;
   color: var(--down);
+  font-weight: 400;
+}
+/* A limit, or how to use a switch: said, not alarmed. */
+.switch-note {
+  max-width: 42ch;
+  margin: 2px 0 0;
+  color: var(--ink-soft);
   font-weight: 400;
 }
 

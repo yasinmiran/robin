@@ -1,14 +1,16 @@
 // Sharp text and actual size, the picture's two switches in the status tab.
 // Sharp text draws the agent's lossless tiles of the still parts of the
 // screen on a canvas laid over the video, at the desktop's own resolution;
-// tiles.js decides what may show. Actual size lays the picture out one of
-// its pixels to one device pixel and pans it, with the pointer at the
-// window's edge or two fingers, when it is larger than the window.
+// tiles.js decides what may show. Actual size lays the picture out each of
+// its pixels a whole number of device pixels and pans it, with the pointer
+// at the window's edge or two fingers, when it is larger than the window.
 
 import { onBulk } from './bulk.js';
 import { registerKind } from './bulkframe.js';
 import { onControl } from './control.js';
-import { TILE_BATCH_LIMIT, TileBook, parseTileBatch } from './tiles.js';
+import { touchFirst } from './device.js';
+import { switchButton, switchNote } from './switches.js';
+import { TILE_BATCH_LIMIT, TileBook, atlasSize, parseTileBatch } from './tiles.js';
 import { actualBox, edgePan } from './actualsize.js';
 
 const KIND = 'tile';
@@ -18,7 +20,12 @@ const MAX_OPEN = 4;
 // TRACE_FRAMES bounds what a trace keeps, about a minute of video.
 const TRACE_FRAMES = 4096;
 
-const NO_FRAME_CLOCK = 'This browser does not say which frame it shows, so a tile could outlive the text under it';
+const NO_FRAME_CLOCK = 'Not available in this browser: it does not report which video frame is on screen. Chrome, Edge and Firefox do.';
+const PAN_POINTER = 'Hold the pointer at an edge of the window to see the rest';
+const PAN_TOUCH = 'Drag with two fingers to see the rest';
+// The notes' ids, which the switches name in aria-describedby.
+const SHARP_NOTE = 'sharp-note';
+const ACTUAL_NOTE = 'actual-note';
 
 registerKind(KIND, TILE_BATCH_LIMIT);
 
@@ -33,13 +40,15 @@ export class SharpText {
   #want = true; // the switch
   #asked = false; // what the agent was last asked for
   #open = false; // the control channel
-  #answer = null; // the agent's protocol.Tiles
+  #answer = null; // the agent's protocol.Tiles to the latest request
   #clock = null; // whether the browser reports frames' RTP timestamps
-  #transfers = 0;
+  #transfers = 0; // open, or committed and still being decoded
+  #warned = false;
   #epoch = 0; // counts resets, so a batch decoded across one is dropped
   #bytes = 0;
   #batches = 0;
   #actual = false;
+  #overflow = false; // the actual-size picture is larger than the window
   #pan = { x: 0, y: 0 };
   #pointer = null;
   #panning = 0;
@@ -62,7 +71,10 @@ export class SharpText {
 
     onControl('frame', (c) => this.#manifest(c.frame));
     onControl('tiles', (c) => {
-      this.#answer = c.tiles ?? null;
+      const answer = c.tiles ?? null;
+      // An answer the other way is to a request since overtaken.
+      if (Boolean(answer?.on || answer?.unsupported) !== this.#asked) return;
+      this.#answer = answer;
       this.#render();
     });
     onBulk(KIND, (h) => this.#accept(h));
@@ -83,11 +95,12 @@ export class SharpText {
   }
 
   // state is what the switches and the canvas show, for the status tab's
-  // tests: the switch, the agent's answer, whether tiles may be seen, how
-  // many are drawn, and what came in.
+  // tests: the switch, whether the agent answered the latest request and
+  // what, whether tiles may be seen, how many are drawn, and what came in.
   get state() {
     return {
       want: this.#want,
+      answered: this.#answer !== null,
       on: this.#on,
       unsupported: this.#unsupported,
       visible: this.#canvas.style.visibility !== 'hidden',
@@ -149,6 +162,7 @@ export class SharpText {
     const want = this.#want && this.#clock === true && this.#open;
     if (want === this.#asked) return;
     this.#asked = want;
+    this.#answer = null;
     this.#send({ t: 'tiles', on: want });
     if (!want) this.#clear();
     this.#render();
@@ -168,48 +182,88 @@ export class SharpText {
     if (this.#actual) this.#layout();
   }
 
+  // accept takes a tile transfer. It stays counted until its atlas is
+  // decoded, so MAX_OPEN bounds the decodes under way as well as the bytes
+  // held.
   #accept(h) {
     if (!this.#asked) throw new Error('sharp text is off');
     if (this.#transfers >= MAX_OPEN) throw new Error(`more than ${MAX_OPEN} tile transfers at once`);
     this.#transfers++;
     const parts = [];
-    let ended = false;
+    let counted = true;
+    let committing = false;
     const end = () => {
-      if (!ended) this.#transfers--;
-      ended = true;
+      if (counted) this.#transfers--;
+      counted = false;
     };
     return {
       write: (chunk) => { parts.push(chunk); },
       commit: async () => {
-        end();
-        const bytes = new Uint8Array(h.size ?? 0);
-        let at = 0;
-        for (const p of parts) {
-          bytes.set(p, at);
-          at += p.length;
+        committing = true;
+        try {
+          const bytes = new Uint8Array(h.size ?? 0);
+          let at = 0;
+          for (const p of parts) {
+            bytes.set(p, at);
+            at += p.length;
+          }
+          this.#bytes += bytes.length;
+          this.#batches++;
+          await this.#take(parseTileBatch(bytes));
+        } finally {
+          end();
         }
-        this.#bytes += bytes.length;
-        this.#batches++;
-        await this.#take(parseTileBatch(bytes));
       },
-      abort: end,
+      abort: () => {
+        if (!committing) end();
+      },
     };
   }
 
   async #take(batch) {
     const epoch = this.#epoch;
     const image = await createImageBitmap(new Blob([batch.png], { type: 'image/png' }));
-    if (!this.#asked || epoch !== this.#epoch) {
+    let due;
+    try {
+      // A decoder that ignored the PNG's header must not slip a picture of
+      // another size through.
+      const { width, height } = atlasSize(batch.tiles.length);
+      if (image.width !== width || image.height !== height) {
+        throw new Error(`malformed tile batch: a ${image.width}x${image.height} atlas of ${batch.tiles.length} tiles`);
+      }
+      if (!this.#asked || epoch !== this.#epoch) {
+        image.close();
+        return;
+      }
+      due = this.#book.batch({ ...batch, image });
+    } catch (err) {
       image.close();
-      return;
+      this.#refuse(err);
+      throw err;
     }
-    this.#draw(this.#book.batch({ ...batch, image }));
+    this.#draw(due);
     this.#show();
   }
 
+  // refuse drops every tile for a manifest or batch outside the bounds
+  // protocol.Frame states: a broken or hostile agent costs blur, never a
+  // hang.
+  #refuse(err) {
+    if (!this.#warned) console.warn('robin: sharp text:', err.message);
+    this.#warned = true;
+    this.#clear();
+  }
+
   #manifest(frame) {
-    if (!frame || !this.#asked) return;
-    const { reset, clear } = this.#book.manifest(frame);
+    if (!this.#asked) return;
+    let reset;
+    let clear;
+    try {
+      ({ reset, clear } = this.#book.manifest(frame));
+    } catch (err) {
+      this.#refuse(err);
+      return;
+    }
     if (reset) {
       this.#canvas.width = frame.w;
       this.#canvas.height = frame.h;
@@ -279,16 +333,20 @@ export class SharpText {
     this.#input.view.reset();
     this.#video.style.transform = '';
     this.#video.classList.toggle('actual', on);
+    this.#canvas.classList.toggle('actual', on);
     this.#layout();
     this.#render();
   }
 
   // layout sizes the video for actual size: the desktop's own size when
-  // tiles carry it, the video's otherwise.
+  // tiles carry it, the video's otherwise. A video at that size scales by
+  // whole device pixels, so it is drawn without smoothing, as the tiles are.
   #layout() {
     const v = this.#video;
     if (!this.#actual) {
       for (const p of ['left', 'top', 'width', 'height']) v.style.removeProperty(`--actual-${p}`);
+      v.classList.remove('whole');
+      this.#setOverflow(false);
       this.#place();
       return;
     }
@@ -298,7 +356,16 @@ export class SharpText {
     const box = actualBox(pw, ph, window.innerWidth, window.innerHeight, window.devicePixelRatio || 1, this.#pan);
     this.#pan = box.pan;
     for (const p of ['left', 'top', 'width', 'height']) v.style.setProperty(`--actual-${p}`, `${box[p]}px`);
+    v.classList.toggle('whole', v.videoWidth === pw && v.videoHeight === ph);
+    this.#setOverflow(box.overflow);
     this.#place();
+  }
+
+  // setOverflow says how to pan while the picture is larger than the window.
+  #setOverflow(on) {
+    if (on === this.#overflow) return;
+    this.#overflow = on;
+    this.#render();
   }
 
   #pinch(g) {
@@ -316,6 +383,11 @@ export class SharpText {
 
   #onPointer(e) {
     if (e.pointerType === 'touch') return;
+    // The status tab hangs over the top band: reaching for it must not pan.
+    if (e.target?.closest?.('#hud')) {
+      this.#pointer = null;
+      return;
+    }
     this.#pointer = { x: e.clientX, y: e.clientY };
     if (this.#actual && !this.#panning) this.#panning = requestAnimationFrame(() => this.#edgeStep());
   }
@@ -329,51 +401,36 @@ export class SharpText {
   }
 
   #render() {
+    const unsupported = this.#unsupported;
     const sharp = {
       key: 'sharp',
       label: 'Sharp text',
-      on: this.#want && !this.#unsupported,
-      busy: this.#want && this.#asked && !this.#answer && !this.#unsupported,
-      title: this.#unsupported || (this.#want
+      on: this.#want && !unsupported,
+      busy: this.#want && this.#asked && !this.#answer && !unsupported,
+      disabled: Boolean(unsupported),
+      describedBy: unsupported ? SHARP_NOTE : '',
+      title: unsupported ? '' : (this.#want
         ? 'Still parts of the screen are sent without loss and drawn over the video'
         : 'Send still parts of the screen without loss, so text is as sharp as on the host'),
     };
+    const pan = this.#actual && this.#overflow ? (touchFirst ? PAN_TOUCH : PAN_POINTER) : '';
     const actual = {
       key: 'actual',
       label: 'Actual size',
       on: this.#actual,
       busy: false,
+      describedBy: pan ? ACTUAL_NOTE : '',
       title: this.#actual
-        ? 'One pixel of the desktop to one pixel of this screen; the pointer at an edge pans'
-        : 'Show one pixel of the desktop to one pixel of this screen instead of fitting the window',
+        ? 'Each pixel of the desktop is a whole number of pixels of this screen'
+        : 'Show each pixel of the desktop as a whole number of pixels of this screen instead of fitting the window',
     };
     const row = document.createElement('div');
     row.className = 'switches';
-    row.append(this.#button(sharp, Boolean(this.#unsupported)), this.#button(actual, false));
-    this.#section.replaceChildren(row);
-  }
-
-  #button(item, disabled) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'switch';
-    b.dataset.switch = item.key;
-    b.dataset.keys = 'local';
-    b.disabled = disabled;
-    b.setAttribute('role', 'switch');
-    b.setAttribute('aria-checked', String(item.on));
-    b.setAttribute('aria-busy', String(item.busy));
-    b.title = item.title;
-    const track = document.createElement('span');
-    track.className = 'track';
-    track.setAttribute('aria-hidden', 'true');
-    const label = document.createElement('span');
-    label.textContent = item.label;
-    b.append(track, label);
-    b.addEventListener('click', () => {
-      b.blur(); // keys belong to the remote, not to this switch
-      this.toggle(item.key);
-    });
-    return b;
+    const toggle = (key) => this.toggle(key);
+    row.append(switchButton(sharp, toggle), switchButton(actual, toggle));
+    const notes = [];
+    if (unsupported) notes.push(switchNote(SHARP_NOTE, unsupported));
+    if (pan) notes.push(switchNote(ACTUAL_NOTE, pan));
+    this.#section.replaceChildren(row, ...notes);
   }
 }
