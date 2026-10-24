@@ -433,6 +433,7 @@ make test-wayland  # Wayland attach against headless GNOME 46, GNOME 49 and KDE 
 make e2e      # the whole thing: podman host, Playwright and Chrome client
 make check    # all four
 make cover    # all four again with coverage, merged, checked against coverage-baseline.txt
+make repro    # builds the agents, the CLI and dist twice, from two paths, and compares them
 ```
 
 `make cover` runs every suite with coverage and merges it in
@@ -528,6 +529,45 @@ and ffmpeg, where it is installed, must decode the result. Set
 `ROBIN_HWENC_REQUIRE=vaapi` (or `nvenc`) to make a missing route fail the run
 instead of skipping it, and `ROBIN_HWENC_COMPARE=1` with the openh264 build tag
 to print the comparison the ADR quotes.
+
+## Verifying a release
+
+Every binary the build ships is reproducible: the same commit, built from
+any checkout path on any Linux x86_64 machine with the pinned toolchain,
+gives the same bytes. A shipped `dist/robin-*` can therefore be checked by
+anyone with a clone, and so can the agent a CLI uploads, since its name on
+the host is the hash of its content.
+
+```sh
+git clone https://github.com/yasinmiran/robin && cd robin
+git checkout v1.2.3
+make dist VERSION=v1.2.3
+sha256sum dist/*
+```
+
+Compare the sums with the published ones. The build downloads the pinned
+zig, openh264 and libopus by hash; `go.mod` names the Go toolchain, which
+`go` fetches on its own unless `GOTOOLCHAIN=local` is set. Pass `VERSION`
+when the clone might describe the commit differently from the release
+build (a shallow clone without the tag, say); the string is linked into
+every binary, so a tree with local changes, which `git describe` marks
+`-dirty`, cannot match. Nothing of the builder's environment is meant to
+reach a binary, but `GOFLAGS`, `GOAMD64` and the like are inputs to the
+compiler as much as the source is, so leave them at their defaults.
+
+`make repro` is the check that keeps this true. It builds the agents, the
+CLI and `dist/` from the checkout, then again from a copy of the tree at
+another path with an empty Go build cache, and fails on the first byte that
+differs, with the `strings` of both for a start on finding the cause.
+`REPRO_TOOLCHAIN=1 make repro` also rebuilds openh264 and libopus for the
+copy, sharing only the downloads, which checks the C side from source and
+takes a few minutes longer. `go test ./internal/agentbin` scans whatever
+agents are embedded for the checkout path, the home directory and git
+build info, so a leak also fails `make test`.
+
+macOS as a build host is expected to produce the same bytes, since zig
+carries its own libc and the Go side is pure, but that has not yet been
+verified against a Linux build.
 
 ## Known limits
 

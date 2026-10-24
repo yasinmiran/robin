@@ -2,6 +2,10 @@ module github.com/yasinmiran/robin
 
 go 1.25.0
 
+// The release binaries embed the compiler's version and change with it, so
+// every builder gets this exact one.
+toolchain go1.27.3
+
 require (
 	github.com/coder/websocket v1.8.15
 	github.com/godbus/dbus/v5 v5.2.4

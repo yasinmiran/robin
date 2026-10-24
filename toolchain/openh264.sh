@@ -31,8 +31,11 @@ if [ ! -f "$out/lib/libopenh264.a" ]; then
 	# install-static-lib builds only the .a; the default target would also
 	# link a shared library we never ship. The git ceiling stops openh264's
 	# version script from stamping the enclosing repo's HEAD into the library.
+	# CFLAGS_OPT is the one variable the Makefile appends to CFLAGS as is,
+	# so it carries the reproducibility flags; setting CFLAGS itself would
+	# drop every flag the Makefile adds.
 	GIT_CEILING_DIRECTORIES=$CACHE/build make -C "$build" -j"$(ncpu)" \
-		OS=linux ARCH="$arch" PREFIX="$out" \
+		OS=linux ARCH="$arch" PREFIX="$out" CFLAGS_OPT="-O3 $(fixed_cflags)" \
 		CC="$zig cc -target $target" CXX="$zig c++ -target $target" AR="$zig ar" \
 		"$@" install-static-lib >&2
 fi

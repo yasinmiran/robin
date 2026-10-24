@@ -19,6 +19,17 @@ MODULE   := $(shell $(GO) list -m)
 COVER    ?= $(CURDIR)/.cover
 # The packages tested against the real openh264 and libopus.
 CGO_TESTS := ./internal/agent/h264/ ./internal/agent/opus/ ./internal/agent/audio/
+# Every shipped binary is reproducible: the same commit built from any
+# checkout path gives the same bytes. -trimpath keeps the checkout out of
+# Go's paths, -buildvcs=false keeps git state out of the build info, and
+# the linker writes no build ID, which would hash the absolute cgo flags.
+# make repro proves it.
+GOBUILD  := $(GO) build -trimpath -buildvcs=false
+LDFLAGS  := -s -w -buildid= -X main.version=$(VERSION)
+# zig cc compiles a file it gets no -O for as a debug build with UBSan on,
+# which puts a sanitizer runtime and the absolute source path of every cgo
+# file into the agent.
+CGO_CFLAGS := -O2 -fno-sanitize=undefined
 
 target_amd64 := x86_64-linux-musl
 target_arm64 := aarch64-linux-musl
@@ -30,7 +41,7 @@ export ZIG_GLOBAL_CACHE_DIR := $(CACHE)/zig
 define zig_env
 t=$(target_$(1)); zig=$$(toolchain/zig.sh); prefix=$$(toolchain/openh264.sh $$t); toolchain/opus.sh $$t >/dev/null; \
 CGO_ENABLED=1 CC="$$zig cc -target $$t" CXX="$$zig c++ -target $$t" \
-CGO_CFLAGS="-I$$prefix/include" CGO_LDFLAGS="-L$$prefix/lib"
+CGO_CFLAGS="$(CGO_CFLAGS) -I$$prefix/include" CGO_LDFLAGS="-L$$prefix/lib"
 endef
 
 # agent_build builds the agent for linux/$(1) into $@, with the extra go
@@ -38,12 +49,12 @@ endef
 define agent_build
 @set -e; echo "build agent linux/$(1) ($(target_$(1)))"; \
 $(call zig_env,$(1)) GOOS=linux GOARCH=$(1) \
-$(GO) build $(2) -trimpath -tags openh264,opus,netgo,osusergo \
-	-ldflags "-s -w -linkmode external -extldflags -static -X main.version=$(VERSION)" \
+$(GOBUILD) $(2) -tags openh264,opus,netgo,osusergo \
+	-ldflags "$(LDFLAGS) -linkmode external -extldflags -static" \
 	-o $@ ./cmd/robin-agent
 endef
 
-.PHONY: all agents cli dist test test-js test-short test-x test-wayland check e2e clean
+.PHONY: all agents cli dist repro test test-js test-short test-x test-wayland check e2e clean
 .PHONY: cover cover-unit cover-x cover-wayland cover-e2e cover-report cover-baseline
 .PRECIOUS: bin/robin-agent-linux-% bin/cover/robin-agent-linux-%
 
@@ -53,27 +64,36 @@ cli: bin/robin
 
 agents: $(foreach a,$(ARCHES),$(AGENTS)/robin-agent-linux-$(a).gz)
 
-bin/robin: agents $(GOSRC) go.mod go.sum
-	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $@ ./cmd/robin
+bin/robin: agents $(GOSRC) go.mod go.sum Makefile
+	CGO_ENABLED=0 $(GOBUILD) -ldflags "$(LDFLAGS)" -o $@ ./cmd/robin
 
-bin/robin-agent-linux-%: $(GOSRC) go.mod go.sum toolchain/*.sh
+bin/robin-agent-linux-%: $(GOSRC) go.mod go.sum toolchain/*.sh Makefile
 	$(call agent_build,$*)
 
+# Go's gzip rather than the host's: implementations compress differently,
+# and the CLI embeds this file byte for byte.
 $(AGENTS)/robin-agent-linux-%.gz: bin/robin-agent-linux-%
-	gzip -9 -n -c $< >$@
+	$(GO) run ./internal/tools/gz $< $@
 
 # Release CLIs for every client platform, each embedding every agent.
 dist: agents
 	@set -e; for p in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do \
 		os=$${p%/*}; arch=$${p#*/}; \
 		echo "build dist/robin-$$os-$$arch"; \
-		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) build -trimpath \
-			-ldflags "-s -w -X main.version=$(VERSION)" -o dist/robin-$$os-$$arch ./cmd/robin; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GOBUILD) \
+			-ldflags "$(LDFLAGS)" -o dist/robin-$$os-$$arch ./cmd/robin; \
 	done
 
+# Builds the agents, the CLI and dist from this tree and again from a copy
+# at another path with an empty Go build cache, and fails if any artifact
+# differs. REPRO_TOOLCHAIN=1 also rebuilds openh264 and libopus for the
+# copy instead of sharing .cache with it.
+repro:
+	toolchain/repro.sh
+
 # The linux/amd64 CLI the e2e client container runs.
-bin/robin-linux-amd64: agents $(GOSRC) go.mod go.sum
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $@ ./cmd/robin
+bin/robin-linux-amd64: agents $(GOSRC) go.mod go.sum Makefile
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GOBUILD) -ldflags "$(LDFLAGS)" -o $@ ./cmd/robin
 
 # Unit and integration tests. The encoder packages are tested against the real
 # openh264 and libopus on linux/amd64 hosts; everywhere else they build as stubs.
@@ -163,17 +183,17 @@ cover-baseline:
 # make cover's e2e builds: the agent with -cover, and a CLI with -cover that
 # embeds it. The overlay swaps the embedded agent without touching
 # $(AGENTS), so no normal build ever ships a cover agent.
-bin/cover/robin-agent-linux-%: $(GOSRC) go.mod go.sum toolchain/*.sh
+bin/cover/robin-agent-linux-%: $(GOSRC) go.mod go.sum toolchain/*.sh Makefile
 	$(call agent_build,$*,-cover)
 
 bin/cover/agents/robin-agent-linux-%.gz: bin/cover/robin-agent-linux-%
 	@mkdir -p $(@D)
-	gzip -9 -n -c $< >$@
+	$(GO) run ./internal/tools/gz $< $@
 
 bin/cover/robin-linux-amd64: bin/cover/agents/robin-agent-linux-amd64.gz $(GOSRC) go.mod go.sum
 	printf '{"Replace":{"%s":"%s"}}\n' $(CURDIR)/$(AGENTS)/robin-agent-linux-amd64.gz $(CURDIR)/$< >bin/cover/overlay.json
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -cover -overlay bin/cover/overlay.json -trimpath \
-		-ldflags "-s -w -X main.version=$(VERSION)" -o $@ ./cmd/robin
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GOBUILD) -cover -overlay bin/cover/overlay.json \
+		-ldflags "$(LDFLAGS)" -o $@ ./cmd/robin
 
 clean:
-	rm -rf bin dist $(AGENTS)/*.gz
+	rm -rf bin dist .repro $(AGENTS)/*.gz

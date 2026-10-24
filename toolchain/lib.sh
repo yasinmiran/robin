@@ -33,6 +33,19 @@ die() { log "error: $*" && exit 1; }
 
 ncpu() { getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4; }
 
+# fixed_cflags prints the flags that keep a library build independent of
+# where the cache is: no debug info (it would record the compile directory
+# and zig's own headers), no sanitizer (zig turns UBSan on in a debug
+# build, and it records source paths), and every path under the cache,
+# as spelled and as resolved, renamed in whatever a __FILE__ still keeps.
+fixed_cflags() {
+	mkdir -p "$CACHE"
+	physical=$(cd "$CACHE" && pwd -P)
+	printf -- '-g0 -fno-sanitize=undefined -ffile-prefix-map=%s=/robin-toolchain' "$CACHE"
+	[ "$physical" = "$CACHE" ] || printf -- ' -ffile-prefix-map=%s=/robin-toolchain' "$physical"
+	echo
+}
+
 sha256() {
 	if command -v sha256sum >/dev/null 2>&1; then
 		sha256sum "$1" | cut -d' ' -f1

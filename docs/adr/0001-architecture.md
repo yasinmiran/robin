@@ -941,6 +941,76 @@ keeps nothing of a script's `DataTransfer` in a `ClipboardEvent` it
 constructs, so its e2e run hands the page the `DataTransfer` through
 `robin.paste` while Chrome's goes through a real paste event.
 
+### Reproducible release binaries
+
+The CLI names the agent on the host after the SHA-256 of its content, and
+a release is a set of `dist/` binaries with published sums. Neither means
+anything unless a second builder can get the same bytes from the tagged
+commit, and until 2026-10-24 none could: two checkouts of one commit gave
+agents that differed in size and in every hash. `make repro` (built twice,
+from the checkout and from a copy at another path with an empty Go build
+cache, then `cmp`) found four leaks, with `strings` diffs pointing at each.
+
+The biggest was not a path at all. Go hands cgo's C files to the compiler
+with whatever `CGO_CFLAGS` says, and ours said only `-I<prefix>/include`.
+With no `-O`, `zig cc` compiles a debug build, and a zig debug build has
+UBSan on, with a runtime that reports rather than traps. That put 280 KB of
+sanitizer into every agent along with UBSan's source locations, which
+carry the absolute path of each cgo file (clang does not run those through
+`-ffile-prefix-map`, so Go's own `-ffile-prefix-map=<checkout>=/_/<module>`
+never touched them) and the type descriptors that name
+`cgo-gcc-prolog`. `CGO_CFLAGS` now starts with `-O2 -fno-sanitize=undefined`.
+The glue is optimized the way Go's default `-O2 -g` would have had it, and
+the release agent runs no sanitizer, which is a behaviour change as much
+as a byte one.
+
+The Go build ID differed next. The linker derives it from the action
+hashes of every input, and the cgo package's hash takes in `CC`, `CGO_CFLAGS`
+and `CGO_LDFLAGS` as spelled, with the absolute toolchain prefix inside.
+Making those path-free would have meant a compiler wrapper on `PATH` that
+adds the include and library directories itself, so that the build cache
+no longer notices a toolchain change. `-ldflags=-buildid=` instead leaves
+the note empty, as Debian and Nix build Go, and every build uses it so the
+recipes stay uniform. `-buildvcs=false` goes with it: the stamped
+`vcs.revision`, `vcs.time` and `vcs.modified` make a tarball or a shallow
+clone differ from a full one, and `VERSION` from `git describe` already
+carries the commit into every binary through `-X main.version`.
+
+The static libraries were a quieter case. `zig ar` is `llvm-ar`, which
+writes deterministic archives by default (every member 0/0 at epoch, in the
+order the makefiles list them), but each object inside carried DWARF with
+`DW_AT_comp_dir` under `.cache/toolchain/build`, the realpath of zig's own
+libc headers, and openh264 forces `-g` even in its release configuration.
+The final link strips all of it with `-s`, so none of this reached an
+agent, but a library that differs between caches is a library nobody can
+check either. Both builds now compile with `-g0 -fno-sanitize=undefined`
+and `-ffile-prefix-map` for the cache as spelled and as resolved
+(`fixed_cflags` in `toolchain/lib.sh`). openh264 takes them through
+`CFLAGS_OPT`, the one variable its Makefile appends as is; setting `CFLAGS`
+on its command line would have replaced every flag the Makefile adds,
+`-DNDEBUG` included. Two caches at different paths, built from the shared
+downloads, gave identical `libopenh264.a` and `libopus.a` with no path
+string left in either.
+
+The gzip of each agent moved from the host's `gzip -9 -n` to
+`internal/tools/gz`, Go's `compress/gzip` with a fixed header. `-n`
+already dropped the name and the time, but GNU gzip, Apple's gzip and pigz
+do not emit the same deflate stream for the same input, and the CLI embeds
+the `.gz` byte for byte. `go.mod` now names the exact Go toolchain for the
+same reason: the compiler's version is in the binary and its output
+changes between patch releases.
+
+What stays an input, and is documented rather than removed: `VERSION`
+(pass it to `make dist` when the clone would describe the commit
+differently), the Go environment (`GOFLAGS`, `GOAMD64`), and the build
+host's architecture, since each host runs its own zig binary. Linux x86_64
+to Linux x86_64 is what `make repro` has shown; macOS to Linux is expected
+to agree and has not been tried. `REPRO_TOOLCHAIN=1` extends the check to
+the C libraries from source, and `go test ./internal/agentbin` scans the
+embedded agents for the checkout, the home directory and `vcs` build info
+on every `make test`, so a leak that comes back is caught without the
+double build.
+
 ## Verification parked
 
 Two checks were parked by decision on 2026-10-18. Both needed hardware the

@@ -22,7 +22,7 @@ if [ ! -f "$out/lib/libopus.a" ]; then
 	# never tries to run what it compiles.
 	(cd "$build" && ./configure --host="$target" --prefix="$out" \
 		--disable-shared --enable-static --disable-doc --disable-extra-programs \
-		CC="$zig cc -target $target" AR="$zig ar" RANLIB="$zig ranlib" CFLAGS="-O2" >&2 &&
+		CC="$zig cc -target $target" AR="$zig ar" RANLIB="$zig ranlib" CFLAGS="-O2 $(fixed_cflags)" >&2 &&
 		make -j"$(ncpu)" install >&2)
 fi
 printf '%s\n' "$out"
