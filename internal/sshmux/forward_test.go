@@ -275,6 +275,22 @@ func TestNoMuxForwardTaken(t *testing.T) {
 	waitNoProcesses(t, sq.Addr().String())
 }
 
+// TestNoMuxForwardBlindTable checks a forward fails, rather than wait for
+// ever, where the table of listeners never shows ssh on its port.
+func TestNoMuxForwardBlindTable(t *testing.T) {
+	defer func(f func(string, int) (bool, bool, error)) { lookupListener = f }(lookupListener)
+	lookupListener = func(string, int) (bool, bool, error) { return false, false, nil }
+	m := dialNoMux(t, sshtest.Start(t))
+	m.tcpForwards = true
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	_, err := m.Forward(ctx, echoServer(t))
+	t.Logf("Forward with a blind listener table: %v", err)
+	if err == nil || errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Forward = %v, want it to fail on what the table does not show", err)
+	}
+}
+
 // TestNoMuxForwardDead kills a forward's ssh, and checks the forward then
 // refuses to dial, even when another program has taken its port.
 func TestNoMuxForwardDead(t *testing.T) {

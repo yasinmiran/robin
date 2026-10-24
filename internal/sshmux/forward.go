@@ -161,6 +161,9 @@ func (m *Master) startProcess(args []string) (*process, error) {
 	return p, nil
 }
 
+// lookupListener is listenerOf, which the tests can stand in for.
+var lookupListener = listenerOf
+
 // awaitListening returns once ssh listens at addr, or fails when it exits
 // or ctx ends first. A unix socket in the private directory can only be
 // ssh's, so a connection there tells, which reaches the remote end as one
@@ -172,9 +175,19 @@ func (p *process) awaitListening(ctx context.Context, network, addr string) erro
 	defer tick.Stop()
 	for {
 		if network == "tcp" {
-			listening, ours, err := listenerOf(addr, p.cmd.Process.Pid)
+			listening, ours, err := lookupListener(addr, p.cmd.Process.Pid)
+			// A port that accepts while the table shows nobody on it means
+			// the table cannot be read right here: fail rather than wait
+			// for a listener it will never show. Read again first, in case
+			// ssh began to listen in between.
+			if err == nil && !listening && accepts(ctx, network, addr) {
+				if listening, ours, err = lookupListener(addr, p.cmd.Process.Pid); err == nil && !listening {
+					err = fmt.Errorf("%s accepts connections, but the system's table of listeners shows none there", addr)
+				}
+			}
 			switch {
 			case err != nil:
+				p.stop()
 				return err
 			case listening && !ours:
 				p.stop()
@@ -182,8 +195,7 @@ func (p *process) awaitListening(ctx context.Context, network, addr string) erro
 			case ours:
 				return nil
 			}
-		} else if c, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, network, addr); err == nil {
-			c.Close()
+		} else if accepts(ctx, network, addr) {
 			return nil
 		}
 		select {
@@ -194,6 +206,16 @@ func (p *process) awaitListening(ctx context.Context, network, addr string) erro
 		case <-tick.C:
 		}
 	}
+}
+
+// accepts reports whether addr takes a connection, which it closes.
+func accepts(ctx context.Context, network, addr string) bool {
+	c, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, network, addr)
+	if err != nil {
+		return false
+	}
+	c.Close()
+	return true
 }
 
 // failure says why ssh exited. Only once exited is closed.

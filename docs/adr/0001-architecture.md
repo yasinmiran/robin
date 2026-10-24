@@ -738,6 +738,8 @@ the port meanwhile, and it shows in ssh's command line. So the CLI does not
 take a connection that the port accepts as proof: it waits until the
 system's table of listeners (`GetExtendedTcpTable`) names ssh's process as
 the one on that port, and fails the forward when another process holds it.
+A port that accepts while the table shows nobody there fails it too, so a
+table read wrong ends in an error rather than a wait with no end.
 Nothing here runs Windows; the tests take that path on Linux, where
 `/proc/net/tcp` and the process's open sockets answer the same question.
 Once a forward's ssh has exited, its `Dial` refuses rather than connect to
