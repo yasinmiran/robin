@@ -70,6 +70,7 @@ type soundServer struct {
 	cookie []byte
 	env    []string // for paplay
 	room   string
+	stop   func() // ends a server the test started
 }
 
 // pulseRoom starts a pulseaudio that stands in for the user's, playing into
@@ -89,7 +90,7 @@ func pulseRoom(t *testing.T, extra ...string) soundServer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return soundServer{socket: s.socket, cookie: cookie, env: s.Env(), room: "robin"}
+	return soundServer{socket: s.socket, cookie: cookie, env: s.Env(), room: "robin", stop: func() { s.Close() }}
 }
 
 // pipeWireRoom is the test session's PipeWire, through pipewire-pulse, whose
@@ -419,6 +420,25 @@ func TestSilentRoomWhenItsOutputGoes(t *testing.T) {
 	if err := r.Err(); err == nil || !strings.Contains(err.Error(), "went away") {
 		t.Fatalf("the room says %v", err)
 	}
+}
+
+// A sound server that goes away ends the room too.
+func TestSilentRoomWhenTheServerGoes(t *testing.T) {
+	s := pulseRoom(t)
+	r, err := Silence(context.Background(), RoomOptions{Socket: s.socket, Cookie: s.cookie, Hold: (&holder{}).hold, Log: quiet()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.stop()
+	select {
+	case <-r.Gone():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the room did not notice its sound server go")
+	}
+	if r.Err() == nil {
+		t.Error("a room whose server went says nothing of it")
+	}
+	r.Close()
 }
 
 // The keeper's undo in this process, after a room that was never closed.

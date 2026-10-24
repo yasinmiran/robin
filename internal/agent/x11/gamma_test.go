@@ -181,6 +181,57 @@ func TestCurtainDarkensAndGivesTheScreensBack(t *testing.T) {
 	p.want("Close", linear)
 }
 
+// While nothing else touches the ramps, the curtain's checks change nothing
+// and tell the keeper nothing new.
+func TestCurtainLeavesADarkScreenAlone(t *testing.T) {
+	tx := startX(t, "sleep 1000")
+	p := gammaPeer{t, tx}
+	linear := p.set(65535)
+	var h holds
+	c, err := OpenCurtain(tx.d.Name, tx.d.XAuthority, h.hold, quietLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.Draw(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(5 * curtainCheck / 2)
+	p.want("two checks", make([]uint16, len(linear)))
+	h.mu.Lock()
+	n := len(h.list)
+	h.mu.Unlock()
+	if n != 1 {
+		t.Errorf("the keeper was told %d times, want once", n)
+	}
+}
+
+// An X server that goes away under a drawn curtain leaves it nothing to
+// lift, and says so.
+func TestCurtainWhenTheServerGoes(t *testing.T) {
+	tx := startX(t, "sleep 1000")
+	gammaPeer{t, tx}.set(65535)
+	c, err := OpenCurtain(tx.d.Name, tx.d.XAuthority, (&holds{}).hold, quietLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Draw(); err != nil {
+		t.Fatal(err)
+	}
+	tx.d.Close()
+	time.Sleep(3 * curtainCheck / 2)
+	closed := make(chan error, 1)
+	go func() { closed <- c.Close() }()
+	select {
+	case err := <-closed:
+		if err == nil {
+			t.Error("lifting a curtain over a display that is gone succeeded")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Close hung on a display that is gone")
+	}
+}
+
 func TestCurtainStaysOpenWhenTheKeeperRefuses(t *testing.T) {
 	tx := startX(t, "sleep 1000")
 	p := gammaPeer{t, tx}
@@ -260,6 +311,15 @@ func TestOpenCurtainNeedsTheDisplay(t *testing.T) {
 	tx := startX(t, "sleep 1000")
 	if _, err := OpenCurtain(":999", "", nil, quietLog()); err == nil {
 		t.Error("OpenCurtain reached a display that is not there")
+	}
+	if _, err := OpenCurtain("remote:0", "", nil, quietLog()); err == nil {
+		t.Error("OpenCurtain took a display on another machine")
+	}
+	if err := UndoGamma(context.Background(), []byte(`{"display":"remote:0"}`)); err == nil {
+		t.Error("UndoGamma took a display on another machine")
+	}
+	if err := UndoGamma(context.Background(), []byte(`{"display":"`+tx.d.Name+`","xauthority":"/dev/null"}`)); err == nil {
+		t.Error("UndoGamma got in with an empty authority file")
 	}
 	if _, err := OpenCurtain(tx.d.Name, "/dev/null", nil, quietLog()); err == nil {
 		t.Error("OpenCurtain got in with an empty authority file")
