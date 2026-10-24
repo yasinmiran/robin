@@ -422,6 +422,19 @@ func TestSilentRoomWhenItsOutputGoes(t *testing.T) {
 	}
 }
 
+// A server that loads no modules, as the agent's own private one, has no
+// room to silence.
+func TestSilentRoomNeedsAServerThatLoadsModules(t *testing.T) {
+	s := serve(t)
+	cookie, err := os.ReadFile(s.cookie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Silence(context.Background(), RoomOptions{Socket: s.socket, Cookie: cookie, Hold: (&holder{}).hold}); err == nil || !strings.Contains(err.Error(), "module-null-sink") {
+		t.Fatalf("Silence on a server that loads no modules: %v", err)
+	}
+}
+
 // A sound server that goes away ends the room too.
 func TestSilentRoomWhenTheServerGoes(t *testing.T) {
 	s := pulseRoom(t)
