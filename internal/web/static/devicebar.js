@@ -40,21 +40,27 @@ const TITLES = {
 // offerDevices readies the senders for what config says the host takes,
 // before the page makes its offer: the microphone on the sound line, which
 // the caller made sendrecv for it, and the camera on a sendonly video line of
-// its own. It returns the switches by name, and stop, which turns them off.
+// its own. It returns the switches by name, and stop, which turns them off
+// and takes them away with their section: they drive this peer
+// connection's senders, and the one built after a reconnect brings its own.
 export function offerDevices(pc, soundLine, config, overlay) {
   const switches = {};
   const senders = {};
   if (config.mic) senders.mic = soundLine.sender;
   if (config.camera) senders.camera = cameraLine(pc).sender;
   const names = Object.keys(senders);
+  let section = null;
   if (names.length) {
-    const section = overlay.addSection('devices');
+    section = overlay.addSection('devices');
     section.classList.add('devices');
     for (const name of names) switches[name] = deviceSwitch(name, senders[name], section);
   }
   return {
     switches,
-    stop: () => Promise.all(Object.values(switches).map((s) => s.off())),
+    stop: () => {
+      section?.remove();
+      return Promise.all(Object.values(switches).map((s) => s.off()));
+    },
   };
 }
 

@@ -1,10 +1,12 @@
-// Just enough of a DOM for files.js and clipboard.js under node: elements
-// that hold children, attributes and click listeners, a window and a body,
-// and animation frames on timers. installDom puts it on globalThis.
+// Just enough of a DOM for files.js, clipboard.js and devicebar.js under
+// node: elements that hold children, attributes and click listeners, a
+// window and a body, and animation frames on timers. installDom puts it on
+// globalThis.
 
 export class FakeElement extends EventTarget {
   children = [];
   dataset = {};
+  classList = new Set(); // add and has, as a DOMTokenList has
   #attrs = new Set();
 
   constructor(tag) {
@@ -30,6 +32,10 @@ export class FakeElement extends EventTarget {
 
   hasAttribute(name) {
     return this.#attrs.has(name);
+  }
+
+  setAttribute(name) {
+    this.#attrs.add(name);
   }
 
   toggleAttribute(name, force = !this.#attrs.has(name)) {
@@ -61,6 +67,7 @@ export function installDom() {
       if (tag === 'a') el.addEventListener('click', () => saved.push({ name: el.download, href: el.href }));
       return el;
     },
+    createElementNS: (_, tag) => new FakeElement(tag),
   };
   globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0);
   // The page's long timers, clearing rows and revoking URLs, must not keep
