@@ -788,15 +788,23 @@ The compositor drops a keysym its layout lacks, a Wayland client cannot add
 one, and the portal does not say what the layout has. ASCII is on every
 Latin layout, so text that is all ASCII types as keysyms; any other text is
 pasted whole: offered as the clipboard, then Ctrl+V, then 100 ms for the
-program to read it before the next input. The clipboard gets back the text
-it held a second after the last paste, unless something was copied
-meanwhile. Putting it back as soon as the offer was read failed on GNOME
-46: mutter's clipboard manager reads every new offer at once, so the probe
-window then pasted the old text, the next paste read nothing, and
-xdg-desktop-portal crashed, leaving the remote desktop session behind. The
-timed version passes on GNOME 46, GNOME 49 and KDE Plasma 6.7. Ctrl+V does
-not paste in a terminal, and an image on the clipboard cannot be put back;
-both are known limits.
+program to read it before the next input. A second after the last paste
+the clipboard gets back the user's text, unless something was copied
+meanwhile: what a program copied or the page set, as last seen, or before
+either, what was there when the session began. The portal reports only
+changes, so the first paste reads that, and GNOME 46, GNOME 49 and KDE
+Plasma 6.7 all answer the read. A paste never counts as the user's text,
+or the next paste would put the last one back. Where there is no text to
+put back (an image, or nothing), empty text is offered in place of the
+pasted text rather than leave it there, and a clipboard manager that read
+the paste's offer reads the empty one too. Putting it back as soon as
+the offer was read failed on GNOME 46: mutter's clipboard manager reads
+every new offer at once, so the probe window then pasted the old text, the
+next paste read nothing, and xdg-desktop-portal crashed, leaving the remote
+desktop session behind. The timed version passes on GNOME 46, GNOME 49 and
+KDE Plasma 6.7. Ctrl+V does not paste in a terminal, an image on the
+clipboard cannot be put back, and a clipboard manager keeps the pasted
+text in its history; all three are known limits.
 
 ### The page types through a hidden text box
 

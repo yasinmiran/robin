@@ -5,16 +5,19 @@ package wayland
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"slices"
-	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/godbus/dbus/v5"
 )
 
-// recorder stands in for the portal, recording what is asked of it.
+// recorder stands in for the portal, recording what is asked of it. Its
+// SelectionRead fails, as with nothing on the clipboard.
 type recorder struct {
 	dbus.BusObject // methods besides Call are not used
 	mu             sync.Mutex
@@ -30,13 +33,28 @@ func (r *recorder) Call(method string, _ dbus.Flags, args ...any) *dbus.Call {
 		if args[3].(uint32) == 1 {
 			dir = "down"
 		}
-		r.calls = append(r.calls, "key "+string(rune(args[2].(int32)&0xffff))+" "+dir)
+		r.calls = append(r.calls, "key "+symName(args[2].(int32))+" "+dir)
 	case ifaceClipboard + ".SetSelection":
 		r.calls = append(r.calls, "offer")
+	case ifaceClipboard + ".SelectionRead":
+		r.calls = append(r.calls, "read")
+		return &dbus.Call{Err: errors.New("no selection owner")}
 	default:
 		r.calls = append(r.calls, method)
 	}
 	return &dbus.Call{}
+}
+
+// symName shows a keysym as its character where it is printable Latin-1,
+// and by its name or number otherwise.
+func symName(sym int32) string {
+	switch {
+	case sym == 0xffe3:
+		return "Control_L"
+	case 0x20 < sym && sym < 0x7f, 0xa0 < sym && sym <= 0xff, 0x1000000 < sym && unicode.IsPrint(rune(sym-0x1000000)):
+		return string(rune(sym & 0xffffff))
+	}
+	return fmt.Sprintf("%#x", sym)
 }
 
 func (r *recorder) take() []string {
@@ -48,13 +66,16 @@ func (r *recorder) take() []string {
 }
 
 // recorded is a desktop whose portal is a recorder, with the clipboard
-// holding held.
+// holding held as the user's text, or with none the agent knows of.
 func recorded(withClipboard bool, held string) (*Desktop, *recorder) {
 	r := &recorder{}
 	s := &portalSession{p: &portal{obj: r}, handle: "/session"}
 	d := &Desktop{in: &input{s: s, held: map[string]uint32{}, buttons: map[int32]bool{}}}
 	if withClipboard {
-		d.clip = &clipboard{s: s, updates: make(chan string, 1), held: held, heldOK: held != ""}
+		d.clip = &clipboard{
+			s: s, updates: make(chan string, 1), log: slog.New(slog.DiscardHandler),
+			held: held, heldOK: held != "", known: held != "",
+		}
 	}
 	return d, r
 }
@@ -65,7 +86,24 @@ func (c *clipboard) offered() string {
 	return c.text
 }
 
-var ctrlV = []string{"key ￣ down", "key v down", "key v up", "key ￣ up"}
+// restoreNow runs the put-back the last paste armed, as restoreAfter
+// passing would, and returns what that asked of the portal.
+func (d *Desktop) restoreNow(t *testing.T, r *recorder) []string {
+	t.Helper()
+	p := &d.clip.paste
+	p.mu.Lock()
+	p.timer.Reset(0)
+	p.mu.Unlock()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		if got := r.take(); len(got) > 0 {
+			return got
+		}
+	}
+	t.Fatal("the put-back asked nothing of the portal")
+	return nil
+}
+
+var ctrlV = []string{"key Control_L down", "key v down", "key v up", "key Control_L up"}
 
 func TestTypeASCII(t *testing.T) {
 	d, r := recorded(true, "kept")
@@ -100,8 +138,7 @@ func TestTypePastes(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.take()
-	time.Sleep(restoreAfter + 200*time.Millisecond)
-	if got := r.take(); !slices.Equal(got, []string{"offer"}) {
+	if got := d.restoreNow(t, r); !slices.Equal(got, []string{"offer"}) {
 		t.Errorf("portal got %q, want the clipboard put back once", got)
 	}
 	if got := d.clip.offered(); got != "kept" {
@@ -109,8 +146,37 @@ func TestTypePastes(t *testing.T) {
 	}
 }
 
+// TestTypePasteLeavesNoText checks typed text does not stay on a clipboard
+// that held none the agent knows of, and is never taken for the user's.
+func TestTypePasteLeavesNoText(t *testing.T) {
+	d, r := recorded(true, "")
+	if err := d.Type(t.Context(), "日本"); err != nil {
+		t.Fatal(err)
+	}
+	// What was there before the session is read once, before the first
+	// paste; here there is nothing.
+	if got, want := r.take(), slices.Concat([]string{"read", "offer"}, ctrlV); !slices.Equal(got, want) {
+		t.Errorf("portal got %q, want %q", got, want)
+	}
+	d.restoreNow(t, r)
+	if got := d.clip.offered(); got != "" {
+		t.Errorf("clipboard holds %q after the paste, want empty text", got)
+	}
+	if err := d.Type(t.Context(), "€"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := r.take(), append([]string{"offer"}, ctrlV...); !slices.Equal(got, want) {
+		t.Errorf("portal got %q, want %q", got, want)
+	}
+	d.restoreNow(t, r)
+	if got := d.clip.offered(); got != "" {
+		t.Errorf("clipboard holds %q after a second paste, want empty text", got)
+	}
+}
+
 func TestTypePasteYieldsToCopies(t *testing.T) {
-	// The browser sets the clipboard: nothing goes back over it.
+	// The browser sets the clipboard: nothing goes back over it, and the
+	// next paste puts the browser's text back.
 	d, r := recorded(true, "kept")
 	if err := d.Type(t.Context(), "日本"); err != nil {
 		t.Fatal(err)
@@ -118,31 +184,34 @@ func TestTypePasteYieldsToCopies(t *testing.T) {
 	if err := d.SetClipboard("newer"); err != nil {
 		t.Fatal(err)
 	}
-	d.clip.putBack()
-	if got := d.clip.offered(); got != "newer" {
-		t.Errorf("clipboard %q, want the browser's newer text", got)
+	r.take()
+	if err := d.clip.putBack(); err != nil || len(r.take()) != 0 || d.clip.offered() != "newer" {
+		t.Errorf("put-back over the browser's text: %v, clipboard %q", err, d.clip.offered())
 	}
-
-	// The clipboard held no text: there is nothing to put back.
-	d, r = recorded(true, "")
 	if err := d.Type(t.Context(), "日本"); err != nil {
 		t.Fatal(err)
 	}
 	r.take()
-	d.clip.putBack()
-	if got := r.take(); len(got) != 0 {
-		t.Errorf("portal got %q after the paste, want nothing put back", got)
+	d.restoreNow(t, r)
+	if got := d.clip.offered(); got != "newer" {
+		t.Errorf("clipboard put back to %q, want the browser's text", got)
 	}
 
-	// The session ends: what the paste replaced goes back at once.
+	// The session ends: what the paste replaced goes back at once, and
+	// only once.
 	d, r = recorded(true, "kept")
 	if err := d.Type(t.Context(), "日本"); err != nil {
 		t.Fatal(err)
 	}
 	r.take()
-	d.clip.putBack()
+	if err := d.clip.putBack(); err != nil {
+		t.Fatal(err)
+	}
 	if got := r.take(); !slices.Equal(got, []string{"offer"}) || d.clip.offered() != "kept" {
 		t.Errorf("portal got %q, clipboard %q; want kept put back", got, d.clip.offered())
+	}
+	if err := d.clip.putBack(); err != nil || len(r.take()) != 0 {
+		t.Errorf("a second put-back: %v", err)
 	}
 }
 
@@ -163,15 +232,21 @@ func TestTypeCancelled(t *testing.T) {
 	if err := d.Type(ctx, "abc"); !errors.Is(err, context.Canceled) {
 		t.Errorf("Type = %v, want cancelled", err)
 	}
-	start := time.Now()
-	if err := d.Type(ctx, "日本"); err != nil {
-		t.Fatal(err)
+	if err := d.Type(ctx, "日本"); !errors.Is(err, context.Canceled) {
+		t.Errorf("paste = %v, want cancelled", err)
 	}
-	if time.Since(start) >= pasteSettle {
-		t.Error("a cancelled paste waited to settle")
+	if got := r.take(); len(got) != 0 {
+		t.Errorf("a cancelled Type asked the portal for %q", got)
 	}
-	if got := strings.Join(r.take(), ","); !strings.HasPrefix(got, "offer") {
-		t.Errorf("portal got %q", got)
+
+	// A context that ends while the paste settles ends the wait.
+	ctx, cancel = context.WithTimeout(t.Context(), pasteSettle/10)
+	defer cancel()
+	if err := d.Type(ctx, "日本"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("paste past its deadline = %v", err)
+	}
+	if got, want := r.take(), append([]string{"offer"}, ctrlV...); !slices.Equal(got, want) {
+		t.Errorf("portal got %q, want %q", got, want)
 	}
 }
 

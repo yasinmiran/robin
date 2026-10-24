@@ -243,13 +243,7 @@ func TestAttachStreamsAndDrives(t *testing.T) {
 		if got := p.entered(mark); got != text {
 			t.Errorf("entered %q, want %q", got, text)
 		}
-		time.Sleep(restoreAfter + 500*time.Millisecond)
-		mark = p.mark()
-		tap(t, d, "F2")
-		ev := p.await(t, mark, func(e probeEvent) bool { return e.Ev == "clipboard" || e.Ev == "clipboard-error" })
-		if ev.Text != "from-session" {
-			t.Errorf("clipboard after the paste holds %+v, want from-session back", ev)
-		}
+		awaitClipboard(t, p, d, "from-session")
 	})
 
 	t.Run("cursor", func(t *testing.T) {
@@ -265,6 +259,56 @@ func TestAttachStreamsAndDrives(t *testing.T) {
 
 	d.Close()
 	checkTornDown(t)
+}
+
+// TestAttachPasteKeepsClipboardFromBefore pastes into a desktop whose
+// clipboard a program took before the session began, which the portal
+// need not report, and checks the paste puts that back.
+func TestAttachPasteKeepsClipboardFromBefore(t *testing.T) {
+	needSession(t)
+	p := startProbe(t)
+	// The probe takes the clipboard during a session that ends before the
+	// one under test begins. Under mutter 49 a window that comes up below a
+	// pointer at rest gets no input until the pointer moves, so it moves in
+	// first, and a click gives the probe the keyboard.
+	before, _ := open(t, true)
+	defer before.Close()
+	mark := p.mark()
+	send(t, before, protocol.Control{T: protocol.ControlMove, X: 101, Y: 103})
+	send(t, before, protocol.Control{T: protocol.ControlMove, X: 301, Y: 203})
+	p.await(t, mark, func(e probeEvent) bool { return e.Ev == "motion" && near(e.X, 301) && near(e.Y, 203) })
+	send(t, before, protocol.Control{T: protocol.ControlButton, Button: 0, Down: true})
+	send(t, before, protocol.Control{T: protocol.ControlButton, Button: 0})
+	p.await(t, mark, func(e probeEvent) bool { return e.Ev == "press" })
+	tap(t, before, "F3")
+	select {
+	case text := <-before.Clipboard():
+		if text != "from-session" {
+			t.Fatalf("desktop copied %q, want from-session", text)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the probe's clipboard never reached the agent")
+	}
+	before.Close()
+	checkTornDown(t)
+
+	d, _ := open(t, true)
+	defer d.Close()
+	select {
+	case text := <-d.Clipboard():
+		t.Logf("the portal reported the clipboard from before the session: %q", text)
+	case <-time.After(time.Second):
+		t.Log("the portal did not report the clipboard from before the session")
+	}
+	mark = p.mark()
+	if err := d.Type(t.Context(), "日本"); err != nil {
+		t.Fatal(err)
+	}
+	p.await(t, mark, func(e probeEvent) bool { return e.Ev == "paste" || e.Ev == "paste-error" })
+	if got := p.entered(mark); got != "日本" {
+		t.Errorf("entered %q, want 日本", got)
+	}
+	awaitClipboard(t, p, d, "from-session")
 }
 
 func TestAttachEndsWhenTheStreamDies(t *testing.T) {
@@ -509,6 +553,22 @@ func send(t *testing.T, d *Desktop, m protocol.Control) {
 func tap(t *testing.T, d *Desktop, key string) {
 	send(t, d, protocol.Control{T: protocol.ControlKey, Key: key, Code: key, Down: true})
 	send(t, d, protocol.Control{T: protocol.ControlKey, Key: key, Code: key})
+}
+
+// awaitClipboard has the probe read the clipboard, with F2, until it reads
+// want, which a put-back after a paste takes restoreAfter to bring.
+func awaitClipboard(t *testing.T, p *probe, d *Desktop, want string) {
+	t.Helper()
+	var ev probeEvent
+	for deadline := time.Now().Add(restoreAfter + 5*time.Second); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
+		mark := p.mark()
+		tap(t, d, "F2")
+		ev = p.await(t, mark, func(e probeEvent) bool { return e.Ev == "clipboard" || e.Ev == "clipboard-error" })
+		if ev.Ev == "clipboard" && ev.Text == want {
+			return
+		}
+	}
+	t.Fatalf("the clipboard holds %+v, want %q", ev, want)
 }
 
 func frameChanges(d *Desktop, before []byte) bool {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"slices"
 	"sync"
@@ -32,18 +33,24 @@ type clipboard struct {
 	updates chan string
 	stops   []func()
 
+	log *slog.Logger
+
 	mu   sync.Mutex
-	text string
-	// held is the text on the desktop's clipboard, as last offered or read;
-	// heldOK is false when what is there now is not text.
+	text string // what the agent offers
+	// held is the user's clipboard: the text a program on the desktop
+	// copied or the page set, as last seen, or what was there before the
+	// session, once a paste has read it. heldOK is false when what is there
+	// is not text, and known when held is any of these. A paste of typed
+	// text changes none of them.
 	held   string
 	heldOK bool
+	known  bool
 	// paste puts back what pastes of typed text replaced.
 	paste pasteRestore
 }
 
-func newClipboard(s *portalSession) (*clipboard, error) {
-	c := &clipboard{s: s, updates: make(chan string, 1)}
+func newClipboard(s *portalSession, log *slog.Logger) (*clipboard, error) {
+	c := &clipboard{s: s, updates: make(chan string, 1), log: log}
 	owner, stopOwner, err := s.p.sigs.watch(portalPath, ifaceClipboard, "SelectionOwnerChanged")
 	if err != nil {
 		return nil, err
@@ -59,10 +66,13 @@ func newClipboard(s *portalSession) (*clipboard, error) {
 	return c, nil
 }
 
-// set offers text to the desktop as its clipboard, in place of whatever
-// pastes of typed text were to put back.
+// set offers the page's text to the desktop as its clipboard, in place of
+// whatever pastes of typed text were to put back.
 func (c *clipboard) set(text string) error {
 	c.paste.forget()
+	c.mu.Lock()
+	c.held, c.heldOK, c.known = text, true, true
+	c.mu.Unlock()
 	return c.offer(text)
 }
 
@@ -70,7 +80,6 @@ func (c *clipboard) set(text string) error {
 func (c *clipboard) offer(text string) error {
 	c.mu.Lock()
 	c.text = text
-	c.held, c.heldOK = text, true
 	c.mu.Unlock()
 	return c.s.p.obj.Call(ifaceClipboard+".SetSelection", 0, c.s.handle, vardict{
 		"mime_types": dbus.MakeVariant(textMimes),
@@ -132,16 +141,16 @@ func (c *clipboard) follow(owner <-chan *dbus.Signal) {
 		}
 		// What a program copies is the user's: no paste puts back over it.
 		c.paste.forget()
-		mime := pickText(mimeList(opts["mime_types"].Value()))
 		var text string
-		err := errors.New("not text")
-		if mime != "" {
-			text, err = c.read(mime)
+		ok := false
+		if mime := pickText(mimeList(opts["mime_types"].Value())); mime != "" {
+			t, err := c.read(mime)
+			text, ok = t, err == nil
 		}
 		c.mu.Lock()
-		c.held, c.heldOK = text, err == nil
+		c.held, c.heldOK, c.known = text, ok, true
 		c.mu.Unlock()
-		if err != nil {
+		if !ok {
 			continue
 		}
 		select {

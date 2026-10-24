@@ -30,14 +30,18 @@ const (
 // keysym its layout lacks, a Wayland client cannot add one, and the portal
 // does not say what the layout has, but every Latin layout has ASCII. A
 // paste offers the text as the clipboard and presses Ctrl+V; a second
-// later the clipboard gets back the text it held before, if it held text
-// and nothing has been copied since. Without the clipboard, everything goes
-// as keysyms and only what the layout has is typed.
+// later the clipboard gets back the user's text, unless something has been
+// copied since, or empty text where the agent knows of none, so the typed
+// text does not stay there. Without the clipboard, everything goes as
+// keysyms and only what the layout has is typed.
 func (d *Desktop) Type(ctx context.Context, text string) error {
 	if d.in.viewOnly {
 		return errViewOnly
 	}
 	if d.clip != nil && !ascii(text) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		return d.paste(ctx, printable(text))
 	}
 	for _, r := range text {
@@ -84,9 +88,10 @@ func (d *Desktop) paste(ctx context.Context, text string) error {
 	defer t.Stop()
 	select {
 	case <-t.C:
+		return nil
 	case <-ctx.Done():
+		return ctx.Err()
 	}
-	return nil
 }
 
 // pasteRestore is what a run of pastes is to put back on the clipboard.
@@ -96,7 +101,7 @@ type pasteRestore struct {
 	// does nothing.
 	gen   uint64
 	run   bool   // pastes have replaced the clipboard
-	ok    bool   // saved is text to put back
+	ok    bool   // saved is the user's text
 	saved string // what the clipboard held before the first of them
 	timer *time.Timer
 }
@@ -112,8 +117,10 @@ func (p *pasteRestore) forget() {
 	}
 }
 
-// offerPaste offers text for a paste, keeping what the clipboard held
-// before the first of a run of pastes.
+// offerPaste offers text for a paste, keeping the user's clipboard from
+// before the first of a run of pastes. Before the first copy the agent
+// sees, that is whatever was there when the session began, which the
+// portal does not report, so it is read once.
 func (c *clipboard) offerPaste(text string) error {
 	p := &c.paste
 	p.mu.Lock()
@@ -123,6 +130,17 @@ func (c *clipboard) offerPaste(text string) error {
 		p.timer.Stop()
 	}
 	if !p.run {
+		c.mu.Lock()
+		known := c.known
+		c.mu.Unlock()
+		if !known {
+			before, err := c.read(textMimes[0])
+			c.mu.Lock()
+			if !c.known {
+				c.held, c.heldOK, c.known = before, err == nil, true
+			}
+			c.mu.Unlock()
+		}
 		c.mu.Lock()
 		p.run, p.saved, p.ok = true, c.held, c.heldOK
 		c.mu.Unlock()
@@ -140,30 +158,40 @@ func (c *clipboard) armPutBack() {
 	p.timer = time.AfterFunc(restoreAfter, func() {
 		p.mu.Lock()
 		defer p.mu.Unlock()
-		if p.gen == gen {
-			c.putBackLocked()
+		if p.gen != gen {
+			return
+		}
+		if err := c.putBackLocked(); err != nil {
+			c.log.Warn("put the clipboard back after a paste", "err", err)
 		}
 	})
 }
 
 // putBack puts back at once what pastes replaced, as the session ends.
-func (c *clipboard) putBack() {
+func (c *clipboard) putBack() error {
 	p := &c.paste
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.timer != nil {
 		p.timer.Stop()
 	}
-	c.putBackLocked()
+	return c.putBackLocked()
 }
 
-func (c *clipboard) putBackLocked() {
+// putBackLocked offers the user's text again, or empty text when there is
+// none to put back. p.mu must be held, which also keeps the next paste's
+// offer from landing before this one.
+func (c *clipboard) putBackLocked() error {
 	p := &c.paste
-	if p.run && p.ok {
-		c.offer(p.saved)
-	}
 	p.gen++
+	if !p.run {
+		return nil
+	}
 	p.run = false
+	if !p.ok {
+		return c.offer("")
+	}
+	return c.offer(p.saved)
 }
 
 // tap presses and releases sym.
