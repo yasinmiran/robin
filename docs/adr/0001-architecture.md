@@ -1713,11 +1713,19 @@ loopback port. Two of the CLI's surfaces failed that reading.
   page was back on the tunnel 4151 ms after UDP was dropped, on a machine
   running seven other tracks' suites (about three seconds when measured
   alone, before the check, which costs one frame read per connection).
-- The page server closes a keep-alive connection after 30 s idle and a
-  refused request at once, and holds at most 32 connections; a browser
-  uses at most six for the page's files and one websocket. Another user can
-  still fill those 32 and slow the page's loading: loopback TCP carries no
-  peer identity to refuse them by.
+- The page server closes a keep-alive connection after 30 s idle, one that
+  sends no whole request header within 2 s, and a refused request at once,
+  and holds at most 32 connections; a browser uses at most six for the
+  page's files and one websocket. Loopback TCP carries no peer identity to
+  refuse a stranger's by, so a connection past 32 makes room rather than
+  waits for it: `http.Server.ConnState` counts them, and the oldest one
+  idle or silent is closed, else the oldest inside a request, never the
+  newcomer and never the hijacked websocket. A first cap through
+  `netutil.LimitListener` waited instead, and another user holding all 32
+  queued the user's browser behind them: its fetch of the launch link never
+  arrived, so the second-use warning never came and the tab just loaded.
+  The CLI now also says when the launch link is first used, so a tab still
+  loading after that line is a takeover the user can see.
 - Smaller bounds from the same reading: `sshmux.Master.Output` stops a
   command past 1 MiB (the probe's report is at most 1248 bytes on the
   hosts in `internal/probe/testdata`), a verbose agent log without

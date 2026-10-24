@@ -7,9 +7,11 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // serveWith starts s, set up by the caller, and stops it at the end of t.
@@ -93,41 +95,87 @@ func TestRefusalClosesTheConnection(t *testing.T) {
 	}
 }
 
-// TestConnectionsAreCapped: past maxConns open connections the server takes
-// no more until one closes, so another user of this machine cannot run the
-// CLI out of file descriptors through the page server.
-func TestConnectionsAreCapped(t *testing.T) {
-	s, _ := start(t)
-	var held []net.Conn
+// hold opens maxConns connections the way another user of this machine
+// could keep them: silent, idle after a request, or stalled inside one.
+func hold(t *testing.T, s *Server, how string) {
+	t.Helper()
 	for range maxConns {
 		c, err := net.Dial("tcp", s.host)
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer c.Close()
-		if resp := get(t, c, bufio.NewReader(c), s.host, "/"); resp.StatusCode != http.StatusOK {
-			t.Fatalf("GET /: %s", resp.Status)
+		t.Cleanup(func() { c.Close() })
+		switch how {
+		case "idle":
+			if resp := get(t, c, bufio.NewReader(c), s.host, "/"); resp.StatusCode != http.StatusOK {
+				t.Fatalf("GET /: %s", resp.Status)
+			}
+		case "stalled":
+			io.WriteString(c, "GET / HTTP/1.1\r\nHost: "+s.host+"\r\n")
 		}
-		held = append(held, c)
 	}
+}
 
-	extra, err := net.Dial("tcp", s.host)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer extra.Close()
-	r := bufio.NewReader(extra)
-	io.WriteString(extra, "GET / HTTP/1.1\r\nHost: "+s.host+"\r\n\r\n")
-	extra.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
-	if _, err := r.ReadByte(); !errors.Is(err, os.ErrDeadlineExceeded) {
-		t.Fatalf("connection %d was served: %v", maxConns+1, err)
-	}
+// TestFullServerStillServesTheLaunchLink: another user of this machine can
+// fill every connection the page server holds, but the browser's fresh one
+// is served at once, so the launch link reaches the user's browser and a
+// race for it is seen on stderr rather than left as a tab that never loads.
+// The server never holds more than maxConns open while it makes room.
+func TestFullServerStillServesTheLaunchLink(t *testing.T) {
+	for _, how := range []string{"silent", "idle", "stalled"} {
+		t.Run(how, func(t *testing.T) {
+			s, _ := start(t)
+			hold(t, s, how)
+			// Every held connection is in the server's hands before the
+			// browser's arrives, as it would be for one held in advance.
+			waitOpen(t, s, maxConns)
 
-	held[0].Close()
-	extra.SetReadDeadline(time.Now().Add(5 * time.Second))
-	resp, err := http.ReadResponse(r, nil)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		t.Fatalf("after one closed: %v, %v", resp, err)
+			c, err := net.Dial("tcp", s.host)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.Close()
+			c.SetDeadline(time.Now().Add(time.Second))
+			io.WriteString(c, "GET "+strings.TrimPrefix(s.LaunchURL(), "http://"+s.host)+" HTTP/1.1\r\nHost: "+s.host+"\r\n\r\n")
+			resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+			if err != nil {
+				t.Fatalf("the launch link on a full server: %v", err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/#"+token(s) {
+				t.Fatalf("the launch link on a full server: %s to %q", resp.Status, resp.Header.Get("Location"))
+			}
+			if peak := s.conns.Peak(); peak > maxConns {
+				t.Fatalf("the server held %d connections at once, the limit is %d", peak, maxConns)
+			}
+		})
 	}
-	resp.Body.Close()
+}
+
+// TestFullServerKeepsTheWebsocket: making room never costs the page its
+// websocket, however many connections arrive after it.
+func TestFullServerKeepsTheWebsocket(t *testing.T) {
+	s, _ := start(t)
+	ws, b := connect(t, s)
+	hold(t, s, "idle")
+	hold(t, s, "silent")
+	if err := b.Send(protocol.Message{Type: protocol.TypeConfig}); err != nil {
+		t.Fatalf("the websocket after %d more connections: %v", 2*maxConns, err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, _, err := ws.Read(ctx); err != nil {
+		t.Fatalf("the websocket after %d more connections: %v", 2*maxConns, err)
+	}
+}
+
+// waitOpen waits until the server counts n open connections.
+func waitOpen(t *testing.T, s *Server, n int) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); s.conns.Open() < n; {
+		if time.Now().After(deadline) {
+			t.Fatalf("the server counts %d connections, want %d", s.conns.Open(), n)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }

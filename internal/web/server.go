@@ -29,7 +29,6 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"golang.org/x/net/netutil"
 )
 
 // static holds the page's own files only: static/test holds its unit tests,
@@ -53,8 +52,13 @@ var ErrClosed = errors.New("web: server closed")
 type Options struct {
 	// Addr is the loopback address to bind. Empty means "127.0.0.1:0".
 	Addr string
+	// LaunchUsed, if set, is called when the launch link is opened for its
+	// one use, by the user's browser or by someone who read the link first.
+	LaunchUsed func()
 	// LaunchReused, if set, is called each time the launch link is opened
 	// after its one use.
+	//
+	// Both run on the request's goroutine and may be called concurrently.
 	LaunchReused func()
 }
 
@@ -63,6 +67,10 @@ type Options struct {
 // of file descriptors through it. A browser opens at most six connections
 // to one host for the page's files, and the websocket is one more.
 const maxConns = 32
+
+// readHeaderTimeout closes a connection that has not sent a whole request
+// header in this long. A request on loopback arrives at once.
+const readHeaderTimeout = 2 * time.Second
 
 // idleTimeout closes a keep-alive connection that carries no request for
 // this long. The page fetches its files within a second of loading and then
@@ -80,7 +88,9 @@ type Server struct {
 
 	launch      string // the secret in LaunchURL
 	launchSpent atomic.Bool
+	used        func()
 	reused      func()
+	conns       *connLimit
 
 	live     atomic.Bool
 	accept   chan *Browser
@@ -121,7 +131,9 @@ func Listen(o Options) (*Server, error) {
 		headers: securityHeaders(host),
 		idle:    idleTimeout,
 		launch:  hex.EncodeToString(launch[:]),
+		used:    o.LaunchUsed,
 		reused:  o.LaunchReused,
+		conns:   newConnLimit(maxConns),
 		accept:  make(chan *Browser),
 		done:    make(chan struct{}),
 	}, nil
@@ -148,13 +160,14 @@ func (s *Server) Serve(ctx context.Context) error {
 	defer s.doneOnce.Do(func() { close(s.done) })
 	srv := &http.Server{
 		Handler:           s.handler(),
-		ReadHeaderTimeout: 10 * time.Second,
+		ReadHeaderTimeout: readHeaderTimeout,
 		IdleTimeout:       s.idle,
+		ConnState:         s.conns.track,
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
 	stop := context.AfterFunc(ctx, func() { srv.Close() })
 	defer stop()
-	err := srv.Serve(netutil.LimitListener(s.ln, maxConns))
+	err := srv.Serve(s.ln)
 	if ctx.Err() != nil {
 		return nil
 	}
@@ -203,6 +216,9 @@ func (s *Server) serveLaunch(w http.ResponseWriter, r *http.Request) {
 		}
 		deny(w, http.StatusNotFound)
 		return
+	}
+	if s.used != nil {
+		s.used()
 	}
 	w.Header().Set("Location", "/#"+s.token)
 	w.WriteHeader(http.StatusSeeOther)

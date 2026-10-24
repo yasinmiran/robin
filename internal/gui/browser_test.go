@@ -125,9 +125,11 @@ func TestShowPageKeepsTheTokenOffCommandLines(t *testing.T) {
 	}
 }
 
-// TestLaunchLinkUsedTwiceIsSaid: a second fetch of the launch link means the
-// user's browser or someone else's got the page first, and the user hears of
-// it on stderr, where the browser would only show Not Found.
+// TestLaunchLinkUsedTwiceIsSaid: the first fetch of the launch link is said
+// on stderr, so a tab still loading after it means someone else has the
+// page. A second fetch means the user's browser or someone else's got the
+// page first, and the user hears of it on stderr too, where the browser
+// would only show Not Found.
 func TestLaunchLinkUsedTwiceIsSaid(t *testing.T) {
 	var stderr bytes.Buffer
 	srv, err := listenPage(Options{Stderr: &stderr})
@@ -147,6 +149,9 @@ func TestLaunchLinkUsedTwiceIsSaid(t *testing.T) {
 		resp.Body.Close()
 		if resp.StatusCode != want {
 			t.Fatalf("fetch %d: %s, want %d", i+1, resp.Status, want)
+		}
+		if said := strings.Contains(stderr.String(), "a browser opened the page"); !said {
+			t.Fatalf("after fetch %d stderr is %q, want the first use said", i+1, stderr.String())
 		}
 		if said := strings.Contains(stderr.String(), "launch link was opened again"); said != (i == 1) {
 			t.Fatalf("after fetch %d stderr is %q", i+1, stderr.String())

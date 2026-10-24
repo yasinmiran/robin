@@ -9,12 +9,20 @@ import (
 )
 
 // listenPage binds the page server, which says on stderr when its launch
-// link is opened a second time: the browser that did gets Not Found, and if
-// that was the user's, someone else opened the page first.
+// link is opened, so a tab of the user's still loading after that means
+// someone else has the page, and again when it is opened a second time: the
+// browser that did gets Not Found, and if that was the user's, someone else
+// opened the page first. o.Stderr takes both from request goroutines.
 func listenPage(o Options) (*web.Server, error) {
-	return web.Listen(web.Options{Addr: o.Listen, LaunchReused: func() {
-		fmt.Fprintln(o.Stderr, "robin: the page's launch link was opened again; if your browser shows Not Found, someone else on this machine opened the page first: end the session with Ctrl+C")
-	}})
+	return web.Listen(web.Options{
+		Addr: o.Listen,
+		LaunchUsed: func() {
+			fmt.Fprintln(o.Stderr, "robin: a browser opened the page")
+		},
+		LaunchReused: func() {
+			fmt.Fprintln(o.Stderr, "robin: the page's launch link was opened again; if your browser shows Not Found, someone else on this machine opened the page first: end the session with Ctrl+C")
+		},
+	})
 }
 
 // showPage brings the user to the page: the browser opener gets the launch

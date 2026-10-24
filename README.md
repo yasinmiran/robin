@@ -619,11 +619,15 @@ found after, though a browser the opener starts keeps it on its own command
 line for as long as it runs. Someone who reads the link and opens it before
 your browser does gets the page; your browser then shows Not Found, and the
 CLI says on stderr that the link was opened again, so end the session with
-Ctrl+C. `--no-browser` prints the page URL, token included, on stdout
-instead, and an opener that fails to start has it printed on stderr. The
-page server closes a connection that sits idle for 30 s and holds at most 32
-at once, so another user can slow the page's loading but cannot run the CLI
-out of file descriptors through it.
+Ctrl+C. The CLI also says when a browser first opens the page, so a tab of
+yours still loading after that line means the same. `--no-browser` prints
+the page URL, token included, on stdout instead, and an opener that fails to
+start has it printed on stderr. The page server closes a connection that
+sits idle for 30 s or sends no request within 2 s, and holds at most 32 at
+once: past that it makes room for a new one by closing the oldest that is
+idle or has sent nothing, never the page's websocket. Another user can
+neither run the CLI out of file descriptors through it nor keep your
+browser waiting behind connections they hold.
 
 The ICE-TCP tunnel's client end, where the browser connects, is a loopback
 TCP port in every mode, so another user of the client machine can connect to
