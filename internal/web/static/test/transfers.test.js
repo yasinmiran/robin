@@ -104,3 +104,17 @@ test('an offer heard again is left as it is, and removal is final', () => {
   assert.equal(list.saved('d1', 'x'), false);
   assert.equal(statusOf({ state: 'from-the-future' }), 'from-the-future');
 });
+
+test('the host withdraws only what it offered', () => {
+  const list = new Transfers();
+  list.upload('up-1', 'a', 1);
+  list.sending('up-1');
+  list.propose('up-2', 'b', 2);
+  for (const id of ['up-1', 'up-2', 'nobody']) assert.equal(list.withdraw(id), false, id);
+  assert.equal(list.get('up-1').state, SENDING);
+  assert.equal(list.get('up-2').state, PENDING);
+  list.offer('d1', 'c', 3);
+  list.fetch('d1');
+  assert.equal(list.withdraw('d1'), true);
+  assert.equal(list.get('d1'), undefined);
+});

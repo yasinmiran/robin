@@ -143,6 +143,14 @@ export class Transfers {
   remove(id) {
     if (this.#list.delete(id)) this.#onChange();
   }
+
+  // withdraw removes a download the host no longer offers, and reports
+  // whether there was one: the host has no say over the page's uploads.
+  withdraw(id) {
+    if (this.get(id)?.dir !== 'down') return false;
+    this.remove(id);
+    return true;
+  }
 }
 
 // statusOf is the line a transfer shows beside its name.

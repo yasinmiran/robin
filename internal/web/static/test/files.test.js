@@ -106,3 +106,18 @@ test('files pasted wait for a click on Upload', async () => {
   assert.equal(files.list().some((t) => t.name === 'old.zip'), false);
   assert.equal(bulks.length, 1);
 });
+
+test('the host cannot withdraw an upload', async () => {
+  const before = bulks.length;
+  files.upload([{ name: 'w1.bin', size: 1 }, { name: 'w2.bin', size: 2 }]);
+  const ids = files.list().filter((t) => ['w1.bin', 'w2.bin'].includes(t.name)).map((t) => t.id);
+  assert.deepEqual(files.list().filter((t) => ids.includes(t.id)).map((t) => t.state), ['sending', 'queued']);
+  for (const id of ids) dispatchControl({ t: 'file-withdraw', file: { id } });
+  await later();
+  assert.deepEqual(files.list().filter((t) => ids.includes(t.id)).map((t) => t.state), ['kept', 'kept']);
+  assert.deepEqual(bulks.slice(before).map((b) => b.header.name), ['w1.bin', 'w2.bin']);
+
+  dispatchControl({ t: 'file-offer', file: { id: 'w3', name: 'w3.bin', size: 1 } });
+  dispatchControl({ t: 'file-withdraw', file: { id: 'w3' } });
+  assert.equal(files.list().some((t) => t.id === 'w3'), false, 'an offer the host withdrew is still listed');
+});

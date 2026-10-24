@@ -51,7 +51,7 @@ export class Files {
     onControl('file-offer', ({ file }) => {
       if (file?.id) this.#transfers.offer(file.id, String(file.name ?? ''), Number(file.size ?? 0));
     });
-    onControl('file-withdraw', ({ file }) => this.#transfers.remove(file?.id));
+    onControl('file-withdraw', ({ file }) => this.#transfers.withdraw(file?.id));
     onControl('file-saved', ({ file }) => this.#transfers.saved(file?.id, String(file?.name ?? '')));
     onBulk(FILE_KIND, (h) => this.#download(h));
 
