@@ -56,6 +56,9 @@ type Message struct {
 	Code      Code       `json:"code,omitempty"` // what Error means, where the other side acts on it
 	Notice    *Notice    `json:"notice,omitempty"`
 	Resume    *Resume    `json:"resume,omitempty"`
+	// Macros and MacroChange ride TypeMacros.
+	Macros      *Macros      `json:"macros,omitempty"`
+	MacroChange *MacroChange `json:"macroChange,omitempty"`
 }
 
 // Start asks the agent to bring up a display and get ready for an offer.
@@ -200,6 +203,8 @@ type Config struct {
 	// to send each and offers its switch.
 	Mic    bool `json:"mic,omitempty"`
 	Camera bool `json:"camera,omitempty"`
+	// Macros are the user's key macros the page offers; see TypeMacros.
+	Macros *Macros `json:"macros,omitempty"`
 }
 
 // ICEServer mirrors the browser's RTCIceServer.
