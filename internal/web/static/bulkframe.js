@@ -2,12 +2,15 @@
 // on a data channel of its own the sender writes a header, binary chunks
 // of at most CHUNK_SIZE bytes and an end frame with the payload's SHA-256,
 // and the receiver answers with one verdict, done or error, and closes the
-// channel. Either side closing first cancels. Nothing here touches the DOM.
+// channel. Either side closing first cancels. The receiver grants credit
+// as its sink takes chunks: the sender sends BULK_WINDOW bytes before the
+// first and never past the latest. Nothing here touches the DOM.
 
 import { Sha256 } from './sha256.js';
 
 export const BULK_CHANNEL = 'bulk';
 export const CHUNK_SIZE = 64 * 1024;
+export const BULK_WINDOW = 512 * 1024;
 
 const limits = new Map();
 
@@ -82,5 +85,30 @@ export class Sum {
   check(frame) {
     if (frame?.t !== 'end') throw new Error('malformed bulk frame: not the end');
     if (frame.sha256 !== this.end().sha256) throw new Error('bulk transfer SHA-256 mismatch');
+  }
+}
+
+// Grant is a receiver's side of the credit: what it let the sender send,
+// what arrived and what its sink took.
+export class Grant {
+  #granted = BULK_WINDOW;
+  #arrived = 0;
+  #taken = 0;
+
+  // arrive counts n bytes that arrived, and throws once they run past the
+  // credit, which a page that cannot stop a channel reading would
+  // otherwise hold in memory.
+  arrive(n) {
+    this.#arrived += n;
+    if (this.#arrived > this.#granted) throw new Error(`bulk data past the credit: ${this.#arrived} bytes with ${this.#granted} granted`);
+  }
+
+  // take counts n bytes the sink took, and returns the credit frame to
+  // send once half a window has been taken since the last, or null.
+  take(n) {
+    this.#taken += n;
+    if (this.#granted - this.#taken > BULK_WINDOW / 2) return null;
+    this.#granted = this.#taken + BULK_WINDOW;
+    return { t: 'credit', credit: this.#granted };
   }
 }

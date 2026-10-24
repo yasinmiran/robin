@@ -8,19 +8,12 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pion/webrtc/v4"
 
 	"github.com/yasinmiran/robin/internal/protocol"
-)
-
-// A bulk sender keeps between bulkLowWater and bulkHighWater bytes queued
-// on its channel: enough to keep a fast path busy between wakeups, little
-// enough that cancelling drops at most a megabyte.
-const (
-	bulkHighWater = 1 << 20
-	bulkLowWater  = 256 << 10
 )
 
 // closeGrace is how long a failed send waits for the channel to report its
@@ -62,6 +55,8 @@ type BulkSink interface {
 // h.Size must be exactly what r holds. Cancelling ctx cancels the transfer.
 // It returns a *BulkRefusedError when the browser refuses, and
 // ErrBulkCancelled when the browser closes the channel first.
+//
+// The transfer goes no faster than the browser's credit allows.
 func (p *Peer) SendBulk(ctx context.Context, h protocol.Bulk, r io.Reader) error {
 	h.T = protocol.BulkHeader
 	if err := h.CheckHeader(); err != nil {
@@ -80,8 +75,11 @@ type bulkSender struct {
 	dc      *webrtc.DataChannel
 	opened  chan struct{}
 	closed  chan struct{}
-	low     chan struct{}
 	verdict chan protocol.Bulk
+	// credit is how many payload bytes the receiver lets the sender have
+	// sent; more ticks when it grows.
+	credit atomic.Int64
+	more   chan struct{}
 }
 
 // newBulkSender takes over dc, which nothing else may use. It must be called
@@ -90,26 +88,30 @@ type bulkSender struct {
 func newBulkSender(dc *webrtc.DataChannel) *bulkSender {
 	s := &bulkSender{
 		dc: dc, opened: make(chan struct{}), closed: make(chan struct{}),
-		low: make(chan struct{}, 1), verdict: make(chan protocol.Bulk, 1),
+		verdict: make(chan protocol.Bulk, 1), more: make(chan struct{}, 1),
 	}
+	s.credit.Store(protocol.BulkWindow)
 	var opened, closed sync.Once
 	dc.OnOpen(func() { opened.Do(func() { close(s.opened) }) })
 	dc.OnClose(func() { closed.Do(func() { close(s.closed) }) })
 	dc.OnMessage(func(m webrtc.DataChannelMessage) {
 		v, err := protocol.ParseBulk(m.Data)
+		if m.IsString && err == nil && v.T == protocol.BulkCredit {
+			if v.Credit > s.credit.Load() {
+				s.credit.Store(v.Credit)
+				select {
+				case s.more <- struct{}{}:
+				default:
+				}
+			}
+			return
+		}
 		if !m.IsString || err != nil || (v.T != protocol.BulkDone && v.T != protocol.BulkError) {
 			v = protocol.Bulk{T: protocol.BulkError, Error: "malformed verdict"}
 		}
 		select {
 		case s.verdict <- v:
 		default: // only the first verdict counts
-		}
-	})
-	dc.SetBufferedAmountLowThreshold(bulkLowWater)
-	dc.OnBufferedAmountLow(func() {
-		select {
-		case s.low <- struct{}{}:
-		default:
 		}
 	})
 	return s
@@ -129,14 +131,17 @@ func (s *bulkSender) send(ctx context.Context, h protocol.Bulk, r io.Reader) err
 	// One byte past the declared size is enough to tell r holds too much.
 	src := io.LimitReader(r, h.Size+1)
 	buf := make([]byte, protocol.BulkChunkSize)
+	var sent int64
 	for {
 		n, err := io.ReadFull(src, buf)
 		if n > 0 {
 			if err := sum.Add(buf[:n]); err != nil {
 				return err
 			}
-			for dc.BufferedAmount() > bulkHighWater {
-				if err := s.wait(ctx, s.low); err != nil {
+			// The credit bounds what waits in the channel's queue too,
+			// so cancelling drops at most a window.
+			for sent+int64(n) > s.credit.Load() {
+				if err := s.wait(ctx, s.more); err != nil {
 					return err
 				}
 			}
@@ -146,6 +151,7 @@ func (s *bulkSender) send(ctx context.Context, h protocol.Bulk, r io.Reader) err
 			if err := dc.Send(buf[:n]); err != nil {
 				return s.sendErr(ctx, err)
 			}
+			sent += int64(n)
 		}
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 			break
@@ -262,10 +268,11 @@ type bulkReceiver struct {
 	accept func(protocol.Bulk) (BulkSink, error)
 	log    *slog.Logger
 
-	mu   sync.Mutex
-	sink BulkSink
-	sum  *protocol.BulkSum
-	over bool // a verdict went out or the channel closed
+	mu    sync.Mutex
+	sink  BulkSink
+	sum   *protocol.BulkSum
+	grant *protocol.BulkGrant
+	over  bool // a verdict went out or the channel closed
 }
 
 // receiveBulk takes one transfer the remote side opened on dc. accept
@@ -294,6 +301,11 @@ func (r *bulkReceiver) message(m webrtc.DataChannelMessage) {
 		}
 		if _, err := r.sink.Write(m.Data); err != nil {
 			r.fail(err)
+			return
+		}
+		if credit, ok := r.grant.Take(len(m.Data)); ok {
+			// A send fails only once the channel is closing.
+			r.send(credit)
 		}
 	default:
 		end, err := protocol.ParseBulk(m.Data)
@@ -330,7 +342,7 @@ func (r *bulkReceiver) open(m webrtc.DataChannelMessage) error {
 	if err != nil {
 		return err
 	}
-	r.sink, r.sum = sink, protocol.NewBulkSum(h.Size)
+	r.sink, r.sum, r.grant = sink, protocol.NewBulkSum(h.Size), protocol.NewBulkGrant()
 	return nil
 }
 
@@ -349,10 +361,14 @@ func (r *bulkReceiver) fail(err error) {
 // the close instead.
 func (r *bulkReceiver) reply(v protocol.Bulk) {
 	r.over = true
+	r.send(v)
+	r.dc.Close()
+}
+
+func (r *bulkReceiver) send(v protocol.Bulk) {
 	if b, err := json.Marshal(v); err == nil {
 		_ = r.dc.SendText(string(b))
 	}
-	r.dc.Close()
 }
 
 func (r *bulkReceiver) closed() {

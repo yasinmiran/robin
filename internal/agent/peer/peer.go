@@ -35,6 +35,11 @@ const H264Fmtp = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-i
 // 256 KiB, so larger clipboard text could not cross anyway.
 const MaxControlBytes = 256 << 10
 
+// sctpReceiveBuffer holds the credit of eight bulk transfers from the
+// browser whose sinks have stalled, and room for control beside them.
+// Pion's default holds two.
+const sctpReceiveBuffer = 8*protocol.BulkWindow + 256<<10
+
 // ErrNoControl means the browser has not opened the control channel yet, so
 // nothing was sent.
 var ErrNoControl = errors.New("peer: control channel not open")
@@ -64,8 +69,8 @@ type Config struct {
 	Mic, Camera bool
 
 	MinBitrate, StartBitrate, MaxBitrate int // bits per second
-	// Unpaced sends every packet and every bulk chunk the moment it is
-	// written, as a comparison for measurements; the agent paces.
+	// Unpaced sends every packet the moment it is written, as a
+	// comparison for measurements; the agent paces.
 	Unpaced bool
 	// FeedWhileLimited hands GCC the browser's feedback while the agent
 	// sends too little to test the link, as Pion does on its own, and
@@ -190,6 +195,7 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 
 	se := webrtc.SettingEngine{}
 	se.SetSCTPMaxMessageSize(MaxControlBytes)
+	se.SetSCTPMaxReceiveBufferSize(sctpReceiveBuffer)
 	// Disconnected after 2 s lets followNomination react quickly; failing late
 	// gives the browser's ICE restart time to land.
 	se.SetICETimeouts(2*time.Second, 30*time.Second, time.Second)

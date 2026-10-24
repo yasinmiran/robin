@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { BulkRefused, Inbound, acceptBulk, onBulk, sendBulk } from '../bulk.js';
-import { CHUNK_SIZE, registerKind } from '../bulkframe.js';
+import { BULK_WINDOW, CHUNK_SIZE, registerKind } from '../bulkframe.js';
 import { FakeChannel, FakePeer } from './fakes.js';
 
 registerKind('test', 16 * 1024 * 1024);
@@ -34,7 +34,7 @@ onBulk('test', (h) => {
   return sink;
 });
 
-test('a transfer arrives whole on the far side, flow control and all', async () => {
+test('a transfer arrives whole on the far side, credit and all', async () => {
   let farChannel;
   const pc = new FakePeer((ch) => {
     farChannel = ch;
@@ -44,13 +44,13 @@ test('a transfer arrives whole on the far side, flow control and all', async () 
   const bytes = new Uint8Array(randomBytes(3 * 1024 * 1024 + 3));
   let peak = 0;
   const sending = sendBulk(pc, { kind: 'test', id: 'up', name: 'n.bin', mime: 'application/octet-stream' }, new Blob([bytes]));
-  // Let the sender fill its queue, then let it drain.
+  // Let the sender send its credit, then let it drain.
   for (let i = 0; i < 200; i++) {
     await later();
     peak = Math.max(peak, pc.channels[0]?.bufferedAmount ?? 0);
   }
-  // One chunk past the high-water mark, and the header.
-  assert.ok(peak > 1024 * 1024 && peak <= 1024 * 1024 + CHUNK_SIZE + 1024, `queue peaked at ${peak} bytes`);
+  // The first window, and the header.
+  assert.ok(peak > BULK_WINDOW && peak <= BULK_WINDOW + 1024, `queue peaked at ${peak} bytes`);
   farChannel.peer.resume();
   await sending;
   const sink = sinks.at(-1);
@@ -59,6 +59,25 @@ test('a transfer arrives whole on the far side, flow control and all', async () 
   assert.equal(sha(sink.bytes()), sha(bytes));
   assert.equal(farChannel.binaryType, 'arraybuffer');
   assert.notEqual(pc.channels[0].readyState, 'open');
+});
+
+test('sendBulk waits for credit, and goes on as it comes', async () => {
+  let far;
+  const pc = new FakePeer((ch) => { far = ch; });
+  const sending = sendBulk(pc, { kind: 'test' }, new Blob([new Uint8Array(BULK_WINDOW + 3 * CHUNK_SIZE)]));
+  const chunks = () => pc.channels[0].sent.filter((f) => typeof f !== 'string').length;
+  for (let i = 0; i < 50; i++) await later();
+  assert.equal(chunks(), BULK_WINDOW / CHUNK_SIZE, 'chunks sent on the first window');
+  // Credit that does not grow changes nothing.
+  far.send(JSON.stringify({ t: 'credit', credit: BULK_WINDOW }));
+  for (let i = 0; i < 20; i++) await later();
+  assert.equal(chunks(), BULK_WINDOW / CHUNK_SIZE);
+  far.send(JSON.stringify({ t: 'credit', credit: BULK_WINDOW + 2 * CHUNK_SIZE }));
+  for (let i = 0; i < 20; i++) await later();
+  assert.equal(chunks(), BULK_WINDOW / CHUNK_SIZE + 2, 'chunks sent on the second credit');
+  // A refusal ends the wait for more.
+  far.send(JSON.stringify({ t: 'error', error: 'enough' }));
+  await assert.rejects(sending, /refused: enough/);
 });
 
 test('progress hears the bytes sent after each chunk', async () => {
@@ -106,6 +125,7 @@ test('sendBulk reads the verdict', async () => {
     ['junk', (ch) => ch.send('junk'), /refused: malformed verdict/],
     ['binary', (ch) => ch.send(new Uint8Array(1)), /refused: malformed verdict/],
     ['an error', (ch) => ch.send('{"t":"error","error":"disk full"}'), /refused: disk full/],
+    ['credit that is no number', (ch) => ch.send('{"t":"credit","credit":"lots"}'), /refused: malformed verdict/],
     ['a close', (ch) => ch.close(), /cancelled/],
   ];
   for (const [name, reply, want] of cases) {
@@ -242,4 +262,39 @@ test('Inbound aborts on a close before the end', async () => {
   await r.rx.closed();
   const idle = inbound(() => () => sink);
   await idle.rx.closed(); // nothing opened, nothing to abort
+});
+
+test('Inbound grants credit as its sink takes chunks', async () => {
+  const sink = memSink();
+  const r = inbound(() => () => sink);
+  await r.rx.message(header(2 * BULK_WINDOW));
+  const chunk = new Uint8Array(CHUNK_SIZE);
+  for (let sent = 0; sent < BULK_WINDOW; sent += CHUNK_SIZE) {
+    r.rx.arrive(chunk.buffer);
+    await r.rx.message(chunk.slice().buffer);
+  }
+  assert.deepEqual(r.verdicts, [
+    { t: 'credit', credit: BULK_WINDOW + BULK_WINDOW / 2 },
+    { t: 'credit', credit: 2 * BULK_WINDOW },
+  ]);
+});
+
+test('Inbound refuses a sender past its credit before its sink sees the rest', async () => {
+  const sink = memSink();
+  const r = inbound(() => () => sink);
+  await r.rx.message(header(2 * BULK_WINDOW));
+  // The frames arrive faster than the sink takes them.
+  const frames = [];
+  for (let sent = 0; sent <= BULK_WINDOW; sent += CHUNK_SIZE) {
+    const f = new Uint8Array(CHUNK_SIZE).buffer;
+    r.rx.arrive(f);
+    frames.push(f);
+  }
+  r.rx.arrive('{"t":"end"}'); // text is not payload
+  for (const f of frames) await r.rx.message(f);
+  assert.equal(r.verdicts.length, 1);
+  assert.match(r.verdicts[0].error, /past the credit/);
+  assert.ok(r.closed());
+  assert.match((await sink.ended).err.message, /past the credit/);
+  assert.equal(sink.bytes().length, 0);
 });

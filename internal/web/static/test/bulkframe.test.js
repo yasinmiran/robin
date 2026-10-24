@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
-import { CHUNK_SIZE, Sum, checkHeader, kindLimit, parseFrame, registerKind } from '../bulkframe.js';
+import { BULK_WINDOW, CHUNK_SIZE, Grant, Sum, checkHeader, kindLimit, parseFrame, registerKind } from '../bulkframe.js';
 
 registerKind('frame-test', 1000);
 
@@ -61,4 +61,15 @@ test('Sum refuses what does not add up', () => {
   assert.throws(() => new Sum(0).check({ t: 'end', sha256: '00' }), /SHA-256 mismatch/);
   const upper = new Sum(0);
   assert.throws(() => upper.check({ t: 'end', sha256: new Sum(0).end().sha256.toUpperCase() }), /SHA-256 mismatch/);
+});
+
+test('Grant lets a window through, and a window past what was taken', () => {
+  const g = new Grant();
+  g.arrive(BULK_WINDOW);
+  assert.throws(() => g.arrive(1), /past the credit: 524289 bytes with 524288 granted/);
+  const h = new Grant();
+  assert.equal(h.take(BULK_WINDOW / 2 - 1), null);
+  assert.deepEqual(h.take(1), { t: 'credit', credit: BULK_WINDOW + BULK_WINDOW / 2 });
+  h.arrive(BULK_WINDOW + BULK_WINDOW / 2);
+  assert.throws(() => h.arrive(1), /past the credit/);
 });
