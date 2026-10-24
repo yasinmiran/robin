@@ -508,9 +508,9 @@ reach the UDP or TCP path can stand in for the agent. The page and its
 websocket listen on 127.0.0.1 and require a random 256-bit token from the URL
 fragment, an exact `Origin` and `Host`, and allow one browser at a time. On
 the host, the agent's ICE-TCP listener binds loopback, hangs up at once on
-any connection another user's process opened, which it reads from the
-kernel's socket table, and completes ICE only with the session's
-credentials; the X display is protected by a fresh cookie in a 0600 file,
+any connection unless a process of yours, or root's, still holds its other
+end open, which it asks the kernel, lets go within 5 s of any that has not
+started ICE, and completes ICE only with the session's credentials; the X display is protected by a fresh cookie in a 0600 file,
 which the agent hands only to the Xvfb it started, checked through the
 socket's peer credentials, whatever else listens at the display's socket
 names; the sound server of a desktop robin starts listens only on a socket
@@ -536,10 +536,13 @@ new one is refused. The agent takes media only on the microphone and camera
 lines the session asked for, and the answer turns down every other line the
 page adds; what the page sends on the agent's own video or sound line, which
 the answer cannot turn down, is read and dropped. Of the ICE candidates the
-page names, the agent takes 256 per ICE restart, never asks the host's
-network to resolve a `.local` name, and never connects out over TCP, so the
-most the page can aim at other addresses is ICE's own connectivity checks
-over UDP.
+page names, the agent counts 256 per ICE restart, drops those at the host's
+loopback or a link-local address, never asks the host's network to resolve
+a `.local` name, and never connects out over TCP. It refuses an offer whose
+sections disagree on their ICE credentials, or whose credentials hold
+anything but the letters, digits, `+` and `/` RFC 8839 allows. So the most
+the page can aim at other addresses is ICE's own connectivity checks over
+UDP, carrying only those credentials.
 
 Text from an input method or a soft keyboard types what keys could type:
 through spare keycodes on X11 and, on Wayland, as keysyms for ASCII and as
