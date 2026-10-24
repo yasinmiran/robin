@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -206,6 +207,38 @@ func TestStaticContentTypes(t *testing.T) {
 		if got := w.Header().Get("Content-Type"); !strings.HasPrefix(got, want) {
 			t.Errorf("%s: Content-Type %q, want %s", path, got, want)
 		}
+	}
+}
+
+// TestStaticServesEveryPageFile keeps the embed's list of extensions in step
+// with static/: a page file it misses would 404 at runtime.
+func TestStaticServesEveryPageFile(t *testing.T) {
+	entries, err := os.ReadDir("static")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := Listen(Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.ln.Close()
+	h := s.handler()
+	served := 0
+	for _, e := range entries {
+		if e.IsDir() || e.Name() == "package.json" {
+			continue
+		}
+		r := httptest.NewRequest("GET", "/"+e.Name(), nil)
+		r.Host = s.host
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("/%s: status %d, want %d", e.Name(), w.Code, http.StatusOK)
+		}
+		served++
+	}
+	if served == 0 {
+		t.Fatal("static holds no page files")
 	}
 }
 

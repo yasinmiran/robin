@@ -29,8 +29,8 @@ import (
 	"github.com/coder/websocket"
 )
 
-// The page's own files only: static/test holds its unit tests, and
-// package.json is there for Node, which runs them.
+// static holds the page's own files only: static/test holds its unit tests,
+// and package.json is there for Node, which runs them.
 //
 //go:embed static/*.html static/*.js static/*.css static/*.svg
 var static embed.FS
