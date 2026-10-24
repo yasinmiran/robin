@@ -147,14 +147,17 @@ the default, applies them (`probe.Report.AutoEncoder`). The GPU is taken
 when the probe shows a working route and either of two things holds. The
 host has four cores or fewer: openh264 needs up to 8.5 ms of a fast core
 per 1080p frame, a quarter of a core at 30 fps, which a small host feels and
-a slow core makes worse. Or the session may exceed 1920x1080 and ffmpeg
+a slow core makes worse. Or the session may exceed 2560x1440 and ffmpeg
 drives the GPU: at 2160p openh264 spends up to 28 ms of CPU a frame on busy
 content against 12 through ffmpeg. GStreamer's route does not count for
 large sessions, since it spends 31 to 34 ms on a 2160p frame, a whole frame
 interval at 30 fps, for 21 ms of CPU. VA-API comes before NVENC, which has
-not run on NVIDIA hardware. A 1080p session on a host with more cores stays
-in software, where the GPU would save a few milliseconds of CPU a frame and
-add as many of latency. Because a pick is a guess from the probe, the CLI
+not run on NVIDIA hardware. A 1080p or 1440p session on a host with more
+cores stays in software, where the GPU would save a few milliseconds of CPU
+a frame and add as many of latency: at 1440p openh264 needs 5.5 to 16.8 ms
+of CPU a frame, GStreamer's vaapih264enc 7.6 to 7.8 ms between the agent
+and the tool for 10 to 11 ms a call (`TestCompare`, same machine). The
+threshold sat at 1920x1080 until 2560x1440 became the default size, below. Because a pick is a guess from the probe, the CLI
 marks it (`Start.EncoderFallback`): a picked encoder that fails its trial
 frame, or later at the session's size, gives way to openh264 for the rest
 of the session and Ready says why, where an encoder the user named still
@@ -263,7 +266,7 @@ channel every second and the page restarts ICE after 3.5 s without one.
 Measured in the e2e `restart` scenario, media is back over the tunnel about
 three seconds after UDP is dropped.
 
-### Congestion control: GCC with no pacer and a bounded NACK responder
+### Congestion control: GCC with a bounded NACK responder
 
 The browser sends transport-wide congestion control feedback; Pion's GCC turns
 it into a target bitrate that the encoder follows. Two Pion defaults had to go,
@@ -274,21 +277,31 @@ and the delay that added pinned the target at its floor. And the default NACK
 responder resends anything in a 1024-packet buffer as often as it is asked:
 after a startup overshoot the lost packets were resent, lost again and NACKed
 again until retransmissions filled the link, and the loss estimator reported
-93% loss with nothing being lost. The agent sends unpaced (the encoder holds
+93% loss with nothing being lost. The agent sent unpaced (the encoder holds
 the rate) and answers NACKs only for packets younger than a second, at most
 twice each, within a quarter of the target bitrate. A 4x overshooting start
 and a link that drops mid-session now both settle within about 10% of the
 link rate.
+
+Unpaced did not last: keyframes sent at once overflow a shallow bottleneck
+faster than the bounded responder repairs it. The agent now paces bursts
+with a pacer of its own whose wait is bounded, and the responder keeps a
+second of history and asks for a keyframe when it cannot repair; see
+[Video in motion](#video-in-motion-measured-against-a-stand-in-for-chrome).
+With the pacer the two scenarios above settle at 1003 and 1058 kbit/s on a
+1000 kbit/s link.
 
 ### Zero playout delay on video
 
 Every video packet carries the playout-delay header extension with a minimum
 and maximum of zero, so Chrome decodes and shows a frame as soon as it is
 complete instead of holding it for its jitter estimate. On a still screen
-the agent sends nothing until Chrome, after 3 s without a frame, asks for a
-keyframe. The jitter estimate grows on that trickle of large frames until it
-holds new frames back for most of a second, so what you type after a pause
-showed late. The e2e measures it after 20 s of a still screen. In the
+the agent used to send nothing until Chrome, after 3 s without a frame,
+asked for a keyframe (it now sends the picture again every 500 ms; see
+[Video in motion](#video-in-motion-measured-against-a-stand-in-for-chrome)).
+The jitter estimate grew on that trickle of large frames until it held new
+frames back for most of a second, so what you type after a pause showed
+late. The e2e measures it after 20 s of a still screen. In the
 direct UDP scenario, before the change, four keystrokes 250 ms apart
 produced one frame on screen, 414 ms after the first key and held 397 ms
 after it arrived; the last two keystrokes had not shown 1.5 s later. With
@@ -715,6 +728,197 @@ peer routes data channels by label, closing any it does not know, and hands
 remote media tracks to `Handlers.Track`, unset until the microphone and
 camera arrive. Protocol version 2 marks the change, so a CLI and an agent
 from either side of it refuse each other.
+
+### Video in motion: measured against a stand-in for Chrome
+
+The first real session, an Apple silicon Mac over Tailscale on direct UDP
+to a 2560x1440 monitor shown through the default `--max-size` of
+1920x1080, looked pixelated at times, and its log showed the browser asking
+for a keyframe about every 3 s. Every change below was judged by the
+numbers of one harness, built before anything changed.
+
+**The harness.** `internal/agent/vqtest` plays a clip through the real
+stream loop, the agent's peer and its encoder, over the shaped virtual link
+the peer tests use, to a stand-in for Chrome's video receiver, and scores
+every picture it shows. The clip is a 2560x1440 screen of an editor with
+13 px code, 14 px prose and a 12 px terminal, rendered by Chrome in the e2e
+client image (`testdata/render.sh`), cropped about its centre for smaller
+sizes; over it run segments of stillness, typing (a glyph every third
+frame), scrolling (9 px a frame), a window drag (12 px right and 6 px up a
+frame) and video (noise over a moving gradient on a third of the screen).
+Each access unit carries its clip frame in an SEI message, so each decoded
+picture is scored against its own source: PSNR and SSIM on luma, and the
+SSIM of the worst 64x64 tile, which shows blocky text in one window that
+the mean of a mostly flat screen hides. A picture encoded smaller than the
+screen is stretched back bilinearly first, as the browser does. The
+receiver follows libwebrtc: it NACKs a gap at once and again every 100 ms,
+the round trip a receive-only peer assumes since no report block gives it
+one, ten times at most; it holds every frame behind a gap until the gap
+fills or a keyframe starts afresh (`H26xPacketBuffer`); and it asks for a
+keyframe after 3 s without a decodable frame while packets still arrive,
+or after 200 ms while one is required. One detail mattered more than any
+other: Pion's SRTP drops packets more than 64 behind the newest as replays,
+which threw most retransmissions away and made the first runs look far
+worse than Chrome, whose window is 1024. `TestVideoQuality` runs a 15 s
+1080p clip in `make test`; `TestVideoQualityMatrix` (`ROBIN_VQ=1`) runs a
+24 s clip (6 s still, 3 s each of typing, scrolling, a drag and video, 6 s
+still) at three sizes over three links, and names variants that put back
+each policy below:
+
+| link | rate | buffer | round trip | random loss |
+|---|---|---|---|---|
+| fast | 50 Mbit/s | 50 ms | 30 ms, 1 ms jitter | 0.1% |
+| lossy | 20 Mbit/s | 50 ms | 40 ms, 2 ms jitter | 1% |
+| tight | 4 Mbit/s | 100 ms | 60 ms | none |
+
+Before any change, per size and link: the pictures shown of the frames
+sent, the keyframes the browser asked for (on a still screen, or stalled
+behind a loss), and the mean PSNR of what it showed, at the screen's size:
+
+| | fast | lossy | tight |
+|---|---|---|---|
+| 1080p | 261/261, 3+0, 42.4 dB | 273/274, 1+1, 42.7 dB | 0/115, 0+7 |
+| 1440p scaled to 1080p | 297/297, 2+0, 26.3 dB | 293/297, 1+2, 26.3 dB | 283/285, 2+1, 25.8 dB |
+| 1440p | 254/255, 2+1, 41.1 dB | 164/238, 2+2, 37.1 dB | 0/25, 0+7 |
+
+And after them, from one run each on this shared machine (between runs the
+tight link's lost packets vary by half again, and the congestion target
+by more, so read differences smaller than that as noise):
+
+| | fast | lossy | tight |
+|---|---|---|---|
+| 1080p | 240/240, 0+0, 42.7 dB | 70/72, 0+0, 41.7 dB | 250/274, 0+0, 42.0 dB |
+| 1440p scaled to 1080p | 250/250, 0+0, 26.1 dB | 320/320, 0+0, 26.4 dB | 279/312, 0+0, 26.3 dB |
+| 1440p | 312/312, 0+0, 48.5 dB | 298/299, 0+0, 44.9 dB | 231/250, 0+0, 40.1 dB |
+
+The 1080p lossy run is one where congestion control collapsed, last item
+below.
+
+**Why the browser asked for keyframes.** Two causes, and the first is the
+3 s of the report. Chrome asks after 3 s without a frame, and a still
+screen sent none, so it asked every 3 s for as long as the screen stayed
+still. Each answer was a fresh IDR of 150 KB at 1080p, at whatever QP
+rate control gave it (27 to 34), so a still screen sat at 39 to 42 dB and
+was replaced by a new picture of the same thing every 3 s. The stream now
+encodes the unchanged picture again every 500 ms. openh264 spends what
+the budget has spare on it: at 2 Mbit/s one 62 KB P frame took a still
+IDR from 37.5 to 41.5 dB, with background detection on or off. In the
+matrix at 1080p over the fast link, without and with: the browser asked
+twice and 5 keyframes went out, against none and one; the first still
+stretch ended at 42.7 dB and SSIM 0.995, against 52.0 dB and 0.9997;
+typing showed at 40.2 dB against 52.4. Settled, a still screen costs
+about 30 kbit/s. 250 ms reached the same quality for twice the frames, and
+1 s ended the stretch at 44 dB. Calibrated in Chrome, the e2e latency test
+now counts what Chrome reports over 19 s of a still screen (direct
+scenario): before, 6 keyframe requests, 6 keyframes decoded and 18.2 s
+counted as freezes, which is the stand-in's cadence exactly; now none,
+none and 3.2 s, with 37 refreshed frames decoded. The keystrokes after it
+showed in 15 to 37 ms, against 5 to 27 ms before, one run each and well
+inside the test's 400 ms.
+
+The second cause is loss the responder cannot repair. Keyframes went out
+in one burst, 150 KB at 1080p and up to 300 KB at 1440p, and a bottleneck
+that buffers less than that drops the rest together. With a NACK budget of
+a quarter of the target refilled every 100 ms, a burst of 36 packets is
+repaired a few at a time, Chrome gives up on the others after ten asks,
+holds every later frame behind them, and asks for a keyframe 3 s later,
+which overflows the buffer again: at 1080p over the tight link the browser
+showed no picture after the first in 24 s. On that run the responder
+refused 1357 NACKs for its budget and 423 for age against 189 it answered.
+Three changes:
+
+- A pacer of the agent's own (`internal/agent/peer/pacer.go`), in the
+  place of Pion's: a packet goes out at once while it fits 20 ms of 1.5
+  times the target, and queues behind the others beyond that, but never
+  for longer than 500 ms, so a keyframe spreads over about 200 ms and
+  steady frames are not delayed. Paced, at 1080p, packets never repaired
+  went from 41 to 0 on the fast link, 210 to 0 on the lossy one and 522 to
+  145 on the tight one, where pictures shown went from 6 to 208. The bound
+  was measured too: over the tight link 250 ms left 243 packets
+  unrepaired and keyframes still overflowing, 1 s held scrolling back by
+  0.76 s on average, and 500 ms left 8 with the longest freeze 0.33 s.
+  This replaces the decision to send unpaced: what Pion's pacer did wrong
+  was the unbounded queue, and this one has a bound.
+- The NACK history held 512 packets, half a second at 10 Mbit/s, while
+  Chrome asks for a packet for about a second; it holds 4096.
+- When a NACK names a packet the responder no longer holds or that is
+  older than a second, the browser is stuck until a keyframe and would ask
+  for one only seconds later, so the responder asks the stream for one at
+  once, at most once a second. Over the tight link at 1080p that took the
+  browser's own requests from 3 to 0 and the longest freeze from 3 s to
+  0.76 s. With a gap of 300 ms instead of a second, 1440p over the tight
+  link went into a storm: each keyframe was lost in turn, 74 of them.
+
+A NACK budget refilled over a second instead of 100 ms changed nothing
+measurable on the tight link (145 and 234 packets unrepaired in two runs),
+so it stays. What is left over the tight link comes from congestion
+control: Pion's GCC sets the target above the link (4.3 to 5 Mbit/s on 4)
+and the encoder fills it during video.
+
+**Keyframes that do not wreck the picture.** openh264 does not size an
+IDR to its target: it clamps the IDR's QP to a range picked by bits per
+pixel (at most 36 to 40 at 1080p, `RcCalculateIdrQp`), so
+`iIdrBitrateRatio` cannot make one smaller, and a 1080p IDR of this
+screen is 130 KB even at 1 Mbit/s. The pacer bounds what that does to the
+link, and the refresh above brings the picture back after it: an IDR at
+QP 34 is followed by P frames of the same picture that raise it 4 dB.
+Long-term reference recovery was the other way and does not work with a
+browser: openh264 needs the decoder to report which reference it holds,
+which a PLI does not carry, and Chrome's H.264 receiver holds every frame
+after a gap until a keyframe, since it tracks continuity by sequence
+number and the agent sends no dependency descriptor. openh264 has no
+intra refresh. Neither is used.
+
+**Rate control for a desktop.** openh264 ran with QP up to 51, so a dip in
+the target turned text to blocks. With frame skipping on, a lower ceiling
+makes rate control skip frames instead, which is the right trade for a
+desktop. At 1080p over the tight link, the worst tile while scrolling and
+while dragging, against the frame rate of each:
+
+| ceiling | scroll tile | scroll fps | drag tile | drag fps | video fps |
+|---|---|---|---|---|---|
+| 51 | 0.398 | 21.7 | 0.674 | 28.7 | 15.0 |
+| 44 | 0.791 | 29.0 | 0.971 | 28.3 | 10.7 |
+| 40 | 0.771 | 26.3 | 0.966 | 28.3 | 15.3 |
+| 36 | 0.905 | 23.0 | 0.916 | 7.0 | 17.7 |
+
+At 36 rate control could not keep frames small enough and the drag went to
+7 fps with 7 keyframes. 40 is the default: text stays legible and frame
+rate pays only where the link cannot carry the content.
+
+**Defaults.** The 1440p monitor of the report, scaled to 1920x1080 and
+stretched back by the browser, scored 26.3 dB against the screen whatever
+the link; shown at its own size the same clip scored 41 to 48 dB on the
+fast link for about the same bitrate (1709 kbit/s against 1793 before the
+changes). Scaling loses the small text, and no encoder setting gets it
+back. openh264 at 1440p needs 5.5 to 16.8 ms of CPU a frame (`TestCompare`,
+`internal/agent/hwenc`), up to half a core at 30 fps, so `--max-size`
+defaults to 2560x1440 on hosts with more than four cores and stays at
+1920x1080 on hosts with four or fewer, or that do not report their cores.
+The display still follows the browser window below that size, and a
+desktop that fits is not scaled at all. `auto` keeps such a session in
+software, as the hardware section says. The bitrate ceiling stays at
+10 Mbit/s: at 1440p on the fast link only video reached it (9.4 Mbit/s at
+QP 31 and 42 dB), while scrolling text took 5.4 Mbit/s at QP 19 and 52 dB.
+A 20 Mbit/s ceiling measured the same (48.8 against 48.2 dB over the clip,
+41.8 against 41.7 during video): the target climbs about 8% a second and
+had not reached 10 Mbit/s when the video ended. High profile on the hardware path stays out. Encoded with this
+iGPU's `vaapih264enc` from the same frames at the same VBR settings, High
+with CABAC and 8x8 transforms came to 764 KB against 768 KB for
+Constrained Baseline at 2 Mbit/s and 1827 against 1933 KB at 5 Mbit/s, at
+most 5%, and openh264's decoder held those streams' pictures back, so
+their quality could not be scored. Using it would take a second codec in
+the agent's SDP and in the page's codec preference, and Firefox decodes
+WebRTC H.264 through OpenH264, which takes Constrained Baseline only.
+
+**What is left.** Pion's GCC lowers its target to 0.85 times the rate it
+received when it sees overuse, and on a still screen that rate is a few
+kbit/s. In some runs a still stretch with a little jitter took the target
+from about 3 Mbit/s to 1.2, or on the lossy link to 0.3, so the first
+seconds of motion after a pause came at that rate until the target climbed
+back. The 1080p lossy run above is one. Pion has no notion of being
+limited by the application, and the agent does not pad; it is in the
+README's Known limits.
 
 ## Verification parked
 
