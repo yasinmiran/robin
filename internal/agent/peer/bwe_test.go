@@ -88,6 +88,7 @@ func TestBulkSharesTheLinkWithVideo(t *testing.T) {
 	lowest := targetBefore
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
+	timeout := time.After(60 * time.Second)
 	var err error
 wait:
 	for {
@@ -96,7 +97,7 @@ wait:
 			break wait
 		case <-tick.C:
 			lowest = min(lowest, l.target.Load())
-		case <-time.After(60 * time.Second):
+		case <-timeout:
 			t.Fatal("transfer never finished")
 		}
 	}
