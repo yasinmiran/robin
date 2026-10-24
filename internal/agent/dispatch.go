@@ -11,15 +11,19 @@ import (
 
 // controlHandlers applies each kind of control message from the browser,
 // and bulkHandlers decides on each kind of bulk transfer it opens. Features
-// add theirs from init in their own file, so no two edit the same lines.
+// add theirs from init in their own file, so no two edit the same lines;
+// written only from init, the maps need no lock.
 var (
 	controlHandlers = map[protocol.ControlType]func(*session, protocol.Control){}
 	bulkHandlers    = map[string]func(*session, protocol.Bulk) (peer.BulkSink, error){}
 )
 
 // handleControl registers h for control messages of type t. It panics on a
-// type registered twice.
+// nil h and on a type registered twice.
 func handleControl(t protocol.ControlType, h func(*session, protocol.Control)) {
+	if h == nil {
+		panic(fmt.Sprintf("agent: nil handler for control %q", t))
+	}
 	if _, dup := controlHandlers[t]; dup {
 		panic(fmt.Sprintf("agent: control %q handled twice", t))
 	}
@@ -28,9 +32,13 @@ func handleControl(t protocol.ControlType, h func(*session, protocol.Control)) {
 
 // handleBulk registers h for bulk transfers of kind from the browser. h
 // returns where the payload goes, or an error that refuses it. The kind
-// needs a limit from protocol.RegisterBulkKind too. It panics on a kind
+// needs a limit from protocol.RegisterBulkKind too, which
+// TestBulkKindsHaveLimits checks. It panics on a nil h and on a kind
 // registered twice.
 func handleBulk(kind string, h func(*session, protocol.Bulk) (peer.BulkSink, error)) {
+	if h == nil {
+		panic(fmt.Sprintf("agent: nil handler for bulk kind %q", kind))
+	}
 	if _, dup := bulkHandlers[kind]; dup {
 		panic(fmt.Sprintf("agent: bulk kind %q handled twice", kind))
 	}
