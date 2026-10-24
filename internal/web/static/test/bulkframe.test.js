@@ -70,6 +70,8 @@ test('Grant lets a window through, and a window past what was taken', () => {
   const h = new Grant();
   assert.equal(h.take(BULK_WINDOW / 2 - 1), null);
   assert.deepEqual(h.take(1), { t: 'credit', credit: BULK_WINDOW + BULK_WINDOW / 2 });
-  h.arrive(BULK_WINDOW + BULK_WINDOW / 2);
-  assert.throws(() => h.arrive(1), /past the credit/);
+  assert.equal(h.take(BULK_WINDOW / 2 - 1), null, 'a second credit too soon');
+  assert.deepEqual(h.take(1), { t: 'credit', credit: 2 * BULK_WINDOW });
+  h.arrive(2 * BULK_WINDOW);
+  assert.throws(() => h.arrive(1), /past the credit: 1048577 bytes with 1048576 granted/);
 });

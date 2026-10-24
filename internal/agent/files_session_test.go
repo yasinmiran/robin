@@ -83,7 +83,7 @@ func wrapBrowser(t *testing.T, pc *webrtc.PeerConnection, dc *webrtc.DataChannel
 func (b *fileBrowser) take(ch *webrtc.DataChannel) {
 	var r received
 	sum := sha256.New()
-	grant := protocol.NewBulkGrant()
+	var grant protocol.BulkGrant
 	ch.OnMessage(func(m webrtc.DataChannelMessage) {
 		if !m.IsString {
 			r.data = append(r.data, m.Data...)

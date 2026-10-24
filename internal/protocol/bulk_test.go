@@ -205,10 +205,10 @@ func TestBulkSumRefuses(t *testing.T) {
 	}
 }
 
-// TestBulkGrant: a window before any credit, and a window past what the
-// sink took once it has taken half of one.
+// TestBulkGrant: from the zero value, a window before any credit, and a
+// window past what the sink took once it has taken half of one.
 func TestBulkGrant(t *testing.T) {
-	g := NewBulkGrant()
+	var g BulkGrant
 	if _, ok := g.Take(BulkWindow/2 - 1); ok {
 		t.Fatal("credit before half a window was taken")
 	}

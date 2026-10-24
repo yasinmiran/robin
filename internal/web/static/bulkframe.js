@@ -88,27 +88,30 @@ export class Sum {
   }
 }
 
-// Grant is a receiver's side of the credit: what it let the sender send,
-// what arrived and what its sink took.
+// Grant is a receiver's side of the credit: what its sink has taken, how
+// much of that it had taken at the last credit, and what has arrived. A new
+// one is the start of a transfer, which the sender may send BULK_WINDOW
+// bytes of before any credit.
 export class Grant {
-  #granted = BULK_WINDOW;
-  #arrived = 0;
   #taken = 0;
+  #last = 0;
+  #arrived = 0;
 
   // arrive counts n bytes that arrived, and throws once they run past the
   // credit, which a page that cannot stop a channel reading would
   // otherwise hold in memory.
   arrive(n) {
     this.#arrived += n;
-    if (this.#arrived > this.#granted) throw new Error(`bulk data past the credit: ${this.#arrived} bytes with ${this.#granted} granted`);
+    const granted = this.#last + BULK_WINDOW;
+    if (this.#arrived > granted) throw new Error(`bulk data past the credit: ${this.#arrived} bytes with ${granted} granted`);
   }
 
   // take counts n bytes the sink took, and returns the credit frame to
   // send once half a window has been taken since the last, or null.
   take(n) {
     this.#taken += n;
-    if (this.#granted - this.#taken > BULK_WINDOW / 2) return null;
-    this.#granted = this.#taken + BULK_WINDOW;
-    return { t: 'credit', credit: this.#granted };
+    if (this.#taken - this.#last < BULK_WINDOW / 2) return null;
+    this.#last = this.#taken;
+    return { t: 'credit', credit: this.#taken + BULK_WINDOW };
   }
 }

@@ -206,22 +206,21 @@ func (s *BulkSum) Check(end Bulk) error {
 	return nil
 }
 
-// BulkGrant is the receiving end's side of the credit: what it has let
-// the sender send, and what its sink has taken.
+// BulkGrant is the receiving end's side of the credit: what its sink has
+// taken, and how much of that it had taken at the last credit. The zero
+// value is the start of a transfer, which the sender may send BulkWindow
+// bytes of before any credit.
 type BulkGrant struct {
-	granted, taken int64
+	taken, last int64
 }
-
-// NewBulkGrant starts the credit of a transfer at BulkWindow.
-func NewBulkGrant() *BulkGrant { return &BulkGrant{granted: BulkWindow} }
 
 // Take counts n bytes the sink took, and returns the credit frame to send
 // once half a window has been taken since the last.
 func (g *BulkGrant) Take(n int) (Bulk, bool) {
 	g.taken += int64(n)
-	if g.granted-g.taken > BulkWindow/2 {
+	if g.taken-g.last < BulkWindow/2 {
 		return Bulk{}, false
 	}
-	g.granted = g.taken + BulkWindow
-	return Bulk{T: BulkCredit, Credit: g.granted}, true
+	g.last = g.taken
+	return Bulk{T: BulkCredit, Credit: g.taken + BulkWindow}, true
 }

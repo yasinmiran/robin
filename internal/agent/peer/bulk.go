@@ -311,7 +311,7 @@ type bulkReceiver struct {
 	mu    sync.Mutex
 	sink  BulkSink
 	sum   *protocol.BulkSum
-	grant *protocol.BulkGrant
+	grant protocol.BulkGrant
 	over  bool // a verdict went out or the channel closed
 }
 
@@ -382,7 +382,7 @@ func (r *bulkReceiver) open(m webrtc.DataChannelMessage) error {
 	if err != nil {
 		return err
 	}
-	r.sink, r.sum, r.grant = sink, protocol.NewBulkSum(h.Size), protocol.NewBulkGrant()
+	r.sink, r.sum = sink, protocol.NewBulkSum(h.Size)
 	return nil
 }
 
