@@ -18,11 +18,12 @@ import (
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
-// cjk returns n distinct characters, none of which a keymap has.
-func cjk(n int) string {
+// cjk returns n distinct characters, none of which a keymap has, from the
+// from-th of a fixed series.
+func cjk(from, n int) string {
 	r := make([]rune, n)
 	for i := range r {
-		r[i] = rune(0x4e00 + i*7)
+		r[i] = rune(0x4e00 + (from+i)*7)
 	}
 	return string(r)
 }
@@ -60,11 +61,11 @@ func TestTypeText(t *testing.T) {
 // for it to settle first.
 func TestTypeWaitsForSpares(t *testing.T) {
 	tx := startX(t, "sleep 1000")
-	if err := tx.c.Type(t.Context(), cjk(maxSpareKeys)); err != nil {
+	if err := tx.c.Type(t.Context(), cjk(0, maxSpareKeys)); err != nil {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	if err := tx.c.Type(t.Context(), cjk(maxSpareKeys+1)[maxSpareKeys:]); err != nil {
+	if err := tx.c.Type(t.Context(), cjk(maxSpareKeys, 1)); err != nil {
 		t.Fatal(err)
 	}
 	if d := time.Since(start); d < spareSettle/2 {
@@ -74,7 +75,7 @@ func TestTypeWaitsForSpares(t *testing.T) {
 	// Waiting ends with the context.
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := tx.c.Type(ctx, cjk(2*maxSpareKeys)); !errors.Is(err, context.Canceled) {
+	if err := tx.c.Type(ctx, cjk(0, 2*maxSpareKeys)); !errors.Is(err, context.Canceled) {
 		t.Errorf("Type with a cancelled context = %v", err)
 	}
 	tx.assertNothingHeld(t)
@@ -101,7 +102,7 @@ func TestTypeIntoXterm(t *testing.T) {
 	waitMapped(t, tx)
 	tx.input(t, protocol.Control{T: protocol.ControlMove, X: 100, Y: 50}) // no WM: focus follows the pointer
 
-	text := "ab " + cjk(4*maxSpareKeys) + " éж😀 {~}"
+	text := "ab " + cjk(0, 4*maxSpareKeys) + " éж😀 {~}"
 	start := time.Now()
 	if err := tx.c.Type(t.Context(), text+"\n"); err != nil {
 		t.Fatal(err)
