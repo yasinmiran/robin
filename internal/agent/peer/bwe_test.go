@@ -1,6 +1,9 @@
 package peer
 
 import (
+	"bytes"
+	"context"
+	"log/slog"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -49,10 +52,115 @@ func TestCongestionControlAdaptsToLink(t *testing.T) {
 	}
 }
 
+// TestBulkSharesTheLinkWithVideo sends a bulk transfer through a shaped link
+// while video streams, and measures what each gets. Bulk is not paced:
+// SCTP's own congestion control fills the queue, and the video's controller
+// answers the delay by lowering its target until the transfer ends.
+func TestBulkSharesTheLinkWithVideo(t *testing.T) {
+	if testing.Short() {
+		t.Skip("takes about 30 s")
+	}
+	const link = 3_000_000
+	var disconnects atomic.Int32
+	var failed atomic.Bool
+	l := newShapedLink(t, 2_000_000, link, Handlers{State: func(s webrtc.PeerConnectionState) {
+		switch s {
+		case webrtc.PeerConnectionStateDisconnected:
+			disconnects.Add(1)
+		case webrtc.PeerConnectionStateFailed:
+			failed.Store(true)
+		}
+	}})
+	videoRate := func(d time.Duration) int {
+		before := l.received.Load()
+		time.Sleep(d)
+		return int(float64(l.received.Load()-before) * 8 / d.Seconds())
+	}
+	time.Sleep(6 * time.Second)
+	videoBefore, targetBefore := videoRate(2*time.Second), l.target.Load()
+
+	const size = 2 << 20
+	done := make(chan error, 1)
+	start, receivedAtStart := time.Now(), l.received.Load()
+	go func() {
+		done <- l.p.SendBulk(context.Background(), protocol.Bulk{Kind: testKind, Size: size}, bytes.NewReader(make([]byte, size)))
+	}()
+	lowest := targetBefore
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	var err error
+wait:
+	for {
+		select {
+		case err = <-done:
+			break wait
+		case <-tick.C:
+			lowest = min(lowest, l.target.Load())
+		case <-time.After(60 * time.Second):
+			t.Fatal("transfer never finished")
+		}
+	}
+	took := time.Since(start)
+	videoDuring := int(float64(l.received.Load()-receivedAtStart) * 8 / took.Seconds())
+	// The target climbs back at the controller's own pace.
+	recovered := time.Now()
+	for l.target.Load() < targetBefore*8/10 && time.Since(recovered) < 20*time.Second {
+		time.Sleep(100 * time.Millisecond)
+	}
+	recovery := time.Since(recovered)
+
+	t.Logf("%d kbit/s link: video %d kbit/s (target %d) before; %d KiB of bulk took %v, %d kbit/s, "+
+		"while video got %d kbit/s with its target down to %d; target back to 80%% %v after; %d disconnects",
+		link/1000, videoBefore/1000, targetBefore/1000, size>>10, took.Round(10*time.Millisecond),
+		int(float64(size*8)/took.Seconds())/1000, videoDuring/1000, lowest/1000, recovery.Round(100*time.Millisecond), disconnects.Load())
+	if err != nil {
+		t.Fatalf("transfer: %v", err)
+	}
+	if failed.Load() {
+		t.Error("the connection failed under the transfer")
+	}
+	if videoDuring < link/10 {
+		t.Errorf("video starved to %d kbit/s during the transfer", videoDuring/1000)
+	}
+	if recovery >= 20*time.Second {
+		t.Errorf("video target still %d kbit/s 20 s after the transfer", l.target.Load()/1000)
+	}
+}
+
 // streamOverShapedLink runs a peer over a virtual link of linkBps for 14 s and
 // returns the controller's final target and the rate delivered over the last
 // 4 s.
 func streamOverShapedLink(t *testing.T, startBps, linkBps, dropTo, dropAtS int) (target, delivered int) {
+	t.Helper()
+	l := newShapedLink(t, startBps, linkBps, Handlers{})
+	for s := 1; s <= 10; s++ {
+		time.Sleep(time.Second)
+		if dropTo > 0 && s == dropAtS {
+			l.tbf.SetRate(dropTo)
+		}
+	}
+	before := l.received.Load()
+	time.Sleep(4 * time.Second)
+	return int(l.target.Load()), int((l.received.Load() - before) * 8 / 4)
+}
+
+// shapedLink is an agent peer streaming to a stand-in browser through a
+// virtual link whose rate toward the browser the test sets.
+type shapedLink struct {
+	p   *Peer
+	b   *browser
+	tbf *vnet.TBFQueue
+	// target is the congestion controller's target; received counts the
+	// video bytes the browser got.
+	target, received atomic.Int64
+}
+
+// newShapedLink connects the peers over a link of linkBps with a 100 ms
+// queue toward the browser, like a congested access link, and streams
+// frames sized to whatever the congestion controller allows, as the
+// agent's encoder does. It returns once video arrives. h may add handlers;
+// the browser accepts bulk transfers and discards them.
+func newShapedLink(t *testing.T, startBps, linkBps int, h Handlers) *shapedLink {
 	t.Helper()
 	wan, err := vnet.NewRouter(&vnet.RouterConfig{
 		CIDR: "10.0.0.0/24", MinDelay: 10 * time.Millisecond, LoggerFactory: logging.NewDefaultLoggerFactory(),
@@ -68,10 +176,8 @@ func streamOverShapedLink(t *testing.T, startBps, linkBps, dropTo, dropAtS int) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Everything bound for the browser drains through a token bucket with a
-	// 100 ms queue, like a congested access link.
-	tbf := vnet.NewTBFQueue(linkBps, 16_000, int64(linkBps/8/10))
-	shaped, err := vnet.NewQueue(browserNet, tbf)
+	l := &shapedLink{tbf: vnet.NewTBFQueue(linkBps, 16_000, int64(linkBps/8/10))}
+	shaped, err := vnet.NewQueue(browserNet, l.tbf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,24 +190,21 @@ func streamOverShapedLink(t *testing.T, startBps, linkBps, dropTo, dropAtS int) 
 	if err := wan.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer wan.Stop()
+	t.Cleanup(func() { wan.Stop() })
 
-	var want atomic.Int64
-	want.Store(int64(startBps))
+	l.target.Store(int64(startBps))
 	cands := make(chan protocol.Candidate, 32)
-	p, err := New(Config{
-		Net: agentNet, MinBitrate: 100_000, StartBitrate: startBps, MaxBitrate: 8_000_000,
-	}, Handlers{
-		Candidate: func(c protocol.Candidate) { cands <- c },
-		Bitrate:   func(bps int) { want.Store(int64(bps)) },
-	})
+	h.Candidate = func(c protocol.Candidate) { cands <- c }
+	h.Bitrate = func(bps int) { l.target.Store(int64(bps)) }
+	l.p, err = New(Config{Net: agentNet, MinBitrate: 100_000, StartBitrate: startBps, MaxBitrate: 8_000_000}, h)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
+	t.Cleanup(func() { l.p.Close() })
 
 	// The browser side: default codecs and interceptors, including the TWCC
-	// feedback and NACKs that Chrome sends.
+	// feedback and NACKs that Chrome sends, and a control channel as the
+	// page opens.
 	m := &webrtc.MediaEngine{}
 	if err := m.RegisterDefaultCodecs(); err != nil {
 		t.Fatal(err)
@@ -119,13 +222,20 @@ func streamOverShapedLink(t *testing.T, startBps, linkBps, dropTo, dropAtS int) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer b.pc.Close()
+	t.Cleanup(func() { b.pc.Close() })
+	l.b = b
 	b.pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly})
 	b.pc.OnTrack(func(tr *webrtc.TrackRemote, _ *webrtc.RTPReceiver) { b.track <- tr })
-	connect(t, b, p, cands)
+	if b.control, err = b.pc.CreateDataChannel(protocol.ControlChannel, nil); err != nil {
+		t.Fatal(err)
+	}
+	b.pc.OnDataChannel(func(dc *webrtc.DataChannel) {
+		receiveBulk(dc, func(protocol.Bulk) (BulkSink, error) { return discard{}, nil }, slog.Default())
+	})
+	connect(t, b, l.p, cands)
 
 	stop := make(chan struct{})
-	defer close(stop)
+	t.Cleanup(func() { close(stop) })
 	go func() {
 		const fps = 30
 		for {
@@ -134,9 +244,9 @@ func streamOverShapedLink(t *testing.T, startBps, linkBps, dropTo, dropAtS int) 
 				return
 			case <-time.After(time.Second / fps):
 			}
-			au := make([]byte, max(int(want.Load())/8/fps, 64))
+			au := make([]byte, max(int(l.target.Load())/8/fps, 64))
 			copy(au, []byte{0, 0, 0, 1, 0x65})
-			p.WriteFrame(au, time.Second/fps)
+			l.p.WriteFrame(au, time.Second/fps)
 		}
 	}()
 
@@ -146,7 +256,6 @@ func streamOverShapedLink(t *testing.T, startBps, linkBps, dropTo, dropAtS int) 
 	case <-time.After(15 * time.Second):
 		t.Fatal("no video at the browser")
 	}
-	var received atomic.Int64
 	go func() {
 		buf := make([]byte, 1500)
 		for {
@@ -154,17 +263,14 @@ func streamOverShapedLink(t *testing.T, startBps, linkBps, dropTo, dropAtS int) 
 			if err != nil {
 				return
 			}
-			received.Add(int64(n))
+			l.received.Add(int64(n))
 		}
 	}()
-
-	for s := 1; s <= 10; s++ {
-		time.Sleep(time.Second)
-		if dropTo > 0 && s == dropAtS {
-			tbf.SetRate(dropTo)
-		}
-	}
-	before := received.Load()
-	time.Sleep(4 * time.Second)
-	return int(want.Load()), int((received.Load() - before) * 8 / 4)
+	return l
 }
+
+type discard struct{}
+
+func (discard) Write(p []byte) (int, error) { return len(p), nil }
+func (discard) Commit() error               { return nil }
+func (discard) Abort(error)                 {}
