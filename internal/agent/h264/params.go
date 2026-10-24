@@ -20,12 +20,13 @@ type Params struct {
 // mode turns full-screen motion into an IDR per frame) and encodes 3 to 4
 // times faster. Frame skipping is what holds the target on incompressible
 // content; its skips cluster after a keyframe, while the link is still busy
-// carrying it. QP 51 leaves rate control room to back off under congestion.
+// carrying it. Past QP 40 small text breaks into blocks, so beyond that rate
+// control skips frames instead: a desktop is better read slowly than not.
 func Defaults(width, height, fps, bitrate int) Params {
 	return Params{
 		Width: width, Height: height, FPS: fps, Bitrate: bitrate,
 		Threads: min(max(runtime.NumCPU()/2, 1), 4),
-		MinQP:   16, MaxQP: 51,
+		MinQP:   16, MaxQP: 40,
 		Screen: false, SceneChange: false, FrameSkip: true,
 	}
 }

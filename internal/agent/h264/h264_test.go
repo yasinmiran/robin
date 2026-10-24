@@ -195,6 +195,44 @@ func TestRateControl(t *testing.T) {
 	}
 }
 
+// TestQPCeilingTradesFramesForLegibility checks the trade the defaults
+// make on a link too slow for the content: frames are skipped rather than
+// encoded past the QP ceiling.
+func TestQPCeilingTradesFramesForLegibility(t *testing.T) {
+	p := Defaults(tw, th, tfps, 800_000)
+	enc, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer enc.Close()
+	img := yuv.NewI420(tw, th)
+	sent, skipped, worst := 0, 0, 0
+	for i := range 150 {
+		desktop(img, i*6)
+		au, err := enc.Encode(img, time.Duration(i)*time.Second/tfps, i == 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(au) == 0 {
+			skipped++
+			continue
+		}
+		sent++
+		worst = max(worst, enc.QP())
+	}
+	t.Logf("scrolling at 800 kbit/s: %d frames sent, %d skipped, worst QP %d", sent, skipped, worst)
+	if worst > p.MaxQP {
+		t.Errorf("a frame went out at QP %d, over the ceiling of %d", worst, p.MaxQP)
+	}
+	if skipped == 0 {
+		t.Error("nothing skipped: the ceiling was never reached")
+	}
+	enc.Close()
+	if enc.QP() != -1 {
+		t.Error("a closed encoder reports a QP")
+	}
+}
+
 func TestSetBitrateTakesEffect(t *testing.T) {
 	enc, err := New(tw, th, tfps, 500_000)
 	if err != nil {
