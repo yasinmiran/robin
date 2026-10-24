@@ -4,6 +4,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,9 +19,10 @@ import (
 // A second account's robin-agent end, aimed at a kept session through a
 // run link to its owner's run root (the only way its end could name that
 // session), cannot end it. The owner's 0700 run root refuses it first;
-// opened up, the kernel refuses the signal. Either way the session lives
-// on, the stranger hears why in words its terminal shows as they are, and
-// the owner's end still works.
+// opened up, End refuses a session directory that is not its user's,
+// before it signals or removes anything. Either way the session lives on,
+// the stranger hears why in words its terminal shows as they are, and the
+// owner's end still works.
 func TestEndOfAnotherUsersSessionIsRefused(t *testing.T) {
 	needXvfb(t)
 	s := agenttest.NewStranger(t)
@@ -67,7 +69,7 @@ func TestEndOfAnotherUsersSessionIsRefused(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	end("through an open run root", "operation not permitted")
+	end("through an open run root", fmt.Sprintf("belongs to uid %d, not us", os.Getuid()))
 
 	own := exec.Command(exe, "end", ready.ID)
 	own.Env = append(os.Environ(), "ROBIN_AGENT_MAIN=1")

@@ -879,8 +879,9 @@ in rootless podman, with nothing on the workstation itself.
   fail: the daemon logs no refusal, and the offer reaches the session.
   The stranger's `robin-agent end`, aimed at another user's kept session
   through a run link to that user's run root, fails on the 0700 root with
-  `permission denied`, and opened up, on the signal with `operation not
-  permitted`; the session lives on and its owner's end still works.
+  `permission denied`, and opened up, on End's check that the session
+  directory belongs to its user; the session lives on and its owner's end
+  still works.
 - Review found the other direction open. End picked the daemon by its
   command line alone, which /proc shows every user, so another user's
   process with `daemon -id <id>` in its argv passed for it: found while
@@ -890,7 +891,10 @@ in rootless podman, with nothing on the workstation itself.
   End now counts a process only when its real uid, from
   `/proc/<pid>/status`, is ours. `TestEndLeavesAnotherUsersLookalikeAlone`
   starts such a process as the stranger; without the check End signals it
-  and times out with the directory still there.
+  and times out with the directory still there. With that check alone, a
+  stranger's end took the owner's live daemon for a dead one and set about
+  removing its directory, so End first refuses a session directory that is
+  not its user's; before, the kernel's refusal of the signal stopped it.
 - "Before a byte it sent is read" is checked, not assumed: a unix socket
   closed with data still unread resets its peer's connection, where one
   closed after a read gives EOF. Unit tests under plain `make test` set the

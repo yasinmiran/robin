@@ -23,16 +23,19 @@ const endTimeout = 15 * time.Second
 
 // End tells the daemon of session id under runRoot to end, which tears the
 // desktop down like bye does, and waits for its run directory to go. It
-// signals only a process of this user whose command line is that daemon's,
-// since the pid in session.json may have been reused once the daemon died,
-// and anyone may start a process with any command line; such a stale
-// directory is removed instead. A directory with no trace of a session is
-// left alone.
+// refuses a directory of another user's, and signals only a process of
+// this user whose command line is that daemon's, since the pid in
+// session.json may have been reused once the daemon died, and anyone may
+// start a process with any command line; such a stale directory is
+// removed instead. A directory with no trace of a session is left alone.
 func End(ctx context.Context, runRoot, id string) error {
 	if err := validID(id); err != nil {
 		return err
 	}
 	dir := filepath.Join(runRoot, id)
+	if err := checkOwner(dir); err != nil {
+		return fmt.Errorf("end session %s: %w", id, err)
+	}
 	pid, err := daemonPID(dir, id)
 	if err != nil {
 		return err
@@ -57,6 +60,23 @@ func End(ctx context.Context, runRoot, id string) error {
 			return fmt.Errorf("session %s did not end within %s", id, endTimeout)
 		}
 	}
+}
+
+// checkOwner refuses a session directory of another user's: the daemon in
+// it is not ours to signal, nor its files ours to remove. A missing one is
+// left for daemonPID to tell apart.
+func checkOwner(dir string) error {
+	fi, err := os.Lstat(dir)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+	case err != nil:
+		return err
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
+		return fmt.Errorf("%s belongs to uid %d, not us", dir, st.Uid)
+	}
+	return nil
 }
 
 // daemonPID is the pid of the live daemon of session id in dir: the one
