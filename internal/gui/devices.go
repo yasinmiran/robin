@@ -2,6 +2,7 @@ package gui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/yasinmiran/robin/internal/protocol"
 )
@@ -21,6 +22,8 @@ func deviceNotes(host string, ready *protocol.Ready) []string {
 		case d.ready == nil:
 		case !d.ready.Available:
 			notes = append(notes, fmt.Sprintf("robin: no %s on %s: %s", d.name, host, d.ready.Error))
+		case strings.HasPrefix(d.ready.Where, "/dev/"):
+			notes = append(notes, fmt.Sprintf("robin: your %s can reach %s on %s; switch it on in the page", d.name, host, d.ready.Where))
 		default:
 			notes = append(notes, fmt.Sprintf("robin: your %s can reach %s as %s (%s); switch it on in the page", d.name, host, d.label, d.ready.Where))
 		}

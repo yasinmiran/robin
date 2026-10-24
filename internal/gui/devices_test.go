@@ -39,6 +39,10 @@ func TestDeviceNotes(t *testing.T) {
 	if mic, camera := offeredDevices(ready); !mic || camera {
 		t.Errorf("offered mic %v camera %v, want the microphone alone", mic, camera)
 	}
+	loopback := &protocol.Ready{Camera: &protocol.Device{Available: true, Where: "/dev/video9"}}
+	if got := deviceNotes("box", loopback); !slices.Equal(got, []string{"robin: your camera can reach box on /dev/video9; switch it on in the page"}) {
+		t.Errorf("loopback note %q", got)
+	}
 	if got := deviceNotes("box", &protocol.Ready{}); len(got) != 0 {
 		t.Errorf("notes for devices nobody asked for: %q", got)
 	}
