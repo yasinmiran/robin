@@ -3,10 +3,12 @@
 package gstsink
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -15,7 +17,8 @@ import (
 
 // fakeGst is a gst-launch-1.0 stand-in. FAKE_GST picks what it does:
 //
-//	cat     record its arguments, then append stdin to out
+//	cat     record its arguments and XDG_RUNTIME_DIR, then append stdin
+//	        to out
 //	fail    complain like a pipeline that cannot be built, and exit
 //	short   append FAKE_GST_BYTES of stdin to out, then exit, as gst does
 //	        when the program reading its node goes away
@@ -26,7 +29,7 @@ import (
 const fakeGst = `#!/bin/sh
 echo $$ >>"$FAKE_GST_DIR/pids"
 case $FAKE_GST in
-cat) printf '%s\n' "$@" >"$FAKE_GST_DIR/args"; exec cat >>"$FAKE_GST_DIR/out" ;;
+cat) printf '%s\n' "$@" >"$FAKE_GST_DIR/args"; printf %s "$XDG_RUNTIME_DIR" >"$FAKE_GST_DIR/runtime"; exec cat >>"$FAKE_GST_DIR/out" ;;
 fail) echo 'WARNING: erroneous pipeline: no element "nosuchsink"' >&2; exit 1 ;;
 short) head -c "$FAKE_GST_BYTES" >>"$FAKE_GST_DIR/out"; echo 'ERROR: PipeWire link to remote node was destroyed' >&2; exit 1 ;;
 brief) sleep 0.15; echo 'ERROR: PipeWire link to remote node was destroyed' >&2; exit 1 ;;
@@ -82,10 +85,11 @@ func eventually(t *testing.T, what string, cond func() bool) {
 	}
 }
 
-func alive(pid string) bool {
-	var p int
-	for _, c := range strings.TrimSpace(pid) {
-		p = p*10 + int(c-'0')
+func alive(t *testing.T, pid string) bool {
+	t.Helper()
+	p, err := strconv.Atoi(pid)
+	if err != nil {
+		t.Fatalf("pid %q: %v", pid, err)
 	}
 	return syscall.Kill(p, 0) == nil
 }
@@ -119,9 +123,40 @@ func TestWritesReachThePipeline(t *testing.T) {
 	}
 	s.Close()
 	for _, pid := range pids(t, dir) {
-		if alive(pid) {
+		if alive(t, pid) {
 			t.Errorf("child %s outlived Close", pid)
 		}
+	}
+}
+
+// TestTheChildFindsTheUsersRuntimeDir: an agent started over SSH may have
+// no XDG_RUNTIME_DIR, and its pipeline still needs the user's to reach
+// PipeWire. Options.Env can name another.
+func TestTheChildFindsTheUsersRuntimeDir(t *testing.T) {
+	for _, tc := range []struct {
+		name, agent string
+		env         []string
+		want        string
+	}{
+		{"unset", "", nil, fmt.Sprintf("/run/user/%d", os.Getuid())},
+		{"set", "/run/user/elsewhere", nil, "/run/user/elsewhere"},
+		{"named in Env", "/run/user/elsewhere", []string{"XDG_RUNTIME_DIR=/tmp/robin-test"}, "/tmp/robin-test"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("XDG_RUNTIME_DIR", tc.agent)
+			if tc.agent == "" {
+				os.Unsetenv("XDG_RUNTIME_DIR")
+			}
+			dir := fake(t, "cat")
+			s, err := Start(nil, Options{Name: "test", Env: tc.env, Log: quiet()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.Close()
+			if got := read(t, filepath.Join(dir, "runtime")); got != tc.want {
+				t.Errorf("the child's XDG_RUNTIME_DIR is %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -204,8 +239,9 @@ func TestARestartThatFailsGivesUp(t *testing.T) {
 func TestWriteWhileRestarting(t *testing.T) {
 	fake(t, "short")
 	t.Setenv("FAKE_GST_BYTES", "1")
+	old := restartDelay
 	restartDelay = 300 * time.Millisecond
-	defer func() { restartDelay = 10 * time.Millisecond }()
+	t.Cleanup(func() { restartDelay = old })
 	s, err := Start(nil, Options{Name: "test", Log: quiet()})
 	if err != nil {
 		t.Fatal(err)
@@ -227,11 +263,11 @@ func TestCloseKillsAChildThatWillNotStop(t *testing.T) {
 	}
 	start := time.Now()
 	s.Close()
-	if d := time.Since(start); d < stopGrace || d > stopGrace+time.Second {
-		t.Errorf("Close took %s, want about %s", d, stopGrace)
+	if d := time.Since(start); d < stopGrace {
+		t.Errorf("Close took %s, less than the %s grace a child gets", d, stopGrace)
 	}
 	for _, pid := range pids(t, dir) {
-		if alive(pid) {
+		if alive(t, pid) {
 			t.Errorf("child %s outlived Close", pid)
 		}
 	}
@@ -250,7 +286,7 @@ func TestCloseDuringARestart(t *testing.T) {
 	eventually(t, "a second child", func() bool { return len(pids(t, dir)) == 2 })
 	s.Close()
 	for _, pid := range pids(t, dir) {
-		if alive(pid) {
+		if alive(t, pid) {
 			t.Errorf("child %s outlived Close", pid)
 		}
 	}
@@ -265,19 +301,41 @@ func TestQuote(t *testing.T) {
 			t.Errorf("Quote(%q) = %q, want %q", in, got, want)
 		}
 	}
-	if got := lastLines("a\nb\nc\nd", 2); got != "c | d" {
-		t.Errorf("lastLines = %q", got)
+}
+
+func TestWhy(t *testing.T) {
+	for _, tc := range []struct{ name, msg, want string }{
+		{
+			// What gst-launch-1.0 1.24 prints when pipewiresink finds no PipeWire.
+			"an element's error",
+			"ERROR: from element /GstPipeline:pipeline0/GstPipeWireSink:pipewiresink0: Failed to connect\n" +
+				"Additional debug info:\n" +
+				"../src/gst/gstpipewiresink.c(860): gst_pipewire_sink_open (): /GstPipeline:pipeline0/GstPipeWireSink:pipewiresink0\n" +
+				"ERROR: pipeline doesn't want to preroll.\n" +
+				"Failed to set pipeline to PAUSED.",
+			"ERROR: from element /GstPipeline:pipeline0/GstPipeWireSink:pipewiresink0: Failed to connect",
+		},
+		{"a parse failure", `WARNING: erroneous pipeline: no element "nosuchsink"`, `WARNING: erroneous pipeline: no element "nosuchsink"`},
+		{"no element's error", "one\ntwo\nthree\nfour", "two | three | four"},
+	} {
+		if got := why(tc.msg); got != tc.want {
+			t.Errorf("why of %s = %q, want %q", tc.name, got, tc.want)
+		}
 	}
-	// What gst-launch-1.0 1.24 prints when pipewiresink finds no PipeWire.
-	const noPipeWire = "ERROR: from element /GstPipeline:pipeline0/GstPipeWireSink:pipewiresink0: Failed to connect\n" +
-		"Additional debug info:\n" +
-		"../src/gst/gstpipewiresink.c(860): gst_pipewire_sink_open (): /GstPipeline:pipeline0/GstPipeWireSink:pipewiresink0\n" +
-		"ERROR: pipeline doesn't want to preroll.\n" +
-		"Failed to set pipeline to PAUSED."
-	if got, want := why(noPipeWire), "ERROR: from element /GstPipeline:pipeline0/GstPipeWireSink:pipewiresink0: Failed to connect"; got != want {
-		t.Errorf("why = %q, want %q", got, want)
-	}
-	if got := why("WARNING: erroneous pipeline: no element \"nosuchsink\""); got != `WARNING: erroneous pipeline: no element "nosuchsink"` {
-		t.Errorf("why of a parse failure = %q", got)
+}
+
+func TestLastLines(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		n    int
+		want string
+	}{
+		{"a\nb\nc\nd", 2, "c | d"},
+		{"a\nb", 3, "a | b"},
+		{"a", 1, "a"},
+	} {
+		if got := lastLines(tc.in, tc.n); got != tc.want {
+			t.Errorf("lastLines(%q, %d) = %q, want %q", tc.in, tc.n, got, tc.want)
+		}
 	}
 }

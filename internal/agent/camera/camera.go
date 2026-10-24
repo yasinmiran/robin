@@ -133,9 +133,7 @@ func Start(o Options) (*Camera, error) {
 	if where == "" {
 		where = "PipeWire"
 	}
-	s, err := gstsink.Start(pipeline(o.Device, "robin-camera-"+strconv.Itoa(os.Getpid())), gstsink.Options{
-		Name: "camera", Env: []string{"XDG_RUNTIME_DIR=" + runtimeDir()}, Log: log,
-	})
+	s, err := gstsink.Start(pipeline(o.Device, "robin-camera-"+strconv.Itoa(os.Getpid())), gstsink.Options{Name: "camera", Log: log})
 	if err != nil {
 		return nil, err
 	}
@@ -280,18 +278,9 @@ func havePipeWire() error {
 	if os.Getenv("PIPEWIRE_REMOTE") != "" {
 		return nil
 	}
-	socket := filepath.Join(runtimeDir(), "pipewire-0")
+	socket := filepath.Join(gstsink.RuntimeDir(), "pipewire-0")
 	if _, err := os.Stat(socket); err != nil {
 		return fmt.Errorf("no PipeWire for this user at %s, and no v4l2loopback device this user can write", socket)
 	}
 	return nil
-}
-
-// runtimeDir is the logged-in user's runtime directory, where PipeWire
-// listens.
-func runtimeDir() string {
-	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
-		return dir
-	}
-	return fmt.Sprintf("/run/user/%d", os.Getuid())
 }

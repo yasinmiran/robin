@@ -13,6 +13,7 @@ import (
 
 	"github.com/jfreymuth/pulse/proto"
 
+	"github.com/yasinmiran/robin/internal/agent/gstsink"
 	"github.com/yasinmiran/robin/internal/agent/opus"
 )
 
@@ -153,16 +154,7 @@ func (f *framer) write(b []byte) {
 
 // userSocket is where the logged-in user's sound server listens, as libpulse
 // would find it.
-func userSocket() string { return filepath.Join(runtimeDir(), "pulse", "native") }
-
-// runtimeDir is the logged-in user's runtime directory, where their sound
-// server and PipeWire listen.
-func runtimeDir() string {
-	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
-		return dir
-	}
-	return fmt.Sprintf("/run/user/%d", os.Getuid())
-}
+func userSocket() string { return filepath.Join(gstsink.RuntimeDir(), "pulse", "native") }
 
 // userCookie is the user's PulseAudio cookie, as libpulse would find it.
 // PipeWire ignores cookies, and PulseAudio accepts a client of the same user

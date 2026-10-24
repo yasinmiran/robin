@@ -54,9 +54,7 @@ func (pipewireMic) idleSilence()             {}
 // node appears only once its format is known, from the first sound.
 func startPipeWireMic(ctx context.Context, c *proto.Client, log *slog.Logger) (micSink, error) {
 	node := micSourcePrefix + strconv.Itoa(os.Getpid())
-	s, err := gstsink.Start(pipewireMicPipeline(node), gstsink.Options{
-		Name: "microphone", Env: []string{"XDG_RUNTIME_DIR=" + runtimeDir()}, Log: log,
-	})
+	s, err := gstsink.Start(pipewireMicPipeline(node), gstsink.Options{Name: "microphone", Log: log})
 	if err != nil {
 		return nil, err
 	}
