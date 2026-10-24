@@ -144,7 +144,7 @@ once, at the start, where each went on the host or why it could not.
 | `--camera` | off | offer your camera to the host's programs, through PipeWire or a v4l2loopback device; off until switched on |
 | `--curtain` | off | attached desktops: black out the host's screen while the page still shows it. The keyboard and mouse at the host still work; see [A private session](#a-private-session) |
 | `--silent` | off | attached desktops: keep the host's speakers quiet while the page still plays the sound |
-| `--stun` | Google's public server | STUN servers for NAT traversal, comma-separated, or `none` |
+| `--stun` | Google's public server | STUN servers for NAT traversal, comma-separated, or `none`; the browser and the agent each ask them for their public address (see [Security](#security)), except with `--transport tunnel`, which asks none |
 | `--no-browser` | | print the page URL on stdout instead of opening a browser |
 | `--listen` | `127.0.0.1:0` | address for the local page; loopback only |
 | `--ssh` | `ssh` | the ssh client to drive |

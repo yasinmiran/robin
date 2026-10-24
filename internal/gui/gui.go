@@ -619,6 +619,8 @@ func runProbe(ctx context.Context, m *sshmux.Master) (*probe.Report, error) {
 // startMessage fills in the session parameters, with lower defaults on
 // small hosts, and picks the encoder when o leaves it to auto. The string
 // says why it picked the one it did; it is empty when the user chose.
+// Through the tunnel alone no STUN server is asked: every UDP candidate is
+// dropped, and the question would only tell the server both addresses.
 func startMessage(o Options, r *probe.Report) (protocol.Start, string) {
 	s := protocol.Start{
 		Version: protocol.Version, MaxWidth: o.MaxWidth, MaxHeight: o.MaxHeight,
@@ -626,6 +628,9 @@ func startMessage(o Options, r *probe.Report) (protocol.Start, string) {
 		Attach: o.Attach, Monitor: o.Monitor, Audio: o.Audio, Encoder: o.Encoder,
 		Mic: o.Mic, Camera: o.Camera,
 		Curtain: o.Curtain, Silent: o.Silent,
+	}
+	if o.Transport == relay.Tunnel {
+		s.STUN = nil
 	}
 	if o.Camera {
 		s.CameraDevice = r.CameraDevice()

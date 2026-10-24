@@ -1,11 +1,14 @@
 package gui
 
 import (
+	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/yasinmiran/robin/internal/probe"
 	"github.com/yasinmiran/robin/internal/protocol"
+	"github.com/yasinmiran/robin/internal/relay"
 )
 
 func TestStartMessageDefaults(t *testing.T) {
@@ -26,6 +29,28 @@ func TestStartMessageDefaults(t *testing.T) {
 		if s.MaxWidth != tc.w || s.MaxHeight != tc.h || s.FPS != tc.fps || s.MaxKbps != tc.k {
 			t.Errorf("%s: %dx%d at %d fps, %d kbps; want %dx%d at %d fps, %d kbps",
 				tc.name, s.MaxWidth, s.MaxHeight, s.FPS, s.MaxKbps, tc.w, tc.h, tc.fps, tc.k)
+		}
+	}
+}
+
+// TestTunnelTransportAsksNoSTUNServer: with --transport tunnel neither the
+// agent nor the page is given a STUN server. Every UDP candidate is dropped
+// then, so a public address would serve nothing, and asking for it would
+// tell the server both ends' addresses. The other transports keep the
+// servers the user gave.
+func TestTunnelTransportAsksNoSTUNServer(t *testing.T) {
+	stun := []string{"stun:stun.example:3478"}
+	for transport, want := range map[relay.Transport][]string{"": stun, relay.Auto: stun, relay.Direct: stun, relay.Tunnel: nil} {
+		s, _ := startMessage(Options{Transport: transport, STUN: stun}, &probe.Report{})
+		if !slices.Equal(s.STUN, want) {
+			t.Errorf("%q: the agent gets STUN %q, want %q", transport, s.STUN, want)
+		}
+		page, err := json.Marshal(protocol.Config{ICEServers: iceServers(s.STUN)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (want == nil) != strings.Contains(string(page), `"iceServers":[]`) {
+			t.Errorf("%q: the page gets %s", transport, page)
 		}
 	}
 }
