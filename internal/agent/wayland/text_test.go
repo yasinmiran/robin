@@ -21,9 +21,13 @@ import (
 // recorder stands in for the portal, recording what is asked of it. Its
 // SelectionRead fails, as with nothing on the clipboard.
 type recorder struct {
-	dbus.BusObject // methods besides Call are not used
+	dbus.BusObject // methods besides Call and CallWithContext are not used
 	mu             sync.Mutex
 	calls          []string
+}
+
+func (r *recorder) CallWithContext(_ context.Context, method string, flags dbus.Flags, args ...any) *dbus.Call {
+	return r.Call(method, flags, args...)
 }
 
 func (r *recorder) Call(method string, _ dbus.Flags, args ...any) *dbus.Call {

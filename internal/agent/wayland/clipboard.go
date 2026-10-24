@@ -3,6 +3,7 @@
 package wayland
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -222,11 +223,18 @@ func (c *clipboard) follow(owner <-chan *dbus.Signal) {
 func (c *clipboard) readAll(offered []string) protocol.Clip {
 	var content protocol.Clip
 	left := maxClipboard
+	// KDE's portal can announce a new owner with the formats of the one
+	// before it, and never answers a read of one the new owner lacks. Once
+	// a read goes unanswered, the rest of the list is not tried either.
+	unanswered := false
 	read := func(mime string) []byte {
-		if mime == "" || !slices.Contains(offered, mime) {
+		if unanswered || mime == "" || !slices.Contains(offered, mime) {
 			return nil
 		}
 		b, err := c.read(mime, left)
+		if errors.Is(err, context.DeadlineExceeded) {
+			unanswered = true
+		}
 		if err != nil {
 			return nil
 		}
@@ -249,9 +257,13 @@ func latest[T any](ch chan T, v T) {
 	ch <- v
 }
 
+// read reads the clipboard as mime, up to limit bytes. The portal's answer
+// is bounded by clipboardTimeout too, as a pipe that sits idle is.
 func (c *clipboard) read(mime string, limit int) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), clipboardTimeout)
+	defer cancel()
 	var fd dbus.UnixFD
-	if err := c.s.p.obj.Call(ifaceClipboard+".SelectionRead", 0, c.s.handle, mime).Store(&fd); err != nil {
+	if err := c.s.p.obj.CallWithContext(ctx, ifaceClipboard+".SelectionRead", 0, c.s.handle, mime).Store(&fd); err != nil {
 		return nil, err
 	}
 	f, err := pollable(fd, "selection-read")
