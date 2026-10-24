@@ -853,7 +853,8 @@ in rootless podman, with nothing on the workstation itself.
   sshd in `session-8083.scope`, outlived the CLI's SIGKILL, was listed,
   resumed in the same unit, and ended by `robin end` while the resumed CLI
   was connected, which exited 0 on its own. All five tests took 25.5 s on
-  2026-10-24.
+  2026-10-24. A CLI built to ask for `setsid` whatever the probe says fails
+  the scenario at its second test, with no unit to find.
 - Its first run failed for a reason worth knowing: a rootless container
   cannot give a login its own audit session, so logind names every login
   after the one podman runs in. A login that starts after another ended
