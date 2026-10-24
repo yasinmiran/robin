@@ -1,0 +1,90 @@
+---
+title: Install and build
+description: Building the robin CLI and its host agents with make, cross-building for other clients, the pinned toolchain, and what a host needs.
+section: Getting started
+order: 3
+---
+
+Robin builds from a checkout of the repository. You need Go 1.25 or newer and nothing else installed by hand: the C toolchain the agents need is downloaded by the build itself.
+
+```sh
+make
+```
+
+The first run fetches a pinned zig toolchain and builds openh264 and libopus with it, which takes about half a minute and is cached under `.cache/`. It then builds static agents for linux/amd64 and linux/arm64 and embeds both in `bin/robin`. That one file is all you carry around. When you connect, the CLI picks the agent that matches the host's architecture and copies it over.
+
+```sh
+make dist
+```
+
+`make dist` cross-builds the CLI for macOS and Linux on amd64 and arm64, each with every agent embedded:
+
+| File | Runs on |
+|---|---|
+| `dist/robin-darwin-arm64` | macOS on Apple silicon |
+| `dist/robin-darwin-amd64` | macOS on Intel |
+| `dist/robin-linux-amd64` | Linux on x86_64 |
+| `dist/robin-linux-arm64` | Linux on arm64 |
+
+`robin version` prints the version the binary was built from, taken from `git describe`.
+
+## Two binaries, two toolchains
+
+The CLI, `cmd/robin`, is pure Go and builds with `CGO_ENABLED=0`, which is why it cross-compiles to every client platform with nothing but Go.
+
+The agent, `cmd/robin-agent`, runs on the host and links openh264 for video and libopus for sound through cgo. It is built as a fully static musl binary, for `x86_64-linux-musl` and `aarch64-linux-musl`, with `zig cc` as the C compiler. Static matters here: the agent has to start on whatever distribution the host runs, so it never assumes a host library is there.
+
+Every input to that toolchain is pinned by version and checked against a SHA-256 before use:
+
+| Component | Version | Used for |
+|---|---|---|
+| zig | 0.17.0 | C and C++ compiler for both agent targets |
+| nasm | 2.16.03 | openh264's x86 assembly; built from source, x86_64 agents only |
+| openh264 | 2.6.0 | software H.264 encoder |
+| opus | 1.5.2 | Opus audio encoder |
+
+Building needs no containers and no root. The design is meant to cross-compile from macOS as well as Linux, but building the agents on a Mac has not been tried yet; the macOS CLI from `make dist` is what has run there.
+
+<Callout type="note" title="Stub builds.">
+Without the `openh264` and `opus` build tags, the encoder packages build as stubs. That keeps `go test ./...` working on any machine, and it is why `make test` runs the encoder tests in a second pass with the real libraries on linux/amd64.
+</Callout>
+
+## What the host needs
+
+Linux on x86_64 or arm64 and an SSH server you can log in to. What else depends on how you use it.
+
+**A spawned session** needs `Xvfb` plus something to run in it: either a desktop (`xfce4-session`) or a window manager (`openbox`, `fluxbox`, `icewm`, `twm`) with a terminal (`xterm`, `x-terminal-emulator` or `xfce4-terminal`). `xkbcomp` comes along with every distribution's Xvfb package. If anything is missing, the CLI prints the install line for that distribution, for example:
+
+```sh
+sudo apt install xvfb openbox xterm
+```
+
+| Package manager | Xvfb | Window manager | Terminal |
+|---|---|---|---|
+| `apt` | `xvfb` | `openbox` | `xterm` |
+| `dnf` | `xorg-x11-server-Xvfb` | `openbox` | `xterm` |
+| `zypper` | `xorg-x11-server-Xvfb` | `openbox` | `xterm` |
+| `pacman` | `xorg-server-xvfb` | `openbox` | `xterm` |
+| `apk` | `xvfb` | `openbox` | `xterm` |
+
+On Enterprise Linux the window manager comes from EPEL, so the printed line starts with `dnf install epel-release`.
+
+No GPU or monitor is needed. The session renders in software, and a light window manager keeps that cheap. Software H.264 at 1080p30 costs one to two cores, which is why hosts with two cores or fewer get a default of 1280x720 at 20 fps.
+
+**Sound in a spawned session** also needs `pulseaudio`. The agent runs a private one for the session; see [Sound](/sound).
+
+**Attaching to a running desktop** needs none of the above, only the desktop. For a Wayland desktop, add GStreamer's tools and plugins:
+
+```sh
+sudo apt install gstreamer1.0-tools gstreamer1.0-pipewire gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+```
+
+**Hardware encoding** needs a render node you can open, or the NVIDIA driver, and an ffmpeg or GStreamer that can drive it. See [Hardware encoding](/hardware-encoding).
+
+### Where the agent lives on the host
+
+The agent is copied to `~/.cache/robin`, or `$XDG_RUNTIME_DIR/robin`, or `/tmp/robin-$UID` when the home directory is mounted `noexec`. It is checked by hash and reused across sessions, so later runs skip the upload. The directory is mode 0700. Each session runs in its own private run directory, which is removed when the session ends.
+
+## What the client needs
+
+macOS or Linux, OpenSSH with ControlMaster support (so not the Windows build of OpenSSH), and a browser that decodes H.264 in WebRTC. Which browsers are proven to do what is on [Browsers and clients](/browsers).

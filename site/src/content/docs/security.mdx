@@ -1,0 +1,51 @@
+---
+title: Security
+description: What Robin trusts, what it exposes, and the guarantees each part of a session gives, on the client and on the host.
+section: Internals
+order: 2
+---
+
+Robin adds as little as it can to what SSH already gives you. Authentication is SSH's, and a session runs as the account you logged in as; no port is opened on the host for authentication and nothing needs root. What is left to secure is the media path from the agent to your browser, and the one page on your machine that drives the session.
+
+## The agent's identity travels over SSH
+
+The agent's session description, including its DTLS fingerprint, reaches the browser only over the SSH channel and then the token-guarded local websocket. WebRTC already refuses a DTLS peer whose certificate does not match the fingerprint in the remote description, so someone who can reach the UDP or TCP path, or inject packets into it, cannot stand in for the agent. The CLI also pins the first fingerprint it sees and aborts the session if a later answer, from an ICE restart, carries a different one.
+
+## The page is the one unauthenticated surface
+
+Whatever drives the page drives the remote desktop, so it is fenced in on every side:
+
+- The page and its websocket listen on 127.0.0.1. `--listen` refuses any address that is not a literal loopback IP.
+- The websocket needs a random 256-bit token. It rides in the URL fragment, which the browser never sends in a request, and reaches the server inside the websocket handshake.
+- Every request must carry the listener's exact `Host`, and the websocket must come from the page's exact `Origin`.
+- One browser at a time. A second connection is refused until the first closes.
+
+Input from the page is limited to what a keyboard, a pointer and a clipboard can do in that session.
+
+<Callout type="warning" title="Shared client.">
+One exposure is on the client side. To open your browser, the CLI hands the page URL, token included, to `open` or `xdg-open`, so for that moment another user logged in to the same client machine could read it from the process list. On a shared client, use `--no-browser` and open the printed URL yourself.
+</Callout>
+
+## On the host
+
+- The agent's ICE-TCP listener binds loopback and only accepts ICE connections carrying the session's credentials. It is reached through the SSH forward, never from the network.
+- A spawned X display is protected by a fresh cookie in a 0600 file.
+- A spawned session's sound server listens only on a socket inside the run directory, with its own cookie.
+- The agent's directory and each session's run directory are 0700. The agent is uploaded, verified by SHA-256 on the host and renamed into place.
+- Everything the agent starts dies with it, through process groups, a parent-death signal and a display watchdog, and its run directory is removed.
+
+### Attaching to X11
+
+Before the agent sends an X cookie anywhere, it asks the kernel (`SO_PEERCRED`) who is listening on the display's socket, and goes no further unless it is you or root. Any local user can create a socket in `/tmp/.X11-unix` for a display nobody runs, or claim the abstract name of one whose server has no socket file, and whatever answered there would otherwise receive the cookie, the keystrokes and the clipboard.
+
+### Attaching to Wayland
+
+Robin attaches through xdg-desktop-portal, where the desktop asks the person at the screen, shows that sharing is on and lets them stop it. GNOME's own remote desktop interface would work with no dialog at all, so any process running as the user could watch and drive the screen unseen; Robin does not use it outside its test harness.
+
+The restore token that skips the dialog after the first approval is treated as a credential. It lives beside the agent as `wayland-restore-token`, mode 0600, written to a temporary file and renamed into place, under a name the agent's cleanup of old files never touches. A grant without both keyboard and pointer is never kept, so a view-only approval cannot silently make every later session view only.
+
+## Text from the host
+
+Anything the host sends that reaches your terminal (the agent's log and errors, the probe's findings, what `ssh` prints) leaves through two paths only, and both escape control characters. A hostile or broken host cannot retitle your terminal or rewrite what you see in it with escape sequences.
+
+The agent's stdout carries signaling and nothing else. No child process inherits it, so a program started on the desktop cannot write into the control channel.

@@ -1,0 +1,81 @@
+---
+title: Roadmap
+description: The planned work, nine features and a track for crisp video in motion, in the order it can land. Nothing on this page has shipped.
+section: Project
+order: 3
+---
+
+<Callout type="warning" title="Planned work.">
+Everything on this page is **planned**. None of it is in Robin today, and flag and command names shown here are the plan's working names, which may change before they ship. For what Robin does now, see [Using Robin](/using) and [Known limits](/known-limits).
+</Callout>
+
+The plan covers nine features, the gaps against Horizon judged worth closing (see [Robin and Horizon](/robin-and-horizon)), plus a track for picture quality while the screen changes. They land in waves, because several of them touch the same code, and every track ships with its tests: unit tests for new code, container tests for anything that needs X, Wayland, PulseAudio or PipeWire, and an end-to-end scenario for anything you see in the page.
+
+## Wave 0: foundation
+
+**Status: planned.** Groundwork the features build on. A bulk transfer channel, one WebRTC data channel per transfer with a SHA-256 checked at the end and flow control on both sides, for files, rich clipboard and sharp text tiles. Coverage tooling that merges unit, container and end-to-end coverage, so no package drops below its current number. A new protocol version for the message types the features add.
+
+## Wave 1
+
+These six tracks can run in parallel once the foundation is in.
+
+### Reconnectable sessions
+
+**Status: planned.** Today a dropped SSH connection ends the session. With this, the desktop outlives the connection: when SSH or the agent drops, the CLI keeps the page open, tells it that it is reconnecting, redials with backoff and resumes the same desktop. The agent splits into a session daemon that owns the desktop, sound and peers, and a proxy that each connection talks through. A spawned desktop is kept for a while after a drop, 8 hours by default in the plan and set with `--keep`, while an attached one is not kept at all.
+
+Planned commands: `robin ls <host>` to list kept sessions, `robin end <host> [id]` to end one, and `robin gui <host>` resuming the kept spawned session by default, with `--new` to start another. The page gets a "Disconnect, keep desktop" control.
+
+### Microphone and camera
+
+**Status: planned.** Microphone and camera toggles in the page, off by default and allowed only when the session was started with `--mic` or `--camera`. On the host the microphone appears as a source named "Robin microphone" that programs can pick: on the private sound server of a spawned session, or as a PipeWire source on an attached desktop that disappears with the session. The camera is decoded on the host and offered as a PipeWire video source, or through a v4l2loopback device where the host has a writable one.
+
+### Files and rich clipboard
+
+**Status: planned.**
+
+- **Upload**: drop files on the page, or pick them from the status tab, and they land in the host's download directory (`XDG_DOWNLOAD_DIR`, or `~/Downloads`). Names are cleaned, existing files are never overwritten, and a partial file is removed if the transfer is cancelled.
+- **Download**: `robin-agent send FILE...` on the host, with a `robin-send` shortcut in a spawned session, offers files to the page. The page saves only on a click, so the host cannot push downloads at you.
+- **Clipboard**: plain text, HTML and PNG images in both directions, up to 16 MiB, on X11 and through the portal on Wayland. Files pasted into the page become uploads.
+
+### Private session
+
+**Status: planned.** `--curtain` and `--silent` for attached desktops, with toggles in the page. The curtain blanks the machine's own screens while the stream carries on; on X11 by zeroing the gamma ramps, on GNOME under Wayland if the running version offers a way, and on KDE the agent will say it cannot. The curtain hides the screen but does not lock the room's keyboard. The silent room moves every playback stream to a sink the agent records from, so the room's speakers stay quiet without changing the configured default. A separate keeper process holds the restore steps, so a killed agent still gives the room its screens and speakers back.
+
+### Clients
+
+**Status: planned.**
+
+- **IME**: composed input, such as CJK, sent as committed text.
+- **Touch**: tap, long press for right click, two-finger scroll, pinch to zoom and pan locally, and a button that raises the soft keyboard.
+- **Windows**: a mode for OpenSSH builds without ControlMaster, one `ssh` per command, so the Windows build of OpenSSH works, plus Windows binaries from `make dist`.
+- **Android**: the linux/arm64 CLI under Termux.
+
+iOS stays unsupported, since there is no way to run the CLI there.
+
+### Crisp video in motion
+
+**Status: planned.** Sharp text (below) fixes a still screen; this track is about the picture while it changes and right after it does. On the first real session, from a Mac over Tailscale to a 2560x1440 monitor, the picture was pixelated at times and the browser asked for a keyframe about every 3 s. The plan:
+
+- **Measure first.** A harness runs the real encoders over recorded screen content (text, scrolling, window drags, video) on a shaped virtual link and reports PSNR and SSIM per frame, keyframe count and bitrate, so every change below is judged by numbers.
+- **Find why the browser keeps asking for keyframes** and fix the cause, looking at NACK history against the path's round trip, the jitter buffer, frame skips and the 300 ms keyframe gap.
+- **Keyframes that do not wreck the picture**: keep a keyframe's size bounded against the target so it does not spike the queue, let quality recover within a few frames, and look at long-term reference recovery and intra refresh as ways to repair loss without a full keyframe.
+- **Rate control for a desktop.** The encoder's QP ceiling is 51 today, so a dip in the bandwidth estimate turns text to blocks. The goal is the ceiling and frame-skip balance that keeps text legible at the cost of frame rate, the right trade for a desktop.
+- **Defaults, decided from the numbers**: whether `--max-size` should follow the monitor's native size up to 2560x1440 when the host can afford it, whether the bitrate ceiling should rise, and whether the hardware path should use High profile with CABAC where the GPU offers it.
+
+Until this lands, [Using Robin](/using) lists what you can adjust today.
+
+## Wave 2
+
+### Collaboration
+
+**Status: planned, after reconnectable sessions.** The owner of a session invites another account on the host, from the page or with `robin gui --share alice`, and the guest joins with `robin gui --join <code> alice@host`. The session admits a guest only when the kernel confirms the invited user and the invite's one-time code matches. Every guest gets the same encoded stream, and guests are view only until the owner grants control; clipboard, files and microphone follow control. The owner sees who is connected and can remove them, and a guest's page says whose desktop it is. This track gets a dedicated security review, with the cross-user cases as regression tests, before it merges.
+
+### Sharp text
+
+**Status: planned.** When a region of the screen has been still for a moment, the agent sends it again losslessly, as PNG tiles drawn on a layer over the video, and clears a tile the moment its region changes, before the next frame is encoded. Tiles are paced under the congestion target and dropped when stale. A toggle in the page, on by default. The test compares the page's pixels with the host's after a still second, and expects them to match exactly, which the video alone does not.
+
+## Wave 3
+
+### Window per monitor
+
+**Status: planned.** One video track per monitor, each with its own capture and encoder and the bitrate split by area, and one browser window per remote monitor, placed with Chrome's Window Management API and by hand elsewhere. Input from each window maps to its monitor. X11 first, and Wayland through the portal's multiple sources if it can be tested. It runs on its own, after sharp text, because both rewrite the same stream and capture code.

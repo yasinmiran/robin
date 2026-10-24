@@ -1,0 +1,47 @@
+---
+title: Robin and Horizon
+description: An honest comparison with Horizon, a virtual desktop infrastructure platform, covering what overlaps today, which gaps are planned and what Robin does not try to be.
+section: Project
+order: 2
+---
+
+Horizon is a virtual desktop infrastructure (VDI) platform. An organization runs it to deliver desktops to its users. Robin is one command between you and a Linux box you can already ssh to. Comparing the two is useful mostly because the remote desktop experience is where they meet, and Robin's planned work was chosen by looking at where Horizon's experience is ahead.
+
+## Different shapes
+
+Robin has no server of its own. There is nothing to install on the host before the first session, no broker that hands out desktops, no gateway, and no port opened for authentication; the agent is copied over SSH when you connect, runs as your user, and when the session ends it stops everything it started and removes its run directory. Who may use a machine is decided by who may log in to it over SSH, and the SSH setup you already have (jump hosts, keys, certificates, 2FA) is the whole access story.
+
+That shape is the reason for most of what Robin does not do. With no central service there is nothing to pool desktops or assign them to users, and none of that is planned.
+
+## What overlaps today
+
+On the experience of using one remote desktop, Robin covers the basics in a browser, without a client install beyond the `robin` binary:
+
+- picture, keyboard and pointer, with keys mapped by character so any client layout types the right text
+- plain-text clipboard both ways, up to 255 KiB
+- sound from the remote desktop, Opus with forward error correction for speech
+- a spawned desktop that follows the browser window's size, and an attached desktop with a monitor picker
+- congestion control that follows the link, and H.264 on the host's GPU where that pays
+- direct UDP when the network allows it, the SSH connection when it does not, and failover between them mid-session
+- attaching to the desktop you are logged in to, on X11 or on GNOME and KDE Plasma under Wayland, with consent at the screen
+
+## The gaps Robin plans to close
+
+The plan names nine features as the Horizon gaps worth closing, and adds a tenth track for picture quality while the screen is changing. All of them are planned, none are shipped, and each one is described on the [Roadmap](/roadmap).
+
+| Feature | Robin today | Planned |
+|---|---|---|
+| Reconnectable sessions | a dropped SSH connection ends the session | the desktop outlives the connection and `robin gui` reattaches |
+| Microphone and camera | sound goes one way | the browser's microphone and camera appear as devices on the host |
+| Files | none | upload by dropping on the page, download on a click |
+| Rich clipboard | plain text, 255 KiB | text, HTML and PNG images, up to 16 MiB |
+| Window per monitor | one monitor per tab | one browser window per remote monitor |
+| Sharp text | the H.264 picture only | lossless tiles over regions that have gone still |
+| Private session | the person at the machine sees everything | curtain the local screen and silence its speakers |
+| Collaboration | one browser per session | invite other host accounts, view only until granted control |
+| More clients | macOS and Linux, no IME | IME, touch, Windows and Android |
+| Crisp video in motion | text can turn blocky when the bitrate estimate dips | measured tuning of keyframes and rate control |
+
+## What Robin does not aim to be
+
+Robin stays a tool for machines you can already reach. Running desktops for an organization, from provisioning them to brokering who gets which, is what a VDI platform is for, and the plan adds none of it. iOS also stays out, since there is no way to run the CLI there, which leaves the planned clients at Windows and Android alongside the macOS and Linux ones that work today.

@@ -1,0 +1,61 @@
+---
+title: Known limits
+description: What Robin does not do today, or does only partly, grouped by area.
+section: Project
+order: 1
+---
+
+These are the current limits of the shipped tool. Some of them are being worked on, and the [Roadmap](/roadmap) says which; until a feature ships, the limit below stands.
+
+## Sessions
+
+- One browser per session. A second tab is refused until the first closes.
+- The session lasts as long as the SSH connection. If it drops, the session ends, and so does a spawned desktop.
+- The status tab reads 0 fps on an idle screen. Nothing is sent when nothing changes, and that is not a stall.
+
+## Attaching to X11
+
+- An attached X11 desktop shows one monitor at a time in one browser tab; there is no window per monitor. With `all`, every monitor arrives as one picture, gaps included, scaled to fit `--max-size`, so small text gets hard to read. Monitors come from RandR 1.5, and an X server older than that shows the whole desktop.
+- Autorepeat is off for the whole display, keys held at the machine itself included, until the session ends.
+- Text pasted from the browser into an attached desktop outlives the session only if that desktop runs a clipboard manager.
+- `--attach auto` never picks an X display inside a Wayland session, because the X server you own there is Xwayland, whose screen holds none of the desktop. It takes the Wayland session itself when the probe finds its socket and session bus.
+
+## Attaching to Wayland
+
+- Someone at the host's screen has to approve the first session. Attaching works through the portal's remote desktop interface, which GNOME and KDE Plasma have and wlroots compositors such as Sway do not.
+- Characters only type if the host's keyboard layout has them. The compositor drops any other keysym, and there is no spare keycode to bind one to as on X11. Paste such text through the clipboard instead.
+- GNOME drops the first key event of each remote session, and now and then the first pointer event. The agent spends both on input that does nothing, so you should not notice, but it is why mutter logs `No keycode found for keyval ffffff` when a session starts.
+- An attached Wayland desktop keeps its own size and shows one monitor. A screen larger than `--max-size` is scaled down, and a scaled (HiDPI) screen streams at its logical size, so text is softer than on the host.
+- The pointer is drawn into the video, so it moves at the video's pace, a round trip behind your hand; the browser hides its own pointer over the picture.
+- Held keys repeat at the host's own rate, and the browser's repeats are not sent. A held key during a network stall keeps repeating on the host until the key-up gets through.
+- KDE Plasma shares its screen only while KWin composites with OpenGL. With KWin's QPainter fallback, used where it finds no GPU to render with, the portal refuses to start and the session ends with "Start failed".
+- The Wayland tests run against GNOME 46, GNOME 49 and KDE Plasma 6.7. Other versions and distributions are untested.
+
+## Sound
+
+- Sound in a spawned session needs `pulseaudio` on the host. Current Fedora and Ubuntu desktops ship PipeWire without it, and their spawned sessions are silent.
+- The page starts muted, because browsers autoplay only silent video: one click on the speaker, and again after each reload.
+- Sound goes one way; there is no microphone.
+- In-band FEC protects speech only. Opus sends speech in hybrid mode, whose SILK layer repeats the previous frame at low rate; music stays in CELT, which has no such redundancy, so a lost music packet is concealed by the browser instead.
+- Attached, the sound is the monitor of whatever output was the default when the session started, and the host's own speakers keep playing it.
+
+## Input and clipboard
+
+- The clipboard is plain text, up to 255 KiB in each direction.
+- Keys map by character, so text arrives right whatever the client layout, but IME composition (CJK input) is not forwarded.
+
+## Network
+
+- Through the SSH tunnel, video is TCP inside TCP, so a lossy link shows head-of-line stalls that direct UDP would not.
+
+## Clients and browsers
+
+- Safari's picture and pointer are untested. The only WebKit the tests can drive on Linux renders no remote WebRTC video; see [Browsers and clients](/browsers).
+- Firefox shows no picture until it has fetched its OpenH264 plugin, which needs a network connection the first time.
+- The macOS client has run from Chrome on an Apple silicon Mac, attached to an X11 desktop over Tailscale. Safari, and building the agents from a Mac, are untried.
+- The client needs OpenSSH with ControlMaster, which rules out native Windows for now.
+
+## Encoding
+
+- Hardware encoding answers a keyframe request about 35 ms later than software and adds a few milliseconds to every frame, which is the price on the hosts and sizes where `auto` picks it.
+- The NVENC route is untested on real NVIDIA hardware. See [Hardware encoding](/hardware-encoding).

@@ -1,0 +1,39 @@
+---
+title: Sound
+description: Where a session's sound comes from, how it is encoded and sent, why the page starts muted, and the limits.
+section: Guides
+order: 4
+---
+
+The desktop's sound comes along by default as a stereo Opus track beside the video. `--audio=false` leaves it out. When the host cannot provide sound, the session runs without it and the CLI says why, as `robin: no sound from <host>: <reason>`.
+
+<Callout type="note" title="Muted at first.">
+The page opens muted, because a browser only starts a video by itself while it is silent. Once an audio track arrives, the status tab shows a speaker: click it to hear the session, and again after each reload.
+</Callout>
+
+## In a spawned session
+
+A spawned desktop has no sound server of its own, so the agent starts a private `pulseaudio` for it, which the host needs installed. That server loads no default script, so no module touches the sound cards or Bluetooth. Its only output is a null sink, and it listens on a socket in the session's run directory with a cookie beside it. A session bus address that leads nowhere keeps it from meeting your own sound server over D-Bus. The desktop's programs are pointed at it with `PULSE_SERVER` and `PULSE_COOKIE`, and nothing is written to `~/.config/pulse`.
+
+The daemon stops with the session, and dies with the agent even if the agent is killed outright.
+
+Hosts with only PipeWire get sound when attached but not in a spawned session. Current Fedora and Ubuntu desktops ship PipeWire without `pulseaudio`, so their spawned sessions are silent. Running PipeWire as the private server was considered and not built: it needs WirePlumber to link streams, WirePlumber 0.4 and 0.5 take different configuration languages, and its default configuration claims the host's sound cards.
+
+## Attached to a running desktop
+
+The agent records the desktop's own sound server, PulseAudio or PipeWire alike, since PipeWire speaks the same protocol through `pipewire-pulse`. It records the monitor of whatever output was the default when the session started, and the host's own speakers keep playing it.
+
+## How it is captured and sent
+
+The agent speaks the PulseAudio native protocol itself, in Go, so it needs no host libraries and no `parec` or `pw-record` on the host. It records at 48 kHz stereo in 20 ms fragments and encodes each fragment as it arrives; a session that falls behind loses packets rather than stalling.
+
+Opus runs at 96 kbit/s and complexity 10, with in-band forward error correction on and 5% expected loss. Speech-like sound goes out in hybrid mode, whose SILK layer carries the previous frame again at low rate, so a lost packet of speech can be recovered, at that lower rate, from the one after it. Tones and music stay in CELT, which has no such redundancy, so a lost music packet is concealed by the browser instead.
+
+Measured in the X test container, the whole audio path, agent and pulseaudio together, costs about 1.5% of a core while silent and 4.5% while playing speech-like noise at 90 kbit/s.
+
+## Limits
+
+- Sound goes one way. There is no microphone yet; a microphone and camera are on the [Roadmap](/roadmap).
+- One click on the speaker is needed per page load.
+- Spawned sessions need `pulseaudio` on the host.
+- Attached, the host's speakers keep playing what you hear.

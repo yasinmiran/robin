@@ -1,0 +1,175 @@
+---
+title: Using Robin
+description: The gui command, spawning versus attaching, sizes and HiDPI, monitors, transports, encoders, sound, the page, and every flag.
+section: Guides
+order: 1
+---
+
+```text
+robin gui [flags] [user@]host [-- ssh-args...]
+robin version
+```
+
+`robin gui` is the whole interface. Flags go before the destination, and everything after `--` is handed to `ssh` as it is:
+
+```sh
+robin gui alice@build-box
+robin gui build-box -- -p 2222 -i ~/.ssh/other_key
+robin gui --max-size 2560x1440 --fps 60 workstation
+robin gui --no-browser lab-node
+robin gui --attach auto workstation
+robin gui --attach wayland workstation
+```
+
+## SSH
+
+Robin runs your own `ssh` binary (`--ssh` picks another one) and opens a single ControlMaster connection with `ssh -M`. The probe, the agent upload, the agent itself and the media tunnel all ride that one connection, so you authenticate once. `~/.ssh/config` with `Match` and `Include`, `ProxyJump`, `ProxyCommand`, the SSH agent, FIDO keys, certificates, Kerberos and interactive prompts for passwords, 2FA or an unknown host key all work the way they do for `ssh` on its own.
+
+If that SSH connection drops, the session ends; sessions that survive a drop are on the [Roadmap](/roadmap).
+
+## Spawning a desktop
+
+Without `--attach`, the agent starts its own display. It runs Xvfb on a free display number at `--max-size`, then switches RandR modes so the display matches your browser window, up to that size. Inside it goes the lightest session the agent finds: Xfce if `xfce4-session` is installed, else a window manager (openbox, fluxbox, icewm or twm) with a terminal beside it, else a bare terminal. `--session` runs a command of your choosing instead:
+
+```sh
+robin gui --session startxfce4 build-box
+```
+
+The session gets a sensible locale even when SSH brought none. The agent keeps any `LANG`, `LC_ALL` or `LC_CTYPE` it was given, else reads `LANG` from `/etc/locale.conf` or `/etc/default/locale`, and falls back to `C.UTF-8`, so a terminal does not end up in the C locale drawing UTF-8 prompts as mojibake.
+
+## Attaching to a running desktop
+
+`--attach` streams a desktop that already exists instead of starting one. `auto` picks your active session, Wayland or X11; `:1` names an X display; `wayland` goes through the desktop's screen sharing portal. An attached desktop is shared with whoever sits at the machine, and it keeps its own resolution, so the browser scales the picture rather than resizing the remote screen. The details differ enough to have their own pages: [Attaching to X11](/attach-x11) and [Attaching to Wayland](/attach-wayland).
+
+## Size, frame rate and HiDPI
+
+`--max-size` is the largest remote resolution, 1920x1080 by default and 1280x720 on hosts with two cores or fewer. A spawned display follows your window up to it. An attached desktop larger than it, a 4K monitor say, is scaled down to fit, and the pointer is mapped back onto the full-size screen. The downscale averages the exact source area under each output pixel, since plain sampling drops strokes of text.
+
+`--fps` caps the frame rate: 30 by default, 20 on small hosts. Below the cap, frames go out only when the screen changes, so the status tab reads 0 fps on an idle screen, which is not a stall.
+
+`--hidpi` sizes the remote display in your browser's device pixels instead of CSS pixels. On a Retina screen that gives sharp text at about four times the pixels to encode. Raise `--max-size` with it if you want the display fully native.
+
+## Monitors
+
+An attached X11 desktop with several monitors shows one of them at a time, starting with the primary one. `--monitor` picks another by name (`--monitor DP-2`), by its number in `xrandr --listmonitors` order (`--monitor 2`), or `all` for every monitor in one picture. While you are connected, the status tab lists the monitors with their sizes and switches between them. A Wayland desktop shows the monitor picked in its own sharing dialog. More on this under [Attaching to X11](/attach-x11#monitors).
+
+## Bitrate and transports
+
+`--max-kbps` is the video bitrate ceiling, 10000 kbit/s by default. Congestion control works below it, following what the link actually carries, so raising the ceiling only helps on a link with room to spare.
+
+`--transport` picks the media path:
+
+- `auto`, the default, offers both direct UDP and the SSH tunnel and lets ICE choose. UDP wins whenever it works. If UDP stops mid-session, the page notices and moves onto the tunnel in about three seconds.
+- `direct` offers UDP only.
+- `tunnel` forces the SSH path. With `tunnel` the session fails if the SSH forward cannot be opened; with `auto` it carries on over UDP alone and logs a warning.
+
+`--stun` sets the STUN servers used to find a public address for NAT traversal, comma-separated. The default is Google's public server, `stun:stun.l.google.com:19302`, and `none` turns STUN off. How the paths fit together is on [How it works](/how-it-works#transports-and-fallback).
+
+## Encoders and sound
+
+`--encoder auto`, the default, encodes on the host's GPU where the probe shows that it pays and in software everywhere else; `software`, `vaapi` and `nvenc` insist on one, and a GPU encoder you name fails the session if it cannot run. See [Hardware encoding](/hardware-encoding).
+
+Sound comes along by default from the spawned session's private sound server or from the attached desktop's own. `--audio=false` leaves it out. See [Sound](/sound).
+
+## The page
+
+The page runs on `127.0.0.1` on a random port (`--listen` sets the address; anything that is not a literal loopback IP, `localhost` included, is refused) and needs the token in the link the CLI opened or printed. The status tab hanging from the top edge shows:
+
+- the state: Connecting, Connected, Reconnecting or Session ended
+- the transport, **Direct UDP** or **SSH tunnel**
+- the picture's resolution, frame rate and bitrate
+- a monitor menu, on attached X11 desktops with more than one monitor
+- the speaker toggle, once an audio track arrives, and the full screen button
+
+The tab tucks itself away while things are healthy and comes back when the pointer nears the top of the window.
+
+Full screen also requests keyboard lock, which lets shortcuts like Ctrl+W and Alt+Tab reach the remote desktop instead of the browser where the browser supports it; without it the session works the same, minus those keys.
+
+Only one browser holds a session at a time. A second tab is refused, with a note to use the most recent link, until the first one closes; reloading the tab you already have is fine, and so is closing it and opening the link again.
+
+### Keyboard, pointer and clipboard
+
+Keys are sent by character. The agent finds the key and shift level that produce each character on the remote keymap, and on X11 binds a spare keycode when the keymap lacks one, so text arrives right whatever your local layout. Named keys such as Enter, arrows, function keys and modifiers are held until you release them. On a Mac, Cmd is sent as Control. IME composition, as used for CJK input, is not forwarded.
+
+The clipboard carries plain text, up to 255 KiB in each direction. Your paste shortcut in the page sends the local clipboard to the remote before the key itself, so the remote program pastes what you just copied. Text copied on the remote is written to your local clipboard when the page has focus and permission.
+
+## Flag reference
+
+Flags take one dash or two (`-v`, `--max-size`). `robin gui -h` prints the same list.
+
+### Picture
+
+<Flags>
+<Flag name="--max-size" arg="WxH" def="`1920x1080`, or `1280x720` on hosts with 2 cores or fewer">
+Largest remote resolution, as WxH.
+</Flag>
+<Flag name="--fps" arg="N" def="`30`, or `20` on small hosts">
+Frame rate cap.
+</Flag>
+<Flag name="--hidpi" def="off">
+Size the remote display in device pixels: sharper on HiDPI screens, more to encode; raise `--max-size` to go native.
+</Flag>
+<Flag name="--max-kbps" arg="N" def="`10000`">
+Video bitrate ceiling in kbit/s; congestion control works below it.
+</Flag>
+<Flag name="--encoder" arg="MODE" def="`auto`">
+Video encoder on the host: `auto` (the GPU where the host has one and it pays, else software), `software`, `vaapi` or `nvenc`.
+</Flag>
+</Flags>
+
+### Desktop
+
+<Flags>
+<Flag name="--session" arg="CMD" def="the lightest desktop found">
+Command to run in the spawned display, such as `startxfce4`.
+</Flag>
+<Flag name="--attach" arg="TARGET" def="none (spawn)">
+Stream a desktop already running on the host: `auto` for your active session, `wayland` for your Wayland session, or an X11 display such as `:0`.
+</Flag>
+<Flag name="--monitor" arg="MONITOR" def="`primary`">
+For X11 desktops attached with `--attach`: the monitor to show first, by name (such as `DP-1`), by number (`1`, `2`, ...), `primary`, or `all` for every monitor as one picture; the page switches between them. Wayland shows the monitor picked in its sharing dialog.
+</Flag>
+<Flag name="--audio" def="`true`">
+Stream the desktop's sound; `--audio=false` leaves it out.
+</Flag>
+</Flags>
+
+### Network
+
+<Flags>
+<Flag name="--transport" arg="MODE" def="`auto`">
+Media path: `auto` (direct UDP, SSH tunnel as fallback), `direct`, or `tunnel`.
+</Flag>
+<Flag name="--stun" arg="SERVERS" def="`stun:stun.l.google.com:19302`">
+Comma-separated STUN servers for NAT traversal, or `none`.
+</Flag>
+<Flag name="--listen" arg="ADDR" def="`127.0.0.1:0`">
+Loopback address for the browser page.
+</Flag>
+</Flags>
+
+### Client
+
+<Flags>
+<Flag name="--no-browser" def="off">
+Print the page URL on stdout instead of opening a browser.
+</Flag>
+<Flag name="--ssh" arg="PATH" def="`ssh`">
+The ssh client to use.
+</Flag>
+<Flag name="-v" def="off">
+Verbose logging to stderr, including the agent's log.
+</Flag>
+</Flags>
+
+### Passing options to ssh
+
+<Flags>
+<Flag name="--" arg="ssh-args...">
+Everything after `--` is handed to `ssh` as it is, as in `robin gui build-box -- -p 2222 -i ~/.ssh/other_key`. Flags for `robin` go before the destination.
+</Flag>
+</Flags>
+
+<Callout type="note" title="When the picture looks soft or blocky.">
+Two things are worth checking today. An attached monitor larger than `--max-size` is scaled down, and the default is 1920x1080, so a 2560x1440 monitor arrives shrunk; `--max-size 2560x1440` sends it at its own size, at the cost of more pixels to encode. On a Retina or other HiDPI client screen, `--hidpi` with a raised `--max-size` renders in device pixels. Blockiness while the screen is changing, when the link's estimate dips, is a known weak spot that is being worked on: see crisp video in motion and sharp text on the [Roadmap](/roadmap).
+</Callout>

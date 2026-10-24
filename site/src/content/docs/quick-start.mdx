@@ -1,0 +1,67 @@
+---
+title: Quick start
+description: From a built robin binary to a remote desktop in your browser, and what to do when the host is missing something.
+section: Getting started
+order: 2
+---
+
+This page starts from a built CLI. If you do not have one yet, run `make` in a checkout (see [Install and build](/install)); it leaves the CLI at `bin/robin`, and `make dist` leaves one per client platform in `dist/`.
+
+## 1. Open a desktop
+
+```sh
+bin/robin gui alice@build-box
+```
+
+The destination is whatever you would give `ssh`: a host alias from `~/.ssh/config`, `user@host`, or an address. Anything after `--` goes to `ssh` untouched:
+
+```sh
+bin/robin gui build-box -- -p 2222 -i ~/.ssh/other_key
+```
+
+Answer any prompt `ssh` puts up. The CLI then probes the host, uploads the agent if this host does not have the current one, and starts a desktop. When the desktop is up, your browser opens on a page at `127.0.0.1` and the terminal prints the display it is showing, the host, and `press Ctrl+C to end the session`.
+
+## 2. If the host is missing something
+
+A spawned desktop needs `Xvfb`, `xkbcomp`, a desktop or window manager, and a terminal. When any of them is missing, the CLI stops before it uploads anything and says what to install, with the command for the host's package manager:
+
+```text
+robin: build-box cannot run a headless desktop yet: missing Xvfb, xkbcomp, a window manager or desktop, a terminal
+install with: sudo apt install xvfb openbox xterm
+```
+
+Run that line on the host and try again. The CLI knows `apt`, `dnf`, `zypper`, `pacman` and `apk`, and on Enterprise Linux it adds `epel-release` when the window manager has to come from EPEL.
+
+If you would rather not install anything, and you are logged in to a desktop on that machine, attach to it instead:
+
+```sh
+bin/robin gui --attach auto workstation
+```
+
+## 3. Use it
+
+Click into the picture and type. Keys map by character, so text comes out right whatever your local keyboard layout is. Pasting with your usual shortcut sends the local clipboard to the remote first, and text copied on the remote lands on your local clipboard while the page has focus.
+
+The status tab at the top shows whether you are on **Direct UDP** or the **SSH tunnel**, along with the picture size, frame rate and bitrate. It hides itself after a moment; move the pointer to the top edge to bring it back.
+
+<Callout type="note" title="Muted at first.">
+The page starts muted, because browsers only autoplay silent video. Click the speaker in the status tab to hear the session, and click it again after a reload.
+</Callout>
+
+The full screen button also asks the browser for keyboard lock where the browser supports it, so shortcuts such as Ctrl+W and Alt+Tab go to the remote desktop instead of closing your tab or switching your local windows.
+
+## 4. End it
+
+Press Ctrl+C in the terminal. The CLI tells the agent goodbye, the agent stops the display, the desktop and everything else it started, and its run directory on the host is removed. The page shows "Session ended".
+
+Closing the browser tab does not end the session; reload or reopen the printed link and you are back where you were. Only one browser can hold a session at a time, so a second tab is refused until the first one closes.
+
+## When something goes wrong
+
+Run the same command with `-v`. The CLI then logs each step to stderr, along with the agent's own log from the host: what the probe found, which encoder was picked and why, and why a picked GPU encoder fell back to software. A session without sound says why even without `-v`.
+
+```sh
+bin/robin gui -v alice@build-box
+```
+
+If the CLI cannot open a browser (on a machine with no desktop, say), it prints `open this URL in your browser:` followed by the link. With `--no-browser` it prints only the link, on stdout, and leaves opening it to you.

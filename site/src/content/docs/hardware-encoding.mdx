@@ -1,0 +1,75 @@
+---
+title: Hardware encoding
+description: How Robin encodes H.264 in software and on the host's GPU, when auto picks the GPU, what the host needs, and what it costs.
+section: Guides
+order: 5
+---
+
+```sh
+robin gui --max-size 3840x2160 build-box   # auto: the GPU, if build-box has one and it pays
+robin gui --encoder vaapi build-box        # Intel or AMD through VA-API, or fail
+robin gui --encoder nvenc gpu-box          # NVIDIA, or fail
+robin gui --encoder software build-box     # never the GPU
+```
+
+## The software encoder
+
+By default video is encoded in software with openh264, statically linked into the agent. It emits Constrained Baseline H.264, which every browser decodes in WebRTC, and lets the agent change the bitrate and ask for a keyframe at any moment, which is what congestion control needs. openh264 is BSD-2 licensed; x264 encodes better per CPU but is GPL-2.0, which would have made the agent GPL.
+
+The encoder runs in openh264's camera mode with scene-change detection off, frame skipping on, and QP allowed from 16 to 51. Screen-content mode looked like the obvious fit and lost on measurement: it forces scene-change detection, so full-screen motion became a keyframe on every frame at 18 to 32 Mbit/s whatever the target, and it encoded three to four times slower. Frame skipping is what holds the target on content that will not compress. A frame that rate control drops is encoded again on the next tick, so an idle screen never freezes on a stale picture.
+
+## Picking the GPU: `--encoder auto`
+
+The CLI picks the encoder from the probe's findings, before it tells the agent to start the session. It takes the GPU when the host can drive it and the GPU pays for the latency it adds, which is in two cases:
+
+- **Hosts with four cores or fewer.** openh264 needs up to 8.5 ms of a fast core per 1080p frame, a quarter of a core at 30 fps, which a small host feels.
+- **Sessions above 1920x1080 when ffmpeg can drive the GPU.** At 2160p openh264 spends up to 28 ms of CPU a frame on busy content, against 12 ms through ffmpeg.
+
+VA-API comes before NVENC. Everywhere else the session stays in software; a 1080p session on a bigger host would save a few milliseconds of CPU a frame and add as many of latency.
+
+If the GPU encoder that `auto` picked fails on the host, at its trial frame or later at the session's size, the session carries on with openh264. An encoder you name with `--encoder` is used or the session fails. `-v` shows which encoder was picked, why, and why it fell back.
+
+## What the host needs
+
+The agent is a static binary and cannot load the host's GPU libraries, so for these encoders it pipes raw frames through a tool the host already has, ffmpeg or GStreamer's `gst-launch-1.0`, and reads one encoded frame back for each one it sends.
+
+| Encoder | Device | Tool, either of |
+|---|---|---|
+| `vaapi` (Intel, AMD) | a render node in `/dev/dri` you can open, which usually means being in the `render` group | ffmpeg built with `h264_vaapi`; `gst-launch-1.0` with GStreamer's va or vaapi plugin and gst-plugins-good |
+| `nvenc` (NVIDIA) | the NVIDIA driver loaded | ffmpeg with `h264_nvenc`; GStreamer's nvcodec plugin |
+
+On Debian and Ubuntu, `sudo apt install ffmpeg` brings both ffmpeg encoders. The CLI checks all of this against the probe before it deploys anything and says what is missing. The agent then tries each route the host offers on a small test frame, ffmpeg first, keeps the first one that returns a Baseline keyframe, and if none works the error lists why each one failed.
+
+## Why `auto` leaves 1080p in software
+
+On a reasonably fast CPU the GPU saves little, because copying each frame out to the tool eats most of what the GPU takes off the CPU. On an i7-13800H with its integrated GPU, a session scrolling a terminal cost about a fifth of a core at 1440x900 and about one core at 3840x2160 with either encoder.
+
+Measured per encoded frame at 30 fps on that machine (iHD 22.3, ffmpeg 4.4, GStreamer 1.20), with a target high enough that nothing is skipped, over typing, scrolling, a video window and full-screen noise:
+
+| | openh264 | ffmpeg `h264_vaapi` | GStreamer `vaapih264enc` |
+|---|---|---|---|
+| time per frame, 1080p | 1.2 to 3.2 ms | 4.8 to 5.1 ms | 5.5 to 6.1 ms |
+| CPU, agent and tool, 1080p | 2.9 to 8.5 ms | 2.6 to 2.8 ms | 3.2 to 3.9 ms |
+| time per frame, 2160p | 5.0 to 10.1 ms | 18.6 to 19.8 ms | 30.8 to 34.2 ms |
+| CPU, agent and tool, 2160p | 12.2 to 28.2 ms | 11.5 to 12.5 ms | 21.1 to 22.1 ms |
+
+Most of the hardware routes' CPU is the copy: a 2160p frame is 12 MB through a pipe and into a GPU surface. GStreamer's route spends 31 to 34 ms on a 2160p frame, a whole frame at 30 fps, so `auto` counts it on small hosts only.
+
+## What the GPU costs
+
+- A keyframe the browser asks for takes about 40 ms instead of 5, because a running tool cannot be asked for one and is restarted instead.
+- Each frame spends 5 ms in the encoder at 1080p and about 20 ms at 2160p through ffmpeg, against 1 to 3 and 5 to 10 ms for openh264.
+- Congestion control is followed by skipping frames, and the tool is restarted at the new bitrate when the target has moved twofold, at most every two seconds.
+- The first GStreamer run on a host builds its plugin registry, which can take a few seconds.
+
+Rate control on the GPU is VBR, with the target as the peak and 70% of it as the average. Under CBR the hardware spent the whole target on any picture, 17 to 20 Mbit/s at a 20 Mbit/s target for typing that openh264 sends in 62 kbit/s. Between restarts a token bucket holding 500 ms of the target skips frames when the output runs ahead of it, because on full-screen noise the Intel encoder sent 4.4 Mbit/s whether the target was 500 kbit/s or 2 Mbit/s.
+
+## What has been verified
+
+The VA-API routes have run on Ubuntu 22.04 (GStreamer 1.20, ffmpeg 4.4) and, in a rootless podman container on the same Intel GPU, Ubuntu 24.04 (GStreamer 1.24, ffmpeg 6.1, iHD 24.1). Each emits Constrained Baseline that ffmpeg decodes, and Chrome decoded both the ffmpeg and the GStreamer route at 30 fps.
+
+<Callout type="warning" title="Not yet run on NVIDIA.">
+NVENC follows NVIDIA's documented options but has not been run on NVIDIA hardware yet. It is tested against stand-in tools only, and `auto` prefers VA-API over it for that reason.
+</Callout>
+
+The hardware tests run against stand-in tools everywhere, and against the real GPU wherever `make test` runs on a host that has one along with a tool to drive it. Set `ROBIN_HWENC_REQUIRE=vaapi` (or `nvenc`) to make a missing route fail the run instead of skipping it. See [Testing](/testing).

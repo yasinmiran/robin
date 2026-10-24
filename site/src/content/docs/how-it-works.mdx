@@ -1,0 +1,142 @@
+---
+title: How it works
+description: The SSH control plane, the WebRTC data plane, what happens between running robin gui and seeing a desktop, transports and failover, and congestion control.
+section: Internals
+order: 1
+---
+
+Robin splits the work in two. SSH is the control plane: authentication, probing the host, deploying the agent and carrying signaling. WebRTC is the data plane: video and sound out to the browser, keyboard, pointer, clipboard and resize back. Both ends are Go, the CLI and the host agent built from one module, with Pion providing WebRTC, ICE (ICE-TCP included), DTLS, SCTP data channels and congestion control.
+
+<figure>
+<svg viewBox="0 0 760 470" role="img" aria-labelledby="robin-arch-title robin-arch-desc" xmlns="http://www.w3.org/2000/svg">
+<title id="robin-arch-title">How a Robin session is wired</title>
+<desc id="robin-arch-desc">On your machine, the browser talks to the robin CLI over a websocket, and the CLI drives ssh. One SSH connection reaches sshd on the Linux host, which runs robin-agent and forwards to its ICE-TCP listener. The agent captures the desktop. Media goes straight from the agent to the browser over UDP, or, when UDP is blocked, through the CLI's tunnel listener and the SSH connection.</desc>
+<g fill="none" stroke="currentColor">
+<rect x="10" y="40" width="330" height="400" rx="14" strokeDasharray="4 4" strokeOpacity="0.45" />
+<rect x="420" y="40" width="330" height="400" rx="14" strokeDasharray="4 4" strokeOpacity="0.45" />
+<rect x="30" y="60" width="290" height="110" rx="8" strokeWidth="1.5" />
+<rect x="30" y="200" width="290" height="100" rx="8" strokeWidth="1.5" />
+<rect x="30" y="340" width="290" height="80" rx="8" strokeWidth="1.5" />
+<rect x="440" y="60" width="290" height="110" rx="8" strokeWidth="1.5" />
+<rect x="560" y="200" width="170" height="100" rx="8" strokeWidth="1.5" />
+<rect x="440" y="340" width="290" height="80" rx="8" strokeWidth="1.5" />
+<line x1="320" y1="105" x2="440" y2="105" strokeWidth="4" />
+<line x1="90" y1="170" x2="90" y2="200" strokeWidth="1.5" />
+<line x1="90" y1="300" x2="90" y2="340" strokeWidth="1.5" />
+<line x1="320" y1="380" x2="440" y2="380" strokeWidth="1.5" />
+<line x1="462" y1="340" x2="462" y2="170" strokeWidth="1.5" />
+<line x1="645" y1="170" x2="645" y2="200" strokeWidth="1.5" />
+<line x1="280" y1="170" x2="280" y2="200" strokeWidth="2" strokeDasharray="6 4" />
+<line x1="280" y1="300" x2="280" y2="340" strokeWidth="2" strokeDasharray="6 4" />
+<line x1="548" y1="340" x2="548" y2="170" strokeWidth="2" strokeDasharray="6 4" />
+<line x1="30" y1="455" x2="60" y2="455" strokeWidth="4" />
+<line x1="250" y1="455" x2="280" y2="455" strokeWidth="2" strokeDasharray="6 4" />
+<line x1="530" y1="455" x2="560" y2="455" strokeWidth="1.5" />
+</g>
+<g fill="currentColor" fontSize="13" fontWeight="600">
+<text x="22" y="30">Your machine</text>
+<text x="432" y="30">Linux host</text>
+<text x="46" y="86">Browser</text>
+<text x="46" y="226">robin CLI</text>
+<text x="46" y="366">ssh -M</text>
+<text x="456" y="86">robin-agent</text>
+<text x="576" y="226">Desktop</text>
+<text x="456" y="366">sshd</text>
+</g>
+<g fill="currentColor" fontSize="11.5" fillOpacity="0.8">
+<text x="46" y="108">the page, served on 127.0.0.1</text>
+<text x="46" y="126">decodes video, plays sound</text>
+<text x="46" y="144">sends keys, pointer, clipboard</text>
+<text x="46" y="248">serves the page, relays signaling</text>
+<text x="46" y="266">pins the agent's DTLS fingerprint</text>
+<text x="46" y="284">tunnel listener on 127.0.0.1</text>
+<text x="46" y="388">your ssh, config and keys</text>
+<text x="46" y="406">one ControlMaster connection</text>
+<text x="456" y="108">capture, H.264 and Opus encode</text>
+<text x="456" y="126">Pion peer connection</text>
+<text x="456" y="144">ICE-TCP listener on loopback</text>
+<text x="576" y="248">Xvfb and a session,</text>
+<text x="576" y="266">or an attached X11</text>
+<text x="576" y="284">or Wayland desktop</text>
+<text x="456" y="388">runs the agent on an exec channel</text>
+<text x="456" y="406">SFTP upload, forward to ICE-TCP</text>
+<text x="380" y="95" textAnchor="middle">WebRTC</text>
+<text x="380" y="123" textAnchor="middle">direct UDP</text>
+<text x="100" y="189">websocket</text>
+<text x="100" y="324">control</text>
+<text x="272" y="189" textAnchor="end">ICE-TCP</text>
+<text x="272" y="324" textAnchor="end">media fallback</text>
+<text x="380" y="370" textAnchor="middle">one SSH</text>
+<text x="380" y="398" textAnchor="middle">connection</text>
+<text x="472" y="245">signaling</text>
+<text x="472" y="261">on stdio</text>
+<text x="655" y="190">frames, input</text>
+<text x="68" y="459">media</text>
+<text x="288" y="459">media when UDP is blocked</text>
+<text x="568" y="459">control and signaling</text>
+</g>
+</svg>
+<figcaption>One SSH connection carries everything except direct media. When UDP works, video, sound and input flow straight between the browser and the agent. When it does not, the same WebRTC session runs over ICE-TCP through a loopback listener on your machine and an SSH forward to the agent.</figcaption>
+</figure>
+
+## From `robin gui` to a desktop
+
+1. **One connection.** `ssh -M` opens a ControlMaster connection, and everything after it rides that connection through its control socket: the probe, the upload, the agent's exec channel and the port forward. Your SSH setup applies exactly as it would to `ssh` on its own. A Go SSH library would have had to reimplement all of that and would still miss cases; the cost is that the client needs OpenSSH with ControlMaster.
+2. **Probe.** A POSIX shell script, sent over `sh -s`, reports the distribution, architecture and core count, live sessions, the GPU and encoding tools, which spawn-mode tools exist, and a directory where the agent can run. The CLI refuses a host that is not Linux, stops with an install line if a spawned desktop would lack something, checks a named `--encoder` against what the host has, and resolves `--attach auto` to a concrete target.
+3. **Deploy.** The agent for that architecture is uploaded over SFTP, verified by SHA-256 on the host and renamed into place. If the right agent is already there, by hash, the upload is skipped.
+4. **Start.** The agent starts on an exec channel. Its stdin and stdout carry signaling as JSON lines, and nothing else may write to that stdout. Both sides send a heartbeat, so a dead connection tears the session down instead of leaving a display running. The CLI sends the session parameters, with lower defaults on small hosts and `--encoder auto` already resolved into a concrete choice.
+5. **Desktop.** The agent starts Xvfb and a session, or attaches to an X display already running, and captures it with MIT-SHM and DAMAGE. A Wayland desktop is reached through xdg-desktop-portal instead, its frames read from PipeWire by `gst-launch-1.0`. Before the desktop comes up, the agent opens a small encoder, so a host whose encoder fails reports it to the CLI instead of streaming a black screen. Then it answers Ready, with the display, size, encoder and whether sound is on.
+6. **Page and media.** The CLI opens the SSH forward to the agent's ICE-TCP listener, serves the page on loopback and opens your browser. The browser creates the WebRTC offer and is the ICE-controlling side; the agent answers. The CLI relays offer, answer and candidates between them, adding one candidate of its own that leads into the SSH forward. Frames are encoded with openh264, or on the GPU through the host's ffmpeg or GStreamer, and sound goes out as Opus. Keyboard, pointer, clipboard and resize come back over a data channel and go in through XTest and RandR, or the portal on Wayland.
+
+When you press Ctrl+C, the CLI says goodbye on the agent's channel and closes it. The agent tears down everything it started and removes its run directory. The display, the session, the sound server and any encoder tool are held by process groups, a parent-death signal and a watchdog on the display, so they go with the agent even when it is killed outright, which the tests check.
+
+## Transports and fallback
+
+`ProxyJump` cannot carry UDP, so the fallback is part of the design rather than an afterthought. The agent accepts ICE-TCP on a listener that only the host itself can reach. The CLI forwards to it over the SSH connection and hands the browser one extra candidate, a passive TCP candidate on the client's loopback that leads into that forward.
+
+That candidate is offered on every session, next to the direct UDP and STUN candidates, and ICE priority decides. There is no detection step to get wrong. The tunnel candidate has priority 16777215, type preference 0 as for relayed candidates, and since pair priority uses the lower of the two sides, every tunnel pair ranks below every direct UDP pair. The CLI drops any other TCP candidate the agent emits, so TCP media can only take the SSH path, and drops the agent's loopback UDP candidates, which would point the browser at its own machine. The browser's own host candidates stay mDNS names.
+
+### When UDP dies mid-session
+
+Chrome nominates the lower-priority tunnel pair within about two seconds of UDP going away. Pion, as the controlled side, would by default ignore a nomination of lower priority than its current pair and keep sending into the dead path for half a minute until ICE failed. So the agent follows a nomination once its own pair has gone quiet for 2 s and the nominated pair has answered a check. A path can also die in one direction only, which leaves the agent's side looking healthy, so the agent sends a heartbeat over the control channel every second and the page restarts ICE after 3.5 s without one. An ICE restart is a renegotiation, not a new session. In the e2e scenario that drops UDP mid-session, media is back over the tunnel about three seconds later.
+
+Through the tunnel, video is TCP inside TCP, so a lossy link shows head-of-line stalls that direct UDP would not.
+
+## Congestion control
+
+The browser sends transport-wide congestion control feedback, and Pion's GCC turns it into a target bitrate that the encoder follows, below the `--max-kbps` ceiling. Two Pion defaults were replaced, both found by streaming through a shaped virtual link:
+
+- **No pacer.** The default leaky-bucket pacer queues without bound. Whatever was sent while the target fell drained for seconds, and the delay that added pinned the target at its floor. The agent sends unpaced and lets the encoder hold the rate.
+- **A bounded NACK responder.** The default resends anything in a 1024-packet buffer as often as it is asked. After a startup overshoot, lost packets were resent, lost again and NACKed again until retransmissions filled the link, and the loss estimator reported 93% loss with nothing being lost. The agent answers NACKs only for packets younger than a second, at most twice each, within a quarter of the target bitrate.
+
+With both changes, a start that overshoots fourfold and a link that drops mid-session both settle within about 10% of the link rate.
+
+## Zero playout delay
+
+Every video packet carries the playout-delay header extension with a minimum and maximum of zero, so Chrome shows a frame as soon as it is complete instead of holding it for its jitter estimate. A still screen sends nothing until Chrome, after 3 s without a frame, asks for a keyframe, and Chrome's jitter estimate used to grow on that trickle of large frames until it held new frames back for most of a second. Before the change, four keystrokes 250 ms apart after a pause produced one frame on screen, 414 ms after the first key. With the extension each keystroke reached the screen within 11 to 34 ms over direct UDP, 9 to 33 ms through the SSH tunnel, 7 to 31 ms after failing over to it, and 6 to 36 ms attached. Browsers that do not offer the extension, Firefox among them, keep their own playout timing.
+
+## Capture and input
+
+On X11 everything is pure Go through the X protocol, with no libX11 and no cgo outside the encoders: MIT-SHM for capture, DAMAGE to skip idle frames, XTest for input, RandR for resizing and selections with XFIXES for the clipboard. Keys arrive as characters and are typed as keysyms; the agent finds the keycode and shift level that produce each one, adjusts Shift and AltGr around the press, and binds a spare keycode when the keymap lacks the character.
+
+On Wayland the portal hands over a PipeWire connection that can see only the shared stream, and `gst-launch-1.0` reads it with that connection as its fd 3, converting to I420, scaling to fit and framing the output for the agent. Input goes back through the portal, with the compositor picking keycodes.
+
+## Where the code lives
+
+| Path | What it holds |
+|---|---|
+| `cmd/robin` | the CLI, pure Go, with the agents embedded |
+| `cmd/robin-agent` | the host agent, a static musl binary with cgo for openh264 and libopus |
+| `internal/gui` | session orchestration and the page and agent signaling bridge |
+| `internal/sshmux`, `deploy`, `agentbin`, `probe` | the SSH control plane |
+| `internal/web` | the loopback server and the browser client in `static/` |
+| `internal/relay` | candidate filtering, the tunnel candidate, DTLS pinning |
+| `internal/protocol` | every message on stdio, the websocket and the data channel |
+| `internal/agent` | the session and the desktop interface it drives |
+| `internal/agent/display`, `x11` | spawning or attaching to X11 |
+| `internal/agent/wayland` | attaching through the portal and a `gst-launch-1.0` child |
+| `internal/agent/peer` | the Pion side |
+| `internal/agent/yuv`, `h264`, `hwenc` | colour conversion and scaling, openh264, the GPU encoders through host tools |
+| `internal/agent/audio`, `opus` | sound capture and Opus encoding |
+
+Every decision here, and the measurement that settled it, is recorded in the architecture decision record, `docs/adr/0001-architecture.md`, in the repository.

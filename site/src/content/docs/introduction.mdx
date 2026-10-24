@@ -1,0 +1,48 @@
+---
+title: Introduction
+description: Robin opens a Linux desktop from any host you can ssh to in your browser, with nothing set up on the host beforehand.
+section: Getting started
+order: 1
+---
+
+`robin gui <host>` opens a Linux desktop from `<host>` in your browser. The host needs one thing beforehand, the SSH access you already have. The CLI connects with your own `ssh`, copies a small static agent over, starts a headless X session as you and streams it back over WebRTC. There is no signaling server and no port opened for authentication, and nothing on the host needs root: the agent runs as the user you log in as.
+
+![A Robin session: an xterm on the remote desktop, the status tab at the top](/img/session.png)
+
+Media goes straight over UDP when the network allows it. When it does not, because UDP is blocked or the host is only reachable through `ProxyJump`, the stream rides the SSH connection instead, and if UDP disappears in the middle of a session the browser moves onto that path by itself in about three seconds.
+
+## Who it is for
+
+Anyone who already has a shell on a Linux machine and wants its screen. That covers a headless build box or lab node where Robin starts a fresh desktop for you, and also a workstation where you are logged in at the console and want to reach that same desktop from somewhere else, X11 or Wayland.
+
+Your `~/.ssh/config`, your agent, `ProxyJump`, `ProxyCommand`, certificates, and password or 2FA prompts all behave exactly as they do for plain `ssh`, because Robin drives plain `ssh`. If you can type `ssh build-box` and get a prompt, `robin gui build-box` has everything it needs on the network side.
+
+The client side is macOS or Linux with OpenSSH and a browser that decodes H.264 in WebRTC. Native Windows is not supported yet, since Robin multiplexes everything over one OpenSSH ControlMaster connection and the Windows build of OpenSSH has no ControlMaster.
+
+## The name
+
+Robin is named for Nico Robin, who sprouts eyes and hands on any surface she can see. This one sprouts yours on any Linux box you can ssh to. The command, its binaries and its paths on disk are all lowercase `robin`.
+
+## What one session looks like
+
+```sh
+robin gui alice@build-box
+```
+
+`ssh` asks whatever it normally asks. Then a short shell probe reports what the host has: its distribution and architecture, live sessions, GPU, which tools exist, and a directory where the agent may run. If the host cannot run a headless desktop yet, the CLI stops here and prints the one install line that fixes it for that distribution.
+
+The agent for the host's architecture is uploaded over SFTP the first time, verified by SHA-256 and reused on later runs. It starts Xvfb on a free display number with the lightest desktop it finds, Xfce if it is there and otherwise a window manager such as openbox with an xterm beside it.
+
+Your browser opens a page on `127.0.0.1`. A small status tab hangs from the top edge, showing the connection state, the transport in use (Direct UDP or SSH tunnel), the picture's size, frame rate and bitrate, plus a speaker button and a full screen button; it tucks itself away while the session is healthy and comes back when the pointer nears the top. Resize the window and a spawned desktop follows it, up to `--max-size`. Reloading the tab is fine, since the remote session lives as long as the CLI does.
+
+Press Ctrl+C in the terminal to end it. The agent kills everything it started on the host and removes its run directory, keeping only its own binary for next time, and the page says the session ended.
+
+## Two ways to get a desktop
+
+**Spawn** is the default. The agent starts its own Xvfb display and a session inside it, sized to your browser window, and throws all of it away at the end. The host needs `Xvfb` and something to run in it.
+
+**Attach** streams a desktop that is already running, usually the one you are logged in to at the machine. `--attach auto` finds it, `--attach :1` names an X display, and `--attach wayland` goes through the desktop's screen sharing portal, which asks the person at the screen first. Nothing new is started, and the desktop is left as it was found. See [Attaching to X11](/attach-x11) and [Attaching to Wayland](/attach-wayland).
+
+<Callout type="note" title="What these pages cover.">
+These pages describe what Robin does today. Work that is planned but not built, such as sessions that survive a dropped connection, file transfer or a microphone, is listed on the [Roadmap](/roadmap) and nowhere else.
+</Callout>

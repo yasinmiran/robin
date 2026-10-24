@@ -1,0 +1,73 @@
+---
+title: Attaching to Wayland
+description: Streaming a GNOME or KDE Plasma session through the screen sharing portal, the consent dialog, the restore token, and what differs from X11.
+section: Guides
+order: 3
+---
+
+```sh
+robin gui --attach wayland workstation
+robin gui --attach auto workstation    # picks Wayland when that is the active session
+```
+
+`--attach wayland` streams the GNOME or KDE Plasma session you are logged in to on the host. It goes through xdg-desktop-portal, the same screen sharing a video call app uses, which means the desktop asks before anyone sees it, shows that sharing is on, and lets the person at the screen stop it. `--attach auto` picks Wayland when the session logind reports as active is a Wayland one.
+
+Robin uses the portal on purpose. GNOME also has its own remote desktop interface, which works with no dialog at all, and that is exactly why it was rejected: any process running as the user could watch and drive the screen without the person in front of it ever knowing. Only Robin's test harness uses it, to answer the dialog in a container where nobody sits at the screen.
+
+## The first time: the consent dialog
+
+The first session brings up a dialog on the host's own screen, and someone sitting there has to answer it. While it waits, the CLI says who has to do what:
+
+```text
+robin: approve the screen sharing request on workstation's screen, with remote interaction allowed (GNOME: switch on Allow Remote Interaction, then Share; KDE Plasma: Approve). Waiting up to 2m0s. Once approved, later sessions start without asking.
+```
+
+- **GNOME**: switch on **Allow Remote Interaction** before pressing **Share**. Without it the session is view only, and the CLI tells you so: your keyboard and mouse do nothing there, and to take control you end the session, run it again and allow remote interaction in the dialog.
+- **KDE Plasma** asks once for both the picture and the input, and **Approve** grants them together. There is no view-only grant on KDE.
+
+The wait is two minutes. If you stop the CLI while the dialog is up, the agent withdraws the request, which closes the dialog too.
+
+## Later sessions: the restore token
+
+Approval gets the agent a restore token from the portal. The agent keeps it next to itself on the host in a file called `wayland-restore-token`, readable only by you, and every later session starts with no dialog at all. Delete that file to be asked again.
+
+A view-only approval is never remembered, so the next run asks once more. If a restored grant ever comes back view only anyway, the agent drops it and asks with the dialog.
+
+<Callout type="warning" title="Restore token.">
+The restore token is a credential. Whoever holds it and can reach your session bus can start a screen share without a dialog. Robin writes it with mode 0600, by writing a temporary file and renaming it into place, and every session spends the token it was given and stores the fresh one the portal returns. On any failure the file is removed.
+</Callout>
+
+## Ending a session
+
+Ending the session gives the screen back as it was. Stopping the share from the host's own sharing indicator ends the remote session too.
+
+## What the host needs
+
+A Wayland desktop already runs PipeWire and most of GStreamer. The agent reads the screen through `gst-launch-1.0`, so the host needs the GStreamer tools and the PipeWire, base and good plugin sets. A desktop install usually has everything but the tools package. The CLI checks before it starts and prints the line for your distribution, for example:
+
+```sh
+sudo apt install gstreamer1.0-tools gstreamer1.0-pipewire gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+```
+
+Streaming a fully animated 1280x720 screen at 30 fps costs `gst-launch-1.0` about 6% of one core, on top of the encoder. An idle screen costs next to nothing, because the agent compares each frame with the last and repeated frames are not encoded.
+
+Sound comes along as it does on X11, recorded from PipeWire's PulseAudio server (`pipewire-pulse`), which current GNOME and Plasma desktops run.
+
+## How it differs from X11
+
+**One monitor, at its own size.** An attached Wayland desktop shows the monitor picked in the sharing dialog, so `--monitor` does not apply. A screen larger than `--max-size` is scaled down, and a scaled (HiDPI) screen streams at its logical size, so text is softer than on the host.
+
+**The pointer is in the picture.** Cursor metadata cannot be passed through `gst-launch-1.0`, so the pointer is drawn into the video. It moves at the video's pace, a round trip behind your hand, and the browser hides its own pointer over the picture.
+
+**Characters only type if the host's layout has them.** Printable characters go to the compositor as keysyms and the compositor picks the keycode. A keysym missing from the active layout is dropped, and a Wayland client cannot add one to the compositor's keymap the way the X11 path binds a spare keycode. Paste such text through the clipboard instead.
+
+**Held keys repeat at the host's rate.** The browser's repeats are not sent, since Wayland clients repeat held keys themselves. A held key during a network stall keeps repeating on the host until the key-up gets through.
+
+**GNOME drops the first key event of each remote session**, and now and then the first pointer event. The agent spends both on input that does nothing, so you should not notice, but it is why mutter logs `No keycode found for keyval ffffff` when a session starts.
+
+## Desktops
+
+The same agent passes the same suites on GNOME 46, GNOME 49 and KDE Plasma 6.7, with no code that knows which desktop it is on. Other versions and distributions are untested.
+
+- **KDE Plasma** shares its screen only while KWin composites with OpenGL. With KWin's QPainter fallback, which it uses where it finds no GPU to render with, the portal refuses to start and the session ends with "Start failed".
+- **wlroots compositors** such as Sway have no remote desktop portal and are not covered.

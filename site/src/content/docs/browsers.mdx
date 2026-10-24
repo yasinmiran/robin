@@ -1,0 +1,45 @@
+---
+title: Browsers and clients
+description: Which client systems and browsers Robin runs on, what the tests prove for each, and what is still unverified.
+section: Guides
+order: 6
+---
+
+The client is the machine you run `robin` on. It needs macOS or Linux, OpenSSH with ControlMaster support, and a browser that decodes H.264 in WebRTC. The Windows build of OpenSSH has no ControlMaster, so native Windows is not a client today.
+
+## Browsers
+
+| Browser | State | What the end-to-end tests prove |
+|---|---|---|
+| Chrome | supported | every scenario: picture, input, latency, sound, clipboard, resize, both transports, failover, attach and Wayland |
+| Edge | same engine as Chrome | not driven by the tests |
+| Firefox | supported, with Cisco's OpenH264 plugin | every check of the direct scenario, latency and sound included |
+| Safari | picture unverified | stood in for by Playwright's WebKit on Linux; see below |
+
+### Chrome
+
+Chrome is the browser every scenario runs in, including UDP blocked from the start, UDP dropped mid-session, attaching to a two-monitor X11 desktop and attaching to GNOME on Wayland. Video packets carry the playout-delay header extension set to zero, so Chrome shows each frame as soon as it is complete, which is what keeps typing after a still screen within the tests' 400 ms bound. In full screen, Chrome's keyboard lock lets shortcuts such as Ctrl+W and Alt+Tab reach the remote desktop.
+
+### Firefox
+
+Firefox passes every check of the direct scenario given Cisco's OpenH264 plugin. Firefox downloads that plugin by itself on first use, and it then shows under Add-ons and themes, Plugins. A Firefox that cannot fetch it offers no H.264, and the page stays black, so the first session from a fresh profile needs a network connection. Firefox does not offer the playout-delay extension and keeps its own playout timing.
+
+### Safari
+
+What is known comes from Playwright's WebKit build on Linux, which shares Safari's WebRTC stack. It negotiates Constrained Baseline H.264, decodes it, plays the sound, carries keyboard, clipboard and resize, and tears down cleanly.
+
+That build renders no remote WebRTC video at all; even a VP8 loopback between two peer connections in a blank page stays black. So the picture, and the pointer, which is mapped onto the picture, have not been seen in Safari itself. Closing that gap takes one session from a Mac with `--no-browser` and the printed link opened in Safari, and it has not been run yet.
+
+## Client systems
+
+**Linux** is where every test runs, with the CLI in the e2e client container.
+
+**macOS** has run once for real: `dist/robin-darwin-arm64 gui --attach auto` from an Apple silicon Mac reached a Linux workstation over Tailscale on direct UDP, attached to its X11 desktop, with picture, input and sound in Chrome. Safari on the Mac, and building the agents on a Mac rather than using a `make dist` binary, are untried.
+
+On a Mac, Cmd is sent to the remote as Control, and keys pressed while Cmd is held are released when Cmd goes up, since macOS swallows their key-ups.
+
+**Windows**, **Android** and **iOS** are not clients today. Windows and Android are planned; iOS has no way to run the CLI. See the [Roadmap](/roadmap).
+
+## One browser per session
+
+A session serves one browser at a time. A second tab gets "Could not connect" and a note to use the most recent link, until the first one closes. Reloading the tab that holds the session is fine.

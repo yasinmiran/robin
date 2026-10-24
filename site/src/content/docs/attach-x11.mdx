@@ -1,0 +1,68 @@
+---
+title: Attaching to X11
+description: Streaming the X11 desktop you are already logged in to, how Robin finds it and its cookie, monitors, and how the desktop is left as it was found.
+section: Guides
+order: 2
+---
+
+```sh
+robin gui --attach auto workstation   # your active session
+robin gui --attach :1 workstation     # a display you name
+```
+
+With `--attach`, nothing new is started on the host. The agent opens one X connection to a display that is already running, usually the one you are logged in to at the machine, and the session ends when that connection does, from either side. The host needs nothing installed beyond the desktop itself.
+
+## Which display `auto` picks
+
+`--attach auto` looks for a Wayland session first. When logind says the active session is Wayland, or there is no logind, and the probe can see the compositor's socket and the session bus, it attaches through the portal described on [Attaching to Wayland](/attach-wayland).
+
+Otherwise it takes the display of your active local X11 session from logind. GDM leaves that field empty, because it registers the session before its X server starts, so the fallback is the one socket in `/tmp/.X11-unix` that you own. `auto` never picks an X display inside a Wayland session: the X server you own there is Xwayland, and its screen holds none of the desktop. If the active session is Wayland but the probe cannot reach it, `auto` refuses to guess and lists what it found.
+
+## The cookie
+
+The agent tries the cookie for that display in `$XAUTHORITY`, then `~/.Xauthority` (where startx and LightDM put it), `/run/user/$UID/gdm/Xauthority`, mutter's `.mutter-Xwaylandauth.*` and SDDM's `xauth_*`. If none of those works, it connects with no cookie and relies on host-based access, which is what an `xhost +si:localuser:$USER` grant opens.
+
+Before it sends any cookie, the agent asks the kernel who is listening on the socket (`SO_PEERCRED`) and goes no further unless it is you or root. Any local user can create a socket in `/tmp/.X11-unix` for a display nobody runs, and whatever answered there would otherwise receive your cookie, your keystrokes and your clipboard.
+
+## What the person at the machine sees
+
+The desktop stays shared. Whoever sits at the machine sees the pointer move as you move it, and sees what you type.
+
+It also keeps its own resolution, since the size of that desktop belongs to its user. Resizing your browser window scales the picture instead of resizing the screen. A desktop larger than `--max-size` (1920x1080 by default) is scaled down in the stream, and the pointer is mapped back onto the full-size screen, to the desktop pixel under the centre of each video pixel.
+
+The remote pointer's image becomes the page's own cursor, so it changes shape over a text field or a window edge the way it would at the machine.
+
+## Monitors
+
+A desktop of several monitors shows one at a time, starting with the primary one. One monitor is the default because a whole desktop squeezed into one picture is too small to read: on a workstation with two 2560x1440 screens and a 1920x1200 panel below them, the 5120x2640 root went out at 1920x990, 2.7 times smaller than on the screens.
+
+```sh
+robin gui --attach auto --monitor DP-2 workstation   # by name
+robin gui --attach auto --monitor 2 workstation      # by number, in xrandr --listmonitors order
+robin gui --attach auto --monitor all workstation    # every monitor as one picture
+```
+
+The terminal says which monitor it is showing and how many there are, along the lines of:
+
+```text
+robin: attached to :1 on workstation, showing monitor DP-1 (2560x1440), one of 3 (switch in the page); press Ctrl+C to end the session
+```
+
+While connected, the status tab has a monitor menu listing each monitor with its size, plus All monitors, and switching there changes the stream on the fly. Capture copies only the monitor shown, so drawing on the others costs nothing; grabbing and hashing the whole 5120x2640 root takes 11.7 ms against 3.2 ms for one 2560x1440 monitor. Monitors come from RandR 1.5, and an X server older than that shows the whole desktop. Monitors made with `xrandr --setmonitor` change without any RandR event, so the agent lists them again every second; if the monitor you are watching goes away, the page switches to the default one.
+
+There is no window per monitor: one browser tab shows one monitor. With `all`, every monitor arrives as one picture, gaps included, scaled to fit `--max-size`, and small text gets hard to read.
+
+## Left as found
+
+Ending the session closes the agent's X connection and nothing else. Two things the agent changes while it runs are put back:
+
+- **Autorepeat** goes off at your first key press, for the whole display, so a session that only watches changes nothing. Keys held at the machine itself do not repeat either until the session ends. Afterwards the global switch is restored and the keymap dump is byte-identical to before, including the spare keycodes the agent bound for characters missing from the keymap.
+- **The clipboard.** Text you pasted from the browser is handed to the desktop's clipboard manager at the end, through the freedesktop.org `SAVE_TARGETS` handshake. Without a clipboard manager it goes away, as it does whenever an X client that owns the selection exits.
+
+## Compositors and idle screens
+
+The agent skips idle ticks on the word of the X DAMAGE extension. A compositing manager draws windows offscreen and only touches the root window when it repaints, which xcompmgr, picom's xrender backend and GNOME's mutter on X11 all report through DAMAGE. A GL compositor on some drivers might not, and a screen whose changes DAMAGE never sees would freeze in the browser. So once a second the agent grabs the screen anyway and compares a hash with the last frame; the first difference switches it to comparing every frame, which still keeps an idle screen from being encoded.
+
+## Limits
+
+Attached to X11, autorepeat is off for the whole display until the session ends, and text pasted from the browser outlives the session only where a clipboard manager runs. The full list is on [Known limits](/known-limits).
