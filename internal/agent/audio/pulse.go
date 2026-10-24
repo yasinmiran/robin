@@ -3,6 +3,7 @@
 package audio
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -56,7 +57,7 @@ func record(socket string, cookie []byte, onFrame func([]int16), onEnd func(erro
 	// ended need no lock.
 	stream := new(atomic.Uint32)
 	stream.Store(proto.Undefined)
-	c, conn, err := connect(socket, cookie, func(msg any) {
+	c, conn, err := connect(context.Background(), socket, cookie, func(msg any) {
 		switch m := msg.(type) {
 		case *proto.DataPacket:
 			if m.StreamIndex == stream.Load() {
@@ -141,11 +142,16 @@ func (r *recorder) follow(source string) error {
 // connect opens a connection to the server at socket and introduces itself.
 // onMsg, when set, runs on the connection's read goroutine for whatever the
 // server sends that answers no request. A request made from onMsg would
-// wait for its reply on that same goroutine, for ever.
-func connect(socket string, cookie []byte, onMsg func(any)) (_ *proto.Client, _ net.Conn, err error) {
-	conn, err := net.DialTimeout("unix", socket, requestTimeout)
+// wait for its reply on that same goroutine, for ever. ctx bounds the dial,
+// and its deadline, if any, the connection's whole life.
+func connect(ctx context.Context, socket string, cookie []byte, onMsg func(any)) (_ *proto.Client, _ net.Conn, err error) {
+	dialer := net.Dialer{Timeout: requestTimeout}
+	conn, err := dialer.DialContext(ctx, "unix", socket)
 	if err != nil {
 		return nil, nil, err
+	}
+	if d, ok := ctx.Deadline(); ok {
+		conn.SetDeadline(d)
 	}
 	defer func() {
 		if err != nil {

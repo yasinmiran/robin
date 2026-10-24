@@ -52,6 +52,7 @@ type Room interface {
 	Gone() <-chan struct{}
 	Err() error
 	Close() error
+	leaker
 }
 
 // SilenceFunc makes the attached desktop's room silent. ctx bounds the
@@ -189,12 +190,13 @@ func (p *private) run() {
 		curtainLeak = p.curtain.Changed()
 	}
 	for {
-		var gone <-chan struct{}
+		var gone, roomLeak <-chan struct{}
 		p.mu.Lock()
-		if p.room != nil {
-			gone = p.room.Gone()
-		}
+		room := p.room
 		p.mu.Unlock()
+		if room != nil {
+			gone, roomLeak = room.Gone(), room.Changed()
+		}
 		select {
 		case <-p.stop:
 			return
@@ -204,6 +206,8 @@ func (p *private) run() {
 			p.roomGone()
 		case <-curtainLeak:
 			p.leaked(&p.state.Curtain, p.curtain)
+		case <-roomLeak:
+			p.leaked(&p.state.Silent, room)
 		}
 		p.send()
 	}

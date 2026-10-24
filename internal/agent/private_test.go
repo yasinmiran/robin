@@ -153,8 +153,10 @@ func (c *fakeCurtain) isDrawn() bool {
 }
 
 type fakeRoom struct {
-	gone   chan struct{}
-	err    error
+	gone chan struct{}
+	err  error
+	fakeLeak
+
 	mu     sync.Mutex
 	closed bool
 }
@@ -426,6 +428,11 @@ func TestPrivateTellsThePageWhatLeaks(t *testing.T) {
 	r.curtain.leaks(nil)
 	if st := next("the screen dark again"); st.Curtain.Error != "" {
 		t.Fatalf("with every screen dark: %+v", st)
+	}
+	room := r.rooms.last(t)
+	room.leaks(errors.New("a program refuses to move"))
+	if st := next("a program left playing"); !st.Silent.On || st.Silent.Error != "a program refuses to move" {
+		t.Fatalf("with a program left playing: %+v", st)
 	}
 	r.set(protocol.ControlCurtain, false)
 	r.curtain.leaks(errors.New("too late"))

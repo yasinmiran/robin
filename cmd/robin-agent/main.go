@@ -132,7 +132,7 @@ func keep(args []string) int {
 }
 
 func silence(ctx context.Context, hold agent.Hold, log *slog.Logger) (agent.Room, error) {
-	r, err := audio.Silence(ctx, audio.RoomOptions{Hold: func(u audio.RoomUndo) error { return hold(audio.RoomStep, u) }, Log: log})
+	r, err := audio.Silence(ctx, audio.RoomOptions{Hold: hold, Log: log})
 	if err != nil {
 		return nil, err // not r: a nil *audio.Room would make a non-nil interface
 	}
