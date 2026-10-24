@@ -63,11 +63,10 @@ func (l Link) Build() (*Net, error) {
 		return nil, err
 	}
 	n := &Net{stop: func() { wan.Stop() }}
-	if n.Agent, err = vnet.NewNet(&vnet.NetConfig{StaticIPs: []string{agentIP}}); err != nil {
-		return nil, err
-	}
-	if n.Browser, err = vnet.NewNet(&vnet.NetConfig{StaticIPs: []string{browserIP}}); err != nil {
-		return nil, err
+	for ip, to := range map[string]**vnet.Net{agentIP: &n.Agent, browserIP: &n.Browser} {
+		if *to, err = vnet.NewNet(&vnet.NetConfig{StaticIPs: []string{ip}}); err != nil {
+			return nil, err
+		}
 	}
 	var browser vnet.NIC = n.Browser
 	if l.Rate > 0 {
@@ -78,11 +77,10 @@ func (l Link) Build() (*Net, error) {
 		}
 		browser = q
 	}
-	if err := wan.AddNet(n.Agent); err != nil {
-		return nil, err
-	}
-	if err := wan.AddNet(browser); err != nil {
-		return nil, err
+	for _, nic := range []vnet.NIC{n.Agent, browser} {
+		if err := wan.AddNet(nic); err != nil {
+			return nil, err
+		}
 	}
 	if l.Loss > 0 {
 		var mu sync.Mutex

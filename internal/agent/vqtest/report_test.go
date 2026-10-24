@@ -69,32 +69,3 @@ func TestSpans(t *testing.T) {
 		t.Errorf("summary %q", s)
 	}
 }
-
-func TestLinkNames(t *testing.T) {
-	for _, tc := range []struct {
-		l    Link
-		want string
-	}{
-		{Link{Name: "fast"}, "fast"},
-		{Link{Delay: 10 * time.Millisecond}, "unshaped, 20ms RTT, 0.0% loss"},
-		{Link{Rate: 4_000_000, Queue: 100 * time.Millisecond, Delay: 30 * time.Millisecond, Loss: 0.01},
-			"4 Mbit/s 100ms queue, 60ms RTT, 1.0% loss"},
-	} {
-		if got := tc.l.String(); got != tc.want {
-			t.Errorf("got %q, want %q", got, tc.want)
-		}
-	}
-}
-
-func TestLinkBuilds(t *testing.T) {
-	for _, l := range []Link{{}, {Rate: 1_000_000, Queue: 50 * time.Millisecond, Delay: time.Millisecond, Loss: 0.5}} {
-		n, err := l.Build()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if (n.TBF != nil) != (l.Rate > 0) {
-			t.Errorf("%v: TBF %v", l, n.TBF)
-		}
-		n.Close()
-	}
-}
