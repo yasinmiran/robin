@@ -23,14 +23,21 @@ export class Session {
     return { type: 'detach' };
   }
 
-  // end is the signal that ends the session, desktop included.
+  // end is the signal that asks the CLI to end the session, desktop
+  // included. The CLI confirms with ended once the host did; a socket that
+  // closes before that leaves the end unconfirmed.
   end() {
-    this.#leaving = 'ended';
+    this.#leaving = 'unconfirmed';
     return { type: 'bye' };
   }
 
+  // ended records the CLI's word that the host ended the session.
+  ended() {
+    this.#leaving = 'ended';
+  }
+
   // closeReason names the notice for a closed socket: refused when it never
-  // opened, else what the page asked for, else a plain close.
+  // opened, else what the page asked for or was told, else a plain close.
   closeReason(opened) {
     if (!opened) return 'refused';
     return this.#leaving ?? 'closed';

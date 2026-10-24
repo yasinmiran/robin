@@ -46,11 +46,32 @@ func TestPickSession(t *testing.T) {
 		{"attached session by id", Options{Resume: "at01"}, attached, "at01", ""},
 		{"other agent", Options{}, other, "", "runs agent robin-agent-fedcba9876543210"},
 	} {
-		tc.o.Dest = "box"
-		got, err := pickSession(tc.o, tc.r, ours)
-		if got != tc.want || (err != nil) != (tc.err != "") || (err != nil && !strings.Contains(err.Error(), tc.err)) {
-			t.Errorf("%s: pickSession = %q, %v; want %q, %q", tc.name, got, err, tc.want, tc.err)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			tc.o.Dest = "box"
+			got, err := pickSession(tc.o, tc.r, ours)
+			if got != tc.want || (err != nil) != (tc.err != "") || (err != nil && !strings.Contains(err.Error(), tc.err)) {
+				t.Errorf("pickSession = %q, %v; want %q, %q", got, err, tc.want, tc.err)
+			}
+		})
+	}
+}
+
+func TestKeepWindow(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		o    Options
+		want time.Duration
+	}{
+		{"spawned by default", Options{}, protocol.DefaultKeep},
+		{"attached by default", Options{Attach: ":0"}, 0},
+		{"asked for", Options{Keep: time.Hour, Attach: ":0"}, time.Hour},
+		{"none asked", Options{Keep: KeepNone}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := keepWindow(tc.o); got != tc.want {
+				t.Errorf("keepWindow = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -71,26 +92,31 @@ func TestChooseToEnd(t *testing.T) {
 		"two":     {[]protocol.Session{a, b}, "", "say which"},
 		"unknown": {[]protocol.Session{a}, "zz", "no kept session zz"},
 	} {
-		if _, err := chooseToEnd("box", tc.kept, tc.id); err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Errorf("%s: %v, want %q", name, err, tc.want)
-		}
+		t.Run(name, func(t *testing.T) {
+			if _, err := chooseToEnd("box", tc.kept, tc.id); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("%v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
 func TestServeArgs(t *testing.T) {
 	for _, tc := range []struct {
+		name string
 		a    serveArgs
 		want string
 	}{
-		{serveArgs{}, "/a serve"},
-		{serveArgs{verbose: true, keep: 8 * time.Hour, detach: "setsid"}, "/a serve -v -keep 8h0m0s"},
-		{serveArgs{keep: time.Minute, detach: "systemd-run"}, "/a serve -keep 1m0s -detach systemd-run"},
-		{serveArgs{verbose: true, keep: time.Hour, resume: "ab12"}, "/a serve -v -resume ab12"},
-		{serveArgs{detach: "systemd-run"}, "/a serve"},
+		{"bare", serveArgs{}, "/a serve"},
+		{"kept under setsid", serveArgs{verbose: true, keep: 8 * time.Hour, detach: protocol.DetachSetsid}, "/a serve -v -keep 8h0m0s"},
+		{"kept under systemd-run", serveArgs{keep: time.Minute, detach: protocol.DetachSystemdRun}, "/a serve -keep 1m0s -detach systemd-run"},
+		{"resume", serveArgs{verbose: true, keep: time.Hour, resume: "ab12"}, "/a serve -v -resume ab12"},
+		{"no keep needs no detach", serveArgs{detach: protocol.DetachSystemdRun}, "/a serve"},
 	} {
-		if got := strings.Join(tc.a.list("/a"), " "); got != tc.want {
-			t.Errorf("%+v: %q, want %q", tc.a, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if got := strings.Join(tc.a.list("/a"), " "); got != tc.want {
+				t.Errorf("%+v: %q, want %q", tc.a, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -99,7 +125,7 @@ func TestDetachModeAndKeepNote(t *testing.T) {
 	kills := &probe.Report{KillUserProcesses: "yes", Commands: map[string]string{"systemd-run": "/usr/bin/systemd-run"}}
 	killsNoSystemd := &probe.Report{KillUserProcesses: "yes", Commands: map[string]string{}}
 	lingers := &probe.Report{KillUserProcesses: "yes", Linger: true, Commands: map[string]string{"systemd-run": "/usr/bin/systemd-run"}}
-	if detachMode(plain) != "setsid" || detachMode(killsNoSystemd) != "setsid" || detachMode(kills) != "systemd-run" || detachMode(lingers) != "systemd-run" {
+	if detachMode(plain) != protocol.DetachSetsid || detachMode(killsNoSystemd) != protocol.DetachSetsid || detachMode(kills) != protocol.DetachSystemdRun || detachMode(lingers) != protocol.DetachSystemdRun {
 		t.Error("detachMode picks wrongly")
 	}
 	if keepNote(plain) != "" || keepNote(lingers) != "" {
@@ -190,7 +216,8 @@ func TestAgentResume(t *testing.T) {
 		{"resumed", protocol.Message{Type: protocol.TypeReady, Ready: &protocol.Ready{Version: protocol.Version, ID: "ab12", Resumed: true}}, false, ""},
 		{"wrong session", protocol.Message{Type: protocol.TypeReady, Ready: &protocol.Ready{Version: protocol.Version, ID: "zz99", Resumed: true}}, true, `resumed session "zz99"`},
 		{"gone", protocol.Message{Type: protocol.TypeError, Error: `no session "ab12" here`}, true, "no session"},
-		{"busy", protocol.Message{Type: protocol.TypeError, Error: "another CLI is connected to this session"}, false, "another CLI"},
+		{"busy", protocol.Message{Type: protocol.TypeError, Error: "another CLI is connected to this session", Code: protocol.CodeBusy}, false, "another CLI"},
+		{"busy by text alone is final", protocol.Message{Type: protocol.TypeError, Error: "another CLI is connected to this session"}, true, "another CLI"},
 		{"other protocol", protocol.Message{Type: protocol.TypeReady, Ready: &protocol.Ready{Version: protocol.Version + 1}}, true, "speaks protocol"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -252,7 +279,7 @@ func TestFinalError(t *testing.T) {
 	if !errors.Is(err, inner) || err.Error() != "gone" {
 		t.Errorf("finalError: %v", err)
 	}
-	if (&agentError{"x"}).Error() != "agent: x" {
+	if (&agentError{text: "x"}).Error() != "agent: x" {
 		t.Error("agentError text")
 	}
 	if keepDuration(90) != "1m30s" {

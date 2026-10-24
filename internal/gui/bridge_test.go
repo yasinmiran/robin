@@ -135,6 +135,18 @@ func runBridge(ctx context.Context, b *bridge, agent signaling) (<-chan error, c
 	return result, sshDone
 }
 
+// sent is the next message the bridge sent to a.
+func sent(t *testing.T, a *fakeAgent) protocol.Message {
+	t.Helper()
+	select {
+	case m := <-a.sent:
+		return m
+	case <-time.After(5 * time.Second):
+		t.Fatal("nothing reached the agent")
+		return protocol.Message{}
+	}
+}
+
 func waitResult(t *testing.T, result <-chan error) error {
 	t.Helper()
 	select {
@@ -156,7 +168,7 @@ func TestBridgeRelaysAndSurvivesAnAgentConnection(t *testing.T) {
 		t.Fatalf("first message to the page %+v, want config with keep", m)
 	}
 	pg.send(protocol.Message{Type: protocol.TypeOffer, SDP: "v=0"})
-	if m := <-agent.sent; m.Type != protocol.TypeOffer || m.SDP != "v=0" {
+	if m := sent(t, agent); m.Type != protocol.TypeOffer || m.SDP != "v=0" {
 		t.Fatalf("agent got %+v", m)
 	}
 	agent.in <- protocol.Message{Type: protocol.TypeError, Error: "offer rejected"}
@@ -191,7 +203,7 @@ func TestBridgeRelaysAndSurvivesAnAgentConnection(t *testing.T) {
 		t.Fatalf("page got %+v after the resume, want config", m)
 	}
 	pg.send(protocol.Message{Type: protocol.TypeOffer, SDP: "v=1"})
-	for m := <-agent2.sent; m.SDP != "v=1"; m = <-agent2.sent {
+	for m := sent(t, agent2); m.SDP != "v=1"; m = sent(t, agent2) {
 		if m.Type != protocol.TypeCandidate {
 			t.Fatalf("second agent got %+v", m)
 		}
@@ -239,15 +251,54 @@ func TestBridgeTakesThePagesDecisions(t *testing.T) {
 		t.Fatalf("detach reached the agent: %+v", <-agent.sent)
 	}
 
+	// End session: the bridge reports the wish and forwards nothing; the
+	// CLI sends the bye itself and waits for the host's answer, so the
+	// page's socket stays until the host confirmed.
 	agent2 := newFakeAgent()
+	agent2.sent = make(chan protocol.Message) // unbuffered: a forwarded bye would block
 	result, _ = runBridge(ctx, b, agent2)
 	pg.recv() // config again
 	pg.send(protocol.Message{Type: protocol.TypeBye})
-	if err := waitResult(t, result); !errors.Is(err, errEnded) {
-		t.Fatalf("run: %v, want errEnded", err)
+	if err := waitResult(t, result); !errors.Is(err, errPageEnded) {
+		t.Fatalf("run: %v, want errPageEnded", err)
 	}
-	if m := <-agent2.sent; m.Type != protocol.TypeBye {
-		t.Fatalf("agent got %+v, want the bye", m)
+	select {
+	case m := <-agent2.sent:
+		t.Fatalf("the bridge forwarded %+v", m)
+	case <-time.After(100 * time.Millisecond):
+	}
+	b.ended("the CLI ended the session")
+	if m := pg.recv(); m.Type != protocol.TypeEnded {
+		t.Fatalf("page got %+v, want ended", m)
+	}
+}
+
+func TestBridgeRunOwnsTheAgentReader(t *testing.T) {
+	b, s, ctx := testBridge(t)
+	agent := newFakeAgent()
+	result, _ := runBridge(ctx, b, agent)
+	pg := openPage(t, s)
+	pg.recv() // config
+	pg.send(protocol.Message{Type: protocol.TypeDetach})
+	if err := waitResult(t, result); !errors.Is(err, errDetached) {
+		t.Fatalf("run: %v, want errDetached", err)
+	}
+	// Once run returned, what the agent says next is the caller's to read.
+	agent.in <- protocol.Message{Type: protocol.TypeEnded, Error: "the CLI ended the session"}
+	rctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	if m, err := agent.Recv(rctx); err != nil || m.Type != protocol.TypeEnded {
+		t.Fatalf("the bridge took the agent's message after run returned: %+v, %v", m, err)
+	}
+	// Decisions that pile up with no run reading them never block the page.
+	for i := 0; i < 5; i++ {
+		pg.send(protocol.Message{Type: protocol.TypeDetach})
+	}
+	pg.send(protocol.Message{Type: protocol.TypeOffer, SDP: "v=0"})
+	pg.c.CloseNow()
+	next := openPage(t, s)
+	if m := next.recv(); m.Type != protocol.TypeConfig {
+		t.Fatalf("next page got %+v, want config", m)
 	}
 }
 

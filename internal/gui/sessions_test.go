@@ -3,12 +3,18 @@ package gui
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/yasinmiran/robin/internal/protocol"
+	"github.com/yasinmiran/robin/internal/sshmux"
 	"github.com/yasinmiran/robin/internal/sshmux/sshtest"
 )
 
@@ -68,5 +74,81 @@ func TestConnectReportsABadDestination(t *testing.T) {
 	}
 	if err := Run(ctx, o); err == nil {
 		t.Fatal("Run to a bad destination succeeded")
+	}
+}
+
+// endScript stands in for the agent on the host: it records its arguments
+// and exits as told.
+func endScript(t *testing.T, exit int) (path, calls string) {
+	t.Helper()
+	dir := t.TempDir()
+	calls = filepath.Join(dir, "calls")
+	path = filepath.Join(dir, "robin-agent")
+	script := fmt.Sprintf("#!/bin/sh\necho \"$@\" >> %s\nexit %d\n", calls, exit)
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path, calls
+}
+
+// TestEndFallsBackToTheAgentsEndCommand: a bye the agent never answers is
+// followed by the agent's end command over the host connection, and an
+// exit saying there is no such session counts as done.
+func TestEndFallsBackToTheAgentsEndCommand(t *testing.T) {
+	o, _, stderr := localhost(t)
+	o, log := o.fill()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	m, err := sshmux.Dial(ctx, o.Dest, sshmux.Options{Args: o.SSHArgs, Stderr: o.Stderr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &host{o: o, log: log, m: m}
+	defer h.close()
+	until := time.Now().Add(time.Hour)
+
+	for _, tc := range []struct {
+		name  string
+		exit  int
+		calls string // a failed end is tried once more over a fresh connection
+		err   string
+	}{
+		{"ended", 0, "end ab12", ""},
+		{"already gone", protocol.ExitNoSession, "end ab12", ""},
+		{"failed", 1, "end ab12\nend ab12", "could not end session ab12"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path, calls := endScript(t, tc.exit)
+			ag, f := agentOverPipes(t)
+			go func() {
+				if m := <-f.calls; m.Type == protocol.TypeBye {
+					f.exit() // the proxy dies with the bye unanswered
+				}
+			}()
+			err := h.end(ag, "ab12", until, path)
+			if (err != nil) != (tc.err != "") || (err != nil && !strings.Contains(err.Error(), tc.err)) {
+				t.Fatalf("end: %v, want %q", err, tc.err)
+			}
+			if b, _ := os.ReadFile(calls); strings.TrimSpace(string(b)) != tc.calls {
+				t.Fatalf("the host ran %q, want %q", b, tc.calls)
+			}
+		})
+	}
+	if !strings.Contains(stderr.String(), "ending the kept session") {
+		t.Errorf("stderr: %q", stderr.String())
+	}
+
+	// A desktop that goes with its controller needs no second trip.
+	path, calls := endScript(t, 0)
+	ag, f := agentOverPipes(t)
+	go func() {
+		<-f.calls
+		f.exit()
+	}()
+	if err := h.end(ag, "ab12", time.Time{}, path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(calls); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the end command ran for a desktop that was not kept")
 	}
 }

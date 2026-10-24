@@ -35,7 +35,11 @@ const NOTICES = {
   ],
   ended: [
     'Session ended',
-    'You ended the session; the desktop on the host is gone.',
+    'The session ended; the desktop on the host is gone.',
+  ],
+  unconfirmed: [
+    'Session ended',
+    'Robin could not confirm that the host ended the session. Run robin end for the host to make sure.',
   ],
 };
 

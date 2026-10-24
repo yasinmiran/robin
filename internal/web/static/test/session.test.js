@@ -21,5 +21,13 @@ test('detaching and ending send their signals and name the close', () => {
   assert.equal(s.closeReason(true), 'kept');
   assert.equal(s.closeReason(false), 'refused');
   assert.deepEqual(s.end(), { type: 'bye' });
+  assert.equal(s.closeReason(true), 'unconfirmed');
+  s.ended();
+  assert.equal(s.closeReason(true), 'ended');
+});
+
+test('the host ending the session needs no request first', () => {
+  const s = new Session();
+  s.ended();
   assert.equal(s.closeReason(true), 'ended');
 });

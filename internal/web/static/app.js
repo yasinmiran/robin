@@ -132,6 +132,11 @@ async function onSignal(m) {
       dropPeer();
       setState('reconnecting');
       break;
+    case 'ended':
+      // The host confirmed the end; the CLI closes the socket next.
+      session.ended();
+      end('ended');
+      break;
     case 'answer': {
       if (!pc) break;
       await pc.setRemoteDescription({ type: 'answer', sdp: m.sdp });

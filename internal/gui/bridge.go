@@ -36,9 +36,12 @@ var (
 	errAgentGone = errors.New("agent exited")
 	// errDetached: the page asked to leave the desktop running.
 	errDetached = errors.New("the page detached, keeping the desktop")
-	// errEnded: the session is over on purpose, by the page's or the
-	// host's doing.
+	// errEnded: the host ended the session on purpose: bye, the keep
+	// window ran out, or robin end.
 	errEnded = errors.New("session ended")
+	// errPageEnded: the page asked to end the session; the CLI has yet to
+	// make the host do it.
+	errPageEnded = errors.New("the page ended the session")
 )
 
 // bridge relays signaling between whichever page is connected and the agent.
@@ -57,7 +60,7 @@ type bridge struct {
 	// redialing marks the gap between agent connections, so a page that
 	// arrives then is told to wait.
 	redialing bool
-	// events carries what the page decides: errDetached or errEnded.
+	// events carries what the page decides: errDetached or errPageEnded.
 	events chan error
 }
 
@@ -105,7 +108,8 @@ func (b *bridge) sendConfig(br *web.Browser) {
 
 // run relays one agent connection until it ends: the agent or SSH goes
 // away, the page server stops, the page detaches or ends the session, or
-// ctx ends. serveErr carries the page server's result.
+// ctx ends. serveErr carries the page server's result. When run returns,
+// nothing reads the agent connection any more, so the caller may.
 func (b *bridge) run(ctx context.Context, agent signaling, sshDone <-chan struct{}, serveErr <-chan error) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -127,17 +131,41 @@ func (b *bridge) run(ctx context.Context, agent signaling, sshDone <-chan struct
 	}
 	agentErr := make(chan error, 1)
 	go func() { agentErr <- b.fromAgent(ctx, agent) }()
+	var err error
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		err = ctx.Err()
 	case <-sshDone:
-		return errSSHLost
-	case err := <-serveErr:
-		return fmt.Errorf("page server stopped: %w", err)
-	case err := <-agentErr:
+		err = errSSHLost
+	case e := <-serveErr:
+		err = fmt.Errorf("page server stopped: %w", e)
+	case err = <-agentErr:
 		return err
-	case err := <-b.events:
-		return err
+	case err = <-b.events:
+	}
+	cancel()
+	<-agentErr
+	return err
+}
+
+// decided records what the page asked for. Only the first decision
+// matters; one that finds the channel full is dropped.
+func (b *bridge) decided(err error) {
+	select {
+	case b.events <- err:
+	default:
+	}
+}
+
+// ended tells the page the session is over, once the host confirmed it.
+func (b *bridge) ended(why string) {
+	b.mu.Lock()
+	br := b.cur
+	b.mu.Unlock()
+	if br != nil {
+		if err := br.Send(protocol.Message{Type: protocol.TypeEnded, Error: why}); err != nil {
+			b.log.Debug("send ended", "err", err)
+		}
 	}
 }
 
@@ -168,7 +196,7 @@ func (b *bridge) fromAgent(ctx context.Context, agent signaling) error {
 				return ctx.Err()
 			}
 			if last != "" {
-				return &agentError{last}
+				return &agentError{text: last}
 			}
 			return errAgentGone
 		}
@@ -217,10 +245,12 @@ func (b *bridge) fromBrowser(ctx context.Context, br *web.Browser, done chan<- s
 		}
 		switch m.Type {
 		case protocol.TypeDetach:
-			b.events <- errDetached
+			b.decided(errDetached)
 			continue
 		case protocol.TypeBye:
-			b.events <- fmt.Errorf("%w: the page ended it", errEnded)
+			// The CLI ends the session, and waits for the host to say so.
+			b.decided(errPageEnded)
+			continue
 		}
 		agent := b.currentAgent()
 		if agent == nil {

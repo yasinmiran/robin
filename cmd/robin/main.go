@@ -197,14 +197,18 @@ func parseSize(s string) (int, int, error) {
 	return w, h, nil
 }
 
-// parseKeep reads --keep: empty leaves the choice to the desktop's mode.
+// parseKeep reads --keep: empty leaves the choice to the desktop's mode,
+// 0 keeps nothing.
 func parseKeep(s string) (time.Duration, error) {
 	if s == "" {
-		return gui.KeepDefault, nil
+		return 0, nil
 	}
 	d, err := time.ParseDuration(s)
 	if err != nil || d < 0 {
 		return 0, fmt.Errorf("bad --keep %q: want a duration such as 8h, or 0", s)
+	}
+	if d == 0 {
+		return gui.KeepNone, nil
 	}
 	return d, nil
 }
