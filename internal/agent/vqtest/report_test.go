@@ -17,7 +17,7 @@ func TestSpans(t *testing.T) {
 		Sent: []Sent{
 			{Index: 0, Bytes: 1000, Key: true, QP: 30},
 			{Index: 30, Bytes: 500, QP: 20, Target: 1_000_000}, {Index: 45, Bytes: 500, QP: 24, Target: 2_000_000},
-			{Index: 59, Bytes: 500, Target: 3_000_000},
+			{Index: 59, Bytes: 500, QP: -1, Target: 3_000_000},
 			{Index: 60, Bytes: 2000, Key: true, QP: 28},
 		},
 		Result: Result{

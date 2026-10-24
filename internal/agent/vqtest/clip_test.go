@@ -82,10 +82,21 @@ func TestClipDraws(t *testing.T) {
 }
 
 func TestBounce(t *testing.T) {
-	for _, tc := range [][3]int{{5, 10, 5}, {12, 10, 8}, {20, 10, 0}, {-3, 10, 3}, {7, 0, 0}} {
-		if got := bounce(tc[0], tc[1]); got != tc[2] {
-			t.Errorf("bounce(%d, %d) = %d, want %d", tc[0], tc[1], got, tc[2])
-		}
+	for _, tc := range []struct {
+		name           string
+		p, limit, want int
+	}{
+		{"inside", 5, 10, 5},
+		{"past the limit", 12, 10, 8},
+		{"a whole lap", 20, 10, 0},
+		{"below zero", -3, 10, 3},
+		{"no room", 7, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := bounce(tc.p, tc.limit); got != tc.want {
+				t.Errorf("bounce(%d, %d) = %d, want %d", tc.p, tc.limit, got, tc.want)
+			}
+		})
 	}
 }
 

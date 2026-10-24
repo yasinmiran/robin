@@ -41,21 +41,24 @@ var Chrome = ReceiverConfig{
 	InactiveAfter:   5 * time.Second,
 }
 
-// Why the receiver asked for a keyframe.
+// PLIReason is why the receiver asked for a keyframe; "" means it did
+// not.
+type PLIReason string
+
 const (
-	// PLIIdle: no frame for FrameTimeout and nothing waiting on a gap,
-	// so the sender simply sent nothing.
-	PLIIdle = "idle"
-	// PLIStalled: no frame for FrameTimeout because packets are held
-	// behind one that never came.
-	PLIStalled = "stalled on loss"
-	// PLIKeyframeRequired: no keyframe within KeyframeTimeout while one
-	// is required, at the start or after a decode error.
-	PLIKeyframeRequired = "keyframe required"
-	// PLINackOverflow: more missing packets than MaxNackList.
-	PLINackOverflow = "nack list overflow"
-	// PLIBufferFull: more held packets than MaxBuffered.
-	PLIBufferFull = "packet buffer full"
+	// PLIIdle means no frame came for FrameTimeout and none is waiting on
+	// a gap: the sender sent nothing.
+	PLIIdle PLIReason = "idle"
+	// PLIStalled means no frame came for FrameTimeout because packets are
+	// held behind one that never came.
+	PLIStalled PLIReason = "stalled on loss"
+	// PLIKeyframeRequired means no keyframe came within KeyframeTimeout
+	// while one is required, at the start or after a decode error.
+	PLIKeyframeRequired PLIReason = "keyframe required"
+	// PLINackOverflow means more packets went missing than MaxNackList.
+	PLINackOverflow PLIReason = "nack list overflow"
+	// PLIBufferFull means more packets were held than MaxBuffered.
+	PLIBufferFull PLIReason = "packet buffer full"
 )
 
 // Packet is the part of an RTP packet the receiver looks at.
@@ -87,7 +90,7 @@ type ReceiverStats struct {
 	// NACKed counts sequence numbers asked for, repeats included.
 	NACKed            int
 	Frames, Keyframes int
-	PLIs              map[string]int
+	PLIs              map[PLIReason]int
 }
 
 type stored struct {
@@ -117,7 +120,7 @@ type Receiver struct {
 	nacks    map[int64]*nackEntry
 
 	keyRequired   bool
-	pending       string // a keyframe request to send at the next Poll
+	pending       PLIReason // a keyframe request to send at the next Poll
 	since         time.Time
 	lastPacket    time.Time
 	lastKeyPacket time.Time
@@ -127,7 +130,7 @@ type Receiver struct {
 // keyframe.
 func NewReceiver(cfg ReceiverConfig, now time.Time) *Receiver {
 	return &Receiver{
-		cfg: cfg, Stats: ReceiverStats{PLIs: map[string]int{}},
+		cfg: cfg, Stats: ReceiverStats{PLIs: map[PLIReason]int{}},
 		buf: map[int64]*stored{}, nacks: map[int64]*nackEntry{},
 		keyRequired: true, since: now,
 	}
@@ -193,7 +196,7 @@ func (r *Receiver) Push(p Packet, now time.Time) []Frame {
 	return r.assemble(now)
 }
 
-func (r *Receiver) request(why string) {
+func (r *Receiver) request(why PLIReason) {
 	if r.pending == "" {
 		r.pending = why
 	}
@@ -292,7 +295,7 @@ func (r *Receiver) drop(seq int64) {
 
 // Poll returns the sequence numbers to NACK now and, when the receiver
 // asks for a keyframe now, why.
-func (r *Receiver) Poll(now time.Time) (nack []uint16, pli string) {
+func (r *Receiver) Poll(now time.Time) (nack []uint16, pli PLIReason) {
 	for _, q := range sortedKeys(r.nacks) {
 		e := r.nacks[q]
 		if e.retries >= r.cfg.MaxNackRetries {

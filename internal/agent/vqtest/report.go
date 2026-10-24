@@ -13,8 +13,8 @@ type Sent struct {
 	Index int
 	Bytes int
 	Key   bool
-	// QP is the encoder's average quantiser for the frame, 0 when it does
-	// not say.
+	// QP is the encoder's average quantiser for the frame, -1 or 0 when
+	// it does not say.
 	QP int
 	// Target is the congestion controller's target when it was encoded,
 	// in bits per second.
@@ -53,7 +53,7 @@ type Span struct {
 	SSIM, MinSSIM float64
 	WorstTile     float64 // lowest worst-tile SSIM of any picture
 	Last          Score   // the last picture shown in the span
-	Requests      map[string]int
+	Requests      map[PLIReason]int
 }
 
 // Spans splits a run by segment, with the whole clip last.
@@ -88,7 +88,7 @@ func (r *Run) at(i int) time.Time {
 
 func (r *Run) span(name string, from, to int, moving bool) Span {
 	s := Span{Name: name, From: from, To: to, Seconds: float64(to-from) / float64(r.FPS),
-		Requests: map[string]int{}, MinPSNR: MaxPSNR, MinSSIM: 1, WorstTile: 1}
+		Requests: map[PLIReason]int{}, MinPSNR: MaxPSNR, MinSSIM: 1, WorstTile: 1}
 	bytes, qps := 0, 0
 	for _, f := range r.Sent {
 		if f.Index < from || f.Index >= to {
@@ -147,8 +147,8 @@ func (r *Run) span(name string, from, to int, moving bool) Span {
 }
 
 // Requests counts the run's keyframe requests by reason.
-func (r *Run) Requests() map[string]int {
-	out := map[string]int{}
+func (r *Run) Requests() map[PLIReason]int {
+	out := map[PLIReason]int{}
 	for _, q := range r.Result.Requests {
 		out[q.Why]++
 	}
@@ -169,7 +169,7 @@ func Table(spans []Span) string {
 	return b.String()
 }
 
-func formatCounts(m map[string]int) string {
+func formatCounts(m map[PLIReason]int) string {
 	if len(m) == 0 {
 		return "-"
 	}

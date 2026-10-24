@@ -39,7 +39,7 @@ type Shown struct {
 // Request is one keyframe request the browser sent.
 type Request struct {
 	At  time.Time
-	Why string
+	Why PLIReason
 }
 
 // Result is what a browser saw.

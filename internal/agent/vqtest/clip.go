@@ -50,6 +50,7 @@ const (
 
 var kindNames = [...]string{"still", "typing", "scroll", "drag", "video"}
 
+// String names the kind as spans and tables do.
 func (k Kind) String() string {
 	if k < 0 || int(k) >= len(kindNames) {
 		return fmt.Sprintf("kind(%d)", int(k))

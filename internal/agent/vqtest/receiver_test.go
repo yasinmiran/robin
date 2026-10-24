@@ -109,7 +109,7 @@ func TestReceiverGivesUpAndStallsUntilAKeyframe(t *testing.T) {
 	s.delta() // lost for good
 	push(r, c, s.delta()...)
 	var asked int
-	var pli string
+	var pli PLIReason
 	for range 30 {
 		push(r, c, s.delta()...) // a frame a tick keeps the stream active
 		var nack []uint16
@@ -228,23 +228,26 @@ func TestReceiverUnwrapsSequenceNumbers(t *testing.T) {
 
 func TestNalTypes(t *testing.T) {
 	for _, tc := range []struct {
+		name    string
 		payload []byte
 		want    []byte
 		key     bool
 	}{
-		{nil, nil, false},
-		{[]byte{0x41, 1}, []byte{1}, false},
-		{[]byte{0x65, 1}, []byte{5}, true},
-		{[]byte{0x78, 0, 2, 0x67, 1, 0, 2, 0x68, 1}, []byte{7, 8}, true},
-		{[]byte{0x78, 0, 9, 0x67}, nil, false}, // a size past the end
-		{[]byte{0x7c, 0x85}, []byte{5}, true},
-		{[]byte{0x7c}, nil, false},
+		{"empty", nil, nil, false},
+		{"P slice", []byte{0x41, 1}, []byte{1}, false},
+		{"IDR slice", []byte{0x65, 1}, []byte{5}, true},
+		{"STAP-A of SPS and PPS", []byte{0x78, 0, 2, 0x67, 1, 0, 2, 0x68, 1}, []byte{7, 8}, true},
+		{"STAP-A with a size past the end", []byte{0x78, 0, 9, 0x67}, nil, false},
+		{"FU-A of an IDR slice", []byte{0x7c, 0x85}, []byte{5}, true},
+		{"FU-A without its header", []byte{0x7c}, nil, false},
 	} {
-		if got := nalTypes(tc.payload); !slices.Equal(got, tc.want) {
-			t.Errorf("% x: types %v, want %v", tc.payload, got, tc.want)
-		}
-		if got := isKeyPacket(tc.payload); got != tc.key {
-			t.Errorf("% x: key %v", tc.payload, got)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if got := nalTypes(tc.payload); !slices.Equal(got, tc.want) {
+				t.Errorf("% x: types %v, want %v", tc.payload, got, tc.want)
+			}
+			if got := isKeyPacket(tc.payload); got != tc.key {
+				t.Errorf("% x: key %v", tc.payload, got)
+			}
+		})
 	}
 }
