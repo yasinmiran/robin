@@ -491,6 +491,58 @@ func TestAcceptFailsRatherThanStall(t *testing.T) {
 	}
 }
 
+// An upload whose file appears only after Close began is not started.
+func TestAcceptRacingClose(t *testing.T) {
+	in := NewInbox(filepath.Join(t.TempDir(), "dl"), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	in.create = func(dir int, name string) (*os.File, error) {
+		for {
+			in.mu.Lock()
+			closed := in.closed
+			in.mu.Unlock()
+			if closed {
+				return createTemp(dir, name)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	accepted := make(chan error, 1)
+	go func() {
+		_, err := in.Accept("late.bin", 1)
+		accepted <- err
+	}()
+	// Close waits for the pending upload, so it runs beside Accept.
+	closed := make(chan struct{})
+	go func() {
+		for {
+			in.mu.Lock()
+			n := len(in.uploads)
+			in.mu.Unlock()
+			if n > 0 {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		in.Close()
+		close(closed)
+	}()
+	select {
+	case err := <-accepted:
+		if !errors.Is(err, ErrClosed) {
+			t.Errorf("Accept that Close overtook: %v, want ErrClosed", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Accept did not return")
+	}
+	select {
+	case <-closed:
+	case <-time.After(closeTimeout + time.Second):
+		t.Fatal("Close did not return")
+	}
+	if names := listing(t, in.Dir()); len(names) != 0 {
+		t.Errorf("the directory holds %v", names)
+	}
+}
+
 func TestUploadsAtOnceAreBounded(t *testing.T) {
 	in := testInbox(t)
 	var ups []*Upload
