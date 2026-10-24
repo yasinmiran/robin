@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -26,11 +27,12 @@ import (
 )
 
 // toneTrack is the browser's microphone playing a tone: Opus packets of
-// 20 ms, handed out in real time, then io.EOF.
+// 20 ms, handed out in real time, then io.EOF, sooner once ended.
 type toneTrack struct {
 	packets [][]byte
 	next    int
 	start   time.Time
+	ended   atomic.Bool
 }
 
 func newToneTrack(t *testing.T, hz, seconds float64) *toneTrack {
@@ -60,7 +62,7 @@ func (tr *toneTrack) ReadRTP() (*rtp.Packet, interceptor.Attributes, error) {
 	if tr.next == 0 {
 		tr.start = time.Now()
 	}
-	if tr.next == len(tr.packets) {
+	if tr.next == len(tr.packets) || tr.ended.Load() {
 		return nil, nil, io.EOF
 	}
 	time.Sleep(time.Until(tr.start.Add(time.Duration(tr.next) * 20 * time.Millisecond)))
@@ -73,11 +75,12 @@ func (tr *toneTrack) ReadRTP() (*rtp.Packet, interceptor.Attributes, error) {
 }
 
 // playTrack runs m.Play on tr until it ends or the test does.
-func playTrack(t *testing.T, m *Mic, tr RTPReader) {
+func playTrack(t *testing.T, m *Mic, tr *toneTrack) {
 	t.Helper()
 	done := make(chan error, 1)
 	go func() { done <- m.Play(tr) }()
 	t.Cleanup(func() {
+		tr.ended.Store(true)
 		if err := <-done; err != nil {
 			t.Errorf("Play: %v", err)
 		}
@@ -103,33 +106,64 @@ func recordSource(t *testing.T, env []string, source string, seconds float64) []
 	return pcm
 }
 
-// monoPitch is the frequency of mono pcm, counted in swings past a
-// threshold, over the part of it that is not silent.
-func monoPitch(pcm []int16) (hz float64, loud int) {
-	const threshold = 2000
-	swings := 0
+// monoPitch is the pitch of mono pcm, counted in swings past a threshold
+// over the 20 ms blocks that are loud, and the share of blocks that are.
+func monoPitch(pcm []int16) (hz, loud float64) {
+	const threshold, block = 2000, opus.FrameSamples
+	swings, loudBlocks, blocks := 0, 0, 0
 	high := false
-	for _, v := range pcm {
-		if high && v < -threshold || !high && v > threshold {
-			high = !high
-			swings++
+	for b := 0; b+block <= len(pcm); b += block {
+		blocks++
+		n, isLoud := 0, false
+		for _, v := range pcm[b : b+block] {
+			if high && v < -threshold || !high && v > threshold {
+				high = !high
+				n++
+			}
+			isLoud = isLoud || v > threshold || v < -threshold
 		}
-		if v > threshold || v < -threshold {
-			loud++
+		if isLoud {
+			loudBlocks++
+			swings += n
 		}
 	}
-	return float64(swings) / 2 / (float64(len(pcm)) / opus.SampleRate), loud
+	if loudBlocks == 0 {
+		return 0, 0
+	}
+	return float64(swings) / 2 / (float64(loudBlocks) * block / opus.SampleRate), float64(loudBlocks) / float64(blocks)
 }
 
-// checkHeard wants most of pcm to be the tone at hz.
-func checkHeard(t *testing.T, pcm []int16, hz float64) {
-	t.Helper()
-	if len(pcm) < opus.SampleRate {
-		t.Fatalf("recorded %d samples, want a second's worth", len(pcm))
+// TestMonoPitchOverTheLoudPart: silence in a recording, as before the
+// sound reaches it, leaves the pitch alone and lowers the loud share.
+func TestMonoPitchOverTheLoudPart(t *testing.T) {
+	pcm := make([]int16, 2*opus.SampleRate)
+	for i := range opus.SampleRate {
+		pcm[opus.SampleRate+i] = int16(9000 * math.Sin(2*math.Pi*440*float64(i)/opus.SampleRate))
 	}
-	got, loud := monoPitch(pcm)
-	if loud < len(pcm)/4 {
-		t.Fatalf("the microphone was silent: %d of %d samples above the threshold", loud, len(pcm))
+	hz, loud := monoPitch(pcm)
+	if math.Abs(hz-440) > 440*0.01 || math.Abs(loud-0.5) > 0.01 {
+		t.Errorf("monoPitch = %.1f Hz, %.2f loud; want 440 Hz, 0.5", hz, loud)
+	}
+}
+
+// checkHeard records source a second at a time, with env added to reach
+// the server, until a recording is mostly loud, as one is once Play and
+// the server get going, and wants that one to be the tone at hz.
+func checkHeard(t *testing.T, env []string, source string, hz float64) {
+	t.Helper()
+	const tries, mostly = 5, 0.75
+	var got, loud float64
+	for range tries {
+		pcm := recordSource(t, env, source, 1)
+		if len(pcm) < opus.SampleRate/2 {
+			continue
+		}
+		if got, loud = monoPitch(pcm); loud >= mostly {
+			break
+		}
+	}
+	if loud < mostly {
+		t.Fatalf("the microphone was silent: the last of %d recordings was %.0f%% loud", tries, 100*loud)
 	}
 	if math.Abs(got-hz) > hz*0.05 {
 		t.Errorf("heard %.1f Hz, want %.0f", got, hz)
@@ -174,9 +208,8 @@ func TestSpawnedMicIsTheDefaultSource(t *testing.T) {
 		t.Errorf("no source described as %s:\n%s", MicName, sources)
 	}
 
-	playTrack(t, m, newToneTrack(t, 440, 4))
-	time.Sleep(500 * time.Millisecond)
-	checkHeard(t, recordSource(t, env, "@DEFAULT_SOURCE@", 2.5), 440)
+	playTrack(t, m, newToneTrack(t, 440, 8))
+	checkHeard(t, env, "@DEFAULT_SOURCE@", 440)
 }
 
 // TestSpawnedMicKeepsTheSpeakers: with the microphone added the desktop's
@@ -255,9 +288,8 @@ func TestAttachedPulseAudioMic(t *testing.T) {
 		t.Errorf("the user's default source changed:\n%s", info)
 	}
 
-	playTrack(t, m, newToneTrack(t, 660, 4))
-	time.Sleep(500 * time.Millisecond)
-	checkHeard(t, recordSource(t, nil, name, 2.5), 660)
+	playTrack(t, m, newToneTrack(t, 660, 8))
+	checkHeard(t, nil, name, 660)
 
 	m.Close()
 	if mods := pactl(t, nil, "list", "short", "modules"); strings.Contains(mods, "robin-mic") {
@@ -378,9 +410,8 @@ func TestPipeWireMic(t *testing.T) {
 		t.Errorf("no source %s described as %s:\n%s", name, MicName, sources)
 	}
 
-	playTrack(t, m, newToneTrack(t, 550, 4))
-	time.Sleep(500 * time.Millisecond)
-	checkHeard(t, recordSource(t, nil, name, 2.5), 550)
+	playTrack(t, m, newToneTrack(t, 550, 8))
+	checkHeard(t, nil, name, 550)
 
 	m.Close()
 	for deadline := time.Now().Add(3 * time.Second); strings.Contains(pactl(t, nil, "list", "short", "sources"), name); {
