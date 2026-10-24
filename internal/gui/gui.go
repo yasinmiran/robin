@@ -429,12 +429,14 @@ func (h *host) reconnect(ctx context.Context, path, id string, until time.Time, 
 			return ag, ready, nil
 		}
 		var agentErr *agentError
-		busy = busy || errors.As(err, &agentErr) && agentErr.code == protocol.CodeBusy
-		if ctx.Err() != nil && busy {
-			return nil, nil, fmt.Errorf("another robin gui holds session %s on %s, or the host has yet to notice this one's connection is gone, so it was left running; robin end %s %s ends it",
-				id, h.o.Dest, h.o.Dest, id)
+		if errors.As(err, &agentErr) && agentErr.code == protocol.CodeBusy {
+			busy = true
 		}
 		if ctx.Err() != nil {
+			if busy {
+				return nil, nil, fmt.Errorf("another robin gui holds session %s on %s, or the host has yet to notice this one's connection is gone, so it was left running; robin end %s %s ends it",
+					id, h.o.Dest, h.o.Dest, id)
+			}
 			// Nothing is connected to send bye to.
 			return nil, nil, h.end(nil, id, until, path)
 		}
