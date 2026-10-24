@@ -179,27 +179,30 @@ func ignoringInterrupt(ssh string, args ...string) (string, []string) {
 	return "/bin/sh", append([]string{"-c", `trap '' INT; exec "$0" "$@"`, ssh}, args...)
 }
 
-// MaxOutput bounds the stdout Output keeps, so a host cannot fill the
+// maxOutput bounds the stdout Output keeps, so a host cannot fill the
 // client's memory by printing without end. The largest output a caller
-// reads is the probe's report: at most 1248 bytes on the hosts in
-// internal/probe/testdata, plus a line of a few hundred bytes for each kept
-// session, so a megabyte leaves room for thousands of those.
-const MaxOutput = 1 << 20
+// reads is the probe's report: a few kilobytes, plus a line of a few
+// hundred bytes for each kept session, so a megabyte leaves room for
+// thousands of those.
+const maxOutput = 1 << 20
+
+// errTooMuchOutput fails a command that printed more than maxOutput.
+var errTooMuchOutput = fmt.Errorf("sshmux: the remote command printed more than %d bytes", maxOutput)
 
 // Output runs remoteCmd with stdin (nil for none) and returns its stdout. A
 // failed command's error includes the end of its stderr. A command that
-// prints more than MaxOutput is stopped and fails.
+// prints more than a megabyte is stopped and fails.
 func (m *Master) Output(ctx context.Context, remoteCmd string, stdin io.Reader) ([]byte, error) {
 	ctx, stop := context.WithCancel(ctx)
 	defer stop()
 	cmd := m.Command(ctx, remoteCmd)
 	cmd.Stdin = stdin
-	stdout := &capped{max: MaxOutput, over: stop}
+	stdout := &capped{max: maxOutput, over: stop}
 	var stderr tail.Buffer
 	cmd.Stdout, cmd.Stderr = stdout, &stderr
 	err := cmd.Run()
 	if stdout.full {
-		return stdout.b.Bytes(), errors.New("sshmux: the remote command printed more than 1 MiB")
+		return stdout.b.Bytes(), errTooMuchOutput
 	}
 	var exitErr *exec.ExitError
 	if msg := strings.TrimSpace(stderr.String()); errors.As(err, &exitErr) && msg != "" {
@@ -209,7 +212,7 @@ func (m *Master) Output(ctx context.Context, remoteCmd string, stdin io.Reader) 
 }
 
 // capped keeps the first max bytes written to it. A write past them fails
-// and calls over, once.
+// with errTooMuchOutput and calls over, once.
 type capped struct {
 	max  int
 	over func()
@@ -224,7 +227,7 @@ func (c *capped) Write(p []byte) (int, error) {
 			c.full = true
 			c.over()
 		}
-		return room, errors.New("sshmux: output limit reached")
+		return room, errTooMuchOutput
 	}
 	return c.b.Write(p)
 }

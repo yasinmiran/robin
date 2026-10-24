@@ -77,8 +77,8 @@ func TestOutput(t *testing.T) {
 }
 
 // TestOutputIsBounded: a host that prints without end costs the CLI at most
-// MaxOutput of memory, and the command is stopped and fails saying why.
-// Exactly MaxOutput still goes through, and so does a stderr far over it, of
+// maxOutput of memory, and the command is stopped and fails saying why.
+// Exactly maxOutput still goes through, and so does a stderr far over it, of
 // which the error keeps the end.
 func TestOutputIsBounded(t *testing.T) {
 	m := dial(t)
@@ -86,16 +86,16 @@ func TestOutputIsBounded(t *testing.T) {
 	defer cancel()
 
 	out, err := m.Output(ctx, "cat /dev/zero", nil)
-	if err == nil || !strings.Contains(err.Error(), "more than 1 MiB") {
+	if !errors.Is(err, errTooMuchOutput) {
 		t.Fatalf("endless output: %v, want the limit named", err)
 	}
-	if len(out) > MaxOutput {
-		t.Fatalf("Output held %d bytes, the limit is %d", len(out), MaxOutput)
+	if len(out) > maxOutput {
+		t.Fatalf("Output held %d bytes, the limit is %d", len(out), maxOutput)
 	}
 
-	out, err = m.Output(ctx, "head -c "+strconv.Itoa(MaxOutput)+" /dev/zero", nil)
-	if err != nil || len(out) != MaxOutput {
-		t.Fatalf("exactly MaxOutput: %d bytes, %v", len(out), err)
+	out, err = m.Output(ctx, "head -c "+strconv.Itoa(maxOutput)+" /dev/zero", nil)
+	if err != nil || len(out) != maxOutput {
+		t.Fatalf("exactly maxOutput: %d bytes, %v", len(out), err)
 	}
 
 	_, err = m.Output(ctx, "head -c 20000000 /dev/zero >&2; echo last words >&2; exit 4", nil)

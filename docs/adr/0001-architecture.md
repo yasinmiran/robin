@@ -1730,8 +1730,7 @@ loopback port. Two of the CLI's surfaces failed that reading.
   The CLI now also says when the launch link is first used, so a tab still
   loading after that line is a takeover the user can see.
 - Smaller bounds from the same reading: `sshmux.Master.Output` stops a
-  command past 1 MiB (the probe's report is at most 1248 bytes on the
-  hosts in `internal/probe/testdata`), a verbose agent log without
+  command past 1 MiB (the probe's report is a few kilobytes), a verbose agent log without
   newlines is shown in 8 KiB pieces, `protocol.Conn.Send` refuses a line
   over `MaxLineBytes` instead of writing one the peer must take for a broken
   stream (a page frame of 1 MiB of `<` re-encoded to six times that), the
