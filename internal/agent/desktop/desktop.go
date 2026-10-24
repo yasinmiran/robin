@@ -65,3 +65,16 @@ type MultiMonitor interface {
 	// protocol.MonitorAll.
 	ShowMonitor(name string) error
 }
+
+// RichClipboard is a desktop whose clipboard carries HTML and images as
+// well as text. Its Clipboard channel still reports the text of each copy.
+type RichClipboard interface {
+	// SetClipboardContent offers c as the clipboard, in every format it
+	// holds.
+	SetClipboardContent(c protocol.Clip) error
+	// ClipboardContent delivers what programs on the desktop copy, in each
+	// format of protocol.Clip they offer, up to protocol.MaxClip in all.
+	// Only the latest is kept if the reader falls behind. It is closed when
+	// the desktop goes away.
+	ClipboardContent() <-chan protocol.Clip
+}

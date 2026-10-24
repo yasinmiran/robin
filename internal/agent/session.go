@@ -116,6 +116,12 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 		return fail(conn, err)
 	}
 	defer os.RemoveAll(runDir)
+	shared, err := openFiles(runDir, log)
+	if err != nil {
+		log.Warn("files unavailable", "err", err)
+	} else {
+		defer shared.close()
+	}
 
 	// Sound comes up before a spawned desktop so its programs inherit the
 	// sound server's address.
@@ -137,6 +143,9 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 			audio, desktopEnv = src, env
 			defer audio.Close()
 		}
+	}
+	if shared != nil {
+		desktopEnv = append(desktopEnv, shared.env()...)
 	}
 
 	// Opening can wait minutes on a consent dialog; a CLI that goes away
@@ -190,6 +199,7 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 		conn: newController(conn), desk: d.desk, start: start, log: log, tcpMux: tcpMux, cert: cert, audio: audio != nil,
 		stream:  newStream(d.desk, start.FPS, start.MaxWidth, start.MaxHeight, newEncoder, log),
 		cursors: map[uint32]protocol.Cursor{},
+		files:   shared, clips: make(chan protocol.Clip, 1),
 	}
 	defer s.closePeer()
 
@@ -220,6 +230,8 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 	}
 	run(s.stream.run)
 	run(s.forwardClipboard)
+	run(s.setClips)
+	run(s.serveFiles)
 	run(s.forwardCursor)
 	run(s.forwardMonitors)
 	run(s.heartbeat)
@@ -252,6 +264,9 @@ type session struct {
 	cursorOrder  []uint32
 	cursor       uint32          // current pointer image
 	cursorsShown map[uint32]bool // images the current page already has
+
+	files *fileShare         // nil when the session takes no files
+	clips chan protocol.Clip // from the browser, for setClips
 }
 
 // maxCursors bounds the pointer images a session keeps. The X11 desktop
@@ -335,6 +350,7 @@ func (s *session) currentPeer() (*peer.Peer, error) {
 		ControlOpen: func() {
 			s.sendCurrentCursor()
 			s.sendMonitors()
+			s.resendOffers()
 		},
 		Keyframe: s.stream.requestKeyframe,
 		Bitrate:  s.stream.setBitrate,
@@ -404,16 +420,6 @@ func (s *session) applyMonitor(m protocol.Control) {
 	s.log.Info("showing monitor", "monitor", m.Monitor)
 }
 
-func (s *session) applyClipboard(m protocol.Control) {
-	if len(m.Text) > clipboardSize {
-		s.log.Warn("clipboard from browser too large", "bytes", len(m.Text))
-		return
-	}
-	if err := s.desk.SetClipboard(m.Text); err != nil {
-		s.log.Warn("set clipboard", "err", err)
-	}
-}
-
 // heartbeat tells the page every second that the media path still works; the
 // page restarts ICE when they stop arriving.
 func (s *session) heartbeat(ctx context.Context) {
@@ -435,28 +441,6 @@ func (s *session) currentOrNil() *peer.Peer {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.peer
-}
-
-func (s *session) forwardClipboard(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case text, ok := <-s.desk.Clipboard():
-			if !ok {
-				return
-			}
-			if len(text) > clipboardSize {
-				s.log.Warn("remote clipboard too large to send", "bytes", len(text))
-				continue
-			}
-			if p := s.currentOrNil(); p != nil {
-				if err := p.SendControl(protocol.Control{T: protocol.ControlClipboard, Text: text}); err != nil && !errors.Is(err, peer.ErrNoControl) {
-					s.log.Warn("send clipboard", "err", err)
-				}
-			}
-		}
-	}
 }
 
 func (s *session) forwardCursor(ctx context.Context) {

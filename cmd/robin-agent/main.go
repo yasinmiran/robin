@@ -8,7 +8,9 @@
 // stdout and the daemon's socket, logging to stderr. daemon owns the
 // desktop, in a process that outlives the SSH connection; it exits, tearing
 // down what it spawned, when the CLI says bye, the keep window runs out with
-// no CLI attached, or end tells it to.
+// no CLI attached, or end tells it to. As robin-agent send, or through the
+// robin-send link a spawned session puts on its programs' PATH, it offers
+// files to the session's browser instead.
 package main
 
 import (
@@ -29,6 +31,7 @@ import (
 	"github.com/yasinmiran/robin/internal/agent"
 	"github.com/yasinmiran/robin/internal/agent/audio"
 	"github.com/yasinmiran/robin/internal/agent/daemon"
+	"github.com/yasinmiran/robin/internal/agent/files"
 	"github.com/yasinmiran/robin/internal/agent/h264"
 	"github.com/yasinmiran/robin/internal/agent/hwenc"
 	"github.com/yasinmiran/robin/internal/protocol"
@@ -36,9 +39,12 @@ import (
 
 var version = "dev"
 
-const usage = "usage: robin-agent serve [-v] [-keep d] [-resume id] [-detach setsid|systemd-run] | daemon ... | end id | version"
+const usage = "usage: robin-agent serve [-v] [-keep d] [-resume id] [-detach setsid|systemd-run] | daemon ... | end id | send FILE... | version"
 
 func main() {
+	if filepath.Base(os.Args[0]) == agent.SendCommand {
+		os.Exit(send(os.Args[1:]))
+	}
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
@@ -52,6 +58,8 @@ func main() {
 		os.Exit(runDaemon(os.Args[2:]))
 	case "end":
 		os.Exit(end(os.Args[2:]))
+	case "send":
+		os.Exit(send(os.Args[2:]))
 	default:
 		fmt.Fprintf(os.Stderr, "robin-agent: unknown command %q\n%s\n", os.Args[1], usage)
 		os.Exit(2)
@@ -223,6 +231,17 @@ func end(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// send offers files to the browser of a session of this agent: the one
+// whose programs it runs among, else the only one running.
+func send(args []string) int {
+	exe, err := os.Executable()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "robin-send:", err)
+		return 1
+	}
+	return files.Main(args, filepath.Join(filepath.Dir(exe), "run"), os.Getenv, os.Stdout, os.Stderr)
 }
 
 func newEncoder(width, height, fps, bitrate int) (agent.Encoder, error) {

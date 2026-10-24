@@ -53,7 +53,6 @@ func init() {
 	}
 	handleControl(protocol.ControlResize, (*session).applyResize)
 	handleControl(protocol.ControlMonitor, (*session).applyMonitor)
-	handleControl(protocol.ControlClipboard, (*session).applyClipboard)
 }
 
 // control applies one message from the browser; types nobody handles are
