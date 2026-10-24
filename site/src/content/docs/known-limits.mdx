@@ -44,7 +44,8 @@ These are the current limits of the shipped tool. Some of them have planned work
 - The clipboard is plain text, up to 255 KiB in each direction.
 - Keys map by character, so text arrives right whatever the client layout, but IME composition (CJK input) is not forwarded.
 - Recording a macro takes only the keys the browser hands the page; outside full screen, click Ctrl+W, Alt+Tab and the like in the Keys row instead. A macro does not wait for the desktop beyond the pauses in it.
-- Two sessions that change macros at the same moment can lose one of the two changes.
+- A macro save waits up to 2 seconds for another session's save, then gives up and says so.
+- On a Wayland desktop, text outside ASCII from Type clipboard or a macro arrives as a paste through the desktop's clipboard, so it does not reach a prompt that takes no paste.
 
 ## Network
 

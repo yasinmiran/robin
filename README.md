@@ -189,25 +189,35 @@ focus.
 
 ## Keys and macros
 
-The Keys row of the status tab sends what your keyboard cannot get to the
-desktop: Ctrl+Alt+Delete, Alt+Tab, Alt+F4, Super, Ctrl+W, Ctrl+T, Ctrl+N,
+The keys button in the status tab, beside full screen, opens a section
+that sends what your keyboard cannot get to the desktop: Ctrl+Alt+Delete, Alt+Tab, Alt+F4, Super, Ctrl+W, Ctrl+T, Ctrl+N,
 Ctrl+Q and Print Screen. Outside full screen the browser or your own
 system keeps these for itself (Ctrl+W closes the tab); in full screen
-Chrome's keyboard lock passes most of them on, and the row covers the rest
-and the other browsers. There are no Ctrl+Alt+F keys: on an attached
-desktop they would switch the host's console away from the session. Type
-clipboard reads this computer's clipboard when you click it and types the
-text as keys, up to 16 KiB, for prompts that take no paste: a lock screen,
-a VM console, a password dialog.
+Chrome's keyboard lock passes most of them on, and the Keys row covers the
+rest and the other browsers. There are no Ctrl+Alt+F keys: on an attached
+desktop they would switch the host's console away from the session. The
+tab stays out while the section is open, and the section starts closed in
+every new page.
+
+Type clipboard leads the Macros row. It reads this computer's clipboard
+when you click it and types the text as keys, up to 16 KiB, for prompts
+that take no paste: a lock screen, a VM console, a password dialog. On a
+Wayland desktop that holds only for ASCII. Any other character makes the
+agent paste the text through the desktop's clipboard instead (see
+[Security](#security)), where a clipboard manager may keep it and where a
+lock screen, which takes no paste, gets nothing.
 
 Macros are your own. New macro opens an editor for a name and steps, each
-a chord, a run of text or a pause. Record keys takes chords as you press
-them, modifiers included, and sends none of them to the desktop until you
-stop; a click on a key in the Keys row while recording adds that key, which
-is how a macro gets Ctrl+W outside full screen. Text and pauses are added
-below. Click a macro to play it and again to stop it. It plays as the same
-key and text messages the keyboard sends, holds nothing down when it ends,
-and stops when the page loses the keyboard or the connection.
+a chord, a run of text or a pause. Record keys takes what you press and
+sends none of it to the desktop until you stop: a key that types one
+character, alone or with Shift, joins the run of text before it, so a typed
+command is one step, and any other key is a chord with the modifiers held
+as it went down. A click on a key in the Keys row while recording adds
+that key, which is how a macro gets Ctrl+W outside full screen. Text and
+pauses are added below. Click a macro to play it and again to stop it. It
+plays as the same key and text messages the keyboard sends, holds nothing
+down when it ends, and stops when the page loses the keyboard or the
+connection. Delete in the editor asks for a second click.
 
 The CLI keeps the macros, not the browser, since the page's address is a
 new port every session and the browser's storage for it goes with it. They
@@ -220,13 +230,14 @@ session on this computer:
 | macOS | `~/Library/Application Support/robin/macros.json` |
 | Windows | `%AppData%\robin\macros.json` |
 
-A macro shows on every host unless you tick Only on in its editor, which
-pins it to the host argument as you typed it: `alice@box` and `box` are
-two hosts.
+A new macro is pinned to the host argument as you typed it, so it shows
+only in sessions to that host; untick Only on in its editor to show it on
+every host. `alice@box` and `box` are two hosts.
 Text in a macro is stored as plain text, and the editor says so where you
-type it. A file Robin cannot read, or one that breaks its rules, is
-reported in the terminal and in the page and left as it is; Robin saves no
-macro until it reads again.
+type it. A file Robin cannot read, one that breaks its rules, a link, or
+one that is not yours or that others can write, is reported in the
+terminal and in the page and left as it is, and Robin saves no macro until
+it reads again.
 
 ## What the host needs
 
@@ -574,14 +585,20 @@ keys, up to 16 KiB of text or a pause of up to 60 s, and at most 100 macros
 and 256 KiB in the file. It reads the file afresh for every change, refuses
 the change while the file does not read, and writes the whole file anew to
 a temporary file, 0600 in a 0700 directory, which it then renames into
-place. A macro pinned to another host is out of the page's reach: it can
-neither see, replace nor delete it. Within that, whatever drives the page
-can read the macros of this host and every unpinned one, text included,
-type them, and replace or delete them.
+place, holding a lock on `macros.json.lock` beside it from the read to the
+rename so two CLIs never undo each other's change. On Linux and macOS it
+reads the file through one open that follows no link and then checks what
+it opened: a regular file of yours that group and others cannot write. The
+directory has to be yours and no link before the CLI makes it 0700. A
+macro pinned to another host is out of the page's reach: it can neither
+see, replace nor delete it. Within that, whatever drives the page can read
+the macros of this host and every unpinned one, text included, type them,
+and replace or delete them.
 
-Text from an input method or a soft keyboard types what keys could type:
-through spare keycodes on X11 and, on Wayland, as keysyms for ASCII and as
-a paste for the rest. That paste puts the text on the desktop's clipboard
+Text from an input method or a soft keyboard, from Type clipboard and from
+a macro's text steps types what keys could type: through spare keycodes on
+X11 and, on Wayland, as keysyms for ASCII and as a paste for the rest, so
+one character outside ASCII sends the whole text that way. That paste puts the text on the desktop's clipboard
 for about a second, where any program on the desktop can read it, before
 the clipboard gets back what it held: what was copied on the desktop or set
 from the page during the session, in each format the agent reads, or the
@@ -764,7 +781,8 @@ in the spawned xterm, `robin-agent send` over ssh for the attached desktop)
 under a name full of markup that the page must show as text and save only
 on a click, and paste an image and HTML into the host's clipboard and back.
 `direct` then records a macro whose keys must not reach the xterm while
-recording, checks the CLI wrote `macros.json` 0600 in a 0700 directory,
+recording, which a line typed after it proves by arriving alone, checks
+the CLI wrote `macros.json` 0600 in a 0700 directory,
 reloads the page, finds the macro and plays it into the xterm, sends
 Ctrl+W from the Keys row into a shell line, and, in Chrome, types the
 local clipboard there with Type clipboard.
@@ -1024,9 +1042,8 @@ verified against a Linux build.
 - A macro plays at its own pace: each chord is held 20 ms and steps are
   30 ms apart, with no wait for the desktop beyond the pauses you add, so a
   macro that opens a window needs a pause before it types into it.
-- Two sessions that change macros at the same moment can lose one of the
-  two changes. Each change reads the file afresh, so a change another
-  session made earlier is kept, but there is no lock between CLIs.
+- A change to the macros waits up to 2 s for another session's change to
+  the file, then gives up and says so; save again.
 - Type clipboard needs the browser to hand over the clipboard: Chrome asks
   once, and Firefox and Safari show a Paste button of their own at each
   click, which only Chrome's run of the tests covers. It types 16 KiB at

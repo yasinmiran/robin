@@ -1698,8 +1698,12 @@ or delete one macro, by an ID the page made up) instead of sending its
 whole list, because two sessions to different hosts both show the unpinned
 macros, and a whole list from one would drop whatever the other saved
 since it loaded. Each change reads the file afresh, so it keeps what
-another CLI wrote before; there is no lock between CLIs, which leaves two
-changes at the same moment to the last writer.
+another CLI wrote before, and holds an exclusive lock on
+`macros.json.lock` beside the file (`flock`, `LockFileEx` on Windows) from
+the read to the rename. Without it a put from one CLI inside another's
+delete wrote the deleted macro back, password text included. A change
+waits 2 s at most for the lock, since it runs on the page's read loop, and
+then fails with a note to save again.
 
 The file is schema-checked JSON: version 1, nothing the schema does not
 name, one value, and every macro within the caps the page restates
@@ -1710,21 +1714,36 @@ takes about 0.5 KiB, so 100 of them take 66 KiB, while a macro of 100
 three-key chords takes 32 KiB and eight of those fill the file. A file that
 does not read, hand-edited or from a newer Robin, is reported once in the
 terminal and in every Config, and every change is refused until it reads,
-so it is never overwritten silently. A write goes to a temporary file in
-the same directory, made 0600 by `os.CreateTemp`, synced and renamed over
-the old one; the directory is set to 0700 on every write, since an
-existing `~/.config/robin` may be wider. The text in a macro may be a
-password, and it is stored as plain text: the page says so where it is
-typed.
+so it is never overwritten silently. What the file holds is typed on a
+host at a click, so on unix it is read through one open with `O_NOFOLLOW`
+and `O_NONBLOCK`, and the descriptor's own stat has to show a regular file
+of the effective user that group and others cannot write; anything else
+does not read. A file someone else could write, or a CLI run with
+`sudo -E` on the user's environment, would otherwise plant a macro that
+types a command, and a FIFO swapped in between a stat and an open would
+hold the open, and the page's read loop with it. A write goes to a
+temporary file in the same directory, made 0600 by `os.CreateTemp`,
+synced and renamed over the old one. The directory is opened the same way
+and has to belong to the user, not be a link, before it is set to 0700 on
+every write, since an existing `~/.config/robin` may be wider. The text in
+a macro may be a password, and it is stored as plain text: the page says
+so where it is typed.
 
 A pinned macro names the host argument as the user typed it, not what ssh
 makes of it: the CLI does not know what `~/.ssh/config` resolves a name
-to, and the user recognises what they typed.
+to, and the user recognises what they typed. A new macro starts pinned.
+Unpinned by default, what one host's session recorded showed and played
+in every other, including a clipboard that host had set while Type
+clipboard recorded it; sharing a macro across hosts is now an untick.
 
-Recording takes chords as they are pressed: each key that is not a
-modifier, with the modifiers held as it went down, and modifiers pressed
-and let go with no other key, such as Super alone, as a chord of their
-own. Repeats are dropped. While recording, `Input.capture` takes every key
+Recording takes a key that types one character, alone or with Shift, as
+text, which joins the text before it, and any other key as a chord with
+the modifiers held as it went down; modifiers pressed and let go with no
+other key, such as Super alone, are a chord of their own. Repeats are
+dropped. One chord per letter put a command of about 95 characters at the
+100-step cap and filled the editor with a chip per key; as text it is one
+step, played as `ControlText` like an input method's, which on Wayland
+means keysyms for ASCII and a paste for anything else. While recording, `Input.capture` takes every key
 in place of the remote, except the release of a key the remote saw
 pressed. Keys the browser keeps for itself never reach the page, so while
 recording the Keys row's buttons add their chord instead of sending it.
