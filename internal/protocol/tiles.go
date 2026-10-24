@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -43,6 +44,10 @@ const (
 // MaxTileBatch tiles at three bytes a pixel with room for PNG's framing.
 const TileBatchLimit = 4 << 20
 
+// MaxTileGrid bounds each side of a tile grid in desktop pixels: the
+// largest canvas side a browser draws. The page refuses a manifest past it.
+const MaxTileGrid = 16384
+
 // Tiles is the agent's answer to ControlTiles.
 type Tiles struct {
 	On bool `json:"on,omitempty"`
@@ -54,19 +59,28 @@ type Tiles struct {
 type Frame struct {
 	// RTP is the RTP timestamp of the frame's packets.
 	RTP uint32 `json:"rtp"`
-	// Gen names the tile grid, W by H desktop pixels in TileSize squares.
-	// A manifest with a new Gen drops every tile of the old one.
+	// Gen names the tile grid, W by H desktop pixels in TileSize squares,
+	// each side 1 to MaxTileGrid. A manifest with a new Gen drops every tile
+	// of the old one.
 	Gen uint32 `json:"gen"`
 	W   int    `json:"w"`
 	H   int    `json:"h"`
 	// Gone lists the tiles this frame changes as half-open ranges of tile
-	// indexes, start and end in turn. Tile (column, row) has index
-	// row*TileColumns(W)+column.
+	// indexes, start and end in turn, every number greater than the one
+	// before and the last at most the grid's count of tiles. Tile (column,
+	// row) has index row*TileColumns(W)+column. The page refuses a manifest
+	// whose Gone strays from that, and a batch naming a tile outside the
+	// grid or the same tile twice.
 	Gone []int `json:"gone,omitempty"`
 }
 
 // TileColumns is how many tiles a row of a grid w pixels wide holds.
 func TileColumns(w int) int { return (w + TileSize - 1) / TileSize }
+
+// TileAtlasSize is the size in pixels of the atlas of n tiles.
+func TileAtlasSize(n int) (w, h int) {
+	return min(n, TileAtlasColumns) * TileSize, (n + TileAtlasColumns - 1) / TileAtlasColumns * TileSize
+}
 
 // TileBatch is the payload of a BulkTile transfer.
 type TileBatch struct {
@@ -77,7 +91,8 @@ type TileBatch struct {
 	Tiles []int
 	// PNG is the atlas: TileAtlasColumns tiles a row, Tiles[k] in column
 	// k%TileAtlasColumns of row k/TileAtlasColumns, each TileSize square
-	// with an edge tile's pixels at its top left.
+	// with an edge tile's pixels at its top left. Its IHDR gives exactly
+	// TileAtlasSize(len(Tiles)), which the page checks before decoding it.
 	PNG []byte
 }
 
@@ -101,8 +116,15 @@ func (b TileBatch) Marshal() []byte {
 	return append(out, b.PNG...)
 }
 
+// pngSignature starts every PNG; its IHDR chunk follows, the chunk's type
+// at offset 12 and the picture's width and height, big-endian, at 16 and 20.
+var pngSignature = []byte("\x89PNG\r\n\x1a\n")
+
+const pngHeadLen = 24
+
 // ParseTileBatch reads what Marshal wrote, as the browser does. It refuses
-// an empty batch, one of more than MaxTileBatch tiles, and one cut short.
+// an empty batch, one of more than MaxTileBatch tiles, one cut short, and
+// one whose PNG does not declare the size of its atlas.
 func ParseTileBatch(p []byte) (TileBatch, error) {
 	if len(p) < tileBatchHead {
 		return TileBatch{}, fmt.Errorf("%w: %d bytes", ErrTileBatch, len(p))
@@ -119,5 +141,10 @@ func ParseTileBatch(p []byte) (TileBatch, error) {
 		b.Tiles[i] = int(binary.BigEndian.Uint32(p[tileBatchHead+4*i:]))
 	}
 	b.PNG = p[tileBatchHead+4*n:]
+	w, h := TileAtlasSize(n)
+	if len(b.PNG) < pngHeadLen || !bytes.HasPrefix(b.PNG, pngSignature) || string(b.PNG[12:16]) != "IHDR" ||
+		binary.BigEndian.Uint32(b.PNG[16:]) != uint32(w) || binary.BigEndian.Uint32(b.PNG[20:]) != uint32(h) {
+		return TileBatch{}, fmt.Errorf("%w: the PNG is not a %dx%d atlas of %d tiles", ErrTileBatch, w, h, n)
+	}
 	return b, nil
 }
