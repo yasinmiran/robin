@@ -43,6 +43,7 @@ func TestPageLimitsMatchTheAgent(t *testing.T) {
 		{"tiles.js", "MAX_TILE_BATCH", protocol.MaxTileBatch},
 		{"tiles.js", "TILE_ATLAS_COLUMNS", protocol.TileAtlasColumns},
 		{"tiles.js", "TILE_BATCH_LIMIT", protocol.TileBatchLimit},
+		{"tiles.js", "MAX_TILE_GRID", protocol.MaxTileGrid},
 	} {
 		got, err := pageConst(filepath.Join("static", c.file), c.name)
 		if err != nil {

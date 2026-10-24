@@ -10,8 +10,19 @@ export const TILE_SIZE = 64;
 export const MAX_TILE_BATCH = 256;
 export const TILE_ATLAS_COLUMNS = 16;
 export const TILE_BATCH_LIMIT = 4 * 1048576;
+// MAX_TILE_GRID bounds each side of a grid: the largest canvas side a
+// browser draws.
+export const MAX_TILE_GRID = 16384;
 
 const HEAD = 10; // RTP, generation and count, before the index
+// A PNG starts with its signature, then the IHDR chunk: its type at 12 and
+// the picture's width and height, big-endian, at 16 and 20.
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+const IHDR = [0x49, 0x48, 0x44, 0x52];
+const PNG_HEAD = 24;
+
+const isUint32 = (v) => Number.isInteger(v) && v >= 0 && v <= 0xffffffff;
+const isSide = (v) => Number.isInteger(v) && v >= 1 && v <= MAX_TILE_GRID;
 
 // after reports whether RTP timestamp a comes later than b, across the
 // 32-bit wrap.
@@ -19,9 +30,15 @@ export function after(a, b) {
   return ((a - b) | 0) > 0;
 }
 
+// atlasSize is the size in pixels of the atlas of n tiles.
+export function atlasSize(n) {
+  return { width: Math.min(n, TILE_ATLAS_COLUMNS) * TILE_SIZE, height: Math.ceil(n / TILE_ATLAS_COLUMNS) * TILE_SIZE };
+}
+
 // parseTileBatch reads a tile transfer's payload: the RTP timestamp of the
 // frame its tiles show, their grid's generation, their indexes in atlas
-// order, and the PNG atlas.
+// order, and the PNG atlas, which must declare the atlas's size before
+// anything decodes it.
 export function parseTileBatch(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.length < HEAD) throw new Error('malformed tile batch');
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -29,7 +46,27 @@ export function parseTileBatch(bytes) {
   if (n === 0 || n > MAX_TILE_BATCH || bytes.length < HEAD + 4 * n) throw new Error(`malformed tile batch of ${n} tiles`);
   const tiles = [];
   for (let k = 0; k < n; k++) tiles.push(view.getUint32(HEAD + 4 * k));
-  return { rtp: view.getUint32(0), gen: view.getUint32(4), tiles, png: bytes.subarray(HEAD + 4 * n) };
+  const at = HEAD + 4 * n;
+  const png = bytes.subarray(at);
+  const { width, height } = atlasSize(n);
+  const starts = (sig, from) => sig.every((b, i) => png[from + i] === b);
+  if (png.length < PNG_HEAD || !starts(PNG_SIGNATURE, 0) || !starts(IHDR, 12) || view.getUint32(at + 16) !== width || view.getUint32(at + 20) !== height) {
+    throw new Error(`malformed tile batch: the PNG is not a ${width}x${height} atlas of ${n} tiles`);
+  }
+  return { rtp: view.getUint32(0), gen: view.getUint32(4), tiles, png };
+}
+
+// checkGone throws unless gone is half-open ranges of a grid of total
+// tiles: every number an integer greater than the one before, the first at
+// least 0 and the last at most total.
+function checkGone(gone, total) {
+  if (!Array.isArray(gone) || gone.length % 2 !== 0) throw new Error('malformed tile manifest');
+  let prev = -1;
+  for (const i of gone) {
+    if (!Number.isInteger(i) || i <= prev) throw new Error('malformed tile manifest');
+    prev = i;
+  }
+  if (prev > total) throw new Error('malformed tile manifest');
 }
 
 // TileBook keeps the page's account of tiles: the grid, which tiles are on
@@ -80,9 +117,13 @@ export class TileBook {
   // otherwise clear lists the tiles to wipe now. A tile drawn from that
   // frame or a later one stays: the manifest came late, behind the batch
   // that already shows the change. Batches that wait are dropped when their
-  // grid goes.
+  // grid goes. A manifest outside the bounds protocol.Frame states throws,
+  // and changes nothing.
   manifest(frame) {
-    const { rtp, gen, w, h } = frame;
+    const { rtp, gen, w, h } = frame ?? {};
+    if (!isUint32(rtp) || !isUint32(gen) || !isSide(w) || !isSide(h)) throw new Error('malformed tile manifest');
+    const gone = frame.gone ?? [];
+    checkGone(gone, Math.ceil(w / TILE_SIZE) * Math.ceil(h / TILE_SIZE));
     this.#latest = rtp;
     if (gen !== this.gen || w !== this.width || h !== this.height) {
       this.gen = gen;
@@ -96,8 +137,7 @@ export class TileBook {
       return { reset: true, clear: [] };
     }
     const clear = [];
-    const gone = frame.gone ?? [];
-    for (let k = 0; k + 1 < gone.length; k += 2) {
+    for (let k = 0; k < gone.length; k += 2) {
       for (let i = gone[k]; i < gone[k + 1]; i++) {
         this.#gone.set(i, rtp);
         const drawn = this.#drawn.get(i);
@@ -111,9 +151,14 @@ export class TileBook {
 
   // batch takes a parsed tile batch with its decoded atlas in batch.image.
   // It returns what is due now, as frame does; a batch of another grid
-  // comes straight back as spent.
+  // comes straight back as spent. One that names a tile outside the grid,
+  // or a tile twice, throws, and changes nothing.
   batch(b) {
     if (b.gen !== this.gen) return { draws: [], spent: [b.image] };
+    const total = this.#cols * Math.ceil(this.height / TILE_SIZE);
+    if (!b.tiles.every((i) => Number.isInteger(i) && i >= 0 && i < total) || new Set(b.tiles).size !== b.tiles.length) {
+      throw new Error('malformed tile batch: a tile outside the grid, or twice');
+    }
     this.#waiting.push(b);
     return this.#due();
   }

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MAX_TILE_BATCH, TileBook, after, parseTileBatch } from '../tiles.js';
+import { MAX_TILE_BATCH, TileBook, after, atlasSize, parseTileBatch } from '../tiles.js';
+import { marshal, pngHead } from './tilebatch.js';
 
 // grid is the manifest that starts a 130x70 desktop: 3x2 tiles, the last
 // column and row cut short.
@@ -22,12 +23,12 @@ test('after compares RTP timestamps across the wrap', () => {
 });
 
 test('parseTileBatch reads what the agent marshals', () => {
-  const b = new Uint8Array([0xde, 0xad, 0xbe, 0xef, 0, 0, 0, 7, 0, 2, 0, 0, 0, 1, 0, 0x10, 0, 0, 0x89, 0x50]);
+  const b = new Uint8Array([0xde, 0xad, 0xbe, 0xef, 0, 0, 0, 7, 0, 2, 0, 0, 0, 1, 0, 0x10, 0, 0, ...pngHead(128, 64)]);
   const p = parseTileBatch(b);
   assert.equal(p.rtp, 0xdeadbeef);
   assert.equal(p.gen, 7);
   assert.deepEqual(p.tiles, [1, 0x100000]);
-  assert.deepEqual([...p.png], [0x89, 0x50]);
+  assert.deepEqual([...p.png], [...pngHead(128, 64)]);
   assert.throws(() => parseTileBatch(new Uint8Array(4)), /malformed/);
   assert.throws(() => parseTileBatch(new Uint8Array(10)), /0 tiles/);
   const many = new Uint8Array(10 + 4 * (MAX_TILE_BATCH + 1));
@@ -35,6 +36,63 @@ test('parseTileBatch reads what the agent marshals', () => {
   assert.throws(() => parseTileBatch(many), /malformed/);
   assert.throws(() => parseTileBatch(b.subarray(0, 15)), /2 tiles/);
   assert.throws(() => parseTileBatch([1, 2, 3]), /malformed/);
+});
+
+test('an atlas whose PNG is not the size of its tiles is refused', () => {
+  // A few bytes of deflate can declare a picture thousands of times the
+  // atlas's size; nothing may decode it.
+  assert.throws(() => parseTileBatch(marshal({ tiles: [0], png: pngHead(65535, 65535) })), /malformed tile batch/);
+  assert.throws(() => parseTileBatch(marshal({ tiles: [0], png: pngHead(64, 64).subarray(0, 20) })), /malformed tile batch/);
+  assert.throws(() => parseTileBatch(marshal({ tiles: [0], png: new Uint8Array(24) })), /malformed tile batch/);
+  const notIhdr = pngHead(64, 64);
+  notIhdr.set([0x74, 0x45, 0x58, 0x74], 12);
+  assert.throws(() => parseTileBatch(marshal({ tiles: [0], png: notIhdr })), /malformed tile batch/);
+  const seventeen = Array.from({ length: 17 }, (_, i) => i);
+  assert.throws(() => parseTileBatch(marshal({ tiles: seventeen, png: pngHead(1024, 64) })), /malformed tile batch/);
+  assert.deepEqual(atlasSize(17), { width: 1024, height: 128 });
+  assert.deepEqual(parseTileBatch(marshal({ tiles: seventeen, png: pngHead(1024, 128) })).tiles, seventeen);
+  assert.deepEqual(atlasSize(MAX_TILE_BATCH), { width: 1024, height: 1024 });
+});
+
+test('a manifest outside its grid is refused, and changes nothing', () => {
+  const book = new TileBook();
+  book.manifest({ rtp: 1, gen: 1, w: 64, h: 64 });
+  book.frame(1);
+  book.batch(batch(1, [0]));
+  for (const bad of [
+    { rtp: 2, gen: 1, w: 64, h: 64, gone: [1, 2] }, // past the one tile
+    { rtp: 2, gen: 1, w: 64, h: 64, gone: [0, 2 ** 31] },
+    { rtp: 2, gen: 1, w: 64, h: 64, gone: [0] }, // odd length
+    { rtp: 2, gen: 1, w: 128, h: 64, gone: [1, 0] }, // descending
+    { rtp: 2, gen: 1, w: 192, h: 64, gone: [0, 1, 1, 2] }, // not strictly ascending
+    { rtp: 2, gen: 1, w: 64, h: 64, gone: [-1, 1] },
+    { rtp: 2, gen: 1, w: 64, h: 64, gone: [0, 0.5] },
+    { rtp: 2, gen: 1, w: 64, h: 64, gone: 'all' },
+    { rtp: 2, gen: 1, w: 0, h: 64 },
+    { rtp: 2, gen: 1, w: 1e6, h: 64 },
+    { rtp: 2, gen: 1, w: 1.5, h: 64 },
+    { rtp: 2, gen: 1, w: 64, h: 16385 },
+    { rtp: -1, gen: 1, w: 64, h: 64 },
+    { rtp: 2 ** 32, gen: 1, w: 64, h: 64 },
+    { rtp: 2, gen: '1', w: 64, h: 64 },
+    null,
+  ]) {
+    assert.throws(() => book.manifest(bad), /malformed tile manifest/, JSON.stringify(bad));
+  }
+  assert.deepEqual([book.gen, book.width, book.height, book.drawn, book.visible], [1, 64, 64, 1, true], 'the book is as it was');
+  assert.deepEqual(book.manifest({ rtp: 2, gen: 1, w: 64, h: 64, gone: [0, 1] }), { reset: false, clear: [0] });
+  assert.equal(book.manifest({ rtp: 3, gen: 2, w: 16384, h: 16384 }).reset, true, 'the largest grid');
+});
+
+test('a batch naming a tile outside the grid is refused', () => {
+  const book = new TileBook();
+  book.manifest({ rtp: 1, gen: 1, w: 64, h: 64 });
+  book.frame(1);
+  for (const tiles of [[1], [-1], [0.5], [0, 0], [2 ** 31]]) {
+    assert.throws(() => book.batch(batch(1, tiles)), /malformed tile batch/, JSON.stringify(tiles));
+  }
+  assert.equal(book.drawn, 0, 'nothing was drawn');
+  assert.equal(book.batch(batch(1, [0])).draws.length, 1);
 });
 
 test('a batch is drawn once the video shows its frame, in the atlas order', () => {
