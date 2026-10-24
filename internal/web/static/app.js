@@ -149,7 +149,8 @@ function createPeer(config) {
   pc = new RTCPeerConnection({ iceServers: config.iceServers ?? [] });
 
   const transceiver = pc.addTransceiver('video', { direction: 'recvonly' });
-  preferH264(transceiver);
+  const codecs = constrainedBaselineFirst(RTCRtpReceiver.getCapabilities('video')?.codecs ?? []);
+  if (codecs) transceiver.setCodecPreferences(codecs);
   // Sound shares the video's stream, so the one element plays both. With the
   // microphone on offer the line goes both ways from the start, as does the
   // camera's own, so switching either is a replaceTrack and never a new offer.
@@ -197,14 +198,6 @@ function createPeer(config) {
   pc.oniceconnectionstatechange = onIceState;
 
   statsTimer = setInterval(async () => overlay.setStats(await sampler.sample(pc)), STATS_EVERY_MS);
-}
-
-// preferH264 puts Constrained Baseline H.264 with packetization-mode=1 first,
-// which is what the agent encodes, and keeps every other codec after it so
-// retransmission and fallbacks still negotiate.
-function preferH264(transceiver) {
-  const codecs = constrainedBaselineFirst(RTCRtpReceiver.getCapabilities('video')?.codecs ?? []);
-  if (codecs) transceiver.setCodecPreferences(codecs);
 }
 
 function onIceState() {
