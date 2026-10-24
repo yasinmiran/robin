@@ -44,7 +44,7 @@ func fakeDaemon(args []string) int {
 		return 1
 	}
 	logFile, _ := os.OpenFile(filepath.Join(*dir, LogFile), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	syscall.Dup2(int(logFile.Fd()), 2)
+	syscall.Dup3(int(logFile.Fd()), 2, 0)
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	ln, err := Listen(*dir, "fake-agent", log)
 	if err != nil {

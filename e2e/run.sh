@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the robin e2e suite in rootless podman.
 #
-#   ./run.sh                    every scenario: direct blocked restart attach wayland webkit firefox
+#   ./run.sh                    every scenario: direct blocked restart resume rejoin attach wayland webkit firefox
 #   ./run.sh direct restart     just those
 #   ./run.sh selftest           prove the harness itself, no CLI needed
 #
@@ -37,7 +37,7 @@ ROBIN_BIN=${ROBIN_BIN:-bin/robin-linux-amd64}
 COVER=${ROBIN_E2E_COVER:-}
 [[ -z $COVER || $COVER = /* ]] || COVER=$PWD/$COVER
 
-ALL_SCENARIOS=(direct blocked restart attach wayland webkit firefox)
+ALL_SCENARIOS=(direct blocked restart resume rejoin attach wayland webkit firefox)
 
 log() { printf '\033[1m[e2e]\033[0m %s\n' "$*" >&2; }
 die() { log "error: $*"; exit 2; }
@@ -383,8 +383,8 @@ main() {
   local s
   for s in "${scenarios[@]}"; do
     case $s in
-      selftest | direct | blocked | restart | attach | wayland | webkit | firefox) ;;
-      *) die "unknown scenario '$s' (want selftest, direct, blocked, restart, attach, wayland, webkit or firefox)" ;;
+      selftest | direct | blocked | restart | resume | rejoin | attach | wayland | webkit | firefox) ;;
+      *) die "unknown scenario '$s' (want selftest, direct, blocked, restart, resume, rejoin, attach, wayland, webkit or firefox)" ;;
     esac
   done
   command -v podman >/dev/null || die "podman not found"

@@ -143,8 +143,8 @@ func runDaemon(args []string) int {
 		fmt.Fprintln(os.Stderr, "robin-agent:", err)
 		return 1
 	}
-	syscall.Dup2(int(logFile.Fd()), 2)
-	syscall.Dup2(int(logFile.Fd()), 1)
+	syscall.Dup3(int(logFile.Fd()), 2, 0)
+	syscall.Dup3(int(logFile.Fd()), 1, 0)
 	level := slog.LevelWarn
 	if *verbose {
 		level = slog.LevelInfo

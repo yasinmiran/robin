@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -79,6 +79,19 @@ export class Cli {
     return !this.exit;
   }
 
+  // kill ends the CLI the way a crash or a closed laptop lid does: SIGKILL
+  // to its process group, ssh master included, with no chance to say bye.
+  kill(): Promise<Exit> {
+    killGroup(this.proc, 'SIGKILL');
+    return this.exited;
+  }
+
+  // waitExit waits up to timeoutMs for the CLI to exit on its own.
+  async waitExit(timeoutMs = 15_000): Promise<Exit | null> {
+    const timedOut = new Promise<null>((r) => setTimeout(() => r(null), timeoutMs));
+    return Promise.race([this.exited, timedOut]);
+  }
+
   // stop sends SIGINT and waits up to timeoutMs for the CLI to exit, then
   // SIGKILLs its process group. Safe to call more than once.
   stop(timeoutMs = 10_000): Promise<Stop> {
@@ -103,6 +116,16 @@ export class Cli {
       return '';
     }
   }
+}
+
+// robin runs another robin command, such as ls or end, to completion.
+export function robin(args: string[], timeoutMs = 60_000): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    execFile('robin', args, { timeout: timeoutMs }, (err, stdout, stderr) => {
+      const code = err ? (typeof err.code === 'number' ? err.code : 255) : 0;
+      resolve({ code, stdout: String(stdout), stderr: String(stderr) });
+    });
+  });
 }
 
 function killGroup(proc: ChildProcess, signal: NodeJS.Signals) {

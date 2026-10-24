@@ -1,7 +1,7 @@
 import { test, expect, type BrowserContext, type Page, type TestInfo } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { Cli } from './helpers/cli';
+import { Cli, robin } from './helpers/cli';
 import { pagePoint } from './helpers/coords';
 import { savePageCoverage, startPageCoverage } from './helpers/cover';
 import { CHANGED_FLOOR, isNonBlack, sampleFrame, waitForStillFrame } from './helpers/frames';
@@ -67,7 +67,7 @@ let page: Page;
 let sessionStart = 0;
 
 test.beforeAll(async ({ browser }, testInfo) => {
-  expect(['direct', 'blocked', 'restart', 'attach'], 'SCENARIO').toContain(SCENARIO);
+  expect(['direct', 'blocked', 'restart', 'resume', 'rejoin', 'attach'], 'SCENARIO').toContain(SCENARIO);
   testInfo.setTimeout(150_000);
   context = await browser.newContext({
     viewport: { width: 1280, height: 720 },
@@ -415,6 +415,135 @@ if (SCENARIO === 'restart') {
   });
 }
 
+// A kept session: what the desktop looks like from the host, to compare
+// across a reconnect.
+type Kept = { session: host.Session; xvfb: number; xterm: string };
+
+async function keptState(): Promise<Kept> {
+  const [session, xvfb, xterm] = await Promise.all([host.session(), host.xvfbPid(), host.terminalWindow()]);
+  return { session, xvfb, xterm };
+}
+
+// markTerminal types a marker command into the xterm, which leaves the
+// command line on screen, and waits for the picture to settle around it.
+async function markTerminal(marker: string) {
+  await typeIntoTerminal(`echo ${marker} > /tmp/${marker}`, `/tmp/${marker}`, marker);
+  await waitForStillFrame(page, SCREEN);
+}
+
+// expectSameDesktop checks the desktop that answers is the one from before:
+// same daemon, Xvfb and xterm, and the marker's file still there.
+async function expectSameDesktop(before: Kept, marker: string) {
+  const after = await keptState();
+  expect(after.session.id, 'session id').toBe(before.session.id);
+  expect(after.session.pid, 'daemon pid').toBe(before.session.pid);
+  expect(after.xvfb, 'Xvfb pid').toBe(before.xvfb);
+  expect(after.xterm, 'xterm window').toBe(before.xterm);
+  expect(await host.exists(`/tmp/${marker}`), `/tmp/${marker} on the host`).toBe(true);
+}
+
+if (SCENARIO === 'resume') {
+  test('resume: SSH cut mid-session; the CLI reconnects to the same desktop and the xterm still shows the marker', async ({}, testInfo) => {
+    testInfo.setTimeout(120_000);
+    const before = await keptState();
+    expect(before.session.connected, 'session.json says connected').toBe(true);
+    expect(before.session.keep, 'keep window').toBe(8 * 3600);
+    expect(before.xvfb, 'Xvfb pid').toBeGreaterThan(0);
+    expect(before.xterm, 'xterm window').not.toBe('');
+    const marker = 'robin-e2e-resume-marker';
+    await markTerminal(marker);
+    let term: host.Rect | null = null;
+    await expect.poll(async () => (term = await host.terminal())).not.toBeNull();
+    await sampleFrame(page, SCREEN, { save: 'pre-cut' });
+
+    await host.cutSSH();
+    const cutAt = Date.now();
+    const seen: string[] = [];
+    const watch = async () => {
+      const st = (await state(page)) ?? 'none';
+      if (seen.at(-1) !== st) seen.push(st);
+      return st;
+    };
+    await expect.poll(watch, { message: 'the page is told the CLI is reconnecting', timeout: 30_000, intervals: [100] }).toBe('reconnecting');
+    const noticedAfterMs = Date.now() - cutAt;
+    await expect.poll(watch, { message: 'the page is connected again', timeout: 60_000, intervals: [250] }).toBe('connected');
+    testInfo.annotations.push({
+      type: 'recovery',
+      description: `noticed after ${noticedAfterMs} ms, connected after ${Date.now() - cutAt} ms via ${seen.join(' -> ')}`,
+    });
+    expect(cli!.running, 'the CLI is still running').toBe(true);
+    expect(cli!.stderrTail(), 'the CLI said it reconnected').toContain('reconnected to robinhost');
+
+    await expectSameDesktop(before, marker);
+    expect((await host.session()).connected, 'session.json says connected again').toBe(true);
+    // The picture is the same xterm with the same text: the marker line is
+    // still on screen.
+    await waitForStillFrame(page, SCREEN);
+    const diff = await sampleFrame(page, SCREEN, { compare: 'pre-cut', region: term! });
+    testInfo.annotations.push({ type: 'xterm diff', description: `${diff.changed} of ${diff.compared} pixels changed` });
+    expect(diff.changed, 'pixels changed in the xterm across the reconnect').toBeLessThan(CHANGED_FLOOR);
+    // And input still works.
+    await typeIntoTerminal('echo robin-e2e-after > /tmp/robin-e2e-resume-after', '/tmp/robin-e2e-resume-after', 'robin-e2e-after');
+  });
+}
+
+if (SCENARIO === 'rejoin') {
+  test('rejoin: the CLI is killed; a new robin gui resumes the kept desktop, detaches, and robin end ends it', async ({}, testInfo) => {
+    testInfo.setTimeout(150_000);
+    const before = await keptState();
+    const marker = 'robin-e2e-rejoin-marker';
+    await markTerminal(marker);
+
+    // The CLI dies without a word, ssh master and all.
+    const exit = await cli!.kill();
+    testInfo.annotations.push({ type: 'kill', description: JSON.stringify(exit) });
+    await expect.poll(() => state(page), { message: 'the page ends with its CLI', timeout: 15_000 }).toBe('ended');
+    await expect
+      .poll(async () => (await host.session()).connected, { message: 'session.json says kept', timeout: 30_000 })
+      .toBe(false);
+    const kept = await host.session();
+    expect(kept.until, 'the keep window has an end').toBeTruthy();
+    expect(await host.xvfbPid(), 'Xvfb outlives the CLI').toBe(before.xvfb);
+
+    const ls = await robin(['ls', 'robinhost']);
+    testInfo.annotations.push({ type: 'robin ls', description: ls.stdout + ls.stderr });
+    expect(ls.code, 'robin ls exit code').toBe(0);
+    expect(ls.stdout).toContain(before.session.id);
+    expect(ls.stdout).toContain('kept until');
+
+    // A new robin gui finds the one kept session and resumes it.
+    cli = await Cli.start(OUT);
+    expect(cli.stderrTail(), 'the CLI resumed').toContain(`resumed session ${before.session.id}`);
+    await page.goto(cli.url);
+    await expect.poll(() => state(page), { message: 'the new page connects', timeout: 60_000 }).toBe('connected');
+    await expectSameDesktop(before, marker);
+    await typeIntoTerminal('echo robin-e2e-after > /tmp/robin-e2e-rejoin-after', '/tmp/robin-e2e-rejoin-after', 'robin-e2e-after');
+
+    // Disconnect, keep desktop: the CLI exits on its own, the page says so,
+    // the host keeps the session.
+    await page.mouse.move(640, 5);
+    const detach = page.locator('#detach');
+    await expect(detach, 'the detach button').toBeVisible({ timeout: 10_000 });
+    await detach.click();
+    const left = await cli.waitExit(15_000);
+    testInfo.annotations.push({ type: 'detach exit', description: JSON.stringify(left) });
+    expect(left, 'the CLI exited after the page detached').not.toBeNull();
+    expect(left!.code, 'CLI exit code').toBe(0);
+    expect(cli.stderrTail()).toContain('desktop kept on robinhost');
+    await expect(page.locator('#state-label')).toHaveText('Desktop kept');
+    expect((await host.session()).connected, 'session.json says kept').toBe(false);
+    expect(await host.xvfbPid(), 'Xvfb still there').toBe(before.xvfb);
+
+    const end = await robin(['end', 'robinhost']);
+    testInfo.annotations.push({ type: 'robin end', description: end.stdout + end.stderr });
+    expect(end.code, 'robin end exit code').toBe(0);
+    expect(end.stderr).toContain(`ended session ${before.session.id}`);
+    await expect.poll(host.leftovers, { message: 'session processes on the host', timeout: 10_000 }).toBe('');
+    expect(await host.agentLeftovers(), 'agents and run dirs').toBe('');
+    expect(cli.extraStdout, 'stdout carries only the URL').toEqual([]);
+  });
+}
+
 if (SCENARIO === 'attach') {
   test('attach: a 1000x700 viewport scales the video and leaves the desktop its size', async () => {
     const desk = await host.displayGeometry();
@@ -515,6 +644,7 @@ if (SCENARIO === 'attach') {
 
 test('teardown: SIGINT ends the CLI and leaves nothing behind on the host', async ({}, testInfo) => {
   test.skip(SCENARIO === 'attach', 'the attached desktop outlives the session; see the attach teardown');
+  test.skip(SCENARIO === 'rejoin', 'robin end tore the session down; see the rejoin test');
   const dir = await host.runDir();
   expect(await host.leftovers(), 'session processes are visible before teardown').not.toBe('');
 

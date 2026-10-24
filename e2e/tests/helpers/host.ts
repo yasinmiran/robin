@@ -91,7 +91,7 @@ export async function setClipboard(text: string): Promise<void> {
 // leftovers lists session processes still running as robin. The bracketed
 // patterns keep pgrep from matching the remote shell that carries them.
 export async function leftovers(): Promise<string> {
-  const r = await sshRaw(`pgrep -u robin -fa '[X]vfb|[r]emotejump-agent|[o]penbox|[x]term|[p]ulseaudio'`);
+  const r = await sshRaw(`pgrep -u robin -fa '[X]vfb|[r]obin-agent|[o]penbox|[x]term|[p]ulseaudio'`);
   if (r.code > 1) throw new Error(`pgrep: exit ${r.code}: ${r.stderr.trim()}`);
   return r.stdout.trim();
 }
@@ -105,8 +105,46 @@ export const liveBefore = () => ssh('robin-live before');
 
 // agentLeftovers lists agents still running as robin, and run dirs they left.
 export async function agentLeftovers(): Promise<string> {
-  const r = await sshRaw(`pgrep -u robin -fa '[r]emotejump-agent'; find ~/.cache/robin/run -mindepth 1 -maxdepth 1 2>/dev/null`);
+  const r = await sshRaw(`pgrep -u robin -fa '[r]obin-agent'; find ~/.cache/robin/run -mindepth 1 -maxdepth 1 2>/dev/null`);
   return r.stdout.trim();
+}
+
+// Session is what the daemon records in its run dir (protocol.Session).
+export type Session = {
+  id: string;
+  pid: number;
+  agent: string;
+  mode: string;
+  display: string;
+  keep: number;
+  connected: boolean;
+  until?: string;
+};
+
+// session reads the kept session's record from the agent's run dir.
+export async function session(): Promise<Session> {
+  return JSON.parse(await ssh('cat "$(robin-rundir)/session.json"')) as Session;
+}
+
+// xvfbPid is the pid of the session's Xvfb, the one whose cookie file is in
+// the agent's run dir, or 0.
+export async function xvfbPid(): Promise<number> {
+  const r = await sshRaw(`pgrep -u robin -f "[X]vfb .*-auth $(robin-rundir)/Xauthority"`);
+  return Number(r.stdout.trim().split('\n')[0]) || 0;
+}
+
+// terminalWindow is the X window id of the first visible xterm, or ''.
+export async function terminalWindow(): Promise<string> {
+  const r = await sshRaw(`robin-x sh -c 'xdotool search --onlyvisible --class xterm | head -n1'`);
+  return r.code === 0 ? r.stdout.trim() : '';
+}
+
+// cutSSH kills every sshd process the robin user owns: the post-auth half of
+// each connection, which drops them all at once, the CLI's master included.
+// The connection carrying the kill goes with them, so its exit code says
+// nothing.
+export async function cutSSH(): Promise<void> {
+  await sshRaw('pkill -u robin -x sshd');
 }
 
 // playNoise plays seconds of white noise into the session's sound server,
