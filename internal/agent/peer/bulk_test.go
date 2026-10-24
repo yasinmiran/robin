@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"math/rand/v2"
@@ -224,58 +225,63 @@ func TestBulkBothWays(t *testing.T) {
 	ctx := context.Background()
 
 	for _, size := range []int{0, 1, protocol.BulkChunkSize, 8<<20 + 123} {
-		data := payload(size)
-		h := protocol.Bulk{Kind: testKind, ID: "up", Name: "notes.txt", MIME: "text/plain", Size: int64(size)}
-		start := time.Now()
-		if err := bp.upload(ctx, t, h, bytes.NewReader(data)); err != nil {
-			t.Fatalf("upload of %d bytes: %v", size, err)
-		}
-		if size > 1<<20 {
-			t.Logf("browser to agent: %d bytes in %v", size, time.Since(start))
-		}
-		s := receive(t, bp.atAgent)
-		h.T = protocol.BulkHeader
-		if s.h != h {
-			t.Errorf("agent got header %+v, want %+v", s.h, h)
-		}
-		if err := s.end(t); err != nil {
-			t.Fatalf("upload of %d bytes aborted: %v", size, err)
-		}
-		if !bytes.Equal(s.buf.Bytes(), data) {
-			t.Fatalf("upload of %d bytes arrived as %d different bytes", size, s.buf.Len())
-		}
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			data := payload(size)
+			up, down := fmt.Sprintf("up-%d", size), fmt.Sprintf("down-%d", size)
+			h := protocol.Bulk{Kind: testKind, ID: up, Name: "notes.txt", MIME: "text/plain", Size: int64(size)}
+			start := time.Now()
+			if err := bp.upload(ctx, t, h, bytes.NewReader(data)); err != nil {
+				t.Fatalf("upload: %v", err)
+			}
+			if size > 1<<20 {
+				t.Logf("browser to agent: %d bytes in %v", size, time.Since(start))
+			}
+			s := receiveID(t, bp.atAgent, up)
+			h.T = protocol.BulkHeader
+			if s.h != h {
+				t.Errorf("agent got header %+v, want %+v", s.h, h)
+			}
+			if err := s.end(t); err != nil {
+				t.Fatalf("upload aborted: %v", err)
+			}
+			if !bytes.Equal(s.buf.Bytes(), data) {
+				t.Fatalf("upload arrived as %d different bytes", s.buf.Len())
+			}
 
-		start = time.Now()
-		if err := bp.agent.SendBulk(ctx, protocol.Bulk{Kind: testKind, ID: "down", Size: int64(size)}, bytes.NewReader(data)); err != nil {
-			t.Fatalf("download of %d bytes: %v", size, err)
-		}
-		if size > 1<<20 {
-			t.Logf("agent to browser: %d bytes in %v", size, time.Since(start))
-		}
-		s = receive(t, bp.atBrowser)
-		if err := s.end(t); err != nil || !bytes.Equal(s.buf.Bytes(), data) {
-			t.Fatalf("download of %d bytes: %v, %d bytes", size, err, s.buf.Len())
-		}
-		if n := s.ends.Load(); n != 1 {
-			t.Errorf("sink ended %d times", n)
-		}
+			start = time.Now()
+			if err := bp.agent.SendBulk(ctx, protocol.Bulk{Kind: testKind, ID: down, Size: int64(size)}, bytes.NewReader(data)); err != nil {
+				t.Fatalf("download: %v", err)
+			}
+			if size > 1<<20 {
+				t.Logf("agent to browser: %d bytes in %v", size, time.Since(start))
+			}
+			s = receiveID(t, bp.atBrowser, down)
+			if err := s.end(t); err != nil || !bytes.Equal(s.buf.Bytes(), data) {
+				t.Fatalf("download: %v, %d bytes", err, s.buf.Len())
+			}
+			if n := s.ends.Load(); n != 1 {
+				t.Errorf("sink ended %d times", n)
+			}
+		})
 	}
 
 	// One channel per transfer: several run at once.
-	errs := make(chan error, 3)
-	for i := range 3 {
-		go func() {
-			errs <- bp.agent.SendBulk(ctx, protocol.Bulk{Kind: testKind, ID: "many", Size: 200_000}, bytes.NewReader(payload(200_000 + i)[:200_000]))
-		}()
-	}
-	for range 3 {
-		if err := <-errs; err != nil {
-			t.Fatalf("concurrent download: %v", err)
+	t.Run("several at once", func(t *testing.T) {
+		errs := make(chan error, 3)
+		for i := range 3 {
+			go func() {
+				errs <- bp.agent.SendBulk(ctx, protocol.Bulk{Kind: testKind, ID: "many", Size: 200_000}, bytes.NewReader(payload(200_000 + i)[:200_000]))
+			}()
 		}
-		if err := receive(t, bp.atBrowser).end(t); err != nil {
-			t.Fatalf("concurrent download aborted: %v", err)
+		for range 3 {
+			if err := <-errs; err != nil {
+				t.Fatalf("concurrent download: %v", err)
+			}
+			if err := receiveID(t, bp.atBrowser, "many").end(t); err != nil {
+				t.Fatalf("concurrent download aborted: %v", err)
+			}
 		}
-	}
+	})
 }
 
 // rawBulk opens a bulk channel from the browser for hand-made frames, and
@@ -322,61 +328,61 @@ func TestBulkReceiveRefuses(t *testing.T) {
 		name string
 		// frames sends what the browser sends; the agent's verdict should
 		// read verdict, and the sink, when there is one, end with abort.
-		frames  func(dc *webrtc.DataChannel)
+		frames  func(t *testing.T, dc *webrtc.DataChannel)
 		sink    bool
 		verdict string
 		abort   error
 	}{
-		{name: "too large", frames: func(dc *webrtc.DataChannel) { sendJSON(t, dc, header("big", testLimit+1)) },
+		{name: "too large", frames: func(t *testing.T, dc *webrtc.DataChannel) { sendJSON(t, dc, header("big", testLimit+1)) },
 			verdict: "too large"},
-		{name: "unknown kind", frames: func(dc *webrtc.DataChannel) {
+		{name: "unknown kind", frames: func(t *testing.T, dc *webrtc.DataChannel) {
 			sendJSON(t, dc, protocol.Bulk{T: protocol.BulkHeader, Kind: "nobody", Size: 1})
 		}, verdict: "unknown bulk kind"},
-		{name: "refused by the handler", frames: func(dc *webrtc.DataChannel) { sendJSON(t, dc, header("refuse", 1)) },
+		{name: "refused by the handler", frames: func(t *testing.T, dc *webrtc.DataChannel) { sendJSON(t, dc, header("refuse", 1)) },
 			verdict: "not today"},
-		{name: "data before the header", frames: func(dc *webrtc.DataChannel) { dc.Send([]byte{1, 2, 3}) },
+		{name: "data before the header", frames: func(t *testing.T, dc *webrtc.DataChannel) { dc.Send([]byte{1, 2, 3}) },
 			verdict: "data before the header"},
-		{name: "junk header", frames: func(dc *webrtc.DataChannel) { dc.SendText("hello") },
+		{name: "junk header", frames: func(t *testing.T, dc *webrtc.DataChannel) { dc.SendText("hello") },
 			verdict: "malformed"},
-		{name: "end where the header belongs", frames: func(dc *webrtc.DataChannel) {
+		{name: "end where the header belongs", frames: func(t *testing.T, dc *webrtc.DataChannel) {
 			sendJSON(t, dc, protocol.Bulk{T: protocol.BulkEnd, SHA256: sumOf(nil)})
 		}, verdict: "malformed"},
 		{name: "wrong hash", sink: true, abort: protocol.ErrBulkHash, verdict: "SHA-256 mismatch",
-			frames: func(dc *webrtc.DataChannel) {
+			frames: func(t *testing.T, dc *webrtc.DataChannel) {
 				sendJSON(t, dc, header("hash", 100))
 				dc.Send(hundred)
 				sendJSON(t, dc, protocol.Bulk{T: protocol.BulkEnd, SHA256: sumOf(hundred[1:])})
 			}},
 		{name: "truncated", sink: true, abort: protocol.ErrBulkTruncated, verdict: "ended early",
-			frames: func(dc *webrtc.DataChannel) {
+			frames: func(t *testing.T, dc *webrtc.DataChannel) {
 				sendJSON(t, dc, header("short", 100))
 				dc.Send(hundred[:50])
 				sendJSON(t, dc, protocol.Bulk{T: protocol.BulkEnd, SHA256: sumOf(hundred[:50])})
 			}},
 		{name: "past the declared size", sink: true, abort: protocol.ErrBulkOverrun, verdict: "past the declared size",
-			frames: func(dc *webrtc.DataChannel) {
+			frames: func(t *testing.T, dc *webrtc.DataChannel) {
 				sendJSON(t, dc, header("long", 10))
 				dc.Send(hundred)
 			}},
 		{name: "oversized chunk", sink: true, abort: protocol.ErrBulkFrame, verdict: "chunk of",
-			frames: func(dc *webrtc.DataChannel) {
+			frames: func(t *testing.T, dc *webrtc.DataChannel) {
 				sendJSON(t, dc, header("chunk", testLimit))
 				dc.Send(make([]byte, protocol.BulkChunkSize+1))
 			}},
 		{name: "junk end", sink: true, abort: protocol.ErrBulkFrame, verdict: "malformed",
-			frames: func(dc *webrtc.DataChannel) {
+			frames: func(t *testing.T, dc *webrtc.DataChannel) {
 				sendJSON(t, dc, header("junk-end", 0))
 				dc.SendText("{")
 			}},
 		{name: "write fails", sink: true, verdict: "disk on fire",
-			frames: func(dc *webrtc.DataChannel) {
+			frames: func(t *testing.T, dc *webrtc.DataChannel) {
 				sendJSON(t, dc, header("fail-write", 100))
 				dc.Send(hundred)
 			}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dc, frames, closed := bp.rawBulk(t)
-			tc.frames(dc)
+			tc.frames(t, dc)
 			select {
 			case v := <-frames:
 				if v.T != protocol.BulkError || !strings.Contains(v.Error, tc.verdict) {
@@ -463,10 +469,10 @@ func TestBulkReceiveRefuses(t *testing.T) {
 }
 
 // cancelAfter is a reader of n bytes of zeros that cancels a context once
-// at bytes have been read.
+// only left bytes remain.
 type cancelAfter struct {
-	n, at  int
-	cancel context.CancelFunc
+	n, left int
+	cancel  context.CancelFunc
 }
 
 func (c *cancelAfter) Read(p []byte) (int, error) {
@@ -476,15 +482,17 @@ func (c *cancelAfter) Read(p []byte) (int, error) {
 	k := min(len(p), c.n)
 	clear(p[:k])
 	c.n -= k
-	if c.n <= c.at {
+	if c.n <= c.left {
 		c.cancel()
 	}
 	return k, nil
 }
 
+var errRead = errors.New("read failed")
+
 type failingReader struct{}
 
-func (failingReader) Read([]byte) (int, error) { return 0, errors.New("read failed") }
+func (failingReader) Read([]byte) (int, error) { return 0, errRead }
 
 func TestBulkSendFails(t *testing.T) {
 	bp := newBulkPair(t, Config{}, Handlers{})
@@ -522,8 +530,8 @@ func TestBulkSendFails(t *testing.T) {
 		}
 	}
 
-	if err := send(ctx, "broken", 10, failingReader{}); err == nil || !strings.Contains(err.Error(), "read failed") {
-		t.Errorf("failing reader: %v", err)
+	if err := send(ctx, "broken", 10, failingReader{}); !errors.Is(err, errRead) {
+		t.Errorf("failing reader: %v, want its read error", err)
 	}
 	if err := receiveID(t, bp.atBrowser, "broken").end(t); !errors.Is(err, ErrBulkCancelled) {
 		t.Errorf("failing reader: browser sink ended with %v, want ErrBulkCancelled", err)
@@ -537,7 +545,7 @@ func TestBulkSendFails(t *testing.T) {
 
 	mid, cancel := context.WithCancel(ctx)
 	defer cancel()
-	if err := send(mid, "mid", 4<<20, &cancelAfter{n: 4 << 20, at: 2 << 20, cancel: cancel}); !errors.Is(err, context.Canceled) {
+	if err := send(mid, "mid", 4<<20, &cancelAfter{n: 4 << 20, left: 2 << 20, cancel: cancel}); !errors.Is(err, context.Canceled) {
 		t.Errorf("cancelled mid-transfer: %v, want context.Canceled", err)
 	}
 	if err := receiveID(t, bp.atBrowser, "mid").end(t); !errors.Is(err, ErrBulkCancelled) {
@@ -595,20 +603,20 @@ func TestBulkVerdicts(t *testing.T) {
 	bp.raw.Store(true)
 	for _, tc := range []struct {
 		name  string
-		reply func(dc *webrtc.DataChannel)
+		reply func(t *testing.T, dc *webrtc.DataChannel)
 		check func(error) bool
 	}{
-		{"done before the end", func(dc *webrtc.DataChannel) { sendJSON(t, dc, protocol.Bulk{T: protocol.BulkDone}) },
+		{"done before the end", func(t *testing.T, dc *webrtc.DataChannel) { sendJSON(t, dc, protocol.Bulk{T: protocol.BulkDone}) },
 			func(err error) bool {
 				var r *BulkRefusedError
 				return errors.As(err, &r) && strings.Contains(r.Reason, "before the end")
 			}},
-		{"junk verdict", func(dc *webrtc.DataChannel) { dc.SendText("junk") },
+		{"junk verdict", func(t *testing.T, dc *webrtc.DataChannel) { dc.SendText("junk") },
 			func(err error) bool {
 				var r *BulkRefusedError
 				return errors.As(err, &r) && r.Reason == "malformed verdict"
 			}},
-		{"closed without a verdict", func(dc *webrtc.DataChannel) { dc.Close() },
+		{"closed without a verdict", func(t *testing.T, dc *webrtc.DataChannel) { dc.Close() },
 			func(err error) bool { return errors.Is(err, ErrBulkCancelled) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -628,7 +636,7 @@ func TestBulkVerdicts(t *testing.T) {
 				t.Fatal("the channel never reached the browser")
 			}
 			waitOpen(t, far)
-			tc.reply(far)
+			tc.reply(t, far)
 			select {
 			case err := <-result:
 				if !tc.check(err) {
@@ -681,18 +689,25 @@ func TestPeerHandsOverRemoteTracks(t *testing.T) {
 	if err := bp.browser.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: answer}); err != nil {
 		t.Fatal(err)
 	}
+	// The writer stops before the cleanups close the peers under it.
 	stop := make(chan struct{})
-	defer close(stop)
-	go func() {
+	var writer sync.WaitGroup
+	defer func() {
+		close(stop)
+		writer.Wait()
+	}()
+	writer.Go(func() {
+		tick := time.NewTicker(20 * time.Millisecond)
+		defer tick.Stop()
 		for {
 			select {
 			case <-stop:
 				return
-			case <-time.After(20 * time.Millisecond):
+			case <-tick.C:
 				mic.WriteSample(media.Sample{Data: []byte{0xf8, 0xff, 0xfe}, Duration: 20 * time.Millisecond})
 			}
 		}
-	}()
+	})
 	select {
 	case tr := <-tracks:
 		if tr.Kind() != webrtc.RTPCodecTypeAudio || !strings.EqualFold(tr.Codec().MimeType, webrtc.MimeTypeOpus) {
@@ -722,11 +737,15 @@ func TestBulkSenderOutcomes(t *testing.T) {
 		return s
 	}
 	full := &protocol.Bulk{T: protocol.BulkError, Error: "full"}
+	refusedFull := func(err error) bool {
+		var r *BulkRefusedError
+		return errors.As(err, &r) && r.Reason == "full"
+	}
 
-	if err := fresh(full, false).sendErr(ctx, sendFailed); err == nil || err.Error() != "peer: bulk transfer refused: full" {
+	if err := fresh(full, false).sendErr(ctx, sendFailed); !refusedFull(err) {
 		t.Errorf("send failed after a refusal: %v", err)
 	}
-	if err := fresh(full, true).sendErr(ctx, sendFailed); err == nil || err.Error() != "peer: bulk transfer refused: full" {
+	if err := fresh(full, true).sendErr(ctx, sendFailed); !refusedFull(err) {
 		t.Errorf("send failed after a refusal and a close: %v", err)
 	}
 	if err := fresh(nil, true).sendErr(ctx, sendFailed); !errors.Is(err, ErrBulkCancelled) {
@@ -748,7 +767,7 @@ func TestBulkSenderOutcomes(t *testing.T) {
 	if err := fresh(nil, true).wait(ctx, nil); !errors.Is(err, ErrBulkCancelled) {
 		t.Errorf("wait after a close: %v", err)
 	}
-	if err := fresh(full, true).afterClose(); err == nil || !strings.Contains(err.Error(), "full") {
+	if err := fresh(full, true).afterClose(); !refusedFull(err) {
 		t.Errorf("close after a refusal: %v", err)
 	}
 
