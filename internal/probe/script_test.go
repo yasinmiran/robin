@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,6 +38,18 @@ func TestScriptShells(t *testing.T) {
 			agent := []byte("agent bytes")
 			if err := os.WriteFile(filepath.Join(agentDir, "agent-a"), agent, 0o700); err != nil {
 				t.Fatal(err)
+			}
+			// Two kept sessions: one whose daemon (this process) lives, one
+			// whose pid is gone.
+			for id, pid := range map[string]int{"ab12": os.Getpid(), "dead": deadPID(t)} {
+				dir := filepath.Join(agentDir, "run", id)
+				if err := os.MkdirAll(dir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				line := fmt.Sprintf(`{"id":%q,"pid":%d,"agent":"agent-a","mode":"spawn","display":":7","keep":28800,"started":"2026-10-24T10:00:00Z","connected":false}`, id, pid)
+				if err := os.WriteFile(filepath.Join(dir, "session.json"), []byte(line+"\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
 			}
 			stubs := stubCommands(t)
 
@@ -90,14 +103,30 @@ func TestScriptShells(t *testing.T) {
 				}
 			}
 			entries, _ := os.ReadDir(agentDir)
-			if len(entries) != 1 {
-				t.Errorf("agent dir holds %v, want only agent-a", entries)
+			if len(entries) != 2 {
+				t.Errorf("agent dir holds %v, want agent-a and run", entries)
+			}
+			if len(r.Kept) != 1 || r.Kept[0].ID != "ab12" || r.Kept[0].PID != os.Getpid() || r.Kept[0].Keep != 28800 {
+				t.Errorf("Kept = %+v, want the live session ab12 alone", r.Kept)
+			}
+			if r.KillUserProcesses != "" && r.KillUserProcesses != "yes" && r.KillUserProcesses != "no" {
+				t.Errorf("KillUserProcesses = %q", r.KillUserProcesses)
 			}
 		})
 	}
 	if ran == 0 {
 		t.Skip("no POSIX shell found")
 	}
+}
+
+// deadPID is a pid no process has: a child already reaped.
+func deadPID(t *testing.T) int {
+	t.Helper()
+	cmd := exec.Command("true")
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	return cmd.Process.Pid
 }
 
 // spawnCommands are the commands SpawnMissing cares about.

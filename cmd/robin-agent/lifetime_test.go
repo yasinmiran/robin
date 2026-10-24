@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -147,13 +148,32 @@ func (p *proxy) exited() error {
 
 func alive(pid int) bool { return pid > 0 && syscall.Kill(pid, 0) != syscall.ESRCH }
 
-func xvfbPID(display string) int {
-	b, err := os.ReadFile("/tmp/.X" + strings.TrimPrefix(display, ":") + "-lock")
-	if err != nil {
-		return 0
+// xvfbPID finds the Xvfb whose cookie file is in run directory dir, or 0.
+func xvfbPID(dir string) int {
+	want := []string{"Xvfb", "-auth", filepath.Join(dir, "Xauthority")}
+	entries, _ := os.ReadDir("/proc")
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
+		if err != nil {
+			continue
+		}
+		argv := strings.Split(string(b), "\x00")
+		found := true
+		for _, w := range want {
+			if !slices.Contains(argv, w) {
+				found = false
+				break
+			}
+		}
+		if found && alive(pid) {
+			return pid
+		}
 	}
-	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
-	return pid
+	return 0
 }
 
 func start(p *proxy) *protocol.Ready {
@@ -192,8 +212,8 @@ func TestDaemonOutlivesTheProxyAndEndsWithTheKeepWindow(t *testing.T) {
 	if st.PID == p1.cmd.Process.Pid || !alive(st.PID) {
 		t.Fatalf("daemon pid %d (proxy %d)", st.PID, p1.cmd.Process.Pid)
 	}
-	xvfb := xvfbPID(ready.Display)
-	if !alive(xvfb) {
+	xvfb := xvfbPID(dir)
+	if xvfb == 0 {
 		t.Fatalf("no Xvfb for %s", ready.Display)
 	}
 	if !strings.Contains(p1.log.String(), "desktop up") {
@@ -203,7 +223,7 @@ func TestDaemonOutlivesTheProxyAndEndsWithTheKeepWindow(t *testing.T) {
 	// sshd goes: the proxy's whole process group dies at once.
 	p1.killGroup()
 	time.Sleep(time.Second)
-	if !alive(st.PID) || !alive(xvfb) || xvfbPID(ready.Display) != xvfb {
+	if !alive(st.PID) || xvfbPID(dir) != xvfb {
 		t.Fatal("the daemon or its display died with the proxy")
 	}
 	if st2, err := agent.ReadSession(dir); err != nil || st2.Connected || st2.Until == nil {
@@ -246,7 +266,10 @@ func TestEndStopsAKeptSession(t *testing.T) {
 	ready := start(p)
 	dir := filepath.Join(filepath.Dir(exe), "run", ready.ID)
 	st, _ := agent.ReadSession(dir)
-	xvfb := xvfbPID(ready.Display)
+	xvfb := xvfbPID(dir)
+	if xvfb == 0 {
+		t.Fatalf("no Xvfb for %s", ready.Display)
+	}
 	p.killGroup()
 
 	end := exec.Command(exe, "end", ready.ID)
@@ -276,7 +299,10 @@ func TestServeWithoutKeepEndsWithItsController(t *testing.T) {
 	p := serveAgent(t, exe)
 	ready := start(p)
 	dir := filepath.Join(filepath.Dir(exe), "run", ready.ID)
-	xvfb := xvfbPID(ready.Display)
+	xvfb := xvfbPID(dir)
+	if xvfb == 0 {
+		t.Fatalf("no Xvfb for %s", ready.Display)
+	}
 	p.killGroup()
 	waitRunDirGone(t, dir, 10*time.Second)
 	deadline := time.Now().Add(5 * time.Second)

@@ -5,10 +5,13 @@ package probe
 
 import (
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // Script is the probe, a POSIX sh script that prints key=value lines starting
@@ -72,6 +75,14 @@ type Report struct {
 	// SHA256Tool is how the host hashes files: "sha256sum", "shasum",
 	// "openssl", "busybox", or "" when it has none.
 	SHA256Tool string
+
+	// Kept lists the sessions whose daemon still runs under AgentDir.
+	Kept []protocol.Session
+	// KillUserProcesses is logind's setting of that name: "yes", "no", or
+	// "" where the probe could not tell (no logind, say). Linger says the
+	// user's systemd manager outlives their logins.
+	KillUserProcesses string
+	Linger            bool
 
 	agentHashes map[string]string
 }
@@ -284,6 +295,16 @@ func (r *Report) set(key, val string) error {
 			return fmt.Errorf("no hash in %q", val)
 		}
 		r.agentHashes[name] = strings.ToLower(sum)
+	case "kept_session":
+		var s protocol.Session
+		if err := json.Unmarshal([]byte(val), &s); err != nil {
+			return err
+		}
+		r.Kept = append(r.Kept, s)
+	case "kill_user_processes":
+		r.KillUserProcesses = val
+	case "linger":
+		r.Linger = val == "yes"
 
 	default:
 		if name, ok := strings.CutPrefix(key, "cmd."); ok {

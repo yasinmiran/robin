@@ -353,6 +353,50 @@ agents() {
 	done
 }
 
+# kept reports each session a daemon keeps under the agent directory: its
+# session.json, one line, when the pid in it is still running.
+kept() {
+	[ -n "$agentdir" ] || return 0
+	for f in "$agentdir"/run/*/session.json; do
+		[ -f "$f" ] || continue
+		pid=$(sed -n 's/.*"pid":\([0-9][0-9]*\).*/\1/p' "$f" 2>/dev/null | head -n1)
+		[ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || continue
+		kv kept_session "$(tr -d '\r\n' <"$f")"
+	done
+	return 0
+}
+
+# logind reports whether logging out kills the user's processes, which
+# decides how a kept session's daemon has to leave the SSH session, and
+# whether the user manager outlives the login (linger).
+logind() {
+	kup=
+	if have busctl; then
+		kup=$(limit busctl --system get-property org.freedesktop.login1 /org/freedesktop/login1 \
+			org.freedesktop.login1.Manager KillUserProcesses </dev/null 2>/dev/null)
+		case $kup in
+		"b true") kup=yes ;;
+		"b false") kup=no ;;
+		*) kup= ;;
+		esac
+	fi
+	if [ -z "$kup" ]; then
+		# The last setting read wins, as logind reads them.
+		line=$(cat /usr/lib/systemd/logind.conf /etc/systemd/logind.conf \
+			/run/systemd/logind.conf.d/*.conf /etc/systemd/logind.conf.d/*.conf 2>/dev/null |
+			grep '^KillUserProcesses=' | tail -n1)
+		case ${line#*=} in
+		yes | true | 1 | on) kup=yes ;;
+		no | false | 0 | off) kup=no ;;
+		esac
+	fi
+	[ -n "$kup" ] && kv kill_user_processes "$kup"
+	have systemd-run && kv cmd.systemd-run "$(command -v systemd-run)"
+	user=$(id -un 2>/dev/null)
+	[ -n "$user" ] && [ -e "/var/lib/systemd/linger/$user" ] && kv linger yes
+	return 0
+}
+
 main() {
 	# The script arrives on stdin; keep every child off it.
 	exec </dev/null
@@ -384,8 +428,10 @@ main() {
 	commands
 	attachable
 	encoders
+	logind
 	pick_agentdir
 	agents "$@"
+	kept
 }
 
 main "$@"

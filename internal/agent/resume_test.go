@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -118,8 +119,14 @@ func (k *kept) connect() *ctl {
 			}
 		}
 	}()
+	conn := protocol.NewConn(inR, outW, protocol.DefaultPingInterval, protocol.DefaultIdleTimeout)
+	// A daemon's socket closes with its protocol connection; so do these pipes.
+	go func() {
+		<-conn.Done()
+		outW.Close()
+	}()
 	select {
-	case k.feed.conns <- protocol.NewConn(inR, outW, protocol.DefaultPingInterval, protocol.DefaultIdleTimeout):
+	case k.feed.conns <- conn:
 	case <-time.After(10 * time.Second):
 		k.t.Fatal("the session never asked for the next controller")
 	}
@@ -246,23 +253,43 @@ func (k *kept) waitGone(display string) {
 	if _, err := os.Lstat(k.dir); !errors.Is(err, os.ErrNotExist) {
 		k.t.Fatalf("run dir still there: %v", err)
 	}
-	if xvfbAlive(display) {
+	if k.xvfbPID() != 0 {
 		k.t.Fatalf("Xvfb for %s is still running", display)
 	}
 }
 
-func xvfbPID(display string) int {
-	b, err := os.ReadFile("/tmp/.X" + strings.TrimPrefix(display, ":") + "-lock")
-	if err != nil {
-		return 0
-	}
-	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
-	return pid
+// xvfbPID finds the session's Xvfb, the one whose cookie file is in the run
+// directory, or 0 when it is gone.
+func (k *kept) xvfbPID() int {
+	return findProcess("Xvfb", "-auth", filepath.Join(k.dir, "Xauthority"))
 }
 
-func xvfbAlive(display string) bool {
-	pid := xvfbPID(display)
-	return pid > 0 && syscall.Kill(pid, 0) != syscall.ESRCH
+// findProcess returns the pid of a live process whose command line holds
+// every word given, or 0.
+func findProcess(words ...string) int {
+	entries, _ := os.ReadDir("/proc")
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
+		if err != nil {
+			continue
+		}
+		argv := strings.Split(string(b), "\x00")
+		found := true
+		for _, w := range words {
+			if !slices.Contains(argv, w) {
+				found = false
+				break
+			}
+		}
+		if found && syscall.Kill(pid, 0) != syscall.ESRCH {
+			return pid
+		}
+	}
+	return 0
 }
 
 func TestKeptSessionSurvivesItsControllerAndResumes(t *testing.T) {
@@ -277,9 +304,9 @@ func TestKeptSessionSurvivesItsControllerAndResumes(t *testing.T) {
 		t.Fatalf("session state %+v", st)
 	}
 	fp1 := c1.fingerprint()
-	xvfb := xvfbPID(ready.Display)
+	xvfb := k.xvfbPID()
 	if xvfb == 0 {
-		t.Fatalf("no Xvfb lock for %s", ready.Display)
+		t.Fatalf("no Xvfb for %s", ready.Display)
 	}
 
 	// The controller goes without bye: the desktop stays, the keep window
@@ -290,7 +317,7 @@ func TestKeptSessionSurvivesItsControllerAndResumes(t *testing.T) {
 		t.Fatalf("keep window %+v", st.Until)
 	}
 	k.running()
-	if !xvfbAlive(ready.Display) || xvfbPID(ready.Display) != xvfb {
+	if k.xvfbPID() != xvfb {
 		t.Fatal("the display did not survive its controller")
 	}
 
@@ -307,7 +334,7 @@ func TestKeptSessionSurvivesItsControllerAndResumes(t *testing.T) {
 	if fp2 := c2.fingerprint(); fp2 != fp1 {
 		t.Fatalf("fingerprint changed across the resume: %s then %s", fp1, fp2)
 	}
-	if xvfbPID(ready.Display) != xvfb {
+	if k.xvfbPID() != xvfb {
 		t.Fatal("a different Xvfb answers after the resume")
 	}
 
@@ -366,7 +393,11 @@ func TestKeptSessionEndsWhenTheDesktopDies(t *testing.T) {
 	ready := c1.start()
 	c1.stdin.Close()
 	k.state(false)
-	if err := syscall.Kill(xvfbPID(ready.Display), syscall.SIGKILL); err != nil {
+	xvfb := k.xvfbPID()
+	if xvfb == 0 {
+		t.Fatalf("no Xvfb for %s", ready.Display)
+	}
+	if err := syscall.Kill(xvfb, syscall.SIGKILL); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -398,8 +429,8 @@ func TestKeptSessionToldToStopEndsItsController(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("the session did not stop")
 	}
-	if xvfbAlive(ready.Display) {
-		t.Fatal("Xvfb outlived the session")
+	if k.xvfbPID() != 0 {
+		t.Fatalf("Xvfb for %s outlived the session", ready.Display)
 	}
 }
 

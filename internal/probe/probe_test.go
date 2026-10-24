@@ -403,6 +403,35 @@ func TestParseAttachAndEncoderKeys(t *testing.T) {
 	}
 }
 
+func TestParseKeptSessionsAndLogind(t *testing.T) {
+	out := "probe=1\nos=Linux\nkill_user_processes=yes\nlinger=yes\ncmd.systemd-run=/usr/bin/systemd-run\n" +
+		`kept_session={"id":"ab12","pid":4242,"agent":"robin-agent-0123456789abcdef","build":"v1","mode":"spawn","display":":7","desktop":"openbox + xterm","keep":28800,"started":"2026-10-24T10:00:00Z","connected":false,"until":"2026-10-24T18:00:00Z"}` + "\n" +
+		`kept_session={"id":"cd34","pid":4343,"mode":"spawn","keep":60,"connected":true}` + "\n"
+	r, err := Parse([]byte(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.KillUserProcesses != "yes" || !r.Linger || r.Commands["systemd-run"] != "/usr/bin/systemd-run" {
+		t.Errorf("logind: kill %q linger %v systemd-run %q", r.KillUserProcesses, r.Linger, r.Commands["systemd-run"])
+	}
+	if len(r.Kept) != 2 {
+		t.Fatalf("Kept = %+v", r.Kept)
+	}
+	k := r.Kept[0]
+	if k.ID != "ab12" || k.PID != 4242 || k.Agent != "robin-agent-0123456789abcdef" || k.Display != ":7" || k.Keep != 28800 || k.Connected || k.Until == nil || k.Until.Hour() != 18 {
+		t.Errorf("Kept[0] = %+v", k)
+	}
+	if r.Kept[1].ID != "cd34" || !r.Kept[1].Connected || r.Kept[1].Until != nil {
+		t.Errorf("Kept[1] = %+v", r.Kept[1])
+	}
+	if _, err := Parse([]byte("probe=1\nkept_session={not json\n")); err == nil || !strings.Contains(err.Error(), "kept_session") {
+		t.Errorf("malformed kept_session: %v", err)
+	}
+	if r, err := Parse([]byte("probe=1\nos=Linux\n")); err != nil || r.KillUserProcesses != "" || r.Linger || len(r.Kept) != 0 {
+		t.Errorf("without the keys: %+v, %v", r, err)
+	}
+}
+
 func TestSpawnMissingTerminalOnlyWithoutDesktop(t *testing.T) {
 	r := &Report{Commands: map[string]string{"Xvfb": "/usr/bin/Xvfb", "xkbcomp": "/usr/bin/xkbcomp"}}
 	r.Commands["openbox"] = "/usr/bin/openbox"
