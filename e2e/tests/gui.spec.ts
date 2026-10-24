@@ -1017,14 +1017,6 @@ if (SCENARIO === 'direct') {
     await expect(play, 'the saved macro').toBeVisible();
     await expect(hud.locator('.macro-editor')).toBeHidden();
 
-    // Anything the recording let through would have reached the xterm
-    // before a line typed now does.
-    await host.focusTerminal();
-    await page.keyboard.type(`touch ${sentinel}`, { delay: 20 });
-    await page.keyboard.press('Enter');
-    await expect.poll(() => host.exists(sentinel), { message: `${sentinel} on the host`, timeout: 10_000 }).toBe(true);
-    expect(await host.exists(marker), 'the recorded keys reached the xterm').toBe(false);
-
     // The CLI wrote it, private, with the text in plain text as the page
     // said it would be.
     expect(fs.statSync(saved).mode & 0o777, 'macros.json mode').toBe(0o600);
@@ -1034,11 +1026,25 @@ if (SCENARIO === 'direct') {
     expect(kept.macros.map((m: { name: string }) => m.name)).toEqual(['E2E touch']);
     expect(kept.macros[0].steps[0]).toEqual({ text: `echo robin-macro-${n} > ${file}; touch ${marker}` });
 
-    await page.reload();
-    await expect.poll(() => state(page), { message: 'connected after the reload', timeout: 20_000 }).toBe('connected');
-    await showKeys();
-    await expect(play, 'the macro after a reload').toBeVisible({ timeout: 10_000 });
+    // WebKit's Linux build crashes the page on some reloads, the more
+    // often the longer the page has stood, with this page and the one
+    // before it alike. What a reload shows here is the CLI's doing, the
+    // same in every browser, so WebKit plays the macro without one.
+    if (process.env.ROBIN_E2E_BROWSER !== 'webkit') {
+      await page.reload();
+      await expect.poll(() => state(page), { message: 'connected after the reload', timeout: 20_000 }).toBe('connected');
+      await expect(page.locator('#keys'), 'a new page starts with the keys section folded').toHaveAttribute('aria-expanded', 'false');
+      await showKeys();
+      await expect(play, 'the macro after a reload').toBeVisible({ timeout: 10_000 });
+    }
+
+    // Anything the recording let through would have reached the xterm
+    // before a line typed now does.
     await host.focusTerminal();
+    await page.keyboard.type(`touch ${sentinel}`, { delay: 20 });
+    await page.keyboard.press('Enter');
+    await expect.poll(() => host.exists(sentinel), { message: `${sentinel} on the host`, timeout: 10_000 }).toBe(true);
+    expect(await host.exists(marker), 'the recorded keys reached the xterm').toBe(false);
     const t0 = Date.now();
     await play.click();
     await expect
