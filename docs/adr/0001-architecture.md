@@ -1707,7 +1707,10 @@ loopback port. Two of the CLI's surfaces failed that reading.
   so the browser cannot check with credentials the tunnel lacks. The
   password, not the ufrag alone: the ufrag crosses the network in clear in
   every UDP check, and the password never leaves SSH and the token-guarded
-  websocket. Only the latest answer's: after an ICE restart Pion's mux no
+  websocket. At most 16 connections wait for their check at once, and past
+  that the oldest is closed, so silent ones cost the CLI no more than 16
+  descriptors; the browser checks a loopback round trip after connecting,
+  so the oldest waiting is not the browser's. Only the latest answer's: after an ICE restart Pion's mux no
   longer routes the old ufrag either. In the e2e `blocked` and `nomux`
   scenarios every TCP session ran through the check; in `restart`, the
   page was back on the tunnel 4151 ms after UDP was dropped, on a machine

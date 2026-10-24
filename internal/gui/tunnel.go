@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"slices"
 	"sync"
 	"time"
 
@@ -26,6 +27,13 @@ const firstCheckWait = 5 * time.Second
 // a connection whose first message is longer, so a longer one could never
 // be a check that works; a browser's is about 150.
 const maxCheckBytes = 512
+
+// maxPending bounds the tunnel connections still to send their first
+// check, each holding a descriptor for up to firstCheckWait, which any user
+// of this machine can open. Past it the oldest is closed. The browser sends
+// its check a loopback round trip after it connects, so the oldest is never
+// the browser's in practice, and a spliced connection no longer counts.
+const maxPending = 16
 
 // Accept backoff, as net/http's: a listener out of file descriptors is
 // tried again after 5 ms, doubling up to a second.
@@ -48,9 +56,10 @@ type tunnel struct {
 	log        *slog.Logger
 	firstCheck time.Duration
 
-	mu    sync.Mutex
-	fwd   interface{ Dial() (net.Conn, error) } // nil while there is none
-	creds relay.Credentials                     // of the agent's last answer
+	mu      sync.Mutex
+	fwd     interface{ Dial() (net.Conn, error) } // nil while there is none
+	creds   relay.Credentials                     // of the agent's last answer
+	pending []net.Conn                            // still to send their check, oldest first
 }
 
 // openTunnel sets the tunnel up for transport: none for Direct, and for
@@ -92,8 +101,21 @@ func (t *tunnel) serve() {
 			continue
 		}
 		retry = acceptRetryFirst
+		t.waitForCheck(c)
 		go t.splice(c)
 	}
+}
+
+// waitForCheck counts c among the connections still to send their check,
+// closing the oldest of them to make room.
+func (t *tunnel) waitForCheck(c net.Conn) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(t.pending) == maxPending {
+		t.pending[0].Close()
+		t.pending = slices.Delete(t.pending, 0, 1)
+	}
+	t.pending = append(t.pending, c)
 }
 
 // answered takes the ICE credentials of an agent's answer, which the bridge
@@ -147,6 +169,7 @@ func (t *tunnel) splice(c net.Conn) {
 	defer c.Close()
 	first, err := t.firstMessage(c)
 	t.mu.Lock()
+	t.pending = slices.DeleteFunc(t.pending, func(p net.Conn) bool { return p == c })
 	fwd, creds := t.fwd, t.creds
 	t.mu.Unlock()
 	if err != nil || fwd == nil || !creds.Admits(first[2:]) {

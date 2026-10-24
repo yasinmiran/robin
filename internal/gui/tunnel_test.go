@@ -28,7 +28,7 @@ func (f fakeForward) Dial() (net.Conn, error) { return net.Dial("unix", f.sock) 
 
 // testTunnel serves a tunnel on loopback whose forward leads to a socket of
 // the test's; what reaches that socket comes out of accepted.
-func testTunnel(t *testing.T, ln net.Listener) (*tunnel, <-chan net.Conn) {
+func testTunnel(t *testing.T, ln net.Listener, firstCheck time.Duration) (*tunnel, <-chan net.Conn) {
 	t.Helper()
 	sock := filepath.Join(t.TempDir(), "fwd.sock")
 	u, err := net.Listen("unix", sock)
@@ -45,7 +45,7 @@ func testTunnel(t *testing.T, ln net.Listener) (*tunnel, <-chan net.Conn) {
 			accepted <- c
 		}
 	}()
-	tun := &tunnel{ln: ln, log: slog.New(slog.DiscardHandler), firstCheck: 300 * time.Millisecond, fwd: fakeForward{sock}}
+	tun := &tunnel{ln: ln, log: slog.New(slog.DiscardHandler), firstCheck: firstCheck, fwd: fakeForward{sock}}
 	go tun.serve()
 	t.Cleanup(func() {
 		ln.Close()
@@ -134,7 +134,7 @@ func spliced(t *testing.T, accepted <-chan net.Conn, want []byte) net.Conn {
 // only the page knows, is let through; one that says nothing is dropped
 // once firstCheck is up.
 func TestTunnelRefusesStrangers(t *testing.T) {
-	tun, accepted := testTunnel(t, loopback(t))
+	tun, accepted := testTunnel(t, loopback(t), 300*time.Millisecond)
 	const ufrag, pwd = "agentufrag", "agentpasswordagentpasswo"
 
 	refused(t, "a check before any answer", dialTunnel(t, tun, framedCheck(t, ufrag+":brws", pwd)))
@@ -200,8 +200,38 @@ func (l *flakyListener) Accept() (net.Conn, error) {
 // TestTunnelOutlivesAFailedAccept: running out of file descriptors for a
 // moment costs the tunnel that one connection, not the rest of the session.
 func TestTunnelOutlivesAFailedAccept(t *testing.T) {
-	tun, accepted := testTunnel(t, &flakyListener{Listener: loopback(t)})
+	tun, accepted := testTunnel(t, &flakyListener{Listener: loopback(t)}, 300*time.Millisecond)
 	tun.answered(iceAnswer("agentufrag", "agentpasswordagentpasswo"))
+	check := framedCheck(t, "agentufrag:brws", "agentpasswordagentpasswo")
+	dialTunnel(t, tun, check)
+	spliced(t, accepted, check)
+}
+
+// TestTunnelBoundsPendingConnections: each connection still to send its
+// check holds a descriptor until firstCheck, and any user of this machine
+// can open them until the CLI runs out. Past maxPending the oldest goes at
+// once. The browser sends its check a loopback round trip after it
+// connects, so the oldest is not the browser's, and a good check that
+// comes after a crowd of silent connections is still spliced.
+func TestTunnelBoundsPendingConnections(t *testing.T) {
+	tun, accepted := testTunnel(t, loopback(t), 5*time.Second)
+	tun.answered(iceAnswer("agentufrag", "agentpasswordagentpasswo"))
+	var silent []net.Conn
+	for range 64 {
+		silent = append(silent, dialTunnel(t, tun, nil))
+	}
+	for i, c := range silent {
+		kept := i >= len(silent)-maxPending
+		wait := time.Second
+		if kept {
+			wait = 20 * time.Millisecond
+		}
+		c.SetReadDeadline(time.Now().Add(wait))
+		_, err := c.Read(make([]byte, 1))
+		if gone := errors.Is(err, io.EOF); gone == kept {
+			t.Fatalf("silent connection %d of %d: %v; want only the last %d left open", i+1, len(silent), err, maxPending)
+		}
+	}
 	check := framedCheck(t, "agentufrag:brws", "agentpasswordagentpasswo")
 	dialTunnel(t, tun, check)
 	spliced(t, accepted, check)

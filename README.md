@@ -635,7 +635,9 @@ it too. The CLI passes a connection on into SSH only once its first message,
 within 5 s, is a connectivity check signed with the ICE password of the
 agent's latest answer, which only the page has seen; anything else is closed
 without an SSH channel opened for it, and the DTLS fingerprint is pinned as
-before. Behind that port the SSH forward is a unix socket in a private
+before. At most 16 connections wait for that check at once, and past that
+the oldest is closed, so connections that say nothing cannot run the CLI out
+of file descriptors either. Behind that port the SSH forward is a unix socket in a private
 directory, with ControlMaster or without, except on Windows, whose OpenSSH
 forwards no unix sockets: there it is a second loopback port, which ssh
 binds only once it has logged in. The CLI uses it only once the system's
