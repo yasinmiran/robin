@@ -145,7 +145,7 @@ func Spawn(ctx context.Context, o Options) (_ *Display, err error) {
 		}
 		group = d.companion.group
 		wctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		if err := waitForWindow(wctx, num, cookie); err != nil {
+		if err := waitForWindow(wctx, num, cookie, d.xvfb.cmd.Process.Pid); err != nil {
 			log.Warn("terminal window not mapped yet; starting the window manager anyway", "err", err)
 		}
 		cancel()
