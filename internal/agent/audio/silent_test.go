@@ -364,6 +364,106 @@ func TestSilentRoomLeavesPulseAudioNoPreference(t *testing.T) {
 	waitSink(t, c, "robin-test-pref", "other")
 }
 
+// A stream that ends while the room is silent is no longer the keeper's to
+// move back; one the keeper cannot hold stays in the room, where nothing
+// would have to move it back.
+func TestSilentRoomKeepsTheKeeperCurrent(t *testing.T) {
+	s := pulseRoom(t)
+	c := s.client(t)
+	var h holder
+	r, err := Silence(context.Background(), RoomOptions{Socket: s.socket, Cookie: s.cookie, Hold: h.hold, Log: quiet()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	stop := playAs(t, "robin-test-ends", s.env, sine(30, 440, 660))
+	waitSink(t, c, "robin-test-ends", r.at.Sink)
+	stop()
+	waitFor(t, "the keeper to forget the stream", func() bool { return len(h.undo().Moved) == 0 })
+
+	h.mu.Lock()
+	h.err = errors.New("the keeper died")
+	h.mu.Unlock()
+	playAs(t, "robin-test-unheld", s.env, sine(30, 440, 660))
+	waitSink(t, c, "robin-test-unheld", s.room)
+	time.Sleep(500 * time.Millisecond)
+	if got := sinkOf(t, c, "robin-test-unheld"); got != s.room {
+		t.Fatalf("a stream the keeper could not hold went to %s", got)
+	}
+}
+
+// A silent output removed underneath the room ends it.
+func TestSilentRoomWhenItsOutputGoes(t *testing.T) {
+	s := pulseRoom(t)
+	c := s.client(t)
+	r, err := Silence(context.Background(), RoomOptions{Socket: s.socket, Cookie: s.cookie, Hold: (&holder{}).hold, Log: quiet()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if r.Err() != nil {
+		t.Fatalf("a live room reports %v", r.Err())
+	}
+	var sink proto.GetSinkInfoReply
+	if err := c.Request(&proto.GetSinkInfo{SinkIndex: proto.Undefined, SinkName: r.at.Sink}, &sink); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Request(&proto.UnloadModule{ModuleIndex: sink.ModuleIndex}, nil); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-r.Gone():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the room did not notice its output go")
+	}
+	if err := r.Err(); err == nil || !strings.Contains(err.Error(), "went away") {
+		t.Fatalf("the room says %v", err)
+	}
+}
+
+// The keeper's undo in this process, after a room that was never closed.
+func TestUndoRoomAfterTheRoomIsGone(t *testing.T) {
+	s := pulseRoom(t)
+	c := s.client(t)
+	var h holder
+	r, err := Silence(context.Background(), RoomOptions{Socket: s.socket, Cookie: s.cookie, Hold: h.hold, Log: quiet()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	playAs(t, "robin-test-undo", s.env, sine(30, 440, 660))
+	waitSink(t, c, "robin-test-undo", r.at.Sink)
+	close(r.stop)
+	r.events.Close()
+	<-r.done
+	r.conn.Close()
+
+	data, _ := json.Marshal(h.undo())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := UndoRoom(ctx, data); err != nil {
+		t.Fatal(err)
+	}
+	waitSink(t, c, "robin-test-undo", s.room)
+	if sinkExists(c, r.at.Sink) {
+		t.Error("the silent output outlived the keeper's undo")
+	}
+	if err := UndoRoom(ctx, []byte("{")); err == nil {
+		t.Error("UndoRoom took broken data")
+	}
+	if err := UndoRoom(ctx, []byte(`{"socket":"/nonexistent"}`)); err == nil {
+		t.Error("UndoRoom reached a sound server that is not there")
+	}
+}
+
+func waitFor(t *testing.T, what string, ok func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); !ok(); time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for " + what)
+		}
+	}
+}
+
 // A stream that plays before the room goes silent is taken too.
 func TestSilentRoomTakesWhatAlreadyPlays(t *testing.T) {
 	s := pulseRoom(t)
@@ -444,6 +544,33 @@ func TestSilentRoomPipeWire(t *testing.T) {
 		t.Run("child", func(t *testing.T) { silentRoom(t, s, false); checkWirePlumberState(t) })
 	}
 	t.Run("module", func(t *testing.T) { silentRoom(t, s, true); checkWirePlumberState(t) })
+}
+
+// pw-record dying takes the silent output with it, which ends the room and
+// sends its streams back to the room's speakers.
+func TestSilentRoomPipeWireWhenPwRecordDies(t *testing.T) {
+	s := pipeWireRoom(t)
+	if _, err := exec.LookPath("pw-record"); err != nil {
+		t.Skip("no pw-record here")
+	}
+	c := s.client(t)
+	r, err := Silence(context.Background(), RoomOptions{Socket: s.socket, Cookie: s.cookie, Hold: (&holder{}).hold, Log: quiet()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	playAs(t, "robin-test-pwdies", s.env, sine(30, 440, 660))
+	waitSink(t, c, "robin-test-pwdies", r.at.Sink)
+	r.child.Process.Kill()
+	select {
+	case <-r.Gone():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the room did not notice pw-record die")
+	}
+	if err := r.Err(); err == nil || !strings.Contains(err.Error(), "pw-record") {
+		t.Fatalf("the room says %v", err)
+	}
+	waitSink(t, c, "robin-test-pwdies", s.room)
 }
 
 func TestSilentRoomPipeWireKeeperAfterSIGKILL(t *testing.T) {

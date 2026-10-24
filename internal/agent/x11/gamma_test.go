@@ -238,6 +238,24 @@ func TestUndoGammaAfterTheCurtainIsGone(t *testing.T) {
 	}
 }
 
+// Ramps for a CRTC that went away, or that changed its ramp's size, are
+// passed over rather than forced onto whatever is there now.
+func TestUndoGammaSkipsWhatNoLongerFits(t *testing.T) {
+	tx := startX(t, "sleep 1000")
+	p := gammaPeer{t, tx}
+	linear := p.set(65535)
+	crtc := uint32(p.crtcs()[0])
+	short := make([]uint16, len(linear)/2)
+	data, _ := json.Marshal(GammaUndo{Display: tx.d.Name, XAuthority: tx.d.XAuthority, Ramps: []Ramp{
+		{CRTC: crtc, Red: short, Green: short, Blue: short},
+		{CRTC: crtc + 1000, Red: make([]uint16, len(linear)), Green: make([]uint16, len(linear)), Blue: make([]uint16, len(linear))},
+	}})
+	if err := UndoGamma(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	p.want("an undo that fits nothing", linear)
+}
+
 func TestOpenCurtainNeedsTheDisplay(t *testing.T) {
 	tx := startX(t, "sleep 1000")
 	if _, err := OpenCurtain(":999", "", nil, quietLog()); err == nil {
