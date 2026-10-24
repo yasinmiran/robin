@@ -1,0 +1,3 @@
+# Statement coverage per package, in percent, from the merged make cover
+# on main. make cover fails when a package falls more than 0.5 points below
+# its line; make cover-baseline rewrites this file from the last run.
