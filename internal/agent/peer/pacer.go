@@ -24,8 +24,11 @@ const (
 	// maxPacingDelay bounds how long a packet waits: when the queue holds
 	// more than that at the pacing rate, it drains faster, so that its
 	// last packet leaves in time. Pion's own pacer queues without bound,
-	// and the delay it added pinned the target at its floor.
-	maxPacingDelay = 250 * time.Millisecond
+	// and the delay it added pinned the target at its floor. Over the
+	// tight link of the agent's quality matrix, 250 ms still overflowed
+	// the buffer with keyframes and 1 s held scrolling back by most of a
+	// second.
+	maxPacingDelay = 500 * time.Millisecond
 	// pacingTick is how often a non-empty queue is drained.
 	pacingTick = 2 * time.Millisecond
 )

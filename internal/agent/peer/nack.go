@@ -24,6 +24,10 @@ const (
 	nackMaxResends  = 2
 	nackBudgetShare = 0.25 // of the congestion controller's target
 	nackBurst       = 100 * time.Millisecond
+	// nackLostGap spaces the keyframes asked for on loss: on a link too
+	// slow for its keyframes, each one is lost in turn, and asking for the
+	// next at once keeps the link full of them.
+	nackLostGap = time.Second
 )
 
 // nackResponderFactory builds the responder for each peer connection.
@@ -47,10 +51,11 @@ type nackResponder struct {
 	budget func() int
 	lost   func()
 
-	mu      sync.Mutex
-	streams map[uint32]*sendHistory
-	tokens  float64 // bits
-	refill  time.Time
+	mu       sync.Mutex
+	streams  map[uint32]*sendHistory
+	tokens   float64 // bits
+	refill   time.Time
+	lastLost time.Time
 }
 
 type sentPacket struct {
@@ -143,12 +148,16 @@ func (r *nackResponder) resend(nack *rtcp.TransportLayerNack, now time.Time) {
 			due = append(due, p)
 		}
 	}
+	report := gone && r.lost != nil && now.Sub(r.lastLost) >= nackLostGap
+	if report {
+		r.lastLost = now
+	}
 	r.mu.Unlock()
 	for _, p := range due {
 		hdr := p.header
 		h.writer.Write(&hdr, p.payload, nil)
 	}
-	if gone && r.lost != nil {
+	if report {
 		r.lost()
 	}
 }

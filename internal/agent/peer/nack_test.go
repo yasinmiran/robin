@@ -122,7 +122,11 @@ func TestNackReportsWhatItCannotResend(t *testing.T) {
 	if lost != 1 {
 		t.Fatalf("lost reported %d times for a packet it no longer holds, want 1", lost)
 	}
-	r.resend(nackFor(nackHistory+6), now.Add(nackMaxAge+time.Millisecond))
+	r.resend(nackFor(3), now.Add(nackLostGap/2))
+	if lost != 1 {
+		t.Fatalf("lost reported %d times within %v, want 1", lost, nackLostGap)
+	}
+	r.resend(nackFor(nackHistory+6), now.Add(nackMaxAge+nackLostGap))
 	if lost != 2 {
 		t.Fatalf("lost reported %d times after a packet aged out, want 2", lost)
 	}
