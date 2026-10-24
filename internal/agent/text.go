@@ -15,13 +15,6 @@ func init() {
 	handleControl(protocol.ControlText, (*session).applyText)
 }
 
-// afterText are the control types that must not overtake text being typed:
-// the input that follows it, and a clipboard the page sets before pasting.
-var afterText = map[protocol.ControlType]bool{
-	protocol.ControlKey: true, protocol.ControlMove: true, protocol.ControlButton: true,
-	protocol.ControlWheel: true, protocol.ControlRelease: true, protocol.ControlClipboard: true,
-}
-
 // maxLane bounds the input waiting behind text. A user cannot get that far
 // ahead of a desktop that keeps up; past it, input is dropped.
 const maxLane = 256
@@ -36,11 +29,11 @@ func (s *session) applyText(m protocol.Control) {
 		s.log.Warn("this desktop cannot type text")
 		return
 	}
-	queued := s.typing.do(func(ctx context.Context) {
+	queued := s.typing.queue(func(ctx context.Context) {
 		if err := t.Type(ctx, m.Text); err != nil {
 			s.log.Debug("type text", "err", err)
 		}
-	}, true)
+	})
 	if !queued {
 		s.log.Warn("text dropped: typing has fallen behind")
 	}
@@ -55,26 +48,40 @@ func (s *session) applyText(m protocol.Control) {
 // which would otherwise overtake the text. The zero lane is ready to use.
 type lane struct {
 	mu     sync.Mutex
-	queue  []func(context.Context)
+	steps  []func(context.Context)
 	cancel context.CancelFunc
 	idle   chan struct{} // closed when the goroutine stops; nil when there is none
 }
 
-// do runs f now, or, when slow is set or text is still being typed, queues
-// it for the lane's goroutine. It reports false when the queue is full and
-// f was dropped.
-func (l *lane) do(f func(context.Context), slow bool) bool {
+// queue queues f, which types text, for the lane's goroutine. It reports
+// false when the lane is full and f was dropped.
+func (l *lane) queue(f func(context.Context)) bool {
 	l.mu.Lock()
-	if l.idle == nil && !slow {
+	defer l.mu.Unlock()
+	return l.push(f)
+}
+
+// run applies input: at once when no text is being typed, and otherwise
+// queued behind it. It reports false when the lane is full and f was
+// dropped.
+func (l *lane) run(f func(context.Context)) bool {
+	l.mu.Lock()
+	if l.idle == nil {
 		l.mu.Unlock()
 		f(context.Background())
 		return true
 	}
 	defer l.mu.Unlock()
-	if len(l.queue) >= maxLane {
+	return l.push(f)
+}
+
+// push queues f, starting the lane's goroutine when there is none. l.mu
+// must be held.
+func (l *lane) push(f func(context.Context)) bool {
+	if len(l.steps) >= maxLane {
 		return false
 	}
-	l.queue = append(l.queue, f)
+	l.steps = append(l.steps, f)
 	if l.idle == nil {
 		var ctx context.Context
 		ctx, l.cancel = context.WithCancel(context.Background())
@@ -93,14 +100,14 @@ func (l *lane) drain(ctx context.Context, idle chan struct{}) {
 			l.mu.Unlock()
 			return
 		}
-		if len(l.queue) == 0 {
+		if len(l.steps) == 0 {
 			l.cancel()
 			l.idle = nil
 			l.mu.Unlock()
 			return
 		}
-		f := l.queue[0]
-		l.queue = l.queue[1:]
+		f := l.steps[0]
+		l.steps = l.steps[1:]
 		l.mu.Unlock()
 		f(ctx)
 	}
@@ -115,7 +122,7 @@ func (l *lane) discard() {
 	if idle != nil {
 		l.cancel()
 	}
-	l.queue, l.idle = nil, nil
+	l.steps, l.idle = nil, nil
 	l.mu.Unlock()
 	if idle != nil {
 		<-idle

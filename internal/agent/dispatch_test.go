@@ -198,6 +198,8 @@ func TestDispatchRefusesBadHandlers(t *testing.T) {
 			handleBulk(dispatchKind, discardBulk)
 		},
 		"nil control": func() { handleControl("dispatch-nil", nil) },
+		"nil input":   func() { handleInput("dispatch-nil", nil) },
+		"input twice": func() { handleInput(protocol.ControlClipboard, (*session).applyClipboard) },
 		"nil bulk":    func() { handleBulk("dispatch-nil", nil) },
 	} {
 		t.Run(name, func(t *testing.T) {

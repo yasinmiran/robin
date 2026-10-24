@@ -46,15 +46,17 @@ func (f *fakeTypist) got() []protocol.Control {
 // waitIdle waits for the lane's goroutine to finish what it was given.
 func waitIdle(t *testing.T, l *lane) {
 	t.Helper()
-	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
-		l.mu.Lock()
-		idle := l.idle == nil
-		l.mu.Unlock()
-		if idle {
-			return
-		}
+	l.mu.Lock()
+	idle := l.idle
+	l.mu.Unlock()
+	if idle == nil {
+		return
 	}
-	t.Fatal("the lane never caught up")
+	select {
+	case <-idle:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the lane never caught up")
+	}
 }
 
 func TestTextKeepsInputInOrder(t *testing.T) {
@@ -122,8 +124,8 @@ func TestLaneDropsWhenFull(t *testing.T) {
 	for range maxLane + 10 {
 		s.control(move)
 	}
-	if s.typing.do(func(context.Context) {}, false) {
-		t.Error("a full lane took more")
+	if s.typing.queue(func(context.Context) {}) {
+		t.Error("a full lane took more text")
 	}
 	desk.gate <- struct{}{}
 	waitIdle(t, &s.typing)

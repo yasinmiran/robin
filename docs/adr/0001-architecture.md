@@ -709,7 +709,9 @@ each needs control messages, bulk kinds or a place in the status tab. So
 nothing switches on message types any more. On the agent, each control type
 and bulk kind maps to a handler its feature registers from `init` in its
 own file (`handleControl`, `handleBulk`), and a unit test fails for any
-handled bulk kind without a limit; the page has `onControl` in
+handled bulk kind without a limit. A control type that is input registers
+with `handleInput` instead, which is how it waits behind typed text (below)
+without the text feature listing it; the page has `onControl` in
 `control.js` and `onBulk` in `bulk.js`, and `Overlay.addSection` gives a
 feature its own part of the status tab without touching `index.html`. The
 peer routes data channels by label, closing any it does not know, and hands
