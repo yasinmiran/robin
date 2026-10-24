@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -93,8 +94,9 @@ func play(t *testing.T, env []string, pcm []byte) {
 	playAs(t, "paplay", env, pcm)
 }
 
-// playAs plays as play does, under the program name app.
-func playAs(t *testing.T, app string, env []string, pcm []byte) {
+// playAs plays as play does, under the program name app, until the test
+// ends or stop is called.
+func playAs(t *testing.T, app string, env []string, pcm []byte) (stop func()) {
 	t.Helper()
 	cmd := exec.Command("paplay", "--raw", "--format=s16le", "--rate=48000", "--channels=2", "--client-name="+app)
 	cmd.Env = append(os.Environ(), env...)
@@ -104,13 +106,18 @@ func playAs(t *testing.T, app string, env []string, pcm []byte) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		cmd.Process.Kill()
-		cmd.Wait()
-		if s := strings.TrimSpace(out.String()); s != "" {
-			t.Logf("paplay: %s", s)
-		}
-	})
+	var once sync.Once
+	stop = func() {
+		once.Do(func() {
+			cmd.Process.Kill()
+			cmd.Wait()
+			if s := strings.TrimSpace(out.String()); s != "" {
+				t.Logf("paplay: %s", s)
+			}
+		})
+	}
+	t.Cleanup(stop)
+	return stop
 }
 
 func rms(pcm []int16) float64 {

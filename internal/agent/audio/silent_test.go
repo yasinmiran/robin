@@ -74,13 +74,13 @@ type soundServer struct {
 
 // pulseRoom starts a pulseaudio that stands in for the user's, playing into
 // a null sink called robin. Unlike the agent's own it loads modules when
-// asked, as a desktop's does.
-func pulseRoom(t *testing.T) soundServer {
+// asked, as a desktop's does, and extra goes on its command line.
+func pulseRoom(t *testing.T, extra ...string) soundServer {
 	t.Helper()
 	needServer(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	s, err := startServer(ctx, t.TempDir(), "--disallow-module-loading=no")
+	s, err := startServer(ctx, t.TempDir(), append([]string{"--disallow-module-loading=no"}, extra...)...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,6 +338,32 @@ func TestSilentRoomPulseAudio(t *testing.T) {
 	silentRoom(t, pulseRoom(t), true)
 }
 
+// A desktop's pulseaudio remembers where each program's stream was moved
+// (module-stream-restore). Moving a stream back to the default sink forgets
+// that again, so a program the room silenced still follows the default.
+func TestSilentRoomLeavesPulseAudioNoPreference(t *testing.T) {
+	s := pulseRoom(t, "--load=module-stream-restore", "--load=module-null-sink sink_name=other")
+	c := s.client(t)
+	stop := playAs(t, "robin-test-pref", s.env, sine(30, 440, 660))
+	waitSink(t, c, "robin-test-pref", s.room)
+	r, err := Silence(context.Background(), RoomOptions{Socket: s.socket, Cookie: s.cookie, Hold: (&holder{}).hold, Log: quiet()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitSink(t, c, "robin-test-pref", r.at.Sink)
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	waitSink(t, c, "robin-test-pref", s.room)
+	stop()
+
+	if err := c.Request(&proto.SetDefaultSink{SinkName: "other"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	playAs(t, "robin-test-pref", s.env, sine(30, 440, 660))
+	waitSink(t, c, "robin-test-pref", "other")
+}
+
 // A stream that plays before the room goes silent is taken too.
 func TestSilentRoomTakesWhatAlreadyPlays(t *testing.T) {
 	s := pulseRoom(t)
@@ -428,9 +454,10 @@ func TestSilentRoomPipeWireKeeperAfterSIGKILL(t *testing.T) {
 	t.Run("module", func(t *testing.T) { keeperGivesTheRoomBack(t, s, true); checkWirePlumberState(t) })
 }
 
-// checkWirePlumberState fails if WirePlumber remembers a silent sink as some
-// program's output. WirePlumber 0.4 stores the target of every moved stream
-// per program; 0.5 stores none.
+// checkWirePlumberState fails if WirePlumber remembers an output for a
+// program the room moved, or a silent sink for any. WirePlumber 0.4 stores
+// the target of every moved stream per program, and forgets it when the
+// stream moves to the default sink; 0.5 stores none.
 func checkWirePlumberState(t *testing.T) {
 	t.Helper()
 	home, _ := os.UserHomeDir()
@@ -439,7 +466,7 @@ func checkWirePlumberState(t *testing.T) {
 		return
 	}
 	for _, line := range strings.Split(string(b), "\n") {
-		if strings.Contains(line, "target=robin_silent") {
+		if strings.Contains(line, "target=robin_silent") || strings.Contains(line, "application.name:robin-test-") && strings.Contains(line, ":target=") {
 			t.Errorf("WirePlumber remembers %s", line)
 		}
 	}
