@@ -33,7 +33,8 @@ const (
 	// agent unloads those whose agent died without doing so.
 	micFeedPrefix   = "robin-mic-feed-"
 	micSourcePrefix = "robin-mic-"
-	// micFrameBytes is 20 ms of the microphone, micFrameTime: 16-bit mono.
+	// micFrameTime is one piece of the microphone, 20 ms, and
+	// micFrameBytes its size in 16-bit mono.
 	micFrameBytes = opus.FrameSamples * 2
 	micFrameTime  = opus.FrameSamples * time.Second / opus.SampleRate
 )
