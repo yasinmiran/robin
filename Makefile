@@ -14,7 +14,9 @@ CACHE    := $(CURDIR)/.cache/toolchain
 AGENTS   := internal/agentbin/agents
 GOSRC    := $(shell find cmd internal -type f -not -path "*/node_modules/*" -not -name "*.gz")
 MODULE   := $(shell $(GO) list -m)
-COVER    ?= $(CURDIR)/.cache/cover
+# Each checkout keeps its own coverage: worktrees share .cache through a
+# link, and a run starts by clearing COVER.
+COVER    ?= $(CURDIR)/.cover
 # The packages tested against the real openh264 and libopus.
 CGO_TESTS := ./internal/agent/h264/ ./internal/agent/opus/ ./internal/agent/audio/
 

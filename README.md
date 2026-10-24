@@ -436,7 +436,7 @@ make cover    # all four again with coverage, merged, checked against coverage-b
 ```
 
 `make cover` runs every suite with coverage and merges it in
-`.cache/cover/`: the unit tests (the cgo-tagged encoder packages included),
+`.cover/`: the unit tests (the cgo-tagged encoder packages included),
 the test-x and test-wayland binaries, and e2e with the CLI and the agent
 built with `-cover`. Every Go suite instruments the whole module, so a
 session test in `internal/agent` counts for `x11` and `peer` too. It prints
