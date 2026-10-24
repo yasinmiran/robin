@@ -1,8 +1,8 @@
-/.cache/
+/.cache
 /bin/
 /dist/
 /internal/agentbin/agents/*
 !/internal/agentbin/agents/README.md
 /e2e/out/
-node_modules/
+node_modules
 /.claude/
