@@ -2,6 +2,7 @@ package gui
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/yasinmiran/robin/internal/probe"
@@ -45,5 +46,28 @@ func TestDeviceNotes(t *testing.T) {
 	}
 	if got := deviceNotes("box", &protocol.Ready{}); len(got) != 0 {
 		t.Errorf("notes for devices nobody asked for: %q", got)
+	}
+}
+
+// A resumed session keeps the devices it started with; the page offers
+// only those this robin gui names.
+func TestAskedDevices(t *testing.T) {
+	ready := &protocol.Ready{
+		Resumed: true,
+		Mic:     &protocol.Device{Available: true, Where: "PipeWire"},
+		Camera:  &protocol.Device{Available: true, Where: "PipeWire"},
+	}
+	if mic, camera := offeredDevices(askedDevices(Options{}, ready)); mic || camera {
+		t.Errorf("a resume without --mic or --camera offers mic %v camera %v", mic, camera)
+	}
+	asked := askedDevices(Options{Camera: true}, ready)
+	if mic, camera := offeredDevices(asked); mic || !camera {
+		t.Errorf("a resume with --camera offers mic %v camera %v", mic, camera)
+	}
+	if got := deviceNotes("box", asked); len(got) != 1 || !strings.Contains(got[0], "camera") {
+		t.Errorf("notes %q, want the camera's alone", got)
+	}
+	if ready.Mic == nil || ready.Camera == nil {
+		t.Error("askedDevices changed the Ready it was given")
 	}
 }

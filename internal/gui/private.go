@@ -7,9 +7,10 @@ import (
 )
 
 // checkPrivate refuses a private session on a desktop the agent spawns,
-// which nobody sits in front of.
+// which nobody sits in front of. A session resumed by id may be attached;
+// its agent refuses the switches if it is not.
 func checkPrivate(o Options) error {
-	if (o.Curtain || o.Silent) && o.Attach == "" {
+	if (o.Curtain || o.Silent) && o.Attach == "" && o.Resume == "" {
 		return errors.New("--curtain and --silent are for a desktop you attach to with --attach; nobody sits in front of one robin starts")
 	}
 	return nil

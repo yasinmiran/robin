@@ -118,9 +118,8 @@ func Run(ctx context.Context, o Options) (err error) {
 		}
 		log.Info("attaching", "to", o.Attach)
 	}
-	if missing := report.SpawnMissing(); o.Attach == "" && len(missing) > 0 {
-		return fmt.Errorf("%s cannot run a headless desktop yet: missing %s\ninstall with: %s",
-			o.Dest, strings.Join(missing, ", "), report.InstallHint())
+	if err := checkSpawn(o, report); err != nil {
+		return err
 	}
 	if err := report.CheckEncoder(o.Encoder); err != nil {
 		return fmt.Errorf("%s: %w", o.Dest, err)
@@ -162,7 +161,7 @@ func Run(ctx context.Context, o Options) (err error) {
 		}
 		ready, err = ag.awaitReady(ctx, hostOf(o.Dest), o.Stderr)
 	} else {
-		ready, err = ag.resume(ctx, resume)
+		ready, err = ag.resume(ctx, resumeMessage(o, resume))
 	}
 	if err != nil {
 		return err
@@ -176,7 +175,8 @@ func Run(ctx context.Context, o Options) (err error) {
 	if o.Audio && !ready.Audio && !ready.Resumed {
 		fmt.Fprintf(o.Stderr, "robin: no sound from %s: %s\n", o.Dest, ready.AudioError)
 	}
-	for _, note := range deviceNotes(o.Dest, ready) {
+	devices := askedDevices(o, ready)
+	for _, note := range deviceNotes(o.Dest, devices) {
 		fmt.Fprintln(o.Stderr, note)
 	}
 
@@ -206,7 +206,7 @@ func Run(ctx context.Context, o Options) (err error) {
 	}
 
 	config := protocol.Config{ICEServers: iceServers(start.STUN), HiDPI: o.HiDPI, Keep: ready.Keep}
-	config.Mic, config.Camera = offeredDevices(ready)
+	config.Mic, config.Camera = offeredDevices(devices)
 	b := newBridge(ag.conn, relay.New(relay.Policy{Transport: o.Transport, TunnelPort: t.Port()}), config, log)
 	go b.accept(ctx, srv)
 	defer b.close()
@@ -448,7 +448,7 @@ func (h *host) redial(ctx context.Context, path, id string, until time.Time, t *
 	if err != nil {
 		return nil, nil, err
 	}
-	ready, err := ag.resume(dialCtx, id)
+	ready, err := ag.resume(dialCtx, protocol.Resume{ID: id})
 	if err != nil {
 		ag.stop()
 		return nil, nil, err
@@ -470,6 +470,24 @@ func (e *finalError) Unwrap() error { return e.err }
 // agent's proxy went away without a word, as a dropped network does.
 func resumable(err error) bool {
 	return errors.Is(err, errSSHLost) || errors.Is(err, errAgentGone)
+}
+
+// checkSpawn refuses a new desktop on a host that lacks what spawning one
+// takes. A resume by id may be of an attached desktop, which needs none of
+// it, and the host has the session either way.
+func checkSpawn(o Options, r *probe.Report) error {
+	if missing := r.SpawnMissing(); o.Attach == "" && o.Resume == "" && len(missing) > 0 {
+		return fmt.Errorf("%s cannot run a headless desktop yet: missing %s\ninstall with: %s",
+			o.Dest, strings.Join(missing, ", "), r.InstallHint())
+	}
+	return nil
+}
+
+// resumeMessage is the Resume of a new robin gui for kept session id: it
+// asks for what the user names this time, which the session either gives or
+// refuses, rather than quietly keeping what it started with.
+func resumeMessage(o Options, id string) protocol.Resume {
+	return protocol.Resume{ID: id, Curtain: o.Curtain, Silent: o.Silent, Mic: o.Mic, Camera: o.Camera}
 }
 
 // pickSession decides which kept session, if any, robin gui resumes.
@@ -755,11 +773,13 @@ type agentError struct {
 
 func (e *agentError) Error() string { return "agent: " + e.text }
 
-// resume asks the agent for kept session id and waits for its Ready. An
-// agent that has no such session, or does not speak this protocol, makes
-// the error final.
-func (a *agentProc) resume(ctx context.Context, id string) (*protocol.Ready, error) {
-	if err := a.conn.Send(protocol.Message{Type: protocol.TypeResume, Resume: &protocol.Resume{Version: protocol.Version, ID: id}}); err != nil {
+// resume asks the agent for the kept session r names and waits for its
+// Ready. An agent that has no such session, refuses what r asks, or does
+// not speak this protocol, makes the error final.
+func (a *agentProc) resume(ctx context.Context, r protocol.Resume) (*protocol.Ready, error) {
+	r.Version = protocol.Version
+	id := r.ID
+	if err := a.conn.Send(protocol.Message{Type: protocol.TypeResume, Resume: &r}); err != nil {
 		return nil, a.explain(err)
 	}
 	ready, err := a.awaitReady(ctx, "", io.Discard)

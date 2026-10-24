@@ -36,10 +36,21 @@ const CodeBusy Code = "busy"
 // no such session, so a CLI whose bye got through sees the end as done.
 const ExitNoSession = 3
 
-// Resume names the kept session a controller wants back.
+// Resume names the kept session a controller wants back, with what a new
+// robin gui asks of it. A redial of the same CLI asks nothing, since the
+// page may have switched the private session since.
 type Resume struct {
 	Version int    `json:"version"`
 	ID      string `json:"id"`
+	// Curtain and Silent turn that switch of an attached desktop's private
+	// session on, as Start's do; one already on stays on either way. The
+	// resume is refused, and both left as they were, when one cannot.
+	Curtain bool `json:"curtain,omitempty"`
+	Silent  bool `json:"silent,omitempty"`
+	// Mic and Camera say the CLI offers them. A session has the devices it
+	// started with, so one that started without either refuses the resume.
+	Mic    bool `json:"mic,omitempty"`
+	Camera bool `json:"camera,omitempty"`
 }
 
 // Detach is how a session daemon leaves the SSH session that started it,

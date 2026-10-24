@@ -66,7 +66,7 @@ func TestAwaitResume(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			agent, cli := pair(t)
 			go cli.Send(tc.m)
-			err := awaitResume(ctx, agent, "ab12")
+			_, err := awaitResume(ctx, agent, "ab12")
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("got %v, want %q", err, tc.want)
 			}
@@ -77,9 +77,9 @@ func TestAwaitResume(t *testing.T) {
 		})
 	}
 	agent, cli := pair(t)
-	go cli.Send(protocol.Message{Type: protocol.TypeResume, Resume: &protocol.Resume{Version: protocol.Version, ID: "ab12"}})
-	if err := awaitResume(ctx, agent, "ab12"); err != nil {
-		t.Fatal(err)
+	go cli.Send(protocol.Message{Type: protocol.TypeResume, Resume: &protocol.Resume{Version: protocol.Version, ID: "ab12", Curtain: true}})
+	if r, err := awaitResume(ctx, agent, "ab12"); err != nil || !r.Curtain {
+		t.Fatalf("resume %+v, %v; want the CLI's, curtain and all", r, err)
 	}
 }
 
@@ -88,7 +88,7 @@ func TestAwaitResumeGivesUpOnAClosedController(t *testing.T) {
 	_, outW := io.Pipe()
 	agent := protocol.NewConn(inR, outW, 0, 0)
 	inW.Close()
-	if err := awaitResume(context.Background(), agent, "x"); !errors.Is(err, io.EOF) {
+	if _, err := awaitResume(context.Background(), agent, "x"); !errors.Is(err, io.EOF) {
 		t.Fatalf("got %v, want EOF", err)
 	}
 }

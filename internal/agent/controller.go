@@ -172,8 +172,9 @@ var errKeepRanOut = errors.New("agent: the keep window ran out")
 // linger waits for the next controller until the keep window ends. It
 // returns the resumed connection, or an error: errKeepRanOut, ErrNoControllers
 // when none can come back, or why the desktop went away or ctx ended. A
-// controller whose first message is not a matching Resume is told so and
-// dropped; the wait goes on.
+// controller whose first message is not a matching Resume, or asks what
+// the session cannot give (takeResume), is told so and dropped; the wait
+// goes on.
 func (s *session) linger(ctx context.Context, cs Controllers, ready *protocol.Ready, desktopDone <-chan error, until time.Time) (*protocol.Conn, error) {
 	type next struct {
 		conn *protocol.Conn
@@ -213,7 +214,13 @@ func (s *session) linger(ctx context.Context, cs Controllers, ready *protocol.Re
 				}
 				return nil, ErrNoControllers
 			}
-			if err := awaitResume(ctx, a.conn, ready.ID); err != nil {
+			r, err := awaitResume(ctx, a.conn, ready.ID)
+			if err == nil {
+				if err = s.takeResume(r); err != nil {
+					fail(a.conn, err)
+				}
+			}
+			if err != nil {
 				s.log.Warn("controller refused", "err", err)
 				a.conn.Close()
 				go func() {
@@ -234,21 +241,21 @@ func (s *session) linger(ctx context.Context, cs Controllers, ready *protocol.Re
 
 // awaitResume reads the handshake of a controller picking up a kept
 // session: a Resume for this session at this protocol version.
-func awaitResume(ctx context.Context, conn *protocol.Conn, id string) error {
+func awaitResume(ctx context.Context, conn *protocol.Conn, id string) (protocol.Resume, error) {
 	ctx, cancel := context.WithTimeoutCause(ctx, startTimeout, errors.New("no resume message from the CLI"))
 	defer cancel()
 	m, err := conn.Recv(ctx)
 	switch {
 	case err != nil:
-		return err
+		return protocol.Resume{}, err
 	case m.Type != protocol.TypeResume || m.Resume == nil:
-		return fail(conn, fmt.Errorf("expected resume, got %q", m.Type))
+		return protocol.Resume{}, fail(conn, fmt.Errorf("expected resume, got %q", m.Type))
 	case m.Resume.Version != protocol.Version:
-		return fail(conn, fmt.Errorf("the CLI speaks protocol %d, this agent %d", m.Resume.Version, protocol.Version))
+		return protocol.Resume{}, fail(conn, fmt.Errorf("the CLI speaks protocol %d, this agent %d", m.Resume.Version, protocol.Version))
 	case m.Resume.ID != id:
-		return fail(conn, fmt.Errorf("no session %q here", m.Resume.ID))
+		return protocol.Resume{}, fail(conn, fmt.Errorf("no session %q here", m.Resume.ID))
 	}
-	return nil
+	return *m.Resume, nil
 }
 
 // ended tells the controller the session is over on purpose, so it does

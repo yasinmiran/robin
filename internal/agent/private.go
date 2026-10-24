@@ -88,8 +88,11 @@ type private struct {
 	room                    Room
 
 	kick chan struct{}
-	stop chan struct{}
-	done chan struct{}
+	// settled hands run a channel to close once it has settled the
+	// switches.
+	settled chan chan struct{}
+	stop    chan struct{}
+	done    chan struct{}
 }
 
 // openPrivate readies the private session of an attached desktop, with the
@@ -101,7 +104,8 @@ func openPrivate(d *openedDesktop, start protocol.Start, o Options, audio AudioS
 	}
 	p := &private{
 		log: log, silence: o.Silence, send: send,
-		kick: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{}),
+		kick: make(chan struct{}, 1), settled: make(chan chan struct{}),
+		stop: make(chan struct{}), done: make(chan struct{}),
 	}
 	p.capture, _ = audio.(follower)
 	if len(o.Keeper) == 0 {
@@ -172,6 +176,58 @@ func (p *private) set(t protocol.ControlType, on bool) {
 	p.wake()
 }
 
+// require turns on the switches a resuming CLI asks for, as Start's would
+// be, and waits until they are. A switch it cannot turn on refuses the
+// resume: the error says why, and both switches go back to what the page
+// last asked. A spawned desktop, which has no private session, refuses any.
+func (p *private) require(curtain, silent bool) error {
+	if !curtain && !silent {
+		return nil
+	}
+	if p == nil {
+		return errors.New("--curtain and --silent are for a desktop you attach to; nobody sits in front of one robin starts")
+	}
+	p.mu.Lock()
+	wasCurtain, wasSilent := p.wantCurtain, p.wantSilent
+	p.wantCurtain, p.wantSilent = wasCurtain || curtain, wasSilent || silent
+	p.mu.Unlock()
+	p.settleNow()
+	st := p.snapshot()
+	var errs []error
+	for _, s := range []struct {
+		flag string
+		on   bool
+		sw   protocol.PrivateSwitch
+	}{{"--curtain", curtain, st.Curtain}, {"--silent", silent, st.Silent}} {
+		if s.on && !s.sw.On {
+			errs = append(errs, fmt.Errorf("%s: %s", s.flag, cmp.Or(s.sw.Unsupported, s.sw.Error, "the session ended")))
+		}
+	}
+	if len(errs) == 0 {
+		return nil
+	}
+	p.mu.Lock()
+	p.wantCurtain, p.wantSilent = wasCurtain, wasSilent
+	p.mu.Unlock()
+	p.settleNow()
+	return errors.Join(errs...)
+}
+
+// settleNow has run settle the switches, and waits until it has or the
+// private session closes.
+func (p *private) settleNow() {
+	done := make(chan struct{})
+	select {
+	case p.settled <- done:
+	case <-p.stop:
+		return
+	}
+	select {
+	case <-done:
+	case <-p.stop:
+	}
+}
+
 func (p *private) wake() {
 	select {
 	case p.kick <- struct{}{}:
@@ -198,6 +254,9 @@ func (p *private) run() {
 			return
 		case <-p.kick:
 			p.settle()
+		case done := <-p.settled:
+			p.settle()
+			close(done)
 		case <-gone:
 			p.roomGone()
 		case <-curtainLeak:

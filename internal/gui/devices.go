@@ -31,6 +31,20 @@ func deviceNotes(host string, ready *protocol.Ready) []string {
 	return notes
 }
 
+// askedDevices is ready with only the devices o asks for. A resumed session
+// keeps every device it started with, and this CLI offers those its user
+// names this time; the agent refuses a resume that names one it lacks.
+func askedDevices(o Options, ready *protocol.Ready) *protocol.Ready {
+	r := *ready
+	if !o.Mic {
+		r.Mic = nil
+	}
+	if !o.Camera {
+		r.Camera = nil
+	}
+	return &r
+}
+
 // offeredDevices says which devices the page may offer: those the host took.
 func offeredDevices(ready *protocol.Ready) (mic, camera bool) {
 	return ready.Mic != nil && ready.Mic.Available, ready.Camera != nil && ready.Camera.Available
