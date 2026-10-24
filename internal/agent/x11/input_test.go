@@ -168,8 +168,14 @@ func typeText(tx *testX, t *testing.T, s string) {
 }
 
 // assertNothingHeld checks no key, button or modifier is down on the server.
+// A round trip on the agent's connection first makes sure the server has
+// processed the input sent through it, which the peer's query would
+// otherwise race.
 func (tx *testX) assertNothingHeld(t *testing.T) {
 	t.Helper()
+	if _, err := xproto.GetInputFocus(tx.c.x).Reply(); err != nil {
+		t.Fatal(err)
+	}
 	km, err := xproto.QueryKeymap(tx.peer).Reply()
 	if err != nil {
 		t.Fatal(err)

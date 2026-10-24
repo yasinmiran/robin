@@ -10,6 +10,8 @@
 </head>
 <body>
 <video id="screen" autoplay muted playsinline></video>
+<textarea id="typing" aria-label="Keyboard input for the remote desktop" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+<div id="preedit" role="status" aria-live="polite" hidden></div>
 <div id="wire" aria-hidden="true"></div>
 <div id="scrim" hidden></div>
 
@@ -38,6 +40,9 @@
       <button id="sound" type="button" aria-label="Sound" aria-pressed="false" title="Turn sound on" hidden>
         <svg class="off" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6h2.5L8 3v10l-3.5-3H2z"/><path d="M10.5 5.75l4.5 4.5M15 5.75l-4.5 4.5"/></svg>
         <svg class="on" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6h2.5L8 3v10l-3.5-3H2z"/><path d="M11 5.5a3.5 3.5 0 0 1 0 5M13 3.5a6.5 6.5 0 0 1 0 9"/></svg>
+      </button>
+      <button id="keyboard" type="button" aria-label="Keyboard" aria-pressed="false" title="Show the keyboard" hidden>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="4" width="13" height="8.5" rx="1.5"/><path d="M4 6.75h.01M6.67 6.75h.01M9.33 6.75h.01M12 6.75h.01M4 9.5h.01M12 9.5h.01M6 9.75h4"/></svg>
       </button>
       <button id="fullscreen" type="button" aria-label="Enter full screen" title="Full screen">
         <svg class="enter" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg>

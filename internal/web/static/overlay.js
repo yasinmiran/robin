@@ -1,5 +1,8 @@
 // The HUD: a tab hanging from the top edge that tucks itself away while the
-// session is healthy and comes back when the pointer nears the top.
+// session is healthy and comes back when the pointer nears the top. Where
+// the pointer is a finger, which hovers nowhere, it stays out.
+
+import { touchFirst } from './device.js';
 
 const TUCK_AFTER_MS = 2500;
 const REVEAL_ZONE_PX = 48;
@@ -55,6 +58,7 @@ export class Overlay {
   #scrim = document.getElementById('scrim');
   #fullscreen = document.getElementById('fullscreen');
   #sound = document.getElementById('sound');
+  #keyboard = document.getElementById('keyboard');
   #monitors = this.#hud.querySelector('.monitors');
   #monitorButton = document.getElementById('monitor');
   #monitorMenu = document.getElementById('monitor-menu');
@@ -199,7 +203,7 @@ export class Overlay {
     this.#notice.textContent = body;
     this.#notice.hidden = false;
     this.#closeMonitorMenu(false);
-    for (const el of [this.#transport, this.#picture, this.#fullscreen, this.#sound, this.#monitors, this.#sections]) {
+    for (const el of [this.#transport, this.#picture, this.#fullscreen, this.#sound, this.#keyboard, this.#monitors, this.#sections]) {
       if (el) el.hidden = true;
     }
     this.#scrim.hidden = false;
@@ -221,6 +225,26 @@ export class Overlay {
     media.addEventListener('volumechange', reflect);
     reflect();
     this.#sound.hidden = false;
+    this.#reveal();
+  }
+
+  // showKeyboard offers a button that raises the soft keyboard: toggle
+  // focuses the text box, or lets go of it, and the button shows whether it
+  // has the focus.
+  showKeyboard(text, toggle) {
+    if (this.#hud.dataset.state === 'ended') return;
+    const reflect = () => {
+      const on = document.activeElement === text;
+      this.#keyboard.setAttribute('aria-pressed', String(on));
+      this.#keyboard.title = on ? 'Hide the keyboard' : 'Show the keyboard';
+    };
+    // Pressing the button must not take the focus from the text box first.
+    this.#keyboard.addEventListener('mousedown', (e) => e.preventDefault());
+    this.#keyboard.addEventListener('click', toggle);
+    text.addEventListener('focus', reflect);
+    text.addEventListener('blur', reflect);
+    reflect();
+    this.#keyboard.hidden = false;
     this.#reveal();
   }
 
@@ -252,7 +276,7 @@ export class Overlay {
 
   #scheduleTuck() {
     clearTimeout(this.#tuckTimer);
-    if (this.#hovered || !this.#monitorMenu.hidden || this.#hud.dataset.state !== 'connected') return;
+    if (touchFirst || this.#hovered || !this.#monitorMenu.hidden || this.#hud.dataset.state !== 'connected') return;
     if (this.#sections?.querySelector(':scope > [data-pinned]')) return;
     this.#tuckTimer = setTimeout(() => this.#hud.classList.add('tucked'), TUCK_AFTER_MS);
   }

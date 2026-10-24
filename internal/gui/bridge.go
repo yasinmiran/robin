@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os/exec"
-	"runtime"
 	"sync"
 
 	"github.com/yasinmiran/robin/internal/protocol"
@@ -283,21 +281,6 @@ func (b *bridge) close() {
 	if br != nil {
 		br.Close()
 	}
-}
-
-func openBrowser(url string) error {
-	name := "xdg-open"
-	if runtime.GOOS == "darwin" {
-		name = "open"
-	}
-	cmd := exec.Command(name, url)
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	// Reap the opener when it exits; it would otherwise stay a zombie for the
-	// whole session.
-	go cmd.Wait()
-	return nil
 }
 
 // prefixWriter prefixes each line written to w.

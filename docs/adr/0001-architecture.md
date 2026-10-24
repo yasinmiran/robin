@@ -30,8 +30,9 @@ probe, SFTP upload, agent exec channel and port forward all ride it through
 `~/.ssh/config` (`Match`, `Include`, `ProxyJump`, `ProxyCommand`), the agent,
 FIDO keys, certificates, Kerberos, and interactive prompts for passwords, 2FA
 and unknown host keys. A Go SSH library would need to reimplement all of that
-and would still miss cases. Cost: the client needs OpenSSH with ControlMaster,
-which rules out native Windows for now.
+and would still miss cases. Cost: one connection needs OpenSSH with
+ControlMaster; Windows, whose OpenSSH has none, gets a connection per
+command instead (see below).
 
 ### Software H.264 with openh264, statically linked through cgo
 
@@ -708,7 +709,9 @@ each needs control messages, bulk kinds or a place in the status tab. So
 nothing switches on message types any more. On the agent, each control type
 and bulk kind maps to a handler its feature registers from `init` in its
 own file (`handleControl`, `handleBulk`), and a unit test fails for any
-handled bulk kind without a limit; the page has `onControl` in
+handled bulk kind without a limit. A control type that is input registers
+with `handleInput` instead, which is how it waits behind typed text (below)
+without the text feature listing it; the page has `onControl` in
 `control.js` and `onBulk` in `bulk.js`, and `Overlay.addSection` gives a
 feature its own part of the status tab without touching `index.html`. The
 peer routes data channels by label, closing any it does not know, and hands
@@ -1054,6 +1057,155 @@ checkout, the toolchain cache, the home directory, Go's directories, the pinned 
 version and the exact set of build settings, so a leak that comes back is
 caught without the double build. Nothing checks it on every merge yet:
 the repository has no CI.
+
+### Without ControlMaster: an ssh per command and per forward
+
+Windows' OpenSSH has no ControlMaster, so `sshmux` has a mode without one
+(`Options.NoMux`, `--ssh-mux=false`), picked by default on Windows. Each
+command and SFTP session is an ssh of its own that reads the user's config
+and arguments as the master would, with `ControlMaster=no` and
+`ControlPath=none` so a master in that config neither starts nor gets
+ridden, and `ClearAllForwardings=yes` so its forwards do not come up once
+per command. A forward is an `ssh -N -L <local>:<remote>` that lives
+until `Close`, and the tunnel splices into it as it does into the master's
+socket. `<local>` is a unix socket in a 0700 directory, as over a master,
+so no other user of the client machine can reach it or take its place.
+Windows' OpenSSH forwards no unix sockets, so there it is a loopback port
+the CLI picks and releases for ssh, and ssh binds it only after logging
+in, seconds or, with a password typed, minutes later. Another user can take
+the port meanwhile, and it shows in ssh's command line. So the CLI does not
+take a connection that the port accepts as proof: it waits until the
+system's table of listeners (`GetExtendedTcpTable`) names ssh's process as
+the one on that port, and fails the forward when another process holds it.
+A port that accepts while the table shows nobody there fails it too, so a
+table read wrong ends in an error rather than a wait with no end.
+Nothing here runs Windows; the tests take that path on Linux, where
+`/proc/net/tcp` and the process's open sockets answer the same question.
+Once a forward's ssh has exited, its `Dial` refuses rather than connect to
+whoever listens there next. That ssh cannot clear the config's
+forwards: `ssh -G -o ClearAllForwardings=yes -L ...` shows the option drops
+the command line's `-L` along with them, so a `LocalForward` for the host
+comes up with the tunnel and, under `ExitOnForwardFailure`, takes it down if
+it fails. The tests count one login per command, four for four commands,
+none for `Dial`, which no longer has anything to wait for.
+
+There is no master to watch either, so `Done` closes only with `Close`, and
+a dropped network is noticed through the agent connection's idle timeout.
+A kept session's redial and its end command after Ctrl+C, which kills
+every ssh in the terminal's process group, log in afresh as every command
+does. The Linux tests and the `nomux` e2e scenario force the mode, which
+is how it is tested at all: nothing here runs Windows.
+
+### Text: its own control, typed in order off the read loop
+
+What an input method commits, or a soft keyboard types without naming a
+key, goes as a `text` control rather than as made-up keys: a composition
+has no keys to send, and the agent can type any character on X11 already.
+Typing text can wait on the desktop (below), and control handlers run on
+Pion's read loop, where waiting stalls every data channel. So text goes to
+a goroutine of the session's, and input that arrives while it types (keys,
+pointer, wheel, release and clipboard) queues behind it, or Enter after a
+commit would land first. With nothing to type, input still applies at once
+on the read loop, as before. The queue holds 256 messages. Past that, runs
+of pointer moves merge into their last, then input is dropped, and a
+release of every key and button, which the queue never refuses, follows
+whatever was dropped: a 4096-byte CJK commit types for about 4 s on X11,
+long enough for pointer moves alone to fill it, and a key-up lost there
+would leave the key held. A browser that leaves has what it queued
+dropped and its typing stopped, and its peer's handler applies nothing it
+sends after that: the data channel can deliver a last message while the
+peer closes, and text in it would start typing again.
+
+On X11 each character the keymap lacks borrows one of 16 spare keycodes.
+A commit of more than 16 such characters reuses keycodes faster than
+clients read their key events, and a client reads the keymap when it gets
+to the event: typing 64 distinct CJK characters into xterm in Xvfb got the
+reused ones wrong in 5 runs of 5 with no wait and 7 of 10 with a 5 ms
+wait; 15 ms was right 10 times of 10. `Type` waits until a spare keycode's
+last press is 50 ms old before binding it again, which typed those 75
+characters in about 205 ms.
+
+### Wayland text: ASCII as keysyms, the rest pasted
+
+The compositor drops a keysym its layout lacks, a Wayland client cannot add
+one, and the portal does not say what the layout has. ASCII is on every
+Latin layout, so text that is all ASCII types as keysyms; any other text is
+pasted whole: offered as the clipboard, then Ctrl+V, then 100 ms for the
+program to read it before the next input. A second after the last paste
+the clipboard gets back what the user had there, unless something was
+copied meanwhile: what a program copied or the page set, as last seen and
+in each format the rich clipboard reads (text, HTML and PNG), or before
+either, the text that was there when the session began. The portal reports
+only changes, so the first paste reads that text, and GNOME 46, GNOME 49
+and KDE Plasma 6.7 all answer the read. A paste never counts as the
+user's clipboard, or the next paste would put the last one back. Where
+there is nothing to put back (no format the agent reads, or nothing),
+empty text is offered in place of the pasted text rather than leave it
+there, and a clipboard manager that read the paste's offer reads the empty
+one too. Putting it back as soon as
+the offer was read failed on GNOME 46: mutter's clipboard manager reads
+every new offer at once, so the probe window then pasted the old text, the
+next paste read nothing, and xdg-desktop-portal crashed, leaving the remote
+desktop session behind. The timed version passes on GNOME 46, GNOME 49 and
+KDE Plasma 6.7, though GNOME 46's xdg-desktop-portal still died twice when
+the probe read the clipboard at the moment the put-back offered anew; the
+attach test reads from half a second after a put-back is due. Ctrl+V does
+not paste in a terminal, an image copied before the session cannot be put
+back, and a clipboard manager keeps the pasted text in its history; all
+three are known limits.
+
+### The page types through a hidden text box
+
+Input methods and soft keyboards type only into something editable that
+has the focus, so the page keeps the focus in a hidden text box. Keys the
+browser names go out as keys, as before, and are cancelled so the box
+stays empty and nothing types twice. Keys an input method owns stay with
+the box: `isComposing`, Chrome's `Process` with keyCode 229 (its first key
+of a composition comes before `isComposing` is set), `Dead`, and Android's
+`Unidentified`. A composition is shown under the status tab while it lasts
+and sent as text when it ends; other edits arrive as `beforeinput`, where
+typed text goes as text and line breaks and deletions as Enter, Backspace
+and Delete. The box moves to wherever the pointer went down, so an input
+method opens its candidates there. On a touch-first device it takes the
+focus only from the keyboard button, since focusing it raises the soft
+keyboard.
+
+### Touch: a finger is the mouse, and the zoom stays local
+
+One finger taps to click, holds 500 ms to right click and drags with the
+button down; two fingers scroll, the content following them, or pinch.
+Which of the two is settled by what they do first, once both have moved:
+the spread changing by 24 px pinches, the centre moving 8 px scrolls.
+Chrome reports each finger of a touch event as a pointermove of its own,
+and one finger of a pinch moves the centre on its own as far as a scroll
+does; judged after each finger, the touch scenario's pinch in, 18 px a side
+per step, scrolled instead. A pinch zooms and pans the
+picture in the page with a CSS transform and never resizes the desktop,
+which keeps the session the same for everyone. Mapping a point to the
+remote needs no change for it: `getBoundingClientRect` reports the
+transformed box, which a unit test checks against the zoom's own sums, and
+the `touch` scenario checks on the host with a zoomed tap. With no pointer
+to hover, the status tab stays out on touch-first devices, and touch screens
+get a button that raises the soft keyboard.
+
+### Windows and Android clients; iOS is not one
+
+Windows opens the page with `rundll32 url.dll,FileProtocolHandler`, which
+hands the URL to the default browser as it is, where `cmd /c start` would
+parse it as a command line first. Termux on Android runs the linux/arm64
+CLI unchanged and opens the page with `termux-open-url` when it is on
+`PATH`. `make dist` builds both Windows CLIs, and `GOOS=windows go vet` and
+the test binaries build. Signals needed no code: Ctrl+C reaches every
+process on the console, the ssh children included, as it reaches the
+terminal's process group on Unix, and Go delivers a closed console window
+as SIGTERM, which the CLI already ends on. A forward's ssh is asked to exit
+with SIGTERM, which lets it end a `ProxyCommand` it started, and killed on
+Windows, which cannot send one. The local paths that assume Unix (the
+control socket's directory, `-F /dev/null` for sessions over the master)
+belong to the ControlMaster mode only; remote paths were already built with
+`path`, not `filepath`. iOS cannot be a client: the page is served on the
+client's loopback, so the CLI runs on the same device as the browser, and
+iOS gives a user nothing that runs it.
 
 ## Verification parked
 

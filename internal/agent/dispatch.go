@@ -3,6 +3,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/yasinmiran/robin/internal/agent/peer"
@@ -14,14 +15,33 @@ import (
 // add theirs from init in their own file, so no two edit the same lines;
 // written only from init, the maps need no lock.
 var (
-	controlHandlers = map[protocol.ControlType]func(*session, protocol.Control){}
+	controlHandlers = map[protocol.ControlType]controlHandler{}
 	bulkHandlers    = map[string]func(*session, protocol.Bulk) (peer.BulkSink, error){}
 )
 
-// handleControl registers h for control messages of type t. It panics on a
-// nil h and on a type registered twice.
+// controlHandler applies one kind of control message. Input applies in the
+// order it came with the text the browser types, so it waits behind any
+// being typed; the rest applies as it arrives.
+type controlHandler struct {
+	apply func(*session, protocol.Control)
+	input bool
+}
+
+// handleControl registers h for control messages of type t, which apply as
+// they arrive. It panics on a nil h and on a type registered twice.
 func handleControl(t protocol.ControlType, h func(*session, protocol.Control)) {
-	if h == nil {
+	addControl(t, controlHandler{apply: h})
+}
+
+// handleInput registers h for control messages of type t that are input:
+// they wait behind text being typed rather than overtake it. It panics as
+// handleControl does.
+func handleInput(t protocol.ControlType, h func(*session, protocol.Control)) {
+	addControl(t, controlHandler{apply: h, input: true})
+}
+
+func addControl(t protocol.ControlType, h controlHandler) {
+	if h.apply == nil {
 		panic(fmt.Sprintf("agent: nil handler for control %q", t))
 	}
 	if _, dup := controlHandlers[t]; dup {
@@ -49,17 +69,27 @@ func init() {
 	for _, t := range []protocol.ControlType{
 		protocol.ControlKey, protocol.ControlMove, protocol.ControlButton, protocol.ControlWheel, protocol.ControlRelease,
 	} {
-		handleControl(t, (*session).applyInput)
+		handleInput(t, (*session).applyInput)
 	}
 	handleControl(protocol.ControlResize, (*session).applyResize)
 	handleControl(protocol.ControlMonitor, (*session).applyMonitor)
 }
 
 // control applies one message from the browser; types nobody handles are
-// ignored, as from a newer page.
+// ignored, as from a newer page. Input waits behind text being typed.
 func (s *session) control(m protocol.Control) {
-	if h := controlHandlers[m.T]; h != nil {
-		h(s, m)
+	h, ok := controlHandlers[m.T]
+	if !ok {
+		return
+	}
+	if !h.input {
+		h.apply(s, m)
+		return
+	}
+	if !s.typing.run(m.T, func(context.Context) { h.apply(s, m) }) {
+		s.log.Warn("input dropped: typing has fallen behind", "type", m.T)
+		// It may have been a key-up; the lane never drops a release.
+		s.control(protocol.Control{T: protocol.ControlRelease})
 	}
 }
 

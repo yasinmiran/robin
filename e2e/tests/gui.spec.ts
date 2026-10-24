@@ -2,7 +2,7 @@ import { test, expect, type BrowserContext, type Page, type TestInfo } from '@pl
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { Cli, robin } from './helpers/cli';
+import { Cli, robin, sshProcesses } from './helpers/cli';
 import { pagePoint } from './helpers/coords';
 import { savePageCoverage, startPageCoverage } from './helpers/cover';
 import { CHANGED_FLOOR, isNonBlack, sampleFrame, waitForStillFrame } from './helpers/frames';
@@ -68,7 +68,7 @@ let page: Page;
 let sessionStart = 0;
 
 test.beforeAll(async ({ browser }, testInfo) => {
-  expect(['direct', 'blocked', 'restart', 'resume', 'rejoin', 'attach'], 'SCENARIO').toContain(SCENARIO);
+  expect(['direct', 'blocked', 'restart', 'resume', 'rejoin', 'attach', 'nomux'], 'SCENARIO').toContain(SCENARIO);
   testInfo.setTimeout(150_000);
   context = await browser.newContext({
     viewport: { width: 1280, height: 720 },
@@ -527,13 +527,54 @@ if (SCENARIO === 'direct') {
   });
 }
 
-if (SCENARIO === 'blocked') {
+if (SCENARIO === 'blocked' || SCENARIO === 'nomux') {
   test('transport: with UDP blocked the session runs on ICE-TCP through the SSH forward', async ({}, testInfo) => {
-    const s = await connectedStats(testInfo, 'blocked');
+    const s = await connectedStats(testInfo, SCENARIO);
     expect(s.transport).toBe('tcp');
     expect(s.remote.address).toBe('127.0.0.1');
   });
 }
+
+if (SCENARIO === 'nomux') {
+  test('nomux: no ControlMaster; the agent and the forward each have an ssh of their own', async ({}, testInfo) => {
+    const ssh = sshProcesses();
+    await testInfo.attach('ssh processes', { body: ssh.join('\n'), contentType: 'text/plain' });
+    expect(ssh.filter((a) => a.includes('ControlMaster=yes')), 'a ControlMaster').toEqual([]);
+    expect(ssh.filter((a) => / -N .*-L \/\S+\/fwd\d+\.sock:127\.0\.0\.1:\d+ /.test(a)), 'the forward, on a socket in a private directory').toHaveLength(1);
+    expect(ssh.filter((a) => / serve( -v)?$/.test(a)), 'the agent').toHaveLength(1);
+    expect(ssh.every((a) => a.includes('ControlPath=none')), 'every ssh keeps clear of any master in the config').toBe(true);
+  });
+}
+
+test('ime: text an input method commits types on the host, characters outside the keymap included', async () => {
+  test.skip(!PICTURE, NO_PICTURE);
+  test.skip(process.env.ROBIN_E2E_BROWSER !== 'chrome', "input methods are driven through Chrome's DevTools protocol");
+  const file = `/tmp/robin-e2e-ime-${SCENARIO}`;
+  await host.ssh(`rm -f ${file}`);
+  let term: host.Rect | null = null;
+  await expect.poll(async () => (term = await host.terminal()), { message: 'an xterm is mapped', timeout: 15_000 }).not.toBeNull();
+  const t = term!;
+  const centre = await pagePoint(page, SCREEN, t.x + t.width / 2, t.y + t.height / 2);
+  await page.mouse.click(centre.x, centre.y);
+  expect(await page.evaluate(() => document.activeElement?.id), 'the text box holds the focus').toBe('typing');
+
+  const cdp = await context.newCDPSession(page);
+  await page.keyboard.type('echo ', { delay: 20 });
+  // What Chrome does for an input method: Process keys, a composition that
+  // changes, and the text it commits.
+  await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Process', code: 'KeyN', windowsVirtualKeyCode: 229 });
+  await cdp.send('Input.imeSetComposition', { text: 'にほんご', selectionStart: 4, selectionEnd: 4 });
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Process', code: 'KeyN', windowsVirtualKeyCode: 229 });
+  await expect(page.locator('#preedit')).toHaveText('にほんご');
+  await cdp.send('Input.insertText', { text: '日本語ü' });
+  await expect(page.locator('#preedit')).toBeHidden();
+  await cdp.detach();
+  await page.keyboard.type(` > ${file}`, { delay: 20 });
+  await page.keyboard.press('Enter');
+  await expect
+    .poll(async () => (await host.sshRaw(`cat ${file}`)).stdout.trim(), { message: `${file} on the host`, timeout: 10_000 })
+    .toBe('日本語ü');
+});
 
 if (SCENARIO === 'restart') {
   test('transport: blocking UDP mid-session falls back to TCP and keeps working', async ({}, testInfo) => {
@@ -829,6 +870,7 @@ test('teardown: SIGINT ends the CLI and leaves nothing behind on the host', asyn
   const left = Math.max(1_000, 10_000 - stop.afterMs);
   await expect.poll(host.leftovers, { message: 'session processes on the host', timeout: left }).toBe('');
   await expect.poll(() => host.exists(dir), { message: `run dir ${dir} exists`, timeout: 1_000 }).toBe(false);
+  await expect.poll(sshProcesses, { message: "the CLI's ssh processes on the client", timeout: 5_000 }).toEqual([]);
   expect(cli!.extraStdout, 'stdout carries only the URL').toEqual([]);
   testInfo.annotations.push({ type: 'page state after teardown', description: String(await state(page)) });
 });

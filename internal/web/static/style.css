@@ -41,6 +41,53 @@ html, body {
   background: #000;
   outline: none;
   touch-action: none;
+  /* The local zoom scales about the corner; see view.js. */
+  transform-origin: 0 0;
+}
+
+/* The text box that holds the keyboard's focus for input methods and soft
+   keyboards. It sits where the pointer last went down, so a candidate list
+   opens there, and shows nothing itself. 16px text keeps mobile browsers
+   from zooming in on focus. */
+#typing {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  resize: none;
+  overflow: hidden;
+  font-size: 16px;
+  color: transparent;
+  caret-color: transparent;
+  background: transparent;
+  pointer-events: none;
+}
+
+/* What an input method is composing, until it commits. It sits under the
+   status tab: a soft keyboard covers the bottom of the screen. */
+#preedit {
+  position: fixed;
+  left: 50%;
+  top: 64px;
+  translate: -50% 0;
+  max-width: calc(100vw - 32px);
+  padding: 6px 12px;
+  color: var(--ink);
+  background: var(--veil);
+  border: 1px solid var(--veil-edge);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(16px) saturate(1.3);
+  font: 400 16px/22px var(--ui);
+  text-decoration: underline dotted var(--ink-soft);
+  text-underline-offset: 4px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  pointer-events: none;
 }
 
 /* The wire runs along the top edge while the link is being established. */
@@ -157,6 +204,7 @@ body:has(#hud[data-state="reconnecting"]) #wire { opacity: 1; }
 }
 
 #sound,
+#keyboard,
 #fullscreen {
   display: grid;
   place-items: center;
@@ -170,11 +218,16 @@ body:has(#hud[data-state="reconnecting"]) #wire { opacity: 1; }
   cursor: pointer;
 }
 #sound:hover,
+#keyboard:hover,
 #fullscreen:hover { color: var(--ink); background: var(--veil-edge); }
 #sound:focus-visible,
+#keyboard:focus-visible,
 #fullscreen:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
-#sound[aria-pressed="true"] { color: var(--ink); }
+#sound[aria-pressed="true"],
+#keyboard[aria-pressed="true"] { color: var(--ink); }
+#keyboard[aria-pressed="true"] { background: var(--veil-edge); }
 #sound svg,
+#keyboard svg,
 #fullscreen svg {
   width: 16px;
   height: 16px;

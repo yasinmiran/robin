@@ -119,7 +119,7 @@ func Open(ctx context.Context, o Options) (_ *Desktop, err error) {
 		return nil, fmt.Errorf("input: %w", err)
 	}
 	if d.sess.clipboard {
-		if d.clip, err = newClipboard(d.sess); err != nil {
+		if d.clip, err = newClipboard(d.sess, o.Log); err != nil {
 			return nil, err
 		}
 	}
@@ -273,6 +273,9 @@ func (d *Desktop) Close() error {
 			d.frames.stop()
 		}
 		if d.clip != nil {
+			if err := d.clip.putBack(); err != nil {
+				d.clip.log.Warn("put the clipboard back", "err", err)
+			}
 			d.clip.close()
 		}
 		if d.sess != nil {

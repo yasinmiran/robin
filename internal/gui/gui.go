@@ -33,6 +33,9 @@ type Options struct {
 	Dest    string
 	SSHPath string
 	SSHArgs []string
+	// NoMux gives every ssh command and forward a connection of its own
+	// instead of one ControlMaster; see sshmux.Options.NoMux.
+	NoMux bool
 
 	Transport           relay.Transport
 	MaxWidth, MaxHeight int
@@ -282,7 +285,7 @@ type host struct {
 // connect dials the host and probes it.
 func connect(ctx context.Context, o Options, log *slog.Logger) (*host, error) {
 	log.Info("connecting", "dest", o.Dest)
-	m, err := sshmux.Dial(ctx, o.Dest, sshmux.Options{SSHPath: o.SSHPath, Args: o.SSHArgs, Stderr: o.Stderr})
+	m, err := dial(ctx, o)
 	if err != nil {
 		return nil, err
 	}
@@ -375,7 +378,12 @@ func (h *host) abandon(err error, ag *agentProc, ready *protocol.Ready, path str
 
 // dial opens another SSH connection to the host.
 func (h *host) dial(ctx context.Context) (*sshmux.Master, error) {
-	return sshmux.Dial(ctx, h.o.Dest, sshmux.Options{SSHPath: h.o.SSHPath, Args: h.o.SSHArgs, Stderr: h.o.Stderr})
+	return dial(ctx, h.o)
+}
+
+// dial opens an SSH connection to o.Dest.
+func dial(ctx context.Context, o Options) (*sshmux.Master, error) {
+	return sshmux.Dial(ctx, o.Dest, sshmux.Options{SSHPath: o.SSHPath, Args: o.SSHArgs, Stderr: o.Stderr, NoMux: o.NoMux})
 }
 
 // reconnect redials the host with backoff and resumes session id, until it
@@ -840,8 +848,8 @@ type tunnel struct {
 	ln  net.Listener
 	log *slog.Logger
 
-	mu   sync.Mutex
-	sock string // the forward's local socket, "" while there is none
+	mu  sync.Mutex
+	fwd *sshmux.Forward // nil while there is none
 }
 
 // openTunnel sets the tunnel up for transport: none for Direct, and for
@@ -881,12 +889,12 @@ func (t *tunnel) forward(ctx context.Context, m *sshmux.Master, remote string) e
 	if t.ln == nil {
 		return nil
 	}
-	sock := m.SocketPath("ice.sock")
-	if err := m.ForwardLocal(ctx, sock, remote); err != nil {
+	fwd, err := m.Forward(ctx, remote)
+	if err != nil {
 		return fmt.Errorf("forward ICE-TCP over SSH: %w", err)
 	}
 	t.mu.Lock()
-	t.sock = sock
+	t.fwd = fwd
 	t.mu.Unlock()
 	return nil
 }
@@ -910,12 +918,12 @@ func (t *tunnel) Close() error {
 func (t *tunnel) splice(c net.Conn) {
 	defer c.Close()
 	t.mu.Lock()
-	sock := t.sock
+	fwd := t.fwd
 	t.mu.Unlock()
-	if sock == "" {
+	if fwd == nil {
 		return
 	}
-	u, err := net.Dial("unix", sock)
+	u, err := fwd.Dial()
 	if err != nil {
 		t.log.Warn("tunnel dial", "err", err)
 		return

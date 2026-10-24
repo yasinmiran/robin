@@ -15,11 +15,13 @@ import (
 )
 
 // Plain text up to clipboardSize travels as a control message; anything
-// else on the clipboard, HTML and images included, as a bulk transfer.
+// else on the clipboard, HTML and images included, as a bulk transfer. The
+// page sets the clipboard before it pastes, so the control message is
+// input: it must not overtake text typed before it either.
 func init() {
 	protocol.RegisterBulkKind(protocol.BulkClipboard, protocol.ClipBulkLimit)
 	handleBulk(protocol.BulkClipboard, (*session).acceptClip)
-	handleControl(protocol.ControlClipboard, (*session).applyClipboard)
+	handleInput(protocol.ControlClipboard, (*session).applyClipboard)
 }
 
 func (s *session) applyClipboard(m protocol.Control) {

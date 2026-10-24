@@ -62,3 +62,11 @@ func TestParseSTUN(t *testing.T) {
 		})
 	}
 }
+
+func TestDefaultSSHMux(t *testing.T) {
+	for goos, want := range map[string]bool{"linux": true, "darwin": true, "windows": false} {
+		if got := defaultSSHMux(goos); got != want {
+			t.Errorf("defaultSSHMux(%q) = %v, want %v", goos, got, want)
+		}
+	}
+}

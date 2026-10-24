@@ -204,8 +204,8 @@ func TestForwardLocal(t *testing.T) {
 		}
 	}()
 
-	sock := m.SocketPath("fwd")
-	if err := m.ForwardLocal(t.Context(), sock, ln.Addr().String()); err != nil {
+	sock := m.socketPath("fwd")
+	if err := m.forwardLocal(t.Context(), sock, ln.Addr().String()); err != nil {
 		t.Fatal(err)
 	}
 	fi, err := os.Stat(sock)
@@ -236,24 +236,24 @@ func TestForwardLocal(t *testing.T) {
 	}
 
 	// ssh treats a repeat of the same forward as a no-op.
-	if err := m.ForwardLocal(t.Context(), sock, ln.Addr().String()); err != nil {
+	if err := m.forwardLocal(t.Context(), sock, ln.Addr().String()); err != nil {
 		t.Errorf("repeating a forward: %v", err)
 	}
-	err = m.ForwardLocal(t.Context(), sock, "127.0.0.1:1")
+	err = m.forwardLocal(t.Context(), sock, "127.0.0.1:1")
 	t.Logf("forwarding a taken path elsewhere: %v", err)
 	if err == nil {
 		t.Error("second forward on the same path succeeded")
 	}
-	stale := m.SocketPath("stale")
+	stale := m.socketPath("stale")
 	if err := os.WriteFile(stale, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err = m.ForwardLocal(t.Context(), stale, ln.Addr().String())
+	err = m.forwardLocal(t.Context(), stale, ln.Addr().String())
 	t.Logf("forwarding onto an existing file: %v", err)
 	if err == nil {
 		t.Error("forward replaced an existing file")
 	}
-	if err := m.ForwardLocal(t.Context(), "relative.sock", "127.0.0.1:1"); err == nil {
+	if err := m.forwardLocal(t.Context(), "relative.sock", "127.0.0.1:1"); err == nil {
 		t.Error("relative forward path accepted")
 	}
 }

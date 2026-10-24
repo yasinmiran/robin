@@ -1,5 +1,10 @@
-// Turns local pointer, keyboard, clipboard and viewport events into Control
-// messages for the remote desktop.
+// Turns local pointer, touch, keyboard, clipboard and viewport events into
+// Control messages for the remote desktop.
+
+import { touchFirst } from './device.js';
+import { Gestures } from './gesture.js';
+import { fromComposition, fromInput, imeOwns } from './ime.js';
+import { View, remotePoint } from './view.js';
 
 const LINE_PX = 40;
 const PASTE_WAIT_MS = 100;
@@ -11,6 +16,8 @@ export const isMac = /Mac|iPhone|iPad/.test(navigator.userAgentData?.platform ??
 
 export class Input {
   #video;
+  #text;
+  #preedit;
   #send;
   #active;
   #paste;
@@ -21,33 +28,49 @@ export class Input {
   #pasteQueue = null; // key messages held back while waiting for a paste event
   #pasteTimer = 0;
   #resizeTimer = 0;
+  #view = new View(window.innerWidth, window.innerHeight);
+  #gestures = new Gestures((g) => this.#onGesture(g));
   // scale turns CSS pixels into remote pixels: devicePixelRatio when the
   // session asked for HiDPI, 1 otherwise.
   scale = 1;
 
-  // send delivers one Control message; active reports whether input should
-  // be captured at all, so a closed session leaves the browser's own keys
-  // (reload, close tab) alone. paste hands what a paste event carries to
-  // the remote clipboard, by default its plain text; it may return a
-  // promise, which the paste key waits on for up to PASTE_HOLD_MS so that
-  // it finds the clipboard set.
-  constructor(video, send, active, { paste } = {}) {
+  // text is the hidden text box that holds the keyboard's focus, so input
+  // methods and soft keyboards have somewhere to type, and preedit shows
+  // what an input method is composing. send delivers one Control message;
+  // active reports whether input should be captured at all, so a closed
+  // session leaves the browser's own keys (reload, close tab) alone. paste
+  // hands what a paste event carries to the remote clipboard, by default
+  // its plain text; it may return a promise, which the paste key waits on
+  // for up to PASTE_HOLD_MS so that it finds the clipboard set.
+  constructor(video, text, preedit, send, active, { paste } = {}) {
     this.#video = video;
+    this.#text = text;
+    this.#preedit = preedit;
     this.#send = send;
     this.#active = active;
     this.#paste = paste ?? ((data) => {
-      const text = data?.getData('text/plain');
-      if (text) this.sendClipboard(text);
+      const plain = data?.getData('text/plain');
+      if (plain) this.sendClipboard(plain);
     });
+  }
+
+  get view() {
+    return this.#view;
+  }
+
+  // gesture is what the fingers on the picture are doing, as Gestures.mode.
+  get gesture() {
+    return this.#gestures.mode;
   }
 
   attach() {
     const v = this.#video;
-    v.addEventListener('pointermove', (e) => this.#onPointerMove(e));
-    v.addEventListener('pointerdown', (e) => this.#onPointerButton(e, true));
-    v.addEventListener('pointerup', (e) => this.#onPointerButton(e, false));
-    v.addEventListener('pointercancel', (e) => this.#onPointerButton(e, false));
-    v.addEventListener('mousedown', (e) => e.preventDefault()); // no middle-click autoscroll
+    v.addEventListener('pointermove', (e) => this.#onPointer(e, 'move'));
+    v.addEventListener('pointerdown', (e) => this.#onPointer(e, 'down'));
+    v.addEventListener('pointerup', (e) => this.#onPointer(e, 'up'));
+    v.addEventListener('pointercancel', (e) => this.#onPointer(e, 'cancel'));
+    // No middle-click autoscroll, and the text box keeps the focus.
+    v.addEventListener('mousedown', (e) => e.preventDefault());
     v.addEventListener('wheel', (e) => this.#onWheel(e), { passive: false });
     window.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -55,9 +78,26 @@ export class Input {
     window.addEventListener('keyup', (e) => this.#onKey(e, false));
     window.addEventListener('paste', (e) => this.#onPaste(e));
 
+    const t = this.#text;
+    t.addEventListener('compositionstart', () => this.#showPreedit(''));
+    t.addEventListener('compositionupdate', (e) => this.#showPreedit(e.data));
+    t.addEventListener('compositionend', (e) => this.#onCompositionEnd(e));
+    t.addEventListener('beforeinput', (e) => this.#onBeforeInput(e));
+    t.addEventListener('input', (e) => {
+      if (!e.isComposing) t.value = '';
+    });
+    // Wherever the focus goes when a page control lets go of it, the text
+    // box takes it back.
+    document.addEventListener('focusout', () => setTimeout(() => this.#keepFocus()));
+    this.#keepFocus();
+
     window.addEventListener('blur', () => this.release());
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') this.release();
+    });
+    window.addEventListener('resize', () => {
+      this.#view.resize(window.innerWidth, window.innerHeight);
+      this.#showView();
     });
 
     new ResizeObserver(() => {
@@ -84,28 +124,49 @@ export class Input {
     this.#send({ t: 'release' });
   }
 
-  // toRemote maps a pointer position to remote pixels. object-fit: contain
-  // letterboxes the video, so the picture is scaled by the tighter axis and
-  // centred in the element box.
-  #toRemote(e) {
+  // toggleKeyboard raises the soft keyboard by focusing the text box, or
+  // puts it away.
+  toggleKeyboard() {
+    if (document.activeElement === this.#text) this.#text.blur();
+    else this.#text.focus({ preventScroll: true });
+  }
+
+  #keepFocus() {
+    const at = document.activeElement;
+    if (touchFirst || (at && at !== document.body && at !== document.documentElement)) return;
+    this.#text.focus({ preventScroll: true });
+  }
+
+  // placeText moves the text box to a page point, so an input method opens
+  // its candidates there, by the pointer, rather than in a corner.
+  #placeText(x, y) {
+    this.#text.style.left = `${Math.round(x)}px`;
+    this.#text.style.top = `${Math.round(y)}px`;
+  }
+
+  #toRemote(x, y) {
     const v = this.#video;
-    const vw = v.videoWidth;
-    const vh = v.videoHeight;
-    if (!vw || !vh) return null;
-    const box = v.getBoundingClientRect();
-    const scale = Math.min(box.width / vw, box.height / vh);
-    const x = (e.clientX - box.left - (box.width - vw * scale) / 2) / scale;
-    const y = (e.clientY - box.top - (box.height - vh * scale) / 2) / scale;
-    return {
-      x: clamp(Math.floor(x), 0, vw - 1),
-      y: clamp(Math.floor(y), 0, vh - 1),
-      inside: x >= 0 && y >= 0 && x < vw && y < vh,
-    };
+    return remotePoint(x, y, v.getBoundingClientRect(), v.videoWidth, v.videoHeight);
+  }
+
+  #onPointer(e, what) {
+    if (!this.#active()) return;
+    if (e.pointerType === 'touch') {
+      e.preventDefault();
+      this.#onTouch(e, what);
+    } else if (what === 'move') {
+      this.#onPointerMove(e);
+    } else {
+      this.#onPointerButton(e, what === 'down');
+    }
   }
 
   #onPointerMove(e) {
-    if (!this.#active()) return;
-    const p = this.#toRemote(e);
+    this.#queueMove(e.clientX, e.clientY);
+  }
+
+  #queueMove(x, y) {
+    const p = this.#toRemote(x, y);
     if (!p || (!p.inside && !this.#buttons)) return;
     this.#move = { t: 'move', x: p.x, y: p.y };
     this.#moveFrame ||= requestAnimationFrame(() => this.#flushMove());
@@ -119,22 +180,73 @@ export class Input {
   }
 
   #onPointerButton(e, down) {
-    if (!this.#active()) return;
     e.preventDefault();
-    const p = this.#toRemote(e);
-    if (!p) return;
-    const bit = 1 << e.button;
+    if (down) this.#placeText(e.clientX, e.clientY);
+    if (this.#button(e.clientX, e.clientY, e.button, down) && down) this.#video.setPointerCapture(e.pointerId);
+  }
+
+  // button presses or releases a button at a page point, and reports
+  // whether it did. A press outside the picture does nothing, and so does
+  // a release of a button not pressed.
+  #button(x, y, button, down) {
+    const p = this.#toRemote(x, y);
+    if (!p) return false;
+    const bit = 1 << button;
     if (down) {
-      if (!p.inside) return;
-      this.#video.setPointerCapture(e.pointerId);
+      if (!p.inside) return false;
       this.#buttons |= bit;
     } else {
-      if (!(this.#buttons & bit)) return;
+      if (!(this.#buttons & bit)) return false;
       this.#buttons &= ~bit;
     }
     this.#move = null;
     this.#send({ t: 'move', x: p.x, y: p.y });
-    this.#send({ t: 'button', x: p.x, y: p.y, button: e.button, down });
+    this.#send({ t: 'button', x: p.x, y: p.y, button, down });
+    return true;
+  }
+
+  #onTouch(e, what) {
+    const g = this.#gestures;
+    switch (what) {
+      case 'down':
+        this.#placeText(e.clientX, e.clientY);
+        g.down(e.pointerId, e.clientX, e.clientY);
+        break;
+      case 'move':
+        g.move(e.pointerId, e.clientX, e.clientY);
+        break;
+      case 'up':
+        g.up(e.pointerId, e.clientX, e.clientY);
+        break;
+      default:
+        g.cancel(e.pointerId);
+    }
+  }
+
+  #onGesture(g) {
+    switch (g.t) {
+      case 'move':
+        this.#queueMove(g.x, g.y);
+        break;
+      case 'button':
+        this.#button(g.x, g.y, g.button, g.down);
+        break;
+      case 'wheel': {
+        const p = this.#toRemote(g.x, g.y);
+        if (!p?.inside) return;
+        this.#move = null;
+        this.#send({ t: 'move', x: p.x, y: p.y });
+        this.#send({ t: 'wheel', dx: g.dx, dy: g.dy });
+        break;
+      }
+      case 'pinch':
+        this.#view.pinch(g.from, g.to);
+        this.#showView();
+    }
+  }
+
+  #showView() {
+    this.#video.style.transform = this.#view.transform;
   }
 
   #onWheel(e) {
@@ -148,9 +260,13 @@ export class Input {
   }
 
   #onKey(e, down) {
-    if (!this.#active() || e.isComposing) return;
-    // A page control that takes keys, such as the monitor menu, keeps them;
-    // only the release of a key the remote saw pressed still goes out.
+    if (!this.#active()) return;
+    // Keys an input method or a soft keyboard is typing with are the text
+    // box's; what they type arrives as text. Only the release of a key the
+    // remote saw pressed still goes out.
+    if (imeOwns(e) && (down || !this.#held.has(e.code))) return;
+    // A page control that takes keys, such as the monitor menu, keeps them
+    // in the same way.
     const local = e.target instanceof Element && e.target.closest('[data-keys="local"]');
     if (local && (down || !this.#held.has(e.code))) return;
     let { key, code } = e;
@@ -169,6 +285,7 @@ export class Input {
       this.#held.set(code, key);
       return;
     }
+    // Sent as a key, so the text box must not type it as well.
     e.preventDefault();
 
     if (down) this.#held.set(code, key);
@@ -189,6 +306,27 @@ export class Input {
   #key(msg) {
     if (this.#pasteQueue) this.#pasteQueue.push(msg);
     else this.#send(msg);
+  }
+
+  #showPreedit(text) {
+    this.#preedit.textContent = text ?? '';
+    this.#preedit.hidden = !text;
+  }
+
+  #onCompositionEnd(e) {
+    this.#showPreedit('');
+    this.#text.value = '';
+    if (!this.#active()) return;
+    for (const m of fromComposition(e.data)) this.#key(m);
+  }
+
+  // onBeforeInput sends what a soft keyboard typed without naming a key.
+  // Text an input method is composing waits for compositionend.
+  #onBeforeInput(e) {
+    if (e.isComposing || e.inputType === 'insertCompositionText') return;
+    e.preventDefault();
+    if (!this.#active()) return;
+    for (const m of fromInput(e.inputType, e.data)) this.#key(m);
   }
 
   #onPaste(e) {
@@ -220,8 +358,4 @@ export class Input {
 function isPasteShortcut(e) {
   const primary = isMac ? e.metaKey : e.ctrlKey;
   return primary && !e.altKey && !e.repeat && (e.code === 'KeyV' || e.key.toLowerCase() === 'v');
-}
-
-function clamp(n, lo, hi) {
-  return Math.min(Math.max(n, lo), hi);
 }

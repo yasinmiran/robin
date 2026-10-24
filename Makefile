@@ -109,11 +109,11 @@ dist: agents | go-version
 		git describe --tags --match 'v[0-9]*' --exact-match >/dev/null 2>&1 || \
 		{ echo "make dist: HEAD is not a release tag; pass VERSION=" >&2; exit 1; }; esac
 	@set -e; echo "dist VERSION=$(VERSION)"; \
-	for p in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do \
-		os=$${p%/*}; arch=$${p#*/}; \
-		echo "build dist/robin-$$os-$$arch"; \
+	for p in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do \
+		os=$${p%/*}; arch=$${p#*/}; ext=; [ $$os != windows ] || ext=.exe; \
+		echo "build dist/robin-$$os-$$arch$$ext"; \
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GOBUILD) \
-			-ldflags "$(GO_LDFLAGS)" -o dist/robin-$$os-$$arch ./cmd/robin; \
+			-ldflags "$(GO_LDFLAGS)" -o dist/robin-$$os-$$arch$$ext ./cmd/robin; \
 	done
 
 # Builds the agents, the CLI and dist from this tree and again from a copy

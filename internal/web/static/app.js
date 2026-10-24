@@ -1,3 +1,4 @@
+import { hasTouch } from './device.js';
 import { Input } from './input.js';
 import { Overlay } from './overlay.js';
 import { StatsSampler } from './stats.js';
@@ -19,12 +20,15 @@ const STATS_EVERY_MS = 1000;
 const TOKEN_KEY = 'robin.token';
 
 const video = document.getElementById('screen');
+const typing = document.getElementById('typing');
 const overlay = new Overlay();
 const sampler = new StatsSampler();
 const toAgent = (header, blob, options) => sendBulk(pc, header, blob, options);
 const files = new Files({ overlay, send: sendControl, bulk: toAgent });
 const clipboard = new Clipboard({ send: sendControl, bulk: toAgent, propose: (list) => files.propose(list) });
-const input = new Input(video, sendControl, () => channel?.readyState === 'open', { paste: (data) => clipboard.paste(data) });
+const input = new Input(video, typing, document.getElementById('preedit'), sendControl, () => channel?.readyState === 'open', {
+  paste: (data) => clipboard.paste(data),
+});
 const cursor = new RemoteCursor(video);
 const session = new Session();
 const sessionControls = sessionSection(overlay.addSection('session'));
@@ -60,6 +64,12 @@ window.robin = {
   get muted() { return video.muted; },
   get monitors() { return monitors; },
   showMonitor: (name) => showMonitor(name),
+  // The picture's local zoom: scale, and the shift of its top-left corner.
+  get zoom() {
+    const v = input.view;
+    return { scale: v.scale, x: v.x, y: v.y };
+  },
+  get gesture() { return input.gesture; },
   addSection: (name) => overlay.addSection(name),
   detach: () => leave(session.detach()),
   endSession: () => leave(session.end()),
@@ -79,6 +89,8 @@ onControl('monitors', (c) => {
 });
 
 input.attach();
+// A touch screen has no keys of its own: the button raises the soft one.
+if (hasTouch) overlay.showKeyboard(typing, () => input.toggleKeyboard());
 connect(takeToken());
 
 // takeToken reads the token from the fragment and moves it out of the address

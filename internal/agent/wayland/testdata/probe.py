@@ -5,6 +5,7 @@ equal monitor coordinates here.
 F2 prints the clipboard's text; F3 sets the clipboard to "from-session".
 F4 prints the clipboard's MIME types and reads its text/html and image/png;
 F5 sets the clipboard to RICH_TEXT, RICH_HTML and RICH_PNG at once.
+Ctrl+V prints the clipboard's text as pasted.
 Each key press, and each SIGUSR1, moves the picture on by one frame, the way
 a terminal echoes what is typed. --animate repaints the whole window 60
 times a second, for frame rate tests.
@@ -92,6 +93,10 @@ class Probe(Gtk.Application):
 
     def on_key(self, ctrl, keyval, keycode, state):
         name = Gdk.keyval_name(keyval)
+        if name == "v" and state & Gdk.ModifierType.CONTROL_MASK:
+            log(ev="paste-key")
+            self.clipboard.read_text_async(None, self.on_paste)
+            return True
         log(ev="key", keyval=name, text=chr(Gdk.keyval_to_unicode(keyval) or 0))
         self.tick(self.area)
         if name == "F2":
@@ -108,6 +113,12 @@ class Probe(Gtk.Application):
             self.clipboard.set_content(Gdk.ContentProvider.new_union(
                 [Gdk.ContentProvider.new_for_bytes(mime, GLib.Bytes.new(data)) for data, mime in parts]))
         return True
+
+    def on_paste(self, cb, res):
+        try:
+            log(ev="paste", text=cb.read_text_finish(res))
+        except GLib.Error as e:
+            log(ev="paste-error", error=e.message)
 
     def on_text(self, cb, res):
         try:

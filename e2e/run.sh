@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the robin e2e suite in rootless podman.
 #
-#   ./run.sh                    every scenario: direct blocked restart resume rejoin attach wayland webkit firefox
+#   ./run.sh                    every scenario: direct blocked restart resume rejoin attach wayland webkit firefox nomux touch
 #   ./run.sh direct restart     just those
 #   ./run.sh selftest           prove the harness itself, no CLI needed
 #
@@ -37,7 +37,7 @@ ROBIN_BIN=${ROBIN_BIN:-bin/robin-linux-amd64}
 COVER=${ROBIN_E2E_COVER:-}
 [[ -z $COVER || $COVER = /* ]] || COVER=$PWD/$COVER
 
-ALL_SCENARIOS=(direct blocked restart resume rejoin attach wayland webkit firefox)
+ALL_SCENARIOS=(direct blocked restart resume rejoin attach wayland webkit firefox nomux touch)
 
 log() { printf '\033[1m[e2e]\033[0m %s\n' "$*" >&2; }
 die() { log "error: $*"; exit 2; }
@@ -172,6 +172,7 @@ run_scenario() {
     image=$WLHOST_IMG
     spec=tests/wayland.spec.ts
   fi
+  [[ $s != touch ]] || spec=tests/touch.spec.ts
   # sshd sets GOCOVERDIR=/cover in every session on the host, so a cover
   # agent writes there.
   local host_cover=() client_cover=() env_cover=()
@@ -188,11 +189,13 @@ run_scenario() {
   start_host "$image" "${host_cover[@]}"
   start_client "$dir" -v "$ROBIN_BIN:/usr/local/bin/robin:ro" "${client_cover[@]}"
   wait_for_sshd
-  if [[ $s = blocked ]]; then
+  # nomux is blocked without a ControlMaster, so its forward carries the media.
+  if [[ $s = blocked || $s = nomux ]]; then
     log "scenario $s: dropping non-loopback UDP on the host"
     on_client ssh robinhost robin-block-udp
   fi
   local cli_args=${ROBIN_CLI_ARGS:-}
+  [[ $s != nomux ]] || cli_args="--ssh-mux=false $cli_args"
   if [[ $s = attach ]]; then
     log "scenario $s: starting robin's own desktop"
     on_client ssh robinhost robin-live start
@@ -383,8 +386,8 @@ main() {
   local s
   for s in "${scenarios[@]}"; do
     case $s in
-      selftest | direct | blocked | restart | resume | rejoin | attach | wayland | webkit | firefox) ;;
-      *) die "unknown scenario '$s' (want selftest, direct, blocked, restart, resume, rejoin, attach, wayland, webkit or firefox)" ;;
+      selftest | direct | blocked | restart | resume | rejoin | attach | wayland | webkit | firefox | nomux | touch) ;;
+      *) die "unknown scenario '$s' (want selftest, direct, blocked, restart, resume, rejoin, attach, wayland, webkit, firefox, nomux or touch)" ;;
     esac
   done
   command -v podman >/dev/null || die "podman not found"

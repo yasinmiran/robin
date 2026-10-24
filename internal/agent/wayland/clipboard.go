@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"slices"
 	"strings"
@@ -39,13 +40,23 @@ type clipboard struct {
 	updates  chan string
 	contents chan protocol.Clip
 	stops    []func()
+	log      *slog.Logger
 
 	mu      sync.Mutex
-	content protocol.Clip
+	content protocol.Clip // what the agent offers
+	// held is the user's clipboard: what a program on the desktop copied
+	// or the page set, as last seen, or the text there before the session,
+	// once a paste has read it; empty when none of it is in a format the
+	// agent reads. known is false until held is any of these. A paste of
+	// typed text changes neither.
+	held  protocol.Clip
+	known bool
+	// paste puts back what pastes of typed text replaced.
+	paste pasteRestore
 }
 
-func newClipboard(s *portalSession) (*clipboard, error) {
-	c := &clipboard{s: s, updates: make(chan string, 1), contents: make(chan protocol.Clip, 1)}
+func newClipboard(s *portalSession, log *slog.Logger) (*clipboard, error) {
+	c := &clipboard{s: s, updates: make(chan string, 1), contents: make(chan protocol.Clip, 1), log: log}
 	owner, stopOwner, err := s.p.sigs.watch(portalPath, ifaceClipboard, "SelectionOwnerChanged")
 	if err != nil {
 		return nil, err
@@ -93,11 +104,25 @@ func dataFor(content protocol.Clip, mime string) []byte {
 	return data
 }
 
-// set offers content to the desktop as its clipboard.
+// set offers the page's content to the desktop as its clipboard, in place
+// of whatever pastes of typed text were to put back.
 func (c *clipboard) set(content protocol.Clip) error {
+	if len(mimesOf(content)) == 0 {
+		return errors.New("nothing to put on the clipboard")
+	}
+	c.paste.forget()
+	c.mu.Lock()
+	c.held, c.known = content, true
+	c.mu.Unlock()
+	return c.offer(content)
+}
+
+// offer offers content to the desktop as its clipboard. Empty content goes
+// as empty text, which leaves nothing there to paste.
+func (c *clipboard) offer(content protocol.Clip) error {
 	mimes := mimesOf(content)
 	if len(mimes) == 0 {
-		return errors.New("nothing to put on the clipboard")
+		mimes = textMimes
 	}
 	c.mu.Lock()
 	c.content = content
@@ -129,9 +154,13 @@ func (c *clipboard) serve(transfer <-chan *dbus.Signal) {
 
 func (c *clipboard) write(serial uint32, mime string) error {
 	c.mu.Lock()
-	data := dataFor(c.content, mime)
+	content := c.content
 	c.mu.Unlock()
-	if data == nil {
+	data := dataFor(content, mime)
+	// Empty content is a put-back's empty text, which pastes as nothing
+	// rather than fail, so a clipboard manager reads it in place of the
+	// pasted text.
+	if data == nil && (content.Size() > 0 || !slices.Contains(textMimes, mime)) {
 		return fmt.Errorf("nothing on the clipboard as %s", mime)
 	}
 	var fd dbus.UnixFD
@@ -172,7 +201,12 @@ func (c *clipboard) follow(owner <-chan *dbus.Signal) {
 		if mine, _ := opts["session_is_owner"].Value().(bool); mine {
 			continue
 		}
+		// What a program copies is the user's: no paste puts back over it.
+		c.paste.forget()
 		content := c.readAll(mimeList(opts["mime_types"].Value()))
+		c.mu.Lock()
+		c.held, c.known = content, true
+		c.mu.Unlock()
 		if content.Size() == 0 {
 			continue
 		}

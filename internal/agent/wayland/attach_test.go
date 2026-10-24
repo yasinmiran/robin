@@ -252,6 +252,56 @@ func TestAttachStreamsAndDrives(t *testing.T) {
 		case <-time.After(10 * time.Second):
 			t.Error("nothing copied on the desktop reached the content channel")
 		}
+		// Its text reaches the plain channel too, which the next copy's
+		// check would otherwise read first.
+		select {
+		case text := <-d.Clipboard():
+			if text != "rich-from-session" {
+				t.Errorf("desktop copied text %q, want rich-from-session", text)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("the text of a rich copy never reached the clipboard channel")
+		}
+	})
+
+	t.Run("text", func(t *testing.T) {
+		if d.clip == nil {
+			t.Fatal("clipboard not granted")
+		}
+		// The probe owns the clipboard, which the pastes must leave as it was.
+		tap(t, d, "F3")
+		select {
+		case text := <-d.Clipboard():
+			if text != "from-session" {
+				t.Fatalf("desktop copied %q, want from-session", text)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("the probe's clipboard never reached the agent")
+		}
+
+		// ASCII types as keys.
+		mark := p.mark()
+		if err := d.Type(t.Context(), "ok!"); err != nil {
+			t.Fatal(err)
+		}
+		p.await(t, mark, func(e probeEvent) bool { return e.Ev == "key" && e.Text == "!" })
+		if got := p.entered(mark); got != "ok!" {
+			t.Errorf("entered %q, want ok!", got)
+		}
+
+		// Anything else is pasted whole, and the clipboard put back after.
+		mark = p.mark()
+		const text = "a日本b€ c"
+		start := time.Now()
+		if err := d.Type(t.Context(), text); err != nil {
+			t.Fatal(err)
+		}
+		pasted := p.await(t, mark, func(e probeEvent) bool { return e.Ev == "paste" || e.Ev == "paste-error" })
+		t.Logf("pasted %+v %v after Type began", pasted, time.Since(start))
+		if got := p.entered(mark); got != text {
+			t.Errorf("entered %q, want %q", got, text)
+		}
+		awaitClipboard(t, p, d, "from-session", start)
 	})
 
 	t.Run("cursor", func(t *testing.T) {
@@ -265,8 +315,44 @@ func TestAttachStreamsAndDrives(t *testing.T) {
 		}
 	})
 
+	// The probe copies once more as the session ends. The next session's
+	// portal need not report a clipboard taken before it began, and a
+	// paste there still puts it back.
+	tap(t, d, "F3")
+	select {
+	case text := <-d.Clipboard():
+		if text != "from-session" {
+			t.Fatalf("desktop copied %q, want from-session", text)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the probe's clipboard never reached the agent")
+	}
 	d.Close()
 	checkTornDown(t)
+
+	t.Run("text after a session", func(t *testing.T) {
+		d, _ := open(t, true)
+		defer func() {
+			d.Close()
+			checkTornDown(t)
+		}()
+		select {
+		case text := <-d.Clipboard():
+			t.Logf("the portal reported the clipboard from before the session: %q", text)
+		case <-time.After(time.Second):
+			t.Log("the portal did not report the clipboard from before the session")
+		}
+		mark := p.mark()
+		start := time.Now()
+		if err := d.Type(t.Context(), "日本"); err != nil {
+			t.Fatal(err)
+		}
+		p.await(t, mark, func(e probeEvent) bool { return e.Ev == "paste" || e.Ev == "paste-error" })
+		if got := p.entered(mark); got != "日本" {
+			t.Errorf("entered %q, want 日本", got)
+		}
+		awaitClipboard(t, p, d, "from-session", start)
+	})
 }
 
 func TestAttachEndsWhenTheStreamDies(t *testing.T) {
@@ -352,6 +438,9 @@ func TestAttachViewOnly(t *testing.T) {
 	}
 	if !d.ViewOnly() {
 		t.Error("a view-only session does not say so, so it would take uploads")
+	}
+	if err := d.Type(t.Context(), "日本"); !errors.Is(err, errViewOnly) {
+		t.Errorf("text on a view-only session: %v", err)
 	}
 	if f, _, err := d.Capture(true); err != nil || f.Width != 1280 {
 		t.Errorf("view-only session streams no picture: %v", err)
@@ -524,6 +613,25 @@ func tap(t *testing.T, d *Desktop, key string) {
 	send(t, d, protocol.Control{T: protocol.ControlKey, Key: key, Code: key})
 }
 
+// awaitClipboard has the probe read the clipboard, with F2, until it reads
+// want, which a put-back brings restoreAfter after the paste that began at
+// pasted. It starts reading half a second after that: GNOME 46's portal
+// has crashed when a read met the put-back's new offer.
+func awaitClipboard(t *testing.T, p *probe, d *Desktop, want string, pasted time.Time) {
+	t.Helper()
+	time.Sleep(time.Until(pasted.Add(restoreAfter + 500*time.Millisecond)))
+	var ev probeEvent
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
+		mark := p.mark()
+		tap(t, d, "F2")
+		ev = p.await(t, mark, func(e probeEvent) bool { return e.Ev == "clipboard" || e.Ev == "clipboard-error" })
+		if ev.Ev == "clipboard" && ev.Text == want {
+			return
+		}
+	}
+	t.Fatalf("the clipboard holds %+v, want %q", ev, want)
+}
+
 func frameChanges(d *Desktop, before []byte) bool {
 	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(33 * time.Millisecond) {
 		if f, changed, err := d.Capture(false); err == nil && changed && !bytes.Equal(f.Pix, before) {
@@ -642,6 +750,20 @@ func (p *probe) typed(mark int) string {
 	var b strings.Builder
 	for _, e := range p.events[mark:] {
 		if e.Ev == "key" && e.Text != "\x00" {
+			b.WriteString(e.Text)
+		}
+	}
+	return b.String()
+}
+
+// entered returns the text that reached the probe from mark on, typed or
+// pasted, in the order it arrived.
+func (p *probe) entered(mark int) string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var b strings.Builder
+	for _, e := range p.events[mark:] {
+		if e.Ev == "key" && e.Text != "\x00" || e.Ev == "paste" {
 			b.WriteString(e.Text)
 		}
 	}
