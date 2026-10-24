@@ -34,7 +34,7 @@ var bulkHeaderWait = 10 * time.Second
 
 // errBulkWaiting refuses a bulk channel while maxWaitingBulk others wait
 // for their header.
-var errBulkWaiting = fmt.Errorf("%w: %d transfers are waiting for their header", protocol.ErrBulkFrame, maxWaitingBulk)
+var errBulkWaiting = fmt.Errorf("peer: %d transfers are already waiting for their header", maxWaitingBulk)
 
 // takeBulk hands a bulk channel the browser opened to receiveBulk's
 // receiver, counting it as waiting until its first frame, and closes it
@@ -55,7 +55,7 @@ func (p *Peer) takeBulk(dc *webrtc.DataChannel) {
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		if r.sink == nil && !r.over {
-			r.fail(fmt.Errorf("%w: no header within %s", protocol.ErrBulkFrame, wait))
+			r.fail(fmt.Errorf("peer: no header within %s", wait))
 		}
 	})
 	dc.OnMessage(func(m webrtc.DataChannelMessage) {
@@ -159,7 +159,7 @@ func (rc *remoteCandidates) offer(offerSDP string) (apply func(), err error) {
 		n += len(rc.seen)
 	}
 	if n > maxRemoteCandidates {
-		return nil, fmt.Errorf("peer: the offer names %d candidates, more than %d", n, maxRemoteCandidates)
+		return nil, fmt.Errorf("peer: the offer brings the browser's candidates to %d, more than %d", n, maxRemoteCandidates)
 	}
 	return func() {
 		rc.mu.Lock()
