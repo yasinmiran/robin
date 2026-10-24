@@ -101,7 +101,8 @@ type Peer struct {
 	control *webrtc.DataChannel
 	bwe     cc.BandwidthEstimator
 
-	remote remoteCandidates
+	remote      remoteCandidates
+	waitingBulk atomic.Int32 // bulk channels the browser opened, before their first frame
 }
 
 // New builds the peer connection and its video track. Nothing is sent until
@@ -408,17 +409,24 @@ func (p *Peer) route(dc *webrtc.DataChannel) {
 	case protocol.ControlChannel:
 		p.attachControl(dc)
 	case protocol.BulkChannel:
-		receiveBulk(dc, p.h.Bulk, p.log)
+		p.takeBulk(dc)
 	default:
 		p.log.Warn("ignoring unexpected data channel", "label", dc.Label())
 		dc.Close()
 	}
 }
 
+// attachControl makes dc the control channel. The page opens one; a second
+// replaces the first, which is closed, so one channel at a time dispatches.
 func (p *Peer) attachControl(dc *webrtc.DataChannel) {
 	p.mu.Lock()
+	old := p.control
 	p.control = dc
 	p.mu.Unlock()
+	if old != nil {
+		p.log.Warn("the browser opened a second control channel; closing the first")
+		old.Close()
+	}
 	dc.OnOpen(func() {
 		if p.h.ControlOpen != nil {
 			p.h.ControlOpen()

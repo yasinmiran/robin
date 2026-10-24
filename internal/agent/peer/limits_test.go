@@ -3,6 +3,7 @@ package peer
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -251,5 +252,196 @@ func TestPeerNeverDialsTCP(t *testing.T) {
 	case <-dialed:
 		t.Error("the agent connected to a TCP port the page named")
 	case <-time.After(3 * time.Second):
+	}
+}
+
+// idle is a bulk channel the browser opened and sends nothing on, with the
+// agent's verdict on it and its close.
+type idle struct {
+	dc      *webrtc.DataChannel
+	verdict chan protocol.Bulk
+	closed  chan struct{}
+}
+
+func idleBulk(t *testing.T, b *browser) *idle {
+	t.Helper()
+	dc, err := b.pc.CreateDataChannel(protocol.BulkChannel, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &idle{dc: dc, verdict: make(chan protocol.Bulk, 1), closed: make(chan struct{})}
+	dc.OnMessage(func(m webrtc.DataChannelMessage) {
+		if v, err := protocol.ParseBulk(m.Data); m.IsString && err == nil {
+			select {
+			case c.verdict <- v:
+			default:
+			}
+		}
+	})
+	dc.OnClose(func() { close(c.closed) })
+	return c
+}
+
+// TestBulkChannelsWithoutAHeaderAreBounded opens far more bulk channels
+// than the page ever runs at once and sends nothing on them: the agent
+// keeps maxWaitingBulk waiting for a header and refuses the rest, a
+// transfer too while the slots are full, and takes one again once a slot
+// is free.
+func TestBulkChannelsWithoutAHeaderAreBounded(t *testing.T) {
+	bp := newBulkPair(t, Config{}, Handlers{})
+	const opened = 4 * maxWaitingBulk
+	var all []*idle
+	for range opened {
+		all = append(all, idleBulk(t, bp.browser))
+	}
+	var open []*idle
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		open = open[:0]
+		for _, c := range all {
+			select {
+			case <-c.closed:
+			default:
+				open = append(open, c)
+			}
+		}
+		if len(open) < maxWaitingBulk {
+			t.Fatalf("%d idle bulk channels left open, fewer than the %d the agent waits for", len(open), maxWaitingBulk)
+		}
+		if len(open) == maxWaitingBulk {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d of %d idle bulk channels still open, want %d", len(open), opened, maxWaitingBulk)
+		}
+	}
+
+	var refused *BulkRefusedError
+	err := bp.upload(context.Background(), t, protocol.Bulk{Kind: testKind, ID: "late", Size: 10}, bytes.NewReader(make([]byte, 10)))
+	if !errors.As(err, &refused) || !strings.Contains(refused.Reason, "header") {
+		t.Errorf("a transfer while every slot waits: %v, want a refusal", err)
+	}
+	for _, c := range all {
+		select {
+		case <-c.closed:
+			select {
+			case v := <-c.verdict:
+				if v.T != protocol.BulkError {
+					t.Errorf("a refused channel's verdict %+v", v)
+				}
+			default:
+				t.Error("a channel refused without a verdict")
+			}
+		default:
+		}
+	}
+
+	open[0].dc.Close()
+	<-open[0].closed
+	// The agent hears of the close after the browser does.
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		err := bp.upload(context.Background(), t, protocol.Bulk{Kind: testKind, ID: "again", Size: 10}, bytes.NewReader(make([]byte, 10)))
+		if err == nil {
+			break
+		}
+		if !errors.As(err, &refused) || time.Now().After(deadline) {
+			t.Fatalf("a transfer once a slot is free: %v", err)
+		}
+	}
+	if err := receiveID(t, bp.atAgent, "again").end(t); err != nil {
+		t.Errorf("the sink ended with %v", err)
+	}
+	for _, c := range open[1:] {
+		select {
+		case <-c.closed:
+			t.Fatal("the agent closed a channel within the bound")
+		default:
+		}
+	}
+}
+
+// TestBulkHeaderDeadline leaves one bulk channel idle past the deadline,
+// which the agent closes with a refusal, while a transfer that sent its
+// header in time may take as long as it likes over the rest.
+func TestBulkHeaderDeadline(t *testing.T) {
+	saved := bulkHeaderWait
+	bulkHeaderWait = 300 * time.Millisecond
+	t.Cleanup(func() { bulkHeaderWait = saved })
+	bp := newBulkPair(t, Config{}, Handlers{})
+
+	c := idleBulk(t, bp.browser)
+	select {
+	case <-c.closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the agent kept a bulk channel without a header")
+	}
+	select {
+	case v := <-c.verdict:
+		if v.T != protocol.BulkError || !strings.Contains(v.Error, "header") {
+			t.Errorf("verdict %+v, want an error about the header", v)
+		}
+	default:
+		t.Error("the agent closed the channel without a verdict")
+	}
+
+	dc, frames, done := bp.rawBulk(t)
+	payload := []byte("slow but sure")
+	sendJSON(t, dc, protocol.Bulk{T: protocol.BulkHeader, Kind: testKind, ID: "slow", Size: int64(len(payload))})
+	s := receiveID(t, bp.atAgent, "slow")
+	time.Sleep(3 * bulkHeaderWait)
+	if err := dc.Send(payload); err != nil {
+		t.Fatal(err)
+	}
+	sendJSON(t, dc, protocol.Bulk{T: protocol.BulkEnd, SHA256: sumOf(payload)})
+	select {
+	case v := <-frames:
+		if v.T != protocol.BulkDone {
+			t.Errorf("slow transfer: verdict %+v, want done", v)
+		}
+	case <-done:
+		t.Fatal("the agent closed a transfer that had sent its header")
+	case <-time.After(10 * time.Second):
+		t.Fatal("no verdict on the slow transfer")
+	}
+	if err := s.end(t); err != nil {
+		t.Errorf("slow transfer: sink ended with %v", err)
+	}
+}
+
+// TestSecondControlChannelClosesFirst opens a second control channel from
+// the same page: the agent lets the first go, so only one ever dispatches,
+// and sends on the second.
+func TestSecondControlChannelClosesFirst(t *testing.T) {
+	bp := newBulkPair(t, Config{}, Handlers{})
+	first := bp.browser.control
+	firstClosed := make(chan struct{})
+	first.OnClose(func() { close(firstClosed) })
+	ordered := true
+	second, err := bp.browser.pc.CreateDataChannel(protocol.ControlChannel, &webrtc.DataChannelInit{Ordered: &ordered})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(chan protocol.Control, 4)
+	second.OnMessage(func(msg webrtc.DataChannelMessage) {
+		var c protocol.Control
+		if json.Unmarshal(msg.Data, &c) == nil {
+			got <- c
+		}
+	})
+	waitOpen(t, second)
+	select {
+	case <-firstClosed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first control channel stayed open beside the second")
+	}
+	if err := bp.agent.SendControl(protocol.Control{T: protocol.ControlRelease}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case c := <-got:
+		if c.T != protocol.ControlRelease {
+			t.Errorf("second channel got %+v", c)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("SendControl never reached the second channel")
 	}
 }

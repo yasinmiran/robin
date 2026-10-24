@@ -5,6 +5,11 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/pion/webrtc/v4"
+
+	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 // maxRemoteCandidates bounds the distinct candidates the browser may name
@@ -14,6 +19,56 @@ import (
 // stand-in browser gathers about 20). Each the agent takes has it check a
 // pair against every candidate of its own for as long as the peer lives.
 const maxRemoteCandidates = 256
+
+// maxWaitingBulk bounds the bulk channels the browser has opened and sent no
+// header on yet. The page sends a header as soon as a channel opens and
+// runs at most four uploads and two clipboard transfers at once; past the
+// header, those features' own limits hold.
+const maxWaitingBulk = 8
+
+// bulkHeaderWait bounds how long a bulk channel may stay open without a
+// header, the page's first frame, which it sends the moment the channel
+// opens; it is long only for a link that stalls. A var so tests need not
+// wait it out.
+var bulkHeaderWait = 10 * time.Second
+
+// errBulkWaiting refuses a bulk channel while maxWaitingBulk others wait
+// for their header.
+var errBulkWaiting = fmt.Errorf("%w: %d transfers are waiting for their header", protocol.ErrBulkFrame, maxWaitingBulk)
+
+// takeBulk hands a bulk channel the browser opened to receiveBulk's
+// receiver, counting it as waiting until its first frame, and closes it
+// with a refusal when its header is late or too many others wait.
+func (p *Peer) takeBulk(dc *webrtc.DataChannel) {
+	if p.waitingBulk.Add(1) > maxWaitingBulk {
+		p.waitingBulk.Add(-1)
+		dc.OnOpen(func() {
+			(&bulkReceiver{dc: dc}).reply(protocol.Bulk{T: protocol.BulkError, Error: reason(errBulkWaiting)})
+		})
+		return
+	}
+	r := &bulkReceiver{dc: dc, accept: p.h.Bulk, log: p.log}
+	var once sync.Once
+	settled := func() { once.Do(func() { p.waitingBulk.Add(-1) }) }
+	wait := bulkHeaderWait
+	late := time.AfterFunc(wait, func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if r.sink == nil && !r.over {
+			r.fail(fmt.Errorf("%w: no header within %s", protocol.ErrBulkFrame, wait))
+		}
+	})
+	dc.OnMessage(func(m webrtc.DataChannelMessage) {
+		late.Stop()
+		settled()
+		r.message(m)
+	})
+	dc.OnClose(func() {
+		late.Stop()
+		settled()
+		r.closed()
+	})
+}
 
 // ErrTooManyCandidates means the browser named more than
 // maxRemoteCandidates candidates since its last ICE restart; the candidate
