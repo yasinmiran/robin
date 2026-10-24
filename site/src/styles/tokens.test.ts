@@ -67,7 +67,7 @@ function contrast(a: string, b: string): number {
 }
 
 // [foreground, background, minimum]: 4.5 for text, 7 for body text, 3 for
-// edges and focus rings.
+// edges and focus rings, 1.5 for the logo tile against the page.
 const PAIRS: [string, string, number][] = [
   ["foreground", "background", 7],
   ["muted-foreground", "background", 4.5],
@@ -95,6 +95,7 @@ const PAIRS: [string, string, number][] = [
   ["warning-edge", "background", 3],
   ["note-edge", "background", 3],
   ["mint", "tile", 3],
+  ["tile", "background", 1.5],
 ];
 
 describe.each([
