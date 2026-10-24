@@ -10,6 +10,8 @@ These are the current limits of the shipped tool. Some of them have planned work
 ## Sessions
 
 - One browser per session. A second tab is refused until the first closes.
+- On a client shared with other users, the launch link the browser opener gets is on a command line they can read. One who opens it before your browser does gets the page, and your browser shows Not Found; the CLI says the link was opened again. `--no-browser` leaves nothing to read.
+- Ctrl+C while the CLI redials a session the host reports busy leaves the session running, since another `robin gui` may be using it; the CLI says so, and `robin end` ends it.
 - The session lasts as long as the SSH connection. If it drops, the session ends, and so does a spawned desktop.
 - The status tab reads 0 fps on an idle screen. Nothing is sent when nothing changes, and that is not a stall.
 

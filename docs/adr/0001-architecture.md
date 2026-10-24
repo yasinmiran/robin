@@ -1673,6 +1673,87 @@ Pion's read loop, and loading a module or waiting for `pw-record`'s output
 to appear takes up to a few hundred milliseconds that every data channel
 would otherwise wait out.
 
+### A shared client: the token off command lines, strangers off the tunnel
+
+The first security audit read the client as a machine other users log in
+to, who can read every command line in `/proc` and connect to every
+loopback port. Two of the CLI's surfaces failed that reading.
+
+- The page URL, token in its fragment, went to `xdg-open` or `open` as an
+  argument, and a browser that the opener starts keeps its arguments for
+  its whole life, so the token sat in `/proc/<pid>/cmdline` for hours, and
+  whoever read it could take the page whenever the user's tab was gone. The
+  opener now gets `Server.LaunchURL`, `/open/<secret>` with a second 256-bit
+  secret, which answers its first fetch with a bodiless 303 to `/#<token>`
+  and every later one with the same bare 404 as a wrong secret. A race
+  remains: someone who reads the link and fetches it before the browser
+  does gets the page. The user's browser then shows Not Found, the server
+  calls `LaunchReused`, and the CLI says on stderr that the link was opened
+  again. The link does not expire on a timer: the browser fetches it as it
+  starts, and a timer would only add a way for a slow cold start to fail.
+  Telling a stranger's loopback connection from the
+  user's by uid, through `/proc/net/tcp`, would close the race on Linux
+  only and not on Android, which hides that file, so it waits. In Chrome
+  (`TestBrowserSmoke`) the launch link lands on the page with its token
+  once, the page clears the address bar and reconnects on reload as
+  before, and a second fetch is a 404.
+- Each connection to the tunnel's loopback port became an SSH channel on the
+  user's master and a connection to the agent's ICE-TCP listener, for as
+  long as the stranger kept it. The tunnel now reads the first RFC 4571
+  frame within 5 s, at most 512 bytes, the buffer the agent's mux reads its
+  first message into, and splices only a Binding request whose
+  MESSAGE-INTEGRITY verifies with the ICE password of the agent's latest
+  answer. The bridge hands the tunnel each answer before the page sees it,
+  so the browser cannot check with credentials the tunnel lacks. The
+  password, not the ufrag alone: the ufrag crosses the network in clear in
+  every UDP check, and the password never leaves SSH and the token-guarded
+  websocket. Only the latest answer's: after an ICE restart Pion's mux no
+  longer routes the old ufrag either. In the e2e `blocked` and `nomux`
+  scenarios every TCP session ran through the check; in `restart`, the
+  page was back on the tunnel 4151 ms after UDP was dropped, on a machine
+  running seven other tracks' suites (about three seconds when measured
+  alone, before the check, which costs one frame read per connection).
+- The page server closes a keep-alive connection after 30 s idle and a
+  refused request at once, and holds at most 32 connections; a browser
+  uses at most six for the page's files and one websocket. Another user can
+  still fill those 32 and slow the page's loading: loopback TCP carries no
+  peer identity to refuse them by.
+- Smaller bounds from the same reading: `sshmux.Master.Output` stops a
+  command past 1 MiB (the probe's report is at most 1248 bytes on the
+  hosts in `internal/probe/testdata`), a verbose agent log without
+  newlines is shown in 8 KiB pieces, `protocol.Conn.Send` refuses a line
+  over `MaxLineBytes` instead of writing one the peer must take for a broken
+  stream (a page frame of 1 MiB of `<` re-encoded to six times that), the
+  forward's target from the agent must be `host:port` or an absolute socket
+  path before it reaches `ssh -L`, and host text the CLI prints has bidi
+  controls and line separators escaped, the set the agent refuses in a file
+  name.
+- Ctrl+C during a reconnect that the daemon keeps answering busy no longer
+  runs the agent's end command: another `robin gui` holds the session, or
+  this CLI's own lost connection does until the daemon's 20 s idle timeout,
+  and the two look the same from here. Leaving a desktop the user meant to
+  end costs them a `robin end`; ending one another CLI is using costs its
+  user the session.
+
+### STUN: Google's by default, none through the tunnel alone
+
+The default `--stun` stays Google's public server. Both ends send it a
+Binding request at the start of every peer connection, which tells it the
+public addresses of the host and of the client, and its answers are not
+authenticated, so whoever can steer DNS or the path to it can hand either
+end a wrong reflexive address. That costs at most a candidate pair or the
+direct UDP path: the agent is known by the fingerprint pinned over SSH. The
+direct path through NAT is the fast one and needs a reflexive address, so
+the default keeps it working out of the box; `--stun none` or a server of
+one's own is the user's choice, and the README's Security section names
+the cost. With `--transport tunnel`, though, the relay drops every UDP
+candidate, so a reflexive address helps nobody, and the CLI gives neither
+the agent nor the page a STUN server. Switching to none under a ProxyJump
+was considered and left: the CLI cannot see a jump in the user's ssh
+config, and a host behind one may still be reachable over UDP. Nothing
+here is measured: the e2e network reaches no STUN server, and the choice
+rests on what ICE does with the answers.
+
 ## Verification parked
 
 Two checks were parked by decision on 2026-10-18. Both needed hardware the

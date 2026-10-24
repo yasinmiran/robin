@@ -69,7 +69,7 @@ An attached X11 desktop with several monitors shows one of them at a time, start
 - `direct` offers UDP only.
 - `tunnel` forces the SSH path. With `tunnel` the session fails if the SSH forward cannot be opened; with `auto` it carries on over UDP alone and logs a warning.
 
-`--stun` sets the STUN servers used to find a public address for NAT traversal, comma-separated. The default is Google's public server, `stun:stun.l.google.com:19302`, and `none` turns STUN off. How the paths fit together is on [How it works](/how-it-works#transports-and-fallback).
+`--stun` sets the STUN servers used to find a public address for NAT traversal, comma-separated. The default is Google's public server, `stun:stun.l.google.com:19302`, and `none` turns STUN off. The browser and the agent each ask it, which tells it both public addresses; `--transport tunnel` asks no STUN server, since it drops every UDP candidate anyway (see [Security](/security#stun-tells-a-server-where-you-are)). How the paths fit together is on [How it works](/how-it-works#transports-and-fallback).
 
 ## Encoders and sound
 
