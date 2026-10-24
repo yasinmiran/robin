@@ -191,9 +191,14 @@ only blind. On X11 the curtain sets the gamma ramp of every screen to zero:
 gamma is applied on the way to the monitor, after the picture the agent
 captures. On GNOME under Wayland it does the same through mutter, and KDE
 Plasma has no way for a program to set gamma, so there the switch is
-missing and `--curtain` fails with the reason. Night light and colour
-profiles set those ramps as well. The curtain checks once a second and
-darkens again, and lifting it restores whichever ramp was set last.
+missing and `--curtain` fails with the reason. Every screen needs a ramp a
+program can set: one without (some USB and DisplayLink monitors, virtual
+GPUs) would stay lit, so there the switch is missing too, and the reason
+names the screen. Night light and colour profiles set those ramps as well.
+The curtain checks once a second and darkens again, and lifting it restores
+whichever ramp was set last. A screen it finds lit and cannot darken, such
+as a monitor without a ramp plugged in meanwhile, shows as an error under
+the switch, which stays on for the screens it does cover.
 
 The silent room gives the desktop's sound server one more output, listed as
 Robin silent room in its sound settings while the room is silent, and moves
@@ -205,7 +210,15 @@ itself is never changed. Under PipeWire the new output belongs to a
 `pipewire-utils` on Fedora) when the host has it, and goes away with that
 process; otherwise it is a PulseAudio `module-null-sink`, which works through
 `pipewire-pulse` too. Switching it off or ending the session moves each
-program back to the output it was on.
+program back to the output it was on. A program that asks its sound server
+never to move its stream goes on playing at the host, and the switch names
+it until it stops. Sound already in another session's silent output stays
+there.
+
+Ending the session for any reason, Ctrl+C, a dropped connection or the
+idle timeout among them, lifts the curtain and gives the speakers back.
+The screen comes back unlocked, with whatever you left open on it: robin
+does not lock it for you.
 
 Before it changes anything, the agent hands a child of its own, `robin-agent
 keeper`, what would undo the change. When the agent ends normally it undoes
@@ -326,8 +339,9 @@ websocket listen on 127.0.0.1 and require a random 256-bit token from the URL
 fragment, an exact `Origin` and `Host`, and allow one browser at a time. On
 the host, the agent's ICE-TCP listener binds loopback and only accepts ICE
 connections carrying the session's credentials; the X display is protected by
-a fresh cookie in a 0600 file; the session's sound server listens only on a
-socket inside the run directory; the agent and its run directory are 0700.
+a fresh cookie in a 0600 file; the sound server of a desktop robin starts
+listens only on a socket inside the run directory; the agent and its run
+directory are 0700.
 Input from the page is limited to what a keyboard, a pointer and a clipboard
 can do in that session, plus the two switches of a private session on an
 attached desktop. The agent also listens for bulk transfers from the
@@ -335,14 +349,27 @@ page, but takes only kinds a feature has registered, and no feature has yet,
 so it refuses every one.
 
 A private session changes the attached desktop for as long as it lasts: the
-gamma of its screens and which output its programs play on. A keeper process
-undoes both if the agent is killed, but not if the keeper is killed along
-with it; then a module-made silent output stays until it is unloaded, and
-the screens stay black until something sets their gamma (night light,
-`xrandr --output NAME --gamma 1:1:1 --brightness 1`, or logging out). The
-curtain is no lock. Anyone at the machine can type and click while it is
+gamma of its screens and, with `--silent`, the user's own sound server, which
+gets an extra output and has the user's programs moved into it. PulseAudio
+and WirePlumber 0.4 remember those moves, and the undo moves each program
+back to clear them. A keeper process undoes both if the agent is killed, but
+not if the keeper is killed along with it. Then a module-made silent output
+stays until it is unloaded (`pactl list short modules | grep robin_silent`,
+then `pactl unload-module` with its number), and the screens stay black
+until something sets their gamma. On X11 that is `xrandr --output NAME
+--gamma 1:1:1 --brightness 1`; on GNOME under Wayland, switching Night Light
+on and off, or logging out. The person at the desk would be typing blind, so
+do it from another machine over SSH or from a text console.
+
+The curtain is no lock. Anyone at the machine can type and click while it is
 drawn, and on GNOME it also blacks out the indicator that says the screen
 is being shared, which leaves the black screen itself as the only sign.
+Whatever ends the session, a dropped connection included, lifts the curtain
+and leaves the desktop unlocked in front of whoever is there. The curtain
+refuses a desktop with a screen it cannot darken rather than leave that
+screen lit, but a screen plugged in while it is drawn stays lit, with an
+error under the switch, and so does a program that refuses to move out of
+the room's speakers.
 
 One exposure is on the client side: to open your browser the CLI hands the
 page URL, token included, to `open` or `xdg-open`, so for that moment another
@@ -502,7 +529,8 @@ to print the comparison the ADR quotes.
 - Text pasted from the browser into an attached desktop outlives the session
   only if that desktop runs a clipboard manager.
 - The curtain hides the host's screen but does not lock it: the keyboard and
-  mouse there still reach your session.
+  mouse there still reach your session, and when the session ends, for
+  whatever reason, the screen comes back unlocked.
 - The curtain is tested on Xvfb and against a stand-in for mutter, never on
   a real screen. Some hardware may draw the pointer on a plane its gamma
   does not cover, leaving the pointer visible on the black screen; night
@@ -510,6 +538,9 @@ to print the comparison the ADR quotes.
   darkens it again; and GNOME on real hardware is unverified.
 - No curtain on KDE Plasma or wlroots compositors, which give programs no
   way to set gamma.
+- A program that asks for its stream never to be moved
+  (`PA_STREAM_DONT_MOVE`) plays in the room while it is silent; the switch
+  names it.
 - A program that starts playing while the room is silent plays in the room
   until it is moved. In the tests that took 80 to 180 ms and none of the
   sound reached the room's output, but a program that is loud from its first

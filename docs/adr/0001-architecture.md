@@ -742,7 +742,14 @@ profile rewrites ramps whenever it likes. A drawn curtain reads every
 CRTC's ramp once a second, one round trip each, and darkens any that are not
 zero; a lit ramp it finds then becomes the one lifting restores, so the
 screen comes back with night light's newest colour rather than the one from
-before the session. The curtain has an X connection of its own and joins
+before the session. Every CRTC that drives an output must have a ramp a
+client can set, or the curtain is refused with the outputs named: one without
+(DisplayLink and other USB screens, some virtual GPUs) would stay lit beside
+the dark ones while the page said the screen was black. A check that finds
+such a screen plugged in, or a ramp it cannot darken again, is reported under
+the switch and the rest stay dark. The state machine is one package,
+`internal/agent/gamma`, over the three calls that differ: list the CRTCs,
+read a ramp, set one. The curtain has an X connection of its own and joins
 RandR on it by opcode only. `randr.Init` also rewrites xgb's global event and
 error tables, which the session's own connection reads on every event, and
 Go maps read and written at once can crash the process, not only fail a race
@@ -794,6 +801,13 @@ silent output by opening a new record stream there and dropping the old one,
 not by moving itself: the PipeWire test caught a moved recording leaving a
 WirePlumber entry for robin. Streams moved out again from the host's sound
 settings are taken back, as the curtain takes back its ramps.
+PipeWire reuses stream indices, so each moved stream is kept with its client
+index, process id and, under PipeWire, its object serial, and the undo moves
+only a stream that still matches and, while the silent output is there, sits
+in it. A stream in another `robin_silent_` output is left alone: two
+sessions silencing one desktop otherwise passed a stream between them as
+fast as the server would move it. A stream that refuses to move
+(`PA_STREAM_DONT_MOVE`) is reported under the switch.
 
 A new stream is moved 81 to 85 ms after paplay starts on PulseAudio 16 and
 with `pw-record` on GNOME 46, and 173 ms through the module on PipeWire.
@@ -811,9 +825,29 @@ a change itself it sends the id alone. When stdin closes or a signal comes,
 the keeper reads for 250 ms more, for a line written just before the agent
 died, then undoes what it still holds, newest first, each undo bounded by
 5 s. It starts with the first change, so a session that only watches runs
-none, and if it dies it is started again and handed everything held. That
-amends the rule that anything the agent starts dies with it: the keeper
-outlives the agent by as long as its undo takes.
+none. That amends the rule that anything the agent starts dies with it: the
+keeper outlives the agent by as long as its undo takes.
+
+The keeper writes a byte to its stdout, a pipe of its own to the agent, once
+its signal handlers are in, and one for every line it takes, and the agent
+makes a change only after that byte. Without it a review found two holes. A
+line written into a dying keeper looked held, since the pipe took it; and a
+keeper still in Go's runtime setup, before `signal.NotifyContext`, died of
+the default SIGTERM when the agent was killed in that window, with the
+change it had been handed never undone. A keeper that dies is started again
+at once and handed everything held, not only at the next change, since a
+curtain over ramps nobody touches makes none; after five failed starts the
+switches say so. Close starts one too when the last died holding steps. The
+keeper is the agent's own image, run through `/proc/self/exe`: a deploy of
+another version removes every other `robin-agent-*` file, and a keeper
+started after that from the path would not exist.
+
+Ending the session, by Ctrl+C, a dropped link or the idle timeout, lifts the
+curtain without locking the screen. A lock was considered and left out:
+which locker answers differs per desktop (logind's `Session.Lock`, which
+nothing may be listening to, GNOME's and freedesktop's ScreenSaver), and
+locking the owner's own desk when a link drops is the owner's call to make.
+The README says the screen comes back unlocked.
 
 The switches change on a goroutine of their own. Control messages arrive on
 Pion's read loop, and loading a module or waiting for `pw-record`'s output
