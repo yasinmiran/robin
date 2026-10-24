@@ -226,6 +226,9 @@ func TestStartRunsThePipeline(t *testing.T) {
 		t.Errorf("%d bytes, starting %d, chroma %d: want whole black frames", len(b), b[0], b[Width*Height])
 	}
 
+	// PIPEWIRE_REMOTE passes the check for the user's PipeWire, which the
+	// stand-in never connects to, so this runs on a host without one.
+	t.Setenv("PIPEWIRE_REMOTE", "robin-test")
 	c, err = Start(Options{Log: quiet()})
 	if err != nil {
 		t.Fatal(err)
