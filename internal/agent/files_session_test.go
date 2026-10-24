@@ -340,7 +340,7 @@ func TestSessionOffersFiles(t *testing.T) {
 	content := noise(200 << 10)
 	path := filepath.Join(t.TempDir(), "report.pdf")
 	os.WriteFile(path, content, 0o600)
-	res := offerFiles(sock, path)
+	res := offerFiles(t, sock, path)
 	b := newFileBrowser(t, h)
 	offered := b.control(protocol.ControlFileOffer).File
 	if offered.Name != "report.pdf" || offered.Size != int64(len(content)) || offered.ID == "" {
@@ -367,7 +367,7 @@ func TestSessionOffersFiles(t *testing.T) {
 	}
 
 	// Declined.
-	res = offerFiles(sock, path)
+	res = offerFiles(t, sock, path)
 	offered = b.control(protocol.ControlFileOffer).File
 	b.sendControl(protocol.Control{T: protocol.ControlFileDecline, File: &protocol.File{ID: offered.ID}})
 	if r := <-res; !errors.Is(r.err, files.ErrNotSaved) || !strings.Contains(r.out, "declined") {
@@ -398,7 +398,7 @@ func TestSessionOffersFiles(t *testing.T) {
 	}
 
 	// Still open when the session ends: robin-agent send hears it ended.
-	res = offerFiles(sock, path)
+	res = offerFiles(t, sock, path)
 	b.control(protocol.ControlFileOffer)
 	h.stdin.Close()
 	if r := <-res; r.err == nil || !strings.Contains(r.err.Error(), "ended") {

@@ -91,11 +91,13 @@ type sent struct {
 	out string
 }
 
-func offerFiles(sock string, paths ...string) <-chan sent {
+// offerFiles runs robin-agent send's offer until it returns or the test
+// ends.
+func offerFiles(t *testing.T, sock string, paths ...string) <-chan sent {
 	res := make(chan sent, 1)
 	go func() {
 		var out bytes.Buffer
-		err := files.Send(sock, paths, &out)
+		err := files.Send(t.Context(), sock, paths, &out)
 		res <- sent{err, out.String()}
 	}()
 	return res
@@ -131,13 +133,13 @@ func hostFile(t *testing.T, name, content string) string {
 func TestOffersSettleOnDecline(t *testing.T) {
 	s, runDir := sharedSession(t)
 	sock := filepath.Join(runDir, files.SocketName)
-	res := offerFiles(sock, hostFile(t, "a.txt", "a"), t.TempDir())
+	res := offerFiles(t, sock, hostFile(t, "a.txt", "a"), t.TempDir())
 
 	// A directory never reaches the session: Send refuses it first.
 	if r := <-res; r.err == nil || !strings.Contains(r.err.Error(), "not a regular file") {
 		t.Fatalf("offering a directory: %v", r.err)
 	}
-	res = offerFiles(sock, hostFile(t, "a.txt", "a"), hostFile(t, "b.txt", "bb"))
+	res = offerFiles(t, sock, hostFile(t, "a.txt", "a"), hostFile(t, "b.txt", "bb"))
 	offers := openOffers(t, s, 2)
 	for _, o := range offers {
 		if o.info.ID == "" || o.info.Size != map[string]int64{"a.txt": 1, "b.txt": 2}[o.info.Name] {
@@ -167,7 +169,7 @@ func TestOffersSettleOnDecline(t *testing.T) {
 
 func TestOffersEndWithTheSession(t *testing.T) {
 	s, runDir := sharedSession(t)
-	res := offerFiles(filepath.Join(runDir, files.SocketName), hostFile(t, "keep.bin", "k"))
+	res := offerFiles(t, filepath.Join(runDir, files.SocketName), hostFile(t, "keep.bin", "k"))
 	o := openOffers(t, s, 1)[0]
 	s.files.close()
 	select {

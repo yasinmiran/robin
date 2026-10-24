@@ -31,7 +31,6 @@ import (
 	"github.com/yasinmiran/robin/internal/agent"
 	"github.com/yasinmiran/robin/internal/agent/audio"
 	"github.com/yasinmiran/robin/internal/agent/daemon"
-	"github.com/yasinmiran/robin/internal/agent/files"
 	"github.com/yasinmiran/robin/internal/agent/h264"
 	"github.com/yasinmiran/robin/internal/agent/hwenc"
 	"github.com/yasinmiran/robin/internal/protocol"
@@ -43,7 +42,7 @@ const usage = "usage: robin-agent serve [-v] [-keep d] [-resume id] [-detach set
 
 func main() {
 	if filepath.Base(os.Args[0]) == agent.SendCommand {
-		os.Exit(send(os.Args[1:]))
+		os.Exit(runSend(os.Args[1:]))
 	}
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, usage)
@@ -59,7 +58,7 @@ func main() {
 	case "end":
 		os.Exit(end(os.Args[2:]))
 	case "send":
-		os.Exit(send(os.Args[2:]))
+		os.Exit(runSend(os.Args[2:]))
 	default:
 		fmt.Fprintf(os.Stderr, "robin-agent: unknown command %q\n%s\n", os.Args[1], usage)
 		os.Exit(2)
@@ -233,15 +232,18 @@ func end(args []string) int {
 	return 0
 }
 
-// send offers files to the browser of a session of this agent: the one
-// whose programs it runs among, else the only one running.
-func send(args []string) int {
+// runSend offers files to the browser of a session of this agent: the one
+// whose programs it runs among, else the only one running. Ctrl+C hangs
+// up, which withdraws what is still on offer.
+func runSend(args []string) int {
 	exe, err := os.Executable()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "robin-send:", err)
 		return 1
 	}
-	return files.Main(args, filepath.Join(filepath.Dir(exe), "run"), os.Getenv, os.Stdout, os.Stderr)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	return send(ctx, args, filepath.Join(filepath.Dir(exe), "run"), os.Getenv, os.Stdout, os.Stderr)
 }
 
 func newEncoder(width, height, fps, bitrate int) (agent.Encoder, error) {

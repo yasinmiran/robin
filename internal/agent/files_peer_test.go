@@ -123,7 +123,7 @@ func TestOfferFetchedOverAPeer(t *testing.T) {
 	content := noise(120 << 10)
 	path := filepath.Join(t.TempDir(), "notes.txt")
 	os.WriteFile(path, content, 0o600)
-	res := offerFiles(filepath.Join(runDir, files.SocketName), path)
+	res := offerFiles(t, filepath.Join(runDir, files.SocketName), path)
 	openOffers(t, s, 1)
 
 	// A page that connects later hears of it.
@@ -150,7 +150,7 @@ func TestOfferFetchedOverAPeer(t *testing.T) {
 
 	// The page refuses this one, so the offer stands and is still on offer.
 	b.refuse.Store(true)
-	res = offerFiles(filepath.Join(runDir, files.SocketName), path)
+	res = offerFiles(t, filepath.Join(runDir, files.SocketName), path)
 	offered = b.control(protocol.ControlFileOffer).File
 	b.sendControl(protocol.Control{T: protocol.ControlFileFetch, File: &protocol.File{ID: offered.ID}})
 	deadline := time.Now().Add(10 * time.Second)

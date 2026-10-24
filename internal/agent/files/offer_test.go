@@ -4,6 +4,7 @@ package files
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -68,11 +69,12 @@ type sendResult struct {
 	out string
 }
 
-func sendAsync(sock string, paths ...string) <-chan sendResult {
+// sendAsync runs Send until it returns or ctx ends.
+func sendAsync(ctx context.Context, sock string, paths ...string) <-chan sendResult {
 	res := make(chan sendResult, 1)
 	go func() {
 		var out bytes.Buffer
-		err := Send(sock, paths, &out)
+		err := Send(ctx, sock, paths, &out)
 		res <- sendResult{err, out.String()}
 	}()
 	return res
@@ -104,7 +106,7 @@ func TestSendOffersFilesAndFollowsThem(t *testing.T) {
 	_, sock, reqs := serve(t)
 	a := writeFile(t, "a.txt", "alpha")
 	b := writeFile(t, "b.bin", "bravo!")
-	res := sendAsync(sock, a, b)
+	res := sendAsync(t.Context(), sock, a, b)
 
 	r := next(t, reqs)
 	if len(r.Files) != 2 {
@@ -153,7 +155,7 @@ func TestSendOffersFilesAndFollowsThem(t *testing.T) {
 
 func TestSendReportsWhatWasNotSaved(t *testing.T) {
 	_, sock, reqs := serve(t)
-	res := sendAsync(sock, writeFile(t, "a", "1"), writeFile(t, "b", "2"))
+	res := sendAsync(t.Context(), sock, writeFile(t, "a", "1"), writeFile(t, "b", "2"))
 	r := next(t, reqs)
 	r.Tell(0, Declined, "")
 	r.Tell(1, Refused, "not a regular file")
@@ -168,12 +170,30 @@ func TestSendReportsWhatWasNotSaved(t *testing.T) {
 
 func TestSendWhenTheSessionEnds(t *testing.T) {
 	_, sock, reqs := serve(t)
-	res := sendAsync(sock, writeFile(t, "a", "1"))
+	res := sendAsync(t.Context(), sock, writeFile(t, "a", "1"))
 	r := next(t, reqs)
 	r.Tell(0, Offered, "")
 	r.Close()
 	if got := result(t, res); got.err == nil || !strings.Contains(got.err.Error(), "ended") {
 		t.Errorf("Send after the session hung up: %v", got.err)
+	}
+}
+
+// Ending Send's context hangs up, so the session withdraws the offer.
+func TestSendStopsWithItsContext(t *testing.T) {
+	_, sock, reqs := serve(t)
+	ctx, stop := context.WithCancel(t.Context())
+	res := sendAsync(ctx, sock, writeFile(t, "a", "1"))
+	r := next(t, reqs)
+	r.Tell(0, Offered, "")
+	stop()
+	if got := result(t, res); got.err == nil || !strings.Contains(got.err.Error(), "withdrawn") {
+		t.Errorf("Send once its context ended: %v", got.err)
+	}
+	select {
+	case <-r.Gone():
+	case <-time.After(5 * time.Second):
+		t.Error("the session never heard Send hang up")
 	}
 }
 
@@ -187,11 +207,11 @@ func TestSendRefusesWhatItCannotOffer(t *testing.T) {
 		"too many":  make([]string, maxOffer+1),
 	} {
 		var out bytes.Buffer
-		if err := Send(sock, paths, &out); err == nil || errors.Is(err, ErrNotSaved) {
+		if err := Send(t.Context(), sock, paths, &out); err == nil || errors.Is(err, ErrNotSaved) {
 			t.Errorf("%s: Send = %v", name, err)
 		}
 	}
-	if err := Send(filepath.Join(dir, "no.sock"), []string{writeFile(t, "a", "1")}, io.Discard); err == nil {
+	if err := Send(t.Context(), filepath.Join(dir, "no.sock"), []string{writeFile(t, "a", "1")}, io.Discard); err == nil {
 		t.Error("Send to no session succeeded")
 	}
 }
@@ -214,7 +234,7 @@ func terminalSafe(t *testing.T, what, s string) {
 func TestSendPrintsNamesSafely(t *testing.T) {
 	_, sock, reqs := serve(t)
 	evil := "a\x1b]0;owned\x07b\u202e.txt"
-	res := sendAsync(sock, writeFile(t, evil, "x"))
+	res := sendAsync(t.Context(), sock, writeFile(t, evil, "x"))
 	r := next(t, reqs)
 	r.Tell(0, Refused, "bad name\x1b[2J")
 	got := result(t, res)
@@ -229,7 +249,7 @@ func TestSendPrintsNamesSafely(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), evil)
 	os.Mkdir(dir, 0o700)
 	for what, path := range map[string]string{"a directory": dir, "a missing file": dir + "-missing"} {
-		err := Send(sock, []string{path}, io.Discard)
+		err := Send(t.Context(), sock, []string{path}, io.Discard)
 		if err == nil {
 			t.Fatalf("Send of %s succeeded", what)
 		}
@@ -348,7 +368,7 @@ func filesOf(f *os.File, n int) []*os.File {
 func TestListenerRefusesOtherUsers(t *testing.T) {
 	// As if the socket's owner were someone else.
 	_, sock, reqs := serve(t, func(l *Listener) { l.uid = os.Getuid() + 1 })
-	res := sendAsync(sock, writeFile(t, "a", "1"))
+	res := sendAsync(t.Context(), sock, writeFile(t, "a", "1"))
 	if got := result(t, res); got.err == nil || got.out != "" {
 		t.Errorf("Send from another user: %v, printed %q", got.err, got.out)
 	}
@@ -424,41 +444,6 @@ func TestFindSocket(t *testing.T) {
 	live("3")
 	if _, err := FindSocket(env(""), root); err == nil || !strings.Contains(err.Error(), "2 robin sessions") {
 		t.Errorf("with two live sessions: %v", err)
-	}
-}
-
-func TestSendCommand(t *testing.T) {
-	root := t.TempDir()
-	run := func(args ...string) (int, string, string) {
-		var out, errOut bytes.Buffer
-		code := Main(args, root, func(string) string { return "" }, &out, &errOut)
-		return code, out.String(), errOut.String()
-	}
-	if code, out, _ := run("--help"); code != 0 || !strings.Contains(out, "usage: robin-send FILE...") {
-		t.Errorf("--help: %d %q", code, out)
-	}
-	if code, _, errOut := run("--", "x"); code != 1 || errOut != "robin-send: no robin session is running here\n" {
-		t.Errorf("without a session: %d %q", code, errOut)
-	}
-
-	os.Mkdir(filepath.Join(root, "9"), 0o700)
-	l, err := Listen(filepath.Join(root, "9", SocketName), slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	go l.Serve(func(r *Request) {
-		if r.Files[0].Name == "keep" {
-			r.Tell(0, Saved, "")
-		} else {
-			r.Tell(0, Declined, "")
-		}
-	})
-	if code, out, _ := run(writeFile(t, "keep", "k")); code != 0 || out != "keep: saved by the browser\n" {
-		t.Errorf("a saved file: %d %q", code, out)
-	}
-	if code, out, errOut := run(writeFile(t, "drop", "d")); code != 1 || errOut != "" || !strings.Contains(out, "declined") {
-		t.Errorf("a declined file: %d %q %q", code, out, errOut)
 	}
 }
 

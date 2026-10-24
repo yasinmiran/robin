@@ -3,6 +3,7 @@
 package files
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,11 +50,14 @@ func FindSocket(getenv func(string) string, runRoot string) (string, error) {
 	return "", fmt.Errorf("%d robin sessions are running here; run this inside the one to send to, where %s is set", len(live), SocketEnv)
 }
 
+// errStopped means Send's context ended before every file was settled.
+var errStopped = errors.New("stopped; the files still on offer are withdrawn")
+
 // Send offers the files at paths to the browser of the session listening
 // at sock, and reports to out what becomes of each until every one is
 // saved, declined or refused. It returns ErrNotSaved when any was not
-// saved. Interrupting it withdraws the files still on offer.
-func Send(sock string, paths []string, out io.Writer) error {
+// saved. Ending ctx hangs up, which withdraws the files still on offer.
+func Send(ctx context.Context, sock string, paths []string, out io.Writer) error {
 	switch {
 	case len(paths) == 0:
 		return errors.New("no files to send")
@@ -80,24 +84,32 @@ func Send(sock string, paths []string, out io.Writer) error {
 		return fmt.Errorf("reach the robin session: %w", err)
 	}
 	defer c.Close()
+	hangUp := context.AfterFunc(ctx, func() { c.Close() })
+	defer hangUp()
 	b, err := json.Marshal(req)
 	if err != nil {
 		return err
 	}
 	if _, _, err := c.WriteMsgUnix(b, unix.UnixRights(fds...), nil); err != nil {
+		if ctx.Err() != nil {
+			return errStopped
+		}
 		return fmt.Errorf("offer the files: %w", err)
 	}
-	return follow(c, req.Names, out)
+	return follow(ctx, c, req.Names, out)
 }
 
 // follow prints the session's reports until every file is settled.
-func follow(c *net.UnixConn, names []string, out io.Writer) error {
+func follow(ctx context.Context, c *net.UnixConn, names []string, out io.Writer) error {
 	settled := make([]Status, len(names))
 	left := len(names)
 	buf := make([]byte, maxRequest)
 	for left > 0 {
 		n, err := c.Read(buf)
-		if err != nil {
+		switch {
+		case err != nil && ctx.Err() != nil:
+			return errStopped
+		case err != nil:
 			return errors.New("the robin session ended with files still on offer")
 		}
 		var rep report
@@ -122,31 +134,6 @@ func follow(c *net.UnixConn, names []string, out io.Writer) error {
 		}
 	}
 	return nil
-}
-
-// Main is robin-agent send, and robin-send: it offers the files named in
-// args to the session FindSocket picks under runRoot and returns the exit
-// status.
-func Main(args []string, runRoot string, getenv func(string) string, stdout, stderr io.Writer) int {
-	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
-		fmt.Fprintln(stdout, "usage: robin-send FILE...\n\nOffers each FILE to the browser of this robin session, which saves it when you click Save there.")
-		return 0
-	}
-	if len(args) > 0 && args[0] == "--" {
-		args = args[1:]
-	}
-	sock, err := FindSocket(getenv, runRoot)
-	if err == nil {
-		err = Send(sock, args, stdout)
-	}
-	switch {
-	case errors.Is(err, ErrNotSaved):
-		return 1
-	case err != nil:
-		fmt.Fprintln(stderr, "robin-send:", err)
-		return 1
-	}
-	return 0
 }
 
 func describe(name string, rep report) string {
