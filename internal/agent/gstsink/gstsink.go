@@ -39,9 +39,10 @@ var (
 	// stableAfter is how long a child must run for its exit to count as the
 	// pipeline having worked rather than failed.
 	stableAfter = 5 * time.Second
-	// maxQuickExits children in a row that exit within stableAfter, and the
-	// sink gives up. A program that opens the camera for a moment and lets
-	// go ends a child each time, so this allows for a few of those.
+	// maxQuickExits is how many children in a row may exit within
+	// stableAfter before the sink gives up. A program that opens the camera
+	// for a moment and lets go ends a child each time, so it allows for a
+	// few.
 	maxQuickExits = 20
 )
 
