@@ -46,12 +46,15 @@ export class Cli {
     private readonly exited: Promise<Exit>,
     readonly url: string,
     readonly stderrPath: string,
+    private readonly stderrFrom: number,
   ) {
     exited.then((e) => (this.exit = e));
   }
 
   static start(dir: string, args: string[] = [], host = 'robinhost', timeoutMs = 90_000): Promise<Cli> {
     const stderrPath = path.join(dir, 'cli.stderr.log');
+    // Every CLI of the run appends to the log; this one's lines start here.
+    const stderrFrom = fs.statSync(stderrPath, { throwIfNoEntry: false })?.size ?? 0;
     const stderr = fs.createWriteStream(stderrPath, { flags: 'a' });
     const stdoutLog = fs.createWriteStream(path.join(dir, 'cli.stdout.log'), { flags: 'a' });
     // Verbose, so the saved stderr carries the agent's log (ICE states, resizes).
@@ -90,7 +93,7 @@ export class Cli {
           return;
         }
         clearTimeout(timer);
-        cli = new Cli(proc, exited, line, stderrPath);
+        cli = new Cli(proc, exited, line, stderrPath, stderrFrom);
         resolve(cli);
       });
     });
@@ -128,6 +131,15 @@ export class Cli {
       return { ...(await this.exited), afterMs: Date.now() - t0, killed: true };
     })();
     return this.stopping;
+  }
+
+  // said is what this CLI has written to stderr so far, from its header on.
+  said(): string {
+    try {
+      return fs.readFileSync(this.stderrPath).subarray(this.stderrFrom).toString('utf8');
+    } catch {
+      return '';
+    }
   }
 
   stderrTail(lines = 60): string {

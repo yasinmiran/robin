@@ -158,19 +158,21 @@ past 1000 again. No error shows under either switch, and both go on again
 before the teardown, which has to give the room its screen and speakers
 back.
 
-After the attach teardown, **Kept**: a second CLI attaches with `--keep
-10m` (`session.json` says mode attach, keep 600). SSH is cut and new logins
-refused for 8 s (an `iptables` REJECT on port 22 that takes itself away);
-while the page says Reconnecting and has no peer connection, a click on the
-curtain switch leaves it busy, and once the CLI has redialed and the page
-is connected, the switch is on and the room's brightness reads 0. The CLI
-is then SIGKILLed: `robin gui --id <id> --mic` exits non-zero saying the
-session started without a microphone, leaving it kept with the same
-daemon, and `robin gui --id <id> --curtain --silent` resumes it with the
-room dark before the page loads and without the hint that the room sees
-the session; the page is told both switches are on, and noise played on
-the host stays below 50 RMS at the room's speakers. SIGINT then ends it
-with exit 0, no agent or run dir left and `robin-live state` as before.
+After the attach teardown, **Kept**: a second CLI attaches with
+`--keep 10m` (`session.json` says mode attach, keep 600). SSH is cut and
+new logins refused (an `iptables` REJECT on port 22) until the click is in,
+lifted over the one connection of its own the cut spares, or by a timer on
+the host after a minute; while the page says Reconnecting and has no peer
+connection, a click on the curtain switch leaves it busy, and once the CLI
+has redialed and the page is connected, the switch is on and the room's
+brightness reads 0. The CLI is then SIGKILLed: `robin gui --id <id> --mic`
+exits non-zero saying the session started without a microphone, leaving it
+kept with the same daemon, and `robin gui --id <id> --curtain --silent`
+resumes it with the room dark before the page loads and without the hint
+that the room sees the session; the page is told both switches are on, and
+noise played on the host stays below 50 RMS at the room's speakers. SIGINT
+then ends it with exit 0, no agent or run dir left and `robin-live state`
+as before.
 
 The `touch` scenario runs `tests/touch.spec.ts` against the X11 host, with
 a 1024x640 touch screen. In order:

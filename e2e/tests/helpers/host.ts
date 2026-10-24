@@ -1,4 +1,5 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import readline from 'node:readline';
 
 // Host-side checks run over the test's own ssh connections, never the CLI's
 // master, so a broken session cannot hide behind (or break) the checks.
@@ -155,15 +156,36 @@ export async function cutSSH(): Promise<void> {
   await sshRaw('pkill -u robin -x sshd');
 }
 
-// cutSSHFor drops every connection as cutSSH does, and refuses new ones
-// for seconds, so the CLI's redials fail fast until then: a window a test
-// can act in while the page reconnects. The rule takes itself away; host
-// checks fail meanwhile too.
-export async function cutSSHFor(seconds: number): Promise<void> {
+// cutSSHUntilRestored drops every connection as cutSSH does and refuses
+// new ones (an iptables REJECT on port 22) until the restore it returns
+// runs, so the CLI's redials fail fast for as long as the test needs the
+// page to wait. Host checks fail meanwhile too. The cut spares one
+// connection of the test's own, which carries the restore: no new one can
+// get through. A timer on the host lifts the rule after a minute should
+// the restore never come.
+export async function cutSSHUntilRestored(): Promise<() => Promise<void>> {
   const rule = 'INPUT -p tcp --dport 22 --syn -j REJECT --reject-with tcp-reset';
+  // Its shell names its sshd, which the cut leaves alone, and waits for a line.
+  const spared = spawn('ssh', [...SSH, 'robinhost', `echo $PPID; read _; sudo -n iptables -w -D ${rule}`], {
+    stdio: ['pipe', 'pipe', 'ignore'],
+  });
+  const exited = new Promise<number>((resolve) => spared.on('close', (code) => resolve(code ?? 255)));
+  const lines = readline.createInterface({ input: spared.stdout! });
+  const sshd = await Promise.race([
+    new Promise<string>((resolve) => lines.once('line', resolve)),
+    exited.then((code) => `the spared connection exited ${code}`),
+  ]);
+  lines.close();
+  if (!/^\d+$/.test(sshd)) throw new Error(`cutSSHUntilRestored: ${sshd}`);
+  // The connection carrying the cut goes with the rest, so its exit code says nothing.
   await sshRaw(
-    `sudo -n iptables -w -I ${rule} && setsid -f sh -c 'sleep ${seconds}; sudo -n iptables -w -D ${rule}' </dev/null >/dev/null 2>&1; pkill -u robin -x sshd`,
+    `sudo -n iptables -w -I ${rule} && setsid -f sh -c 'sleep 60; sudo -n iptables -w -D ${rule}' </dev/null >/dev/null 2>&1; pgrep -u robin -x sshd | grep -vx ${sshd} | xargs kill`,
   );
+  return async () => {
+    spared.stdin!.end('\n');
+    const code = await exited;
+    if (code !== 0) throw new Error(`lifting the SSH cut over the spared connection: exit ${code}`);
+  };
 }
 
 // keptSession reads the record of the one session the agent keeps, in its

@@ -991,18 +991,22 @@ if (SCENARIO === 'attach') {
     const kept = await host.keptSession();
     expect(`${kept.mode}, kept ${kept.keep} s`).toBe('attach, kept 600 s');
 
-    // SSH goes, and stays away for 8 s: the page waits for the CLI's redial
-    // with no peer connection to carry a click.
-    await host.cutSSHFor(8);
-    const waiting = () => page.evaluate(() => `${(window as any).robin.state}, ${(window as any).robin.pc ? 'a peer' : 'no peer'}`);
-    await expect
-      .poll(waiting, { message: 'the page waits for the CLI to redial', timeout: 30_000, intervals: [100] })
-      .toBe('reconnecting, no peer');
-    await page.mouse.move(300, 4); // near the top edge, where the status tab comes out
+    // SSH goes, and stays away until the click is in: the page waits for
+    // the CLI's redial with no peer connection to carry it.
+    const restore = await host.cutSSHUntilRestored();
     const curtain = page.locator('[data-switch="curtain"]');
-    await curtain.click();
-    await expect(curtain, 'the switch waits').toHaveAttribute('aria-busy', 'true');
-    expect(await waiting(), 'the click came while the page waited').toBe('reconnecting, no peer');
+    try {
+      const waiting = () => page.evaluate(() => `${(window as any).robin.state}, ${(window as any).robin.pc ? 'a peer' : 'no peer'}`);
+      await expect
+        .poll(waiting, { message: 'the page waits for the CLI to redial', timeout: 30_000, intervals: [100] })
+        .toBe('reconnecting, no peer');
+      await page.mouse.move(300, 4); // near the top edge, where the status tab comes out
+      await curtain.click();
+      await expect(curtain, 'the switch waits').toHaveAttribute('aria-busy', 'true');
+      expect(await waiting(), 'the click came while the page waited').toBe('reconnecting, no peer');
+    } finally {
+      await restore();
+    }
     await expect.poll(() => state(page), { message: 'the page is connected again', timeout: 60_000 }).toBe('connected');
     expect(cli.stderrTail(), 'the CLI said it reconnected').toContain('reconnected to robinhost');
     await expect(curtain, 'the curtain, once the new peer carried the click').toHaveAttribute('aria-checked', 'true', { timeout: 15_000 });
@@ -1029,11 +1033,9 @@ if (SCENARIO === 'attach') {
     // One that names --curtain and --silent gets both, before Ready.
     cli = await Cli.start(OUT, ['--id', kept.id, '--curtain', '--silent']);
     const resumed = cli;
-    await expect.poll(() => resumed.stderrTail(), { message: 'the CLI said it resumed' }).toContain(`resumed session ${kept.id}`);
+    await expect.poll(() => resumed.said(), { message: 'the CLI said it resumed' }).toContain(`resumed session ${kept.id}`);
     expect(await host.roomBrightness(), 'the host screen as the CLI resumed').toBe(0);
-    // The log holds every CLI of the run; this one's lines follow its header.
-    const said = resumed.stderrTail(200);
-    expect(said.slice(said.lastIndexOf('\n--- ')), 'a hint that the room sees the session').not.toContain('to whoever is there');
+    expect(resumed.said(), 'a hint that the room sees the session').not.toContain('to whoever is there');
     await page.goto(cli.url);
     await expect.poll(() => state(page), { message: 'the new page connects', timeout: 60_000 }).toBe('connected');
     await expect
@@ -1102,7 +1104,8 @@ test('teardown: SIGINT ends the CLI and leaves nothing behind on the host', asyn
   if (SCENARIO === 'nomux') {
     // Ctrl+C reached the CLI alone, so bye went over the agent's own ssh:
     // no reconnect to announce, and no fresh login to end the desktop with.
-    const said = cli!.stderrTail(1_000);
+    const said = cli!.said();
+    expect(said, "this CLI's own log").toMatch(/^--- \S+ robin gui /);
     expect(said, 'the CLI after Ctrl+C').not.toContain('reconnecting to robinhost');
     expect(said, 'the CLI after Ctrl+C').not.toContain('ending the kept session');
   }

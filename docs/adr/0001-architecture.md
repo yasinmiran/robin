@@ -879,16 +879,16 @@ page for a session that is not what was asked.
   also covers an answer lost with the old channel; asking twice is
   harmless, as the agent settles on the position asked last.
 - Measured in the `attach` e2e scenario on 2026-10-24, on a desktop kept
-  with `--keep 10m`: with SSH cut and new logins refused for 8 s, a curtain
-  click while the page had no peer connection went on 10 ms after the next
-  peer connected, and the room's brightness read 0. After the CLI was
-  killed, `robin gui --id <id> --mic` was refused with the session still
-  kept by the same daemon, and `--id <id> --curtain --silent` had both on
-  461 ms after that CLI started, before Ready and 454 ms before the page's
-  peer connected; noise played on the host stayed below 50 RMS at the
-  room's speakers. In the `nomux` teardown the agent logged the session
-  ended 25 ms after the page let go, with no reconnect line and no end
-  command.
+  with `--keep 10m`: with SSH cut and new logins refused until the click
+  was in, a curtain click while the page had no peer connection went on
+  5 ms after the next peer connected, and the room's brightness read 0.
+  After the CLI was killed, `robin gui --id <id> --mic` was refused with
+  the session still kept by the same daemon, and
+  `--id <id> --curtain --silent` had both on 307 ms after that CLI
+  started, before Ready and 338 ms before the page's peer connected; noise
+  played on the host stayed below 50 RMS at the room's speakers. In the
+  `nomux` teardown the agent logged the session ended 27 ms after the page
+  let go, with no reconnect line and no end command.
 
 ### Files: into the download folder, out on a click
 
