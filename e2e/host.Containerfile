@@ -27,9 +27,9 @@ RUN userdel -r ubuntu \
 
 COPY sshd_config /etc/ssh/sshd_config
 COPY sudoers-robin /etc/sudoers.d/robin
-COPY robin-rundir robin-x robin-block-udp robin-live /usr/local/bin/
+COPY robin-rundir robin-x robin-block-udp robin-live robin-room /usr/local/bin/
 RUN chmod 0440 /etc/sudoers.d/robin \
- && chmod 0755 /usr/local/bin/robin-rundir /usr/local/bin/robin-x /usr/local/bin/robin-block-udp /usr/local/bin/robin-live \
+ && chmod 0755 /usr/local/bin/robin-rundir /usr/local/bin/robin-x /usr/local/bin/robin-block-udp /usr/local/bin/robin-live /usr/local/bin/robin-room \
  && visudo -cf /etc/sudoers.d/robin
 
 EXPOSE 22

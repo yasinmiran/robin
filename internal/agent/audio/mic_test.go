@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"os"
 	"slices"
@@ -294,10 +293,6 @@ func listenUnix(t *testing.T, path string) net.Listener {
 	}
 	t.Cleanup(func() { ln.Close() })
 	return ln
-}
-
-func quiet() *slog.Logger {
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 }
 
 // micHelperEnv makes the test binary act as an agent that puts the

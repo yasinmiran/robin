@@ -86,7 +86,7 @@ func StartMic(ctx context.Context, o MicOptions) (*Mic, error) {
 	if _, err := os.Stat(socket); err != nil {
 		return nil, fmt.Errorf("no sound server for this user at %s", socket)
 	}
-	c, conn, err := connect(socket, cookie, nil)
+	c, conn, err := connect(context.Background(), socket, cookie, nil)
 	if err != nil {
 		return nil, fmt.Errorf("the sound server at %s: %w", socket, err)
 	}

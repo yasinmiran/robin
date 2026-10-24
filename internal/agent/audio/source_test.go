@@ -4,7 +4,6 @@ package audio
 
 import (
 	"context"
-	"math"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
@@ -46,30 +45,6 @@ func listen(t *testing.T, src *Source) []int16 {
 		}
 	}
 	return heard
-}
-
-// pitch is the frequency of one channel of interleaved stereo, counted in
-// swings past a threshold so codec noise around zero does not count twice.
-func pitch(pcm []int16, ch int) float64 {
-	const threshold = 2000
-	swings := 0
-	high := pcm[ch] > 0
-	for i := ch; i < len(pcm); i += opus.Channels {
-		if v := pcm[i]; high && v < -threshold || !high && v > threshold {
-			high = !high
-			swings++
-		}
-	}
-	return float64(swings) / 2 / (float64(len(pcm)/opus.Channels) / opus.SampleRate)
-}
-
-func checkTone(t *testing.T, heard []int16, left, right float64) {
-	t.Helper()
-	for ch, want := range []float64{left, right} {
-		if got := pitch(heard, ch); math.Abs(got-want) > want*0.03 {
-			t.Errorf("channel %d decodes at %.1f Hz, want %.0f", ch, got, want)
-		}
-	}
 }
 
 // TestSpawnedDesktopIsHeard plays a tone the way a program on a spawned
@@ -125,6 +100,41 @@ func TestAttachedDesktopIsHeard(t *testing.T) {
 	case <-user.Done():
 		t.Fatal("closing an attached capture stopped the user's server")
 	default:
+	}
+}
+
+// A silent room's sound reaches the session once the capture follows the
+// room's monitor, and the room's own after it follows back.
+func TestCaptureFollowsTheSilentRoom(t *testing.T) {
+	s := pulseRoom(t)
+	t.Setenv("XDG_RUNTIME_DIR", filepath.Dir(filepath.Dir(s.socket)))
+	t.Setenv("PULSE_COOKIE", filepath.Join(filepath.Dir(s.socket), "cookie"))
+	src, _, err := Start(context.Background(), Options{RunDir: t.TempDir(), Attached: true, Log: quiet()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	r, err := Silence(context.Background(), RoomOptions{Hold: (&holder{}).hold, Log: quiet()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if err := src.Follow(r.Monitor()); err != nil {
+		t.Fatal(err)
+	}
+	playAs(t, "robin-test-follow", s.env, sine(30, 523, 784))
+	waitSink(t, s.client(t), "robin-test-follow", r.at.Sink)
+	checkTone(t, listen(t, src), 523, 784)
+
+	if err := src.Follow(""); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	checkTone(t, listen(t, src), 523, 784)
+	if err := src.Follow(filepath.Join(t.TempDir(), "no such source")); err == nil {
+		t.Error("followed a source that is not there")
 	}
 }
 

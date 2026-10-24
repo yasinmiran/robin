@@ -41,6 +41,7 @@ robin gui --max-size 2560x1440 --fps 60 workstation
 robin gui --no-browser lab-node                     # print the URL instead of opening it
 robin gui --attach auto workstation                 # the desktop you are logged in to there
 robin gui --attach wayland workstation              # your GNOME or Plasma session on Wayland
+robin gui --attach auto --curtain --silent workstation  # and keep its own screen dark and speakers quiet
 robin gui build-box                                 # again later: picks the desktop up where you left it
 robin ls build-box                                  # the sessions the host keeps
 robin end build-box                                 # end one without opening it
@@ -90,7 +91,8 @@ names a display outright. The cookie comes from wherever startx, LightDM, GDM, m
 or SDDM left it; failing that, the agent gets in the way an
 `xhost +si:localuser:$USER` grant allows.
 
-That desktop stays shared: whoever sits at the machine sees the pointer move.
+That desktop stays shared: whoever sits at the machine sees the pointer move,
+unless you draw the curtain (see [A private session](#a-private-session)).
 It keeps its own resolution, too. Your browser window scales the picture
 instead of resizing the screen, and a desktop larger than `--max-size` (a 4K
 monitor) is scaled down to fit, with the pointer mapped back onto the
@@ -137,6 +139,8 @@ once, at the start, where each went on the host or why it could not.
 | `--audio` | `true` | stream the desktop's sound; `--audio=false` leaves it out |
 | `--mic` | off | offer your microphone to the host's programs; it stays off until you switch it on in the page |
 | `--camera` | off | offer your camera to the host's programs, through PipeWire or a v4l2loopback device; off until switched on |
+| `--curtain` | off | attached desktops: black out the host's screen while the page still shows it. The keyboard and mouse at the host still work; see [A private session](#a-private-session) |
+| `--silent` | off | attached desktops: keep the host's speakers quiet while the page still plays the sound |
 | `--stun` | Google's public server | STUN servers for NAT traversal, comma-separated, or `none` |
 | `--no-browser` | | print the page URL on stdout instead of opening a browser |
 | `--listen` | `127.0.0.1:0` | address for the local page; loopback only |
@@ -299,6 +303,58 @@ sudo modprobe v4l2loopback card_label="Robin camera" exclusive_caps=1
 The probe finds the loopback devices you can write and the camera takes the
 one labelled Robin, else the first, in preference to PipeWire.
 
+## A private session
+
+An attached desktop shows everything you do to whoever sits in front of
+it, and plays its sound through their speakers. `--curtain` blacks out the
+screen at the host and `--silent` keeps its speakers quiet, while the page
+still shows the picture and plays the sound. Both are off unless you ask,
+and the status tab has a switch for each that works mid-session; when you
+attach without them, the CLI says the room can see and hear you and names
+the two flags. A desktop robin starts has nobody in front of it, so there
+the flags are refused.
+
+The curtain hides the screen without locking it. The keyboard and mouse at
+the host keep working, so someone there can still type into your session,
+only blind. On X11 the curtain sets the gamma ramp of every screen to zero:
+gamma is applied on the way to the monitor, after the picture the agent
+captures. On GNOME under Wayland it does the same through mutter, and KDE
+Plasma has no way for a program to set gamma, so there the switch is
+missing and `--curtain` fails with the reason. Every screen needs a ramp a
+program can set: one without (some USB and DisplayLink monitors, virtual
+GPUs) would stay lit, so there the switch is missing too, and the reason
+names the screen. Night light and colour profiles set those ramps as well.
+The curtain checks once a second and darkens again, and lifting it restores
+whichever ramp was set last. A screen it finds lit and cannot darken, such
+as a monitor without a ramp plugged in meanwhile, shows as an error under
+the switch, which stays on for the screens it does cover.
+
+The silent room gives the desktop's sound server one more output, listed as
+Robin silent room in its sound settings while the room is silent, and moves
+every program's sound into it the moment the program starts to play. The
+session records that output, so it hears every program, including the ones
+that were playing somewhere other than the default output. The default output
+itself is never changed. Under PipeWire the new output belongs to a
+`pw-record` process (PipeWire's tools, `pipewire-bin` on Debian and Ubuntu,
+`pipewire-utils` on Fedora) when the host has it, and goes away with that
+process; otherwise it is a PulseAudio `module-null-sink`, which works through
+`pipewire-pulse` too. Switching it off or ending the session moves each
+program back to the output it was on. A program that asks its sound server
+never to move its stream goes on playing at the host, and the switch names
+it until it stops. Sound already in another session's silent output stays
+there.
+
+Ending the session for any reason, Ctrl+C, a dropped connection or the
+idle timeout among them, lifts the curtain and gives the speakers back. A
+desktop you attach to with `--keep` stays dark and quiet while the host
+keeps it for you, until it ends. The screen comes back unlocked, with
+whatever you left open on it: robin does not lock it for you.
+
+Before it changes anything, the agent hands a child of its own, `robin-agent
+keeper`, what would undo the change. When the agent ends normally it undoes
+everything itself and the keeper exits with nothing to do; when the agent is
+killed, the keeper gives the room back its screens and speakers.
+
 ## Hardware encoding
 
 ```sh
@@ -453,14 +509,16 @@ websocket listen on 127.0.0.1 and require a random 256-bit token from the URL
 fragment, an exact `Origin` and `Host`, and allow one browser at a time. On
 the host, the agent's ICE-TCP listener binds loopback and only accepts ICE
 connections carrying the session's credentials; the X display is protected by
-a fresh cookie in a 0600 file; the session's sound server listens only on a
-socket inside the run directory; the agent and its run directory are 0700.
+a fresh cookie in a 0600 file; the sound server of a desktop robin starts
+listens only on a socket inside the run directory; the agent and its run
+directory are 0700.
 The page can do on the host what a keyboard, a pointer and a clipboard can do
 in that session, give it the sound and picture of a microphone or camera you
-switched on (with `--mic` or `--camera`), say two words about the session
-itself (End session, which the CLI carries out as it does Ctrl+C, and
-Disconnect, keep desktop, which leaves the desktop for `--keep`), and move
-files, within these bounds.
+switched on (with `--mic` or `--camera`), flip the two switches of a private
+session on an attached desktop, say two words about the session itself (End
+session, which the CLI carries out as it does Ctrl+C, and Disconnect, keep
+desktop, which leaves the desktop for `--keep`), and move files, within
+these bounds.
 A view-only Wayland grant takes the keyboard, the pointer and uploads away,
 and leaves the clipboard and the files the host offers.
 
@@ -523,6 +581,29 @@ as you: your sound server and PipeWire are yours alone, but a v4l2loopback
 device is readable by whoever its permissions admit, usually the `video`
 group, so on a shared host the camera's pictures go to them too. Nothing
 leaves the browser while a switch is off, and the agent never turns one on.
+
+A private session changes the attached desktop for as long as it lasts: the
+gamma of its screens and, with `--silent`, the user's own sound server, which
+gets an extra output and has the user's programs moved into it. PulseAudio
+and WirePlumber 0.4 remember those moves, and the undo moves each program
+back to clear them. A keeper process undoes both if the agent is killed, but
+not if the keeper is killed along with it. Then a module-made silent output
+stays until it is unloaded (`pactl list short modules | grep robin_silent`,
+then `pactl unload-module` with its number), and the screens stay black
+until something sets their gamma. On X11 that is `xrandr --output NAME
+--gamma 1:1:1 --brightness 1`; on GNOME under Wayland, switching Night Light
+on and off, or logging out. The person at the desk would be typing blind, so
+do it from another machine over SSH or from a text console.
+
+The curtain is no lock. Anyone at the machine can type and click while it is
+drawn, and on GNOME it also blacks out the indicator that says the screen
+is being shared, which leaves the black screen itself as the only sign.
+Whatever ends the session, a dropped connection included, lifts the curtain
+and leaves the desktop unlocked in front of whoever is there. The curtain
+refuses a desktop with a screen it cannot darken rather than leave that
+screen lit, but a screen plugged in while it is drawn stays lit, with an
+error under the switch, and so does a program that refuses to move out of
+the room's speakers.
 
 One exposure is on the client side: to open your browser the CLI hands the
 page URL, token included, to `open`, `xdg-open`, `rundll32` on Windows or
@@ -649,6 +730,30 @@ See [e2e/README.md](e2e/README.md). Rootless containers cannot shape bandwidth,
 so congestion control is tested separately over a shaped virtual link
 (`go test ./internal/agent/peer -run Congestion`).
 
+A private session is tested piece by piece against real servers in
+podman, and nowhere near the workstation's own screen or speakers. Xvfb
+keeps a 256-entry gamma ramp per CRTC and hands back what was set, though it
+shows nothing, so in `make test-x` the curtain has to zero every ramp, darken
+it again after a stand-in for night light sets a new one, and on lifting put
+that newest ramp back. The silent room there runs against a pulseaudio in the
+user's place: a tone played on the desktop must reach the silent output's
+monitor while the room's own output hears nothing at all, and play in the
+room again once the room is no longer silent, with the default output
+unchanged and, with `module-stream-restore` loaded, nothing remembered for
+the program. Then an agent with both switched on is killed with SIGKILL, and
+its keeper alone has to light the screens, remove the silent output and
+move the program back. `make test-wayland` repeats the silent room and the
+SIGKILL against each desktop's PipeWire, with `pw-record` on GNOME 46 and the
+module everywhere, and reads WirePlumber's state file afterwards for any
+output it kept for the program. Mutter's gamma calls are tested against a
+stand-in on a private bus, whose signatures the test compares with the real
+mutter 46 and 49; headless mutter has no screen to darken, so the session
+tests there only see the curtain reported as unavailable, and on KDE as
+impossible. In `make e2e` the attach scenario flips both switches from the
+page while it watches the host's screen and speakers, and leaves both on
+for the teardown, which compares the desktop's gamma and outputs with how
+they were before.
+
 Bulk transfers run between two Pion peers in one process, both ways, along
 with the ones that must fail: oversized, corrupt, truncated, refused and
 cancelled, including a cancel while the sender waits for its queue to drain
@@ -773,6 +878,27 @@ verified against a Linux build.
   machine itself included, until the session ends.
 - Text pasted from the browser into an attached desktop outlives the session
   only if that desktop runs a clipboard manager.
+- The curtain hides the host's screen but does not lock it: the keyboard and
+  mouse there still reach your session, and when the session ends, for
+  whatever reason, the screen comes back unlocked.
+- The curtain is tested on Xvfb and against a stand-in for mutter, never on
+  a real screen. Some hardware may draw the pointer on a plane its gamma
+  does not cover, leaving the pointer visible on the black screen; night
+  light or a monitor plugged in shows for up to a second before the curtain
+  darkens it again; and GNOME on real hardware is unverified.
+- No curtain on KDE Plasma or wlroots compositors, which give programs no
+  way to set gamma.
+- A program that asks for its stream never to be moved
+  (`PA_STREAM_DONT_MOVE`) plays in the room while it is silent; the switch
+  names it.
+- A program that starts playing while the room is silent plays in the room
+  until it is moved. In the tests that took 80 to 180 ms and none of the
+  sound reached the room's output, but a program that is loud from its first
+  buffer may be heard for that long.
+- A program that stops playing while the room is silent is remembered by
+  PulseAudio, and by WirePlumber 0.4, as playing on the silent output. It
+  plays on the default output next time, as before, but an output chosen
+  for it earlier is forgotten.
 - Sound in a spawned session needs `pulseaudio` on the host. Current Fedora
   and Ubuntu desktops ship PipeWire without it, and their spawned sessions
   are silent.
@@ -802,7 +928,8 @@ verified against a Linux build.
   which has no such redundancy, so a lost music packet is concealed by the
   browser instead.
 - Attached, the sound is the monitor of whatever output was the default when
-  the session started, and the host's own speakers keep playing it.
+  the session started, and the host's own speakers keep playing it unless
+  the room is silent (`--silent`).
 - A kept desktop survives its connection only where logind leaves user
   processes alone on logout (the default) or a user systemd manager can
   hold it (`KillUserProcesses=yes` with `systemd-run` and, for your last

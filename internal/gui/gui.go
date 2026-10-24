@@ -53,6 +53,9 @@ type Options struct {
 	// Mic and Camera offer the browser's microphone and camera to the
 	// host's programs; the page keeps each off until the user turns it on.
 	Mic, Camera bool
+	// Curtain and Silent start an attached desktop's private session with
+	// that switch on; see protocol.Private.
+	Curtain, Silent bool
 	// HiDPI sizes the remote display in the browser's device pixels.
 	HiDPI bool
 	STUN  []string
@@ -100,6 +103,9 @@ func Run(ctx context.Context, o Options) (err error) {
 			err = printableError{err}
 		}
 	}()
+	if err := checkPrivate(o); err != nil {
+		return err
+	}
 	h, err := connect(ctx, o, log)
 	if err != nil {
 		return err
@@ -195,6 +201,9 @@ func Run(ctx context.Context, o Options) (err error) {
 		fmt.Fprintf(o.Stderr, "open this URL in your browser: %s\n", srv.URL())
 	}
 	fmt.Fprintf(o.Stderr, "robin: %s; press Ctrl+C to end the session\n", sessionNote(o.Dest, ready))
+	if note := privateNote(ready); note != "" {
+		fmt.Fprintln(o.Stderr, note)
+	}
 
 	config := protocol.Config{ICEServers: iceServers(start.STUN), HiDPI: o.HiDPI, Keep: ready.Keep}
 	config.Mic, config.Camera = offeredDevices(ready)
@@ -594,6 +603,7 @@ func startMessage(o Options, r *probe.Report) (protocol.Start, string) {
 		FPS: o.FPS, MaxKbps: o.MaxKbps, Session: o.Session, STUN: o.STUN,
 		Attach: o.Attach, Monitor: o.Monitor, Audio: o.Audio, Encoder: o.Encoder,
 		Mic: o.Mic, Camera: o.Camera,
+		Curtain: o.Curtain, Silent: o.Silent,
 	}
 	if o.Camera {
 		s.CameraDevice = r.CameraDevice()

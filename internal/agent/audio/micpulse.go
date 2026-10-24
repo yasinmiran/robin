@@ -3,6 +3,7 @@
 package audio
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -76,7 +77,7 @@ type pulseMic struct {
 // dialPulseMic connects to the server at socket for a microphone.
 func dialPulseMic(socket string, cookie []byte, log *slog.Logger) (*pulseMic, error) {
 	p := &pulseMic{log: log}
-	c, conn, err := connect(socket, cookie, p.notice)
+	c, conn, err := connect(context.Background(), socket, cookie, p.notice)
 	if err != nil {
 		return nil, err
 	}

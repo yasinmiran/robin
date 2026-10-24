@@ -68,7 +68,14 @@ type Options struct {
 	// camera; nil when this build has none.
 	NewMic    NewMicFunc
 	NewCamera NewCameraFunc
-	Log       *slog.Logger
+	// Keeper is the argv that makes this executable the child that undoes a
+	// private session's changes if the agent dies (see keeper.New); without
+	// it an attached desktop gets no private session.
+	Keeper []string
+	// Silence makes an attached desktop's room silent; nil when this build
+	// cannot.
+	Silence SilenceFunc
+	Log     *slog.Logger
 }
 
 // Run serves one session over r and w (the SSH exec channel) until the CLI
@@ -228,6 +235,10 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 		s.closePeer()
 		s.endPlays()
 	}()
+	if s.private, err = openPrivate(d, start, o, audio, s.sendPrivate, log); err != nil {
+		return fail(conn, err)
+	}
+	defer s.private.close()
 
 	width, height := d.desk.Size()
 	ready := &protocol.Ready{
@@ -236,6 +247,7 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 		Mode: d.mode, Audio: audio != nil, AudioError: audioErr, Encoder: encoderName, EncoderError: encoderErr,
 		ID: filepath.Base(runDir), Keep: int(o.Keep / time.Second),
 		Mic: micReady, Camera: cameraReady,
+		Private: s.private.snapshot(),
 	}
 	if mm, ok := d.desk.(desktop.MultiMonitor); ok {
 		ms := mm.MonitorState()
@@ -285,6 +297,9 @@ type session struct {
 	// takes it too, so that once it has let a browser go nothing that
 	// browser sent is still applying, and nothing it sends later will.
 	inputMu sync.Mutex
+	// private is an attached desktop's curtain and silent room; nil for a
+	// spawned one.
+	private *private
 
 	mic    Mic    // nil unless the session takes the browser's microphone
 	camera Camera // and its camera
@@ -395,6 +410,7 @@ func (s *session) currentPeer() (*peer.Peer, error) {
 			s.sendCurrentCursor()
 			s.sendMonitors()
 			s.resendOffers()
+			s.sendPrivate()
 		},
 		Keyframe: s.stream.requestKeyframe,
 		Bitrate:  s.stream.setBitrate,

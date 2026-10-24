@@ -7,15 +7,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"log/slog"
 	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/yasinmiran/robin/internal/agent/opus"
 )
 
 // helperEnv makes the test binary act as an agent that starts a server and
@@ -34,6 +38,13 @@ func TestMain(m *testing.M) {
 	}
 	if os.Getenv(micHelperEnv) != "" {
 		runMicHelper()
+	}
+	if os.Getenv(keeperEnv) != "" {
+		serveKeeper()
+		return
+	}
+	if room := os.Getenv(roomEnv); room != "" {
+		silenceForTest(room)
 	}
 	os.Exit(m.Run())
 }
@@ -83,7 +94,14 @@ func sine(seconds, left, right float64) []byte {
 // said is logged.
 func play(t *testing.T, env []string, pcm []byte) {
 	t.Helper()
-	cmd := exec.Command("paplay", "--raw", "--format=s16le", "--rate=48000", "--channels=2")
+	playAs(t, "paplay", env, pcm)
+}
+
+// playAs plays as play does, under the program name app, until the test
+// ends or stop is called.
+func playAs(t *testing.T, app string, env []string, pcm []byte) (stop func()) {
+	t.Helper()
+	cmd := exec.Command("paplay", "--raw", "--format=s16le", "--rate=48000", "--channels=2", "--client-name="+app)
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdin = bytes.NewReader(pcm)
 	var out bytes.Buffer
@@ -91,13 +109,18 @@ func play(t *testing.T, env []string, pcm []byte) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		cmd.Process.Kill()
-		cmd.Wait()
-		if s := strings.TrimSpace(out.String()); s != "" {
-			t.Logf("paplay: %s", s)
-		}
-	})
+	var once sync.Once
+	stop = func() {
+		once.Do(func() {
+			cmd.Process.Kill()
+			cmd.Wait()
+			if s := strings.TrimSpace(out.String()); s != "" {
+				t.Logf("paplay: %s", s)
+			}
+		})
+	}
+	t.Cleanup(stop)
+	return stop
 }
 
 func rms(pcm []int16) float64 {
@@ -204,6 +227,34 @@ func TestServerDiesWithTheAgent(t *testing.T) {
 	}
 	syscall.Kill(pid, syscall.SIGKILL)
 	t.Errorf("pulseaudio %d outlived the agent", pid)
+}
+
+// pitch is the frequency of one channel of interleaved stereo, counted in
+// swings past a threshold so codec noise around zero does not count twice.
+func pitch(pcm []int16, ch int) float64 {
+	const threshold = 2000
+	swings := 0
+	high := pcm[ch] > 0
+	for i := ch; i < len(pcm); i += opus.Channels {
+		if v := pcm[i]; high && v < -threshold || !high && v > threshold {
+			high = !high
+			swings++
+		}
+	}
+	return float64(swings) / 2 / (float64(len(pcm)/opus.Channels) / opus.SampleRate)
+}
+
+func checkTone(t *testing.T, heard []int16, left, right float64) {
+	t.Helper()
+	for ch, want := range []float64{left, right} {
+		if got := pitch(heard, ch); math.Abs(got-want) > want*0.03 {
+			t.Errorf("channel %d decodes at %.1f Hz, want %.0f", ch, got, want)
+		}
+	}
+}
+
+func quiet() *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 }
 
 // running reports a live process; a zombie has already been killed.

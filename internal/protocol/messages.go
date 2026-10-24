@@ -91,6 +91,10 @@ type Start struct {
 	Mic          bool   `json:"mic,omitempty"`
 	Camera       bool   `json:"camera,omitempty"`
 	CameraDevice string `json:"cameraDevice,omitempty"`
+	// Curtain and Silent start an attached desktop's private session with
+	// that switch on; see Private. The session fails if it cannot.
+	Curtain bool `json:"curtain,omitempty"`
+	Silent  bool `json:"silent,omitempty"`
 }
 
 // Start limits the CLI fills in when the user names none, and the agent
@@ -160,6 +164,9 @@ type Ready struct {
 	// Mic and Camera answer Start's, and are nil when it did not ask.
 	Mic    *Device `json:"mic,omitempty"`
 	Camera *Device `json:"camera,omitempty"`
+	// Private is the private session of an attached desktop; nil for a
+	// spawned one, which nobody sits in front of.
+	Private *Private `json:"private,omitempty"`
 }
 
 // Notice is something the user has to do or know before the desktop is ready.
@@ -275,6 +282,12 @@ type Control struct {
 
 	// File, for the file control types.
 	File *File `json:"file,omitempty"`
+
+	// On is the position the browser asks for in ControlCurtain and
+	// ControlSilent.
+	On bool `json:"on,omitempty"`
+	// Private is the agent's state of a private session, in ControlPrivate.
+	Private *Private `json:"private,omitempty"`
 }
 
 // Values for Start.Attach, Ready.Mode and Start.Encoder.

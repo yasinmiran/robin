@@ -15,8 +15,8 @@ import (
 
 // sessionBus connects to the desktop session's bus. The socket in the runtime
 // directory comes first: an SSH login can carry a DBUS_SESSION_BUS_ADDRESS
-// of its own that the desktop's portal is not on.
-func sessionBus() (*dbus.Conn, error) {
+// of its own that the desktop's portal is not on. opts go to dbus.Connect.
+func sessionBus(opts ...dbus.ConnOption) (*dbus.Conn, error) {
 	sock := filepath.Join(xdg.RuntimeDir(), "bus")
 	addr := "unix:path=" + sock
 	if fi, err := os.Stat(sock); err != nil || fi.Mode().Type() != os.ModeSocket {
@@ -24,7 +24,7 @@ func sessionBus() (*dbus.Conn, error) {
 			return nil, fmt.Errorf("no session bus at %s: is a desktop session running for this user?", sock)
 		}
 	}
-	conn, err := dbus.Connect(addr)
+	conn, err := dbus.Connect(addr, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("connect to the session bus: %w", err)
 	}

@@ -11,6 +11,7 @@ import { Files } from './files.js';
 import { Clipboard } from './clipboard.js';
 import { offerDevices } from './devicebar.js';
 import { constrainedBaselineFirst } from './devices.js';
+import { PrivateSwitches } from './private.js';
 
 const CONTROL_CHANNEL = 'control';
 const ICE_GRACE_MS = 2000;
@@ -34,6 +35,7 @@ const input = new Input(video, typing, document.getElementById('preedit'), sendC
 const cursor = new RemoteCursor(video);
 const session = new Session();
 const sessionControls = sessionSection(overlay.addSection('session'));
+const privateSwitches = new PrivateSwitches(overlay, sendControl);
 
 let ws = null;
 let pc = null;
@@ -73,6 +75,7 @@ window.robin = {
     return { scale: v.scale, x: v.x, y: v.y };
   },
   get gesture() { return input.gesture; },
+  get private() { return privateSwitches.state; },
   addSection: (name) => overlay.addSection(name),
   detach: () => leave(session.detach()),
   endSession: () => leave(session.end()),

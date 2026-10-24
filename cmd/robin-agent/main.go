@@ -34,12 +34,15 @@ import (
 	"github.com/yasinmiran/robin/internal/agent/daemon"
 	"github.com/yasinmiran/robin/internal/agent/h264"
 	"github.com/yasinmiran/robin/internal/agent/hwenc"
+	"github.com/yasinmiran/robin/internal/agent/keeper"
+	"github.com/yasinmiran/robin/internal/agent/wayland"
+	"github.com/yasinmiran/robin/internal/agent/x11"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
 var version = "dev"
 
-const usage = "usage: robin-agent serve [-v] [-keep d] [-resume id] [-detach setsid|systemd-run] | daemon ... | end id | send FILE... | version"
+const usage = "usage: robin-agent serve [-v] [-keep d] [-resume id] [-detach setsid|systemd-run] | daemon ... | end id | send FILE... | keeper [-v] | version"
 
 func main() {
 	if filepath.Base(os.Args[0]) == agent.SendCommand {
@@ -60,6 +63,8 @@ func main() {
 		os.Exit(end(os.Args[2:]))
 	case "send":
 		os.Exit(runSend(os.Args[2:]))
+	case "keeper":
+		os.Exit(runKeeper(os.Args[2:]))
 	default:
 		fmt.Fprintf(os.Stderr, "robin-agent: unknown command %q\n%s\n", os.Args[1], usage)
 		os.Exit(2)
@@ -190,6 +195,10 @@ func runDaemon(args []string) int {
 	defer ln.Close()
 	// Serve removes the directory once a session ran; before that it is ours.
 	defer os.RemoveAll(*dir)
+	keeperArgv := []string{exe, "keeper"} // exe names it; keeper.Client runs this same image
+	if *verbose {
+		keeperArgv = append(keeperArgv, "-v")
+	}
 	err = agent.Serve(ctx, ln, agent.Options{
 		RunRoot: filepath.Dir(*dir), RunDir: *dir, Keep: *keep,
 		StateDir: filepath.Dir(exe),
@@ -202,6 +211,8 @@ func runDaemon(args []string) int {
 		NewAudio:  newAudio,
 		NewMic:    newMic,
 		NewCamera: newCamera,
+		Keeper:    keeperArgv,
+		Silence:   silence,
 		Log:       log,
 	})
 	if err != nil {
@@ -247,6 +258,37 @@ func runSend(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	return send(ctx, args, filepath.Join(filepath.Dir(exe), "run"), os.Getenv, os.Stdout, os.Stderr)
+}
+
+// runKeeper is the keeper of a private session: it undoes what the agent
+// changed on the attached desktop once the agent closes its stdin or dies,
+// which the kernel tells it with SIGTERM.
+func runKeeper(args []string) int {
+	fs := flag.NewFlagSet("keeper", flag.ContinueOnError)
+	verbose := fs.Bool("v", false, "log at info level")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	level := slog.LevelWarn
+	if *verbose {
+		level = slog.LevelInfo
+	}
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	xgb.Logger = stdlog.New(io.Discard, "", 0)
+	keeper.Main(keeper.Undo{
+		x11.GammaStep:      x11.UndoGamma,
+		wayland.MutterStep: wayland.UndoMutter,
+		audio.RoomStep:     audio.UndoRoom,
+	}, log)
+	return 0
+}
+
+func silence(ctx context.Context, hold agent.Hold, log *slog.Logger) (agent.Room, error) {
+	r, err := audio.Silence(ctx, audio.RoomOptions{Hold: hold, Log: log})
+	if err != nil {
+		return nil, err // not r: a nil *audio.Room would make a non-nil interface
+	}
+	return r, nil
 }
 
 func newEncoder(width, height, fps, bitrate int) (agent.Encoder, error) {

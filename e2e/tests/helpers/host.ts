@@ -107,7 +107,7 @@ export async function leftovers(): Promise<string> {
 export const blockUdp = () => ssh('robin-block-udp');
 
 // liveState describes robin's own desktop (host/robin-live): its processes,
-// autorepeat and keymaps. liveBefore is the same, saved before the CLI ran.
+// autorepeat, keymaps, gamma and sinks. liveBefore is the same, saved before the CLI ran.
 export const liveState = () => ssh('robin-live state');
 export const liveBefore = () => ssh('robin-live before');
 
@@ -154,6 +154,14 @@ export async function terminalWindow(): Promise<string> {
 export async function cutSSH(): Promise<void> {
   await sshRaw('pkill -u robin -x sshd');
 }
+
+// roomBrightness is the brightness of robin's own desktop's screen gamma as
+// xrandr reads it (host/robin-room): 0 is black, about 1 is lit.
+export const roomBrightness = async () => Number(await ssh('robin-room brightness'));
+
+// roomLoudness is the RMS of a second of what robin's own desktop's
+// speakers play.
+export const roomLoudness = async () => Number(await ssh('robin-room loudness'));
 
 // playNoise plays seconds of white noise into the session's sound server,
 // as a program on the remote desktop would, and resolves when it ends.

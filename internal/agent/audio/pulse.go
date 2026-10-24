@@ -3,12 +3,15 @@
 package audio
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jfreymuth/pulse/proto"
@@ -31,8 +34,12 @@ const (
 // interleaved stereo to onFrame on the protocol's read goroutine.
 type recorder struct {
 	conn net.Conn
-	// sink is the sink whose monitor is recorded.
+	c    *proto.Client
+	// sink is the sink whose monitor the recording started on.
 	sink string
+	// stream is the record stream whose data counts; follow replaces it.
+	stream *atomic.Uint32
+	mu     sync.Mutex // serializes follow
 }
 
 // record connects to the server at socket and starts recording. onEnd runs
@@ -47,15 +54,20 @@ func record(socket string, cookie []byte, onFrame func([]int16), onEnd func(erro
 			onEnd(err)
 		}
 	}
-	// The client runs the callback on its read goroutine, the only place
-	// frames and endings arrive, so f and ended need no lock. The connection
-	// carries one stream, so every data packet is ours.
-	c, conn, err := connect(socket, cookie, func(msg any) {
+	// The callback is the only place frames and endings arrive, so f and
+	// ended need no lock.
+	stream := new(atomic.Uint32)
+	stream.Store(proto.Undefined)
+	c, conn, err := connect(context.Background(), socket, cookie, func(msg any) {
 		switch m := msg.(type) {
 		case *proto.DataPacket:
-			f.write(m.Data)
+			if m.StreamIndex == stream.Load() {
+				f.write(m.Data)
+			}
 		case *proto.RecordStreamKilled:
-			end(errors.New("the sound server dropped the recording"))
+			if m.StreamIndex == stream.Load() {
+				end(errors.New("the sound server dropped the recording"))
+			}
 		case *proto.ConnectionClosed:
 			end(errors.New("the sound server closed the connection"))
 		}
@@ -68,7 +80,6 @@ func record(socket string, cookie []byte, onFrame func([]int16), onEnd func(erro
 			conn.Close()
 		}
 	}()
-
 	var info proto.GetServerInfoReply
 	if err := c.Request(&proto.GetServerInfo{}, &info); err != nil {
 		return nil, fmt.Errorf("ask for the default sink: %w", err)
@@ -76,12 +87,23 @@ func record(socket string, cookie []byte, onFrame func([]int16), onEnd func(erro
 	if info.DefaultSinkName == "" {
 		return nil, errors.New("the sound server has no output to capture")
 	}
+	r := &recorder{conn: conn, c: c, sink: info.DefaultSinkName, stream: stream}
+	index, err := r.open(info.DefaultSinkName + ".monitor")
+	if err != nil {
+		return nil, err
+	}
+	stream.Store(index)
+	return r, nil
+}
+
+// open starts a record stream on source.
+func (r *recorder) open(source string) (uint32, error) {
 	var reply proto.CreateRecordStreamReply
-	if err := c.Request(&proto.CreateRecordStream{
+	if err := r.c.Request(&proto.CreateRecordStream{
 		SampleSpec:         proto.SampleSpec{Format: proto.FormatInt16LE, Channels: opus.Channels, Rate: opus.SampleRate},
 		ChannelMap:         proto.ChannelMap{proto.ChannelLeft, proto.ChannelRight},
 		SourceIndex:        proto.Undefined,
-		SourceName:         info.DefaultSinkName + ".monitor",
+		SourceName:         source,
 		BufferMaxLength:    10 * frameBytes,
 		BufferFragSize:     frameBytes,
 		AdjustLatency:      true,
@@ -89,28 +111,58 @@ func record(socket string, cookie []byte, onFrame func([]int16), onEnd func(erro
 		Properties:         proto.PropList{"media.name": proto.PropListString("robin desktop sound")},
 		ChannelVolumes:     proto.ChannelVolumes{proto.VolumeNorm, proto.VolumeNorm},
 	}, &reply); err != nil {
-		return nil, fmt.Errorf("record %s.monitor: %w", info.DefaultSinkName, err)
+		return 0, fmt.Errorf("record %s: %w", source, err)
 	}
-	return &recorder{conn: conn, sink: info.DefaultSinkName}, nil
+	return reply.StreamIndex, nil
 }
 
 // close drops the connection, and with it the stream.
 func (r *recorder) close() { r.conn.Close() }
 
-// connect opens a client of the server at socket and introduces it. The
-// client runs callback on its read goroutine for everything the server
-// sends unasked; it is set before that goroutine starts.
-func connect(socket string, cookie []byte, callback func(any)) (_ *proto.Client, _ net.Conn, err error) {
-	conn, err := net.DialTimeout("unix", socket, requestTimeout)
+// follow records source from now on, or for "" the monitor the recording
+// started on. It opens a stream there and drops the old one rather than
+// moving it: WirePlumber 0.4 remembers where a stream was moved as its
+// program's preference.
+func (r *recorder) follow(source string) error {
+	if source == "" {
+		source = r.sink + ".monitor"
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	index, err := r.open(source)
+	if err != nil {
+		return err
+	}
+	old := r.stream.Swap(index)
+	if err := r.c.Request(&proto.DeleteRecordStream{StreamIndex: old}, nil); err != nil {
+		return fmt.Errorf("stop recording the old source: %w", err)
+	}
+	return nil
+}
+
+// connect opens a connection to the server at socket and introduces itself.
+// onMsg, when set, runs on the connection's read goroutine for whatever the
+// server sends that answers no request. A request made from onMsg would
+// wait for its reply on that same goroutine, for ever. ctx bounds the dial,
+// and its deadline, if any, the connection's whole life.
+func connect(ctx context.Context, socket string, cookie []byte, onMsg func(any)) (_ *proto.Client, _ net.Conn, err error) {
+	dialer := net.Dialer{Timeout: requestTimeout}
+	conn, err := dialer.DialContext(ctx, "unix", socket)
 	if err != nil {
 		return nil, nil, err
+	}
+	if d, ok := ctx.Deadline(); ok {
+		conn.SetDeadline(d)
 	}
 	defer func() {
 		if err != nil {
 			conn.Close()
 		}
 	}()
-	c := &proto.Client{Callback: callback}
+	c := &proto.Client{}
+	if onMsg != nil {
+		c.Callback = onMsg // before Open starts the read goroutine
+	}
 	c.Open(conn)
 	c.SetTimeout(requestTimeout)
 

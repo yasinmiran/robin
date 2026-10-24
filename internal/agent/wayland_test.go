@@ -14,6 +14,7 @@ import (
 
 	"github.com/pion/webrtc/v4"
 
+	"github.com/yasinmiran/robin/internal/agent/wayland"
 	"github.com/yasinmiran/robin/internal/agent/wayland/wltest"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
@@ -36,12 +37,14 @@ func TestSessionAttachesToWayland(t *testing.T) {
 	}
 	state := t.TempDir()
 	enc := &fakeEncoder{sizes: h.sizes}
+	keeper, _ := testKeeper(t)
 	go func() {
 		defer close(h.exited)
 		h.runErr = Run(context.Background(), inR, outW, Options{
 			RunRoot: h.root, StateDir: state, Build: "test",
 			Log:      slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})),
 			Encoders: map[string]NewEncoderFunc{protocol.EncoderSoftware: func(w, hgt, fps, bps int) (Encoder, error) { return enc, nil }},
+			Keeper:   keeper, Silence: silenceForTest,
 		})
 		outW.Close()
 	}()
@@ -67,6 +70,14 @@ func TestSessionAttachesToWayland(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(state, waylandTokenFile)); err != nil {
 		t.Errorf("restore token not kept in the state dir: %v", err)
+	}
+	// Headless mutter lists no screen to darken, and KWin has no way to.
+	want := wayland.ErrNoGamma
+	if wltest.KDE() {
+		want = wayland.ErrNoDisplayConfig
+	}
+	if p := ready.Private; p == nil || p.Curtain.Unsupported != want.Error() || p.Silent.Unsupported != "" {
+		t.Errorf("ready reports the private session %+v, want no curtain (%v) and a silent room", ready.Private, want)
 	}
 
 	m := &webrtc.MediaEngine{}
