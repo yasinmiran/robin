@@ -138,19 +138,21 @@ cover-wayland:
 cover-e2e: bin/cover/robin-linux-amd64
 	ROBIN_BIN=$(CURDIR)/$< ROBIN_E2E_COVER=$(COVER)/e2e e2e/run.sh $(SCENARIOS)
 
-# The page's coverage first, then the Go summary and the baseline check.
+# One shell, so a step that fails (stale page coverage, say) still lets the
+# Go summary and the baseline check print before the target fails.
 cover-report:
-	@mkdir -p $(COVER)/profiles
-	@dirs=$$(find $(COVER)/e2e -name 'covmeta.*' -exec dirname {} + 2>/dev/null | sort -u | paste -sd, -); \
-	if [ -n "$$dirs" ]; then $(GO) tool covdata textfmt -i="$$dirs" -o $(COVER)/profiles/e2e.out; \
-	else echo "make cover-report: no e2e coverage data"; fi
-	@pages=$$(find $(COVER) -path '*/page/*' -name '*.json' 2>/dev/null); \
+	@mkdir -p $(COVER)/profiles; status=0; \
+	dirs=$$(find $(COVER)/e2e -name 'covmeta.*' -exec dirname {} + 2>/dev/null | sort -u | paste -sd, -); \
+	if [ -n "$$dirs" ]; then $(GO) tool covdata textfmt -i="$$dirs" -o $(COVER)/profiles/e2e.out || status=$$?; \
+	else echo "make cover-report: no e2e coverage data"; fi; \
+	pages=$$(find $(COVER) -path '*/page/*' -name '*.json' 2>/dev/null); \
 	if [ -z "$$pages" ]; then echo "make cover-report: no page coverage"; \
-	else $(GO) run ./internal/tools/pagecover $$pages >$(COVER)/page.txt && cat $(COVER)/page.txt && echo; fi
-	@status=0; $(GO) run ./internal/tools/covercheck -module $(MODULE) -baseline coverage-baseline.txt \
+	elif $(GO) run ./internal/tools/pagecover $$pages >$(COVER)/page.txt; then cat $(COVER)/page.txt; echo; \
+	else status=$$?; fi; \
+	$(GO) run ./internal/tools/covercheck -module $(MODULE) -baseline coverage-baseline.txt \
 		-o $(COVER)/merged.out $(COVER)/profiles >$(COVER)/summary.txt || status=$$?; \
 	cat $(COVER)/summary.txt; \
-	[ ! -f $(COVER)/merged.out ] || $(GO) tool cover -html=$(COVER)/merged.out -o $(COVER)/cover.html; \
+	[ ! -f $(COVER)/merged.out ] || $(GO) tool cover -html=$(COVER)/merged.out -o $(COVER)/cover.html || status=$$?; \
 	exit $$status
 
 cover-baseline:
