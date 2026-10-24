@@ -91,7 +91,7 @@ export async function setClipboard(text: string): Promise<void> {
 // leftovers lists session processes still running as robin. The bracketed
 // patterns keep pgrep from matching the remote shell that carries them.
 export async function leftovers(): Promise<string> {
-  const r = await sshRaw(`pgrep -u robin -fa '[X]vfb|[r]emotejump-agent|[o]penbox|[x]term|[p]ulseaudio'`);
+  const r = await sshRaw(`pgrep -u robin -fa '[X]vfb|[r]obin-agent|[o]penbox|[x]term|[p]ulseaudio'`);
   if (r.code > 1) throw new Error(`pgrep: exit ${r.code}: ${r.stderr.trim()}`);
   return r.stdout.trim();
 }
@@ -105,7 +105,7 @@ export const liveBefore = () => ssh('robin-live before');
 
 // agentLeftovers lists agents still running as robin, and run dirs they left.
 export async function agentLeftovers(): Promise<string> {
-  const r = await sshRaw(`pgrep -u robin -fa '[r]emotejump-agent'; find ~/.cache/robin/run -mindepth 1 -maxdepth 1 2>/dev/null`);
+  const r = await sshRaw(`pgrep -u robin -fa '[r]obin-agent'; find ~/.cache/robin/run -mindepth 1 -maxdepth 1 2>/dev/null`);
   return r.stdout.trim();
 }
 
