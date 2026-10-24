@@ -445,8 +445,9 @@ to print the comparison the ADR quotes.
   it, since every data channel shares one SCTP receive window.
 - Keys map by character, so text arrives right whatever the client layout,
   but IME composition (CJK input) is not forwarded.
-- The status tab reads 0 fps on an idle screen. Nothing is sent when nothing
-  changes; that is not a stall.
+- The status tab reads about 2 fps on an idle screen. A still picture is
+  sent again every half second, a few hundred bytes each, so the browser
+  never times out waiting for one; that is not a stall.
 - Through the SSH tunnel video is TCP inside TCP, so a lossy link shows
   head-of-line stalls that direct UDP would not.
 - Safari's picture is checked by hand only: the WebKit the tests drive on
