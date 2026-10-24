@@ -196,7 +196,8 @@ func TestSpawnedMicKeepsTheSpeakers(t *testing.T) {
 }
 
 // userServer starts a pulseaudio standing in for the user's own: module
-// loading allowed, found through XDG_RUNTIME_DIR as libpulse would.
+// loading allowed, a default source the user chose, found through
+// XDG_RUNTIME_DIR as libpulse would.
 func userServer(t *testing.T) {
 	t.Helper()
 	needServer(t)
@@ -206,7 +207,7 @@ func userServer(t *testing.T) {
 	}
 	socket := filepath.Join(dir, "pulse", "native")
 	script := filepath.Join(dir, "user.pa")
-	os.WriteFile(script, []byte("load-module module-null-sink sink_name=speakers\nset-default-sink speakers\n"+
+	os.WriteFile(script, []byte("load-module module-null-sink sink_name=speakers\nset-default-sink speakers\nset-default-source speakers.monitor\n"+
 		"load-module module-native-protocol-unix socket="+quoteArg(socket)+" auth-anonymous=1\n"), 0o600)
 	cmd := exec.Command("pulseaudio", "-n", "--file="+script, "--daemonize=no", "--exit-idle-time=-1",
 		"--use-pid-file=no", "--realtime=no", "--high-priority=no", "--log-target=stderr")
@@ -230,8 +231,6 @@ func userServer(t *testing.T) {
 		}
 	}
 	t.Setenv("XDG_RUNTIME_DIR", dir)
-	t.Setenv("PULSE_SERVER", "")
-	t.Setenv("PULSE_COOKIE", "")
 }
 
 // TestAttachedPulseAudioMic adds the microphone to the user's own
