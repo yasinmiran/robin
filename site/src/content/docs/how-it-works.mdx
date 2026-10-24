@@ -104,12 +104,15 @@ Through the tunnel, video is TCP inside TCP, so a lossy link shows head-of-line 
 
 ## Congestion control
 
-The browser sends transport-wide congestion control feedback, and Pion's GCC turns it into a target bitrate that the encoder follows, below the `--max-kbps` ceiling. Two Pion defaults were replaced, both found by streaming through a shaped virtual link:
+The browser sends transport-wide congestion control feedback, and Pion's GCC turns it into a target bitrate that the encoder follows, below the `--max-kbps` ceiling. Several Pion defaults were replaced, each found by streaming through a shaped virtual link:
 
-- **No pacer.** The default leaky-bucket pacer queues without bound. Whatever was sent while the target fell drained for seconds, and the delay that added pinned the target at its floor. The agent sends unpaced and lets the encoder hold the rate.
+- **A pacer with a bound.** The default leaky-bucket pacer queues without bound. Whatever was sent while the target fell drained for seconds, and the delay that added pinned the target at its floor. The agent's own pacer spreads a burst, a keyframe above all, at 1.5 times the target, and never holds a packet longer than 500 ms.
 - **A bounded NACK responder.** The default resends anything in a 1024-packet buffer as often as it is asked. After a startup overshoot, lost packets were resent, lost again and NACKed again until retransmissions filled the link, and the loss estimator reported 93% loss with nothing being lost. The agent answers NACKs only for packets younger than a second, at most twice each, within a quarter of the target bitrate.
+- **The target held through a still screen.** A still screen sends a refresh twice a second and sound, and GCC took that trickle for the link's measure: its target rose 8% a second to the ceiling, which the first scroll then overflowed, or fell to a fraction of the link. The agent tells such spells apart as libwebrtc does and keeps their feedback from GCC, so motion starts at the target the screen went still with, and its own frames try the link again.
+- **Sound first.** Opus packets go out ahead of a queued keyframe, and the pacer numbers packets again as they leave, since the browser's feedback counts a packet that arrives behind a higher number as lost.
+- **Bulk under the target.** Files and clipboard content from the host take what the picture leaves of the target, and a quarter of it while the picture fills it, since GCC cannot see them. Every transfer also has a credit window of 512 KiB, so one that stalls never fills the connection the keyboard shares.
 
-With both changes, a start that overshoots fourfold and a link that drops mid-session both settle within about 10% of the link rate.
+With these, a start that overshoots fourfold and a link that drops mid-session both settle within about 10% of the link rate, the first motion after a minute of a still screen shows as the motion before it did, and a download beside a moving picture leaves the picture its rate.
 
 ## Zero playout delay
 

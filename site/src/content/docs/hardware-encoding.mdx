@@ -64,6 +64,19 @@ Most of the hardware routes' CPU is the copy: a 2160p frame is 12 MB through a p
 
 Rate control on the GPU is VBR, with the target as the peak and 70% of it as the average. Under CBR the hardware spent the whole target on any picture, 17 to 20 Mbit/s at a 20 Mbit/s target for typing that openh264 sends in 62 kbit/s. Between restarts a token bucket holding 500 ms of the target skips frames when the output runs ahead of it, because on full-screen noise the Intel encoder sent 4.4 Mbit/s whether the target was 500 kbit/s or 2 Mbit/s.
 
+## Quality against openh264
+
+The agent's video quality harness, which plays a recorded screen of small text through the real stream loop over shaped links and scores every picture the stand-in browser shows, runs the GPU too (`ROBIN_VQ=all`, variant `vaapi`). Through `vaapih264enc` on the same Intel GPU, the hardware encoded every frame, 30 fps through scrolling, dragging and video where openh264 dropped frames to keep text legible, but spent about a third of its target, 662 to 670 kbit/s against 2 to 2.6 Mbit/s, where openh264 spent 1.1 to 1.5. The picture paid for it:
+
+| over the whole clip | openh264 | `vaapih264enc` |
+|---|---|---|
+| 1080p, three links | 41.7 to 45.4 dB | 36.8 to 37.2 dB |
+| 1440p, three links | 38.8 to 43.6 dB | 32.4 to 32.6 dB |
+| 1440p shown at 1080p | 26.2 to 26.3 dB | 26.0 dB |
+| worst tile during video, 1080p and 1440p | 0.41 to 0.52 | 0.06 to 0.16 |
+
+A still screen stays where the hardware first put it, since its refreshes do not sharpen the picture as openh264's do. That is the measure behind `auto` keeping 1080p and 1440p sessions in software where the CPU can afford them.
+
 ## What has been verified
 
 The VA-API routes have run on Ubuntu 22.04 (GStreamer 1.20, ffmpeg 4.4) and, in a rootless podman container on the same Intel GPU, Ubuntu 24.04 (GStreamer 1.24, ffmpeg 6.1, iHD 24.1). Each emits Constrained Baseline that ffmpeg decodes, and Chrome decoded both the ffmpeg and the GStreamer route at 30 fps.
