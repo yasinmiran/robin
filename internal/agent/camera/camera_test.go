@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -109,12 +110,8 @@ func TestFitOddSizes(t *testing.T) {
 }
 
 func TestSteps(t *testing.T) {
-	got := steps(4, 8)
-	want := []int{0, 0, 1, 1, 2, 2, 3, 3}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("steps(4, 8) = %v, want %v", got, want)
-		}
+	if got, want := steps(4, 8), []int{0, 0, 1, 1, 2, 2, 3, 3}; !slices.Equal(got, want) {
+		t.Errorf("steps(4, 8) = %v, want %v", got, want)
 	}
 	for i, s := range steps(1000, 7) {
 		if s < 0 || s >= 1000 {
@@ -213,8 +210,15 @@ func TestBlackUntilPictures(t *testing.T) {
 	if !dev.closed {
 		t.Error("Close left the device open")
 	}
-	if c.show(newFitter(Width, Height), solid(Width, Height, 1, 2, 3)) && c.show(newFitter(Width, Height), solid(Width, Height, 1, 2, 3)) {
-		t.Error("a closed camera kept taking pictures")
+	select {
+	case <-c.done:
+	default:
+		t.Fatal("the writer outlived Close")
+	}
+	n := len(dev.written())
+	c.show(newFitter(Width, Height), solid(Width, Height, 1, 2, 3))
+	if len(dev.written()) != n {
+		t.Error("a closed camera showed a picture")
 	}
 }
 
@@ -235,12 +239,38 @@ func TestShowDropsWhenTheWriterIsBehind(t *testing.T) {
 	}
 }
 
+// logBuffer keeps what a logger writes, for a test to read while the
+// camera's writer logs.
+type logBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *logBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *logBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
+// TestADeviceThatRefusesIsLoggedNotFatal: the writer carries on past a
+// device that takes no picture, and says so once rather than every time.
 func TestADeviceThatRefusesIsLoggedNotFatal(t *testing.T) {
 	shortIdle(t, 10*time.Millisecond)
 	dev := &fakeDevice{fail: errors.New("restarting")}
-	c := newCamera(dev, "test", quiet())
+	var log logBuffer
+	c := newCamera(dev, "test", slog.New(slog.NewTextHandler(&log, nil)))
 	waitFor(t, "a few attempts", func() bool { return len(dev.written()) >= 3 })
 	c.Close()
+	warning := `level=WARN msg="camera: the device took no picture" err=restarting times=1`
+	if got := log.String(); strings.Count(got, "level=WARN") != 1 || !strings.Contains(got, warning) {
+		t.Errorf("logged\n%s\nwant the one warning %s", got, warning)
+	}
 }
 
 func TestStartWithoutPipeWireSaysSo(t *testing.T) {
