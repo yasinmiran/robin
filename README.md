@@ -637,8 +637,9 @@ forwards no unix sockets: there it is a second loopback port, which ssh
 binds only once it has logged in. The CLI uses it only once the system's
 table of listeners shows ssh holding it, so another user who takes the port
 first gets the tunnel refused, not connected to them. The forward's target
-comes from the agent and is refused unless it is `host:port` or an absolute
-socket path, so a host cannot slip other fields into ssh's `-L`.
+comes from the agent and is refused unless it is a loopback address and port,
+as the agent's listener has, so a host can neither slip other fields into
+ssh's `-L` nor have ssh expand `${VAR}` in it from your environment.
 
 Text from the host that the CLI prints, the agent's log and errors, the
 probe's findings and what ssh writes, has its control characters, the

@@ -222,7 +222,13 @@ func TestTunnelWithoutAForward(t *testing.T) {
 // fatal only when the tunnel is the only transport allowed.
 func TestOpenTunnel(t *testing.T) {
 	log := slog.New(slog.DiscardHandler)
-	m, err := sshmux.Dial(t.Context(), "host", sshmux.Options{NoMux: true, Stderr: io.Discard})
+	dir := t.TempDir()
+	ran := filepath.Join(dir, "ran")
+	tripwire := filepath.Join(dir, "ssh")
+	if err := os.WriteFile(tripwire, []byte("#!/bin/sh\ntouch "+ran+"\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	m, err := sshmux.Dial(t.Context(), "host", sshmux.Options{SSHPath: tripwire, NoMux: true, Stderr: io.Discard})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,9 +239,16 @@ func TestOpenTunnel(t *testing.T) {
 		t.Fatalf("Direct: %v, port %d; want no tunnel", err, tun.Port())
 	}
 
-	// A malformed target fails the forward before any ssh runs.
-	if _, err := openTunnel(t.Context(), m, "a:b:c", relay.Tunnel, log); err == nil || !strings.Contains(err.Error(), "forward ICE-TCP over SSH") {
-		t.Fatalf("Tunnel with a forward that fails: %v", err)
+	// A malformed target fails the forward before any ssh runs, and so does
+	// one ssh would expand from this machine's environment.
+	for _, remote := range []string{"a:b:c", "/tmp/${HOME}"} {
+		_, err := openTunnel(t.Context(), m, remote, relay.Tunnel, log)
+		if err == nil || !strings.Contains(err.Error(), "forward ICE-TCP over SSH") || !strings.Contains(err.Error(), "malformed forward target") {
+			t.Fatalf("Tunnel to %q: %v, want the target refused", remote, err)
+		}
+	}
+	if _, err := os.Stat(ran); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ssh ran for a refused target: %v", err)
 	}
 	tun, err = openTunnel(t.Context(), m, "a:b:c", relay.Auto, log)
 	if err != nil || tun.Port() == 0 {

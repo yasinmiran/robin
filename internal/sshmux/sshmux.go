@@ -230,8 +230,8 @@ func (c *capped) Write(p []byte) (int, error) {
 }
 
 // forwardLocal makes the master listen on the unix socket path local and
-// forward each connection to remote, which is "host:port" or a unix socket
-// path on the remote host. local must not exist yet; socketPath gives a
+// forward each connection to remote, "host:port" on the remote host, which
+// Forward has checked. local must not exist yet; socketPath gives a
 // suitable one. The forward lasts until the master exits.
 func (m *Master) forwardLocal(ctx context.Context, local, remote string) error {
 	if !m.mux {

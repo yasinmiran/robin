@@ -1724,8 +1724,11 @@ loopback port. Two of the CLI's surfaces failed that reading.
   newlines is shown in 8 KiB pieces, `protocol.Conn.Send` refuses a line
   over `MaxLineBytes` instead of writing one the peer must take for a broken
   stream (a page frame of 1 MiB of `<` re-encoded to six times that), the
-  forward's target from the agent must be `host:port` or an absolute socket
-  path before it reaches `ssh -L`, and host text the CLI prints has bidi
+  forward's target from the agent must be a loopback address and port, as
+  the agent's listener has, before it reaches `ssh -L`, which splits the
+  spec at colons and expands `${VAR}` in it from the client's environment
+  (OpenSSH 8.9's `ssh -G -L '/tmp/a:/tmp/x${USER}y'` shows the user's name
+  in the target), and host text the CLI prints has bidi
   controls and line separators escaped, the set the agent refuses in a file
   name.
 - Ctrl+C during a reconnect that the daemon keeps answering busy no longer
