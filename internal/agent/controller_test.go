@@ -186,4 +186,11 @@ func TestSessionFileRoundTrip(t *testing.T) {
 	if sessionPID(t.TempDir()) != 0 {
 		t.Error("sessionPID of nothing is not 0")
 	}
+	if err := WriteSession(filepath.Join(t.TempDir(), "missing"), want); err == nil {
+		t.Error("WriteSession into a missing directory succeeded")
+	}
+	os.WriteFile(filepath.Join(dir, SessionFile), []byte("{not json"), 0o600)
+	if _, err := ReadSession(dir); err == nil {
+		t.Error("ReadSession took malformed JSON")
+	}
 }

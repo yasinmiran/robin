@@ -43,6 +43,9 @@ func fakeDaemon(args []string) int {
 		os.WriteFile(filepath.Join(*dir, LogFile), []byte("level=ERROR msg=\"no display for you\"\n"), 0o600)
 		return 1
 	}
+	if os.Getenv("ROBIN_TEST_DAEMON") == "die-quiet" {
+		return 1
+	}
 	logFile, _ := os.OpenFile(filepath.Join(*dir, LogFile), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	syscall.Dup3(int(logFile.Fd()), 2, 0)
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -170,6 +173,50 @@ func TestListenRefusesAnOpenDirectory(t *testing.T) {
 	}
 	if _, err := Listen(filepath.Join(dir, "missing"), "a", testLog()); err == nil {
 		t.Fatal("Listen on a missing dir succeeded")
+	}
+	file := filepath.Join(t.TempDir(), "file")
+	os.WriteFile(file, nil, 0o600)
+	if _, err := Listen(file, "a", testLog()); err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("Listen on a file: %v", err)
+	}
+	deep := filepath.Join(t.TempDir(), strings.Repeat("d", 100))
+	os.Mkdir(deep, 0o700)
+	if _, err := Listen(deep, "a", testLog()); err == nil || !strings.Contains(err.Error(), "too long") {
+		t.Fatalf("Listen with a long path: %v", err)
+	}
+}
+
+func TestChangedWithoutItsDirectoryOnlyWarns(t *testing.T) {
+	dir := privateDir(t)
+	ln, err := Listen(dir, "a", testLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	os.RemoveAll(dir)
+	ln.Changed(protocol.Session{ID: "s1"})
+}
+
+func TestCheckPeerWantsAUnixConnection(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		c, err := net.Dial("tcp", ln.Addr().String())
+		if err == nil {
+			defer c.Close()
+			time.Sleep(200 * time.Millisecond)
+		}
+	}()
+	c, err := ln.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := checkPeer(c); err == nil || !strings.Contains(err.Error(), "not a unix connection") {
+		t.Fatalf("checkPeer on TCP: %v", err)
 	}
 }
 
@@ -337,6 +384,14 @@ func TestStartReportsADaemonThatDies(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(root); len(entries) != 0 {
 		t.Fatalf("run dir left behind: %v", entries)
+	}
+}
+
+func TestStartReportsADaemonThatDiesQuietly(t *testing.T) {
+	sp, _ := fakeSpawn(t, "die-quiet")
+	_, _, err := Start(context.Background(), sp)
+	if err == nil || !strings.Contains(err.Error(), "exited before listening") || strings.Contains(err.Error(), "daemon log:") {
+		t.Fatalf("got %v", err)
 	}
 }
 
