@@ -11,7 +11,11 @@ case $target in
 esac
 
 out=$CACHE/$target
-if [ ! -f "$out/lib/libopus.a" ]; then
+cflags="-O2 $FIXED_CFLAGS"
+want="opus $OPUS_VERSION $cflags"
+cflags="$cflags $(prefix_maps)"
+stamp=$out/lib/libopus.a.built
+if ! built "$stamp" "$want"; then
 	zig=$("$TOOLCHAIN_DIR/zig.sh")
 	src=$(fetch "https://github.com/xiph/opus/releases/download/v$OPUS_VERSION/opus-$OPUS_VERSION.tar.gz" \
 		"$OPUS_SHA256" "opus-$OPUS_VERSION.tar.gz")
@@ -22,7 +26,8 @@ if [ ! -f "$out/lib/libopus.a" ]; then
 	# never tries to run what it compiles.
 	(cd "$build" && ./configure --host="$target" --prefix="$out" \
 		--disable-shared --enable-static --disable-doc --disable-extra-programs \
-		CC="$zig cc -target $target" AR="$zig ar" RANLIB="$zig ranlib" CFLAGS="-O2 $(fixed_cflags)" >&2 &&
+		CC="$zig cc -target $target" AR="$zig ar" RANLIB="$zig ranlib" CFLAGS="$cflags" >&2 &&
 		make -j"$(ncpu)" install >&2)
+	printf '%s\n' "$want" >"$stamp"
 fi
 printf '%s\n' "$out"

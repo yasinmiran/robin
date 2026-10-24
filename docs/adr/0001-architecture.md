@@ -949,7 +949,9 @@ anything unless a second builder can get the same bytes from the tagged
 commit, and until 2026-10-24 none could: two checkouts of one commit gave
 agents that differed in size and in every hash. `make repro` (built twice,
 from the checkout and from a copy at another path with an empty Go build
-cache, then `cmp`) found four leaks, with `strings` diffs pointing at each.
+cache, then `cmp`) showed two leaks in its `strings` diff; the rest below
+came from reading what the build records and asking what a builder on
+another machine, or without a clone, would get.
 
 The biggest was not a path at all. Go hands cgo's C files to the compiler
 with whatever `CGO_CFLAGS` says, and ours said only `-I<prefix>/include`.
@@ -985,12 +987,20 @@ The final link strips all of it with `-s`, so none of this reached an
 agent, but a library that differs between caches is a library nobody can
 check either. Both builds now compile with `-g0 -fno-sanitize=undefined`
 and `-ffile-prefix-map` for the cache as spelled and as resolved
-(`fixed_cflags` in `toolchain/lib.sh`). openh264 takes them through
+(`FIXED_CFLAGS` and `prefix_maps` in `toolchain/lib.sh`). openh264 takes them through
 `CFLAGS_OPT`, the one variable its Makefile appends as is; setting `CFLAGS`
 on its command line would have replaced every flag the Makefile adds,
 `-DNDEBUG` included. Two caches at different paths, built from the shared
 downloads, gave identical `libopenh264.a` and `libopus.a` with no path
-string left in either.
+string left in either. The first `REPRO_TOOLCHAIN=1` run then failed on
+the agents by 32 bytes, because the checkout's cache still held libraries
+from before the flag change while the copy had built fresh ones, and a
+cache that outlives its flags is a quiet way for one builder to differ
+from the rest. Each library now sits beside a `.built` stamp with its
+version and flags, and the scripts rebuild when the stamp does not say
+what the current script would build. The prefix maps stay out of the
+stamp: they spell the cache's path, which every checkout sharing a cache
+through a link spells differently, and the output does not depend on them.
 
 The gzip of each agent moved from the host's `gzip -9 -n` to
 `internal/tools/gz`, Go's `compress/gzip` with a fixed header. `-n`

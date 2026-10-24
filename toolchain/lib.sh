@@ -33,18 +33,29 @@ die() { log "error: $*" && exit 1; }
 
 ncpu() { getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4; }
 
-# fixed_cflags prints the flags that keep a library build independent of
-# where the cache is: no debug info (it would record the compile directory
-# and zig's own headers), no sanitizer (zig turns UBSan on in a debug
-# build, and it records source paths), and every path under the cache,
-# as spelled and as resolved, renamed in whatever a __FILE__ still keeps.
-fixed_cflags() {
+# The flags that keep a library build independent of where the cache is:
+# no debug info (it would record the compile directory and zig's own
+# headers) and no sanitizer (zig turns UBSan on in a debug build, and it
+# records source paths).
+FIXED_CFLAGS="-g0 -fno-sanitize=undefined"
+
+# prefix_maps prints the flags that rename every path under the cache, as
+# spelled and as resolved, in whatever a __FILE__ still keeps. They name
+# this cache, so they stay out of the stamp: a cache shared between
+# checkouts is reached by a different spelling from each.
+prefix_maps() {
 	mkdir -p "$CACHE"
 	physical=$(cd "$CACHE" && pwd -P)
-	printf -- '-g0 -fno-sanitize=undefined -ffile-prefix-map=%s=/robin-toolchain' "$CACHE"
+	printf -- '-ffile-prefix-map=%s=/robin-toolchain' "$CACHE"
 	[ "$physical" = "$CACHE" ] || printf -- ' -ffile-prefix-map=%s=/robin-toolchain' "$physical"
 	echo
 }
+
+# built STAMP WANT says whether the library STAMP sits beside was built from
+# WANT, its version and flags. A library built another way is rebuilt,
+# since a cache that outlives a flag change would make this builder's
+# agent differ from everyone else's.
+built() { [ -f "$1" ] && [ "$(cat "$1")" = "$2" ]; }
 
 sha256() {
 	if command -v sha256sum >/dev/null 2>&1; then

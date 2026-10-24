@@ -12,7 +12,11 @@ case $target in
 esac
 
 out=$CACHE/$target
-if [ ! -f "$out/lib/libopenh264.a" ]; then
+cflags="-O3 $FIXED_CFLAGS"
+want="openh264 $OPENH264_VERSION $cflags"
+cflags="$cflags $(prefix_maps)"
+stamp=$out/lib/libopenh264.a.built
+if ! built "$stamp" "$want"; then
 	zig=$("$TOOLCHAIN_DIR/zig.sh")
 	set --
 	if [ "$arch" = x86_64 ]; then
@@ -35,8 +39,9 @@ if [ ! -f "$out/lib/libopenh264.a" ]; then
 	# so it carries the reproducibility flags; setting CFLAGS itself would
 	# drop every flag the Makefile adds.
 	GIT_CEILING_DIRECTORIES=$CACHE/build make -C "$build" -j"$(ncpu)" \
-		OS=linux ARCH="$arch" PREFIX="$out" CFLAGS_OPT="-O3 $(fixed_cflags)" \
+		OS=linux ARCH="$arch" PREFIX="$out" CFLAGS_OPT="$cflags" \
 		CC="$zig cc -target $target" CXX="$zig c++ -target $target" AR="$zig ar" \
 		"$@" install-static-lib >&2
+	printf '%s\n' "$want" >"$stamp"
 fi
 printf '%s\n' "$out"
