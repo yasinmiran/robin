@@ -541,15 +541,20 @@ if (SCENARIO === 'attach') {
     expect(await page.evaluate(() => (window as any).robin.muted), 'the speaker, on since the sound test').toBe(false);
     await flip('silent', true);
     const before = await energy();
-    const playing = host.playNoise(12);
+    const silenced = host.playNoise(12);
     await expect.poll(energy, { message: 'totalAudioEnergy grows while the host plays noise', timeout: 15_000 }).toBeGreaterThan(before);
     const quiet = await host.roomLoudness();
     await flip('silent', false);
-    const loud = await host.roomLoudness();
+    // Noise of its own for the second reading, which the first may outlast
+    // the end of on a slow run.
+    const heard = host.playNoise(5);
+    let loud = 0;
+    await expect
+      .poll(async () => (loud = await host.roomLoudness()), { message: 'the host speakers once the room is no longer silent', timeout: 10_000 })
+      .toBeGreaterThan(1000);
     testInfo.annotations.push({ type: 'room RMS', description: `silent ${quiet}, after ${loud}` });
     expect(quiet, 'the host speakers while silent').toBeLessThan(50);
-    expect(loud, 'the host speakers once the room is no longer silent').toBeGreaterThan(1000);
-    await playing;
+    await Promise.all([silenced, heard]);
     // Both on for the teardown below, which must give the room its screen
     // and speakers back.
     await flip('curtain', true);
