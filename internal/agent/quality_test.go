@@ -7,8 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -46,7 +44,7 @@ func newClipDesktop(clip *vqtest.Clip, fps int) *clipDesktop {
 	return d
 }
 
-// begin starts the clip and returns when its frame 0 is captured.
+// begin starts the clip and returns the time its frame 0 is shown from.
 func (d *clipDesktop) begin() time.Time {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -149,12 +147,12 @@ type clipRun struct {
 	unpaced bool
 }
 
-func softwareEncoder(t *testing.T) NewEncoderFunc {
-	return paramsEncoder(t, func(*h264.Params) {})
+func softwareEncoder() NewEncoderFunc {
+	return paramsEncoder(func(*h264.Params) {})
 }
 
 // paramsEncoder opens openh264 with its defaults changed by edit.
-func paramsEncoder(t *testing.T, edit func(*h264.Params)) NewEncoderFunc {
+func paramsEncoder(edit func(*h264.Params)) NewEncoderFunc {
 	return func(w, h, fps, bps int) (Encoder, error) {
 		p := h264.Defaults(w, h, fps, bps)
 		edit(&p)
@@ -188,7 +186,7 @@ func (c clipRun) run(t *testing.T) *vqtest.Run {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer net.Close()
+	t.Cleanup(net.Close)
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	if os.Getenv("ROBIN_VQ_LOG") != "" {
@@ -221,11 +219,12 @@ func (c clipRun) run(t *testing.T) *vqtest.Run {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
+	t.Cleanup(func() { p.Close() })
 	b, err := vqtest.NewBrowser(net.Browser, c.clip, vqtest.Chrome)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { b.Close() })
 	if err := b.Connect(p, cands); err != nil {
 		t.Fatal(err)
 	}
@@ -236,16 +235,22 @@ func (c clipRun) run(t *testing.T) *vqtest.Run {
 		s.run(ctx)
 		close(done)
 	}()
-	if err := b.WaitShown(20 * time.Second); err != nil {
+	stop := func() {
 		cancel()
+		<-done
+	}
+	t.Cleanup(stop)
+	if err := b.WaitShown(20 * time.Second); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(c.preroll)
 	start := desk.begin()
 	time.Sleep(time.Duration(c.clip.Len())*time.Second/time.Duration(c.fps) + 500*time.Millisecond)
-	cancel()
-	<-done
-	res, _ := b.Close()
+	stop()
+	res, err := b.Close()
+	if err != nil {
+		t.Error(err)
+	}
 	tag.mu.Lock()
 	defer tag.mu.Unlock()
 	return &vqtest.Run{Clip: c.clip, FPS: c.fps, Start: start, Sent: tag.sent, Result: res}
@@ -276,7 +281,7 @@ func TestVideoQuality(t *testing.T) {
 	needVideoHarness(t)
 	clip := mustClip(t, vqtest.Captured, 1920, 1080,
 		seconds(vqtest.Still, 5), seconds(vqtest.Typing, 2), seconds(vqtest.Scroll, 2), seconds(vqtest.Drag, 2), seconds(vqtest.Still, 4))
-	r := clipRun{clip: clip, fps: 30, link: vqtest.Link{Delay: 10 * time.Millisecond}, open: softwareEncoder(t), preroll: 2 * time.Second}.run(t)
+	r := clipRun{clip: clip, fps: 30, link: vqtest.Link{Delay: 10 * time.Millisecond}, open: softwareEncoder(), preroll: 2 * time.Second}.run(t)
 	spans := r.Spans()
 	t.Logf("\n%s%s", vqtest.Table(spans), r.Summary())
 
@@ -312,8 +317,8 @@ func TestVideoQuality(t *testing.T) {
 }
 
 // matrixSizes are the screens the matrix streams: a 1080p monitor, the
-// 1440p one of the session that prompted it, scaled to the default
-// --max-size as it was, and the same shown at its own size.
+// 1440p one of the session that prompted it scaled to 1920x1080, and the
+// same shown at its own size.
 var matrixSizes = []struct {
 	name       string
 	w, h       int
@@ -336,66 +341,60 @@ var matrixLinks = []vqtest.Link{
 // numbers can be measured again.
 type variant struct {
 	name string
-	edit func(t *testing.T, c *clipRun)
+	edit func(*clipRun)
 }
 
 var variants = []variant{
-	{"current", func(*testing.T, *clipRun) {}},
-	{"no-refresh", func(_ *testing.T, c *clipRun) { c.tune = func(s *stream) { s.refresh = 0 } }},
-	{"refresh-250ms", func(_ *testing.T, c *clipRun) { c.tune = func(s *stream) { s.refresh = 250 * time.Millisecond } }},
-	{"refresh-1s", func(_ *testing.T, c *clipRun) { c.tune = func(s *stream) { s.refresh = time.Second } }},
-	{"unpaced", func(_ *testing.T, c *clipRun) { c.unpaced = true }},
-	{"unpaced-no-refresh", func(_ *testing.T, c *clipRun) {
+	{"current", func(*clipRun) {}},
+	{"no-refresh", func(c *clipRun) { c.tune = func(s *stream) { s.refresh = 0 } }},
+	{"refresh-250ms", func(c *clipRun) { c.tune = func(s *stream) { s.refresh = 250 * time.Millisecond } }},
+	{"refresh-1s", func(c *clipRun) { c.tune = func(s *stream) { s.refresh = time.Second } }},
+	{"unpaced", func(c *clipRun) { c.unpaced = true }},
+	{"unpaced-no-refresh", func(c *clipRun) {
 		c.unpaced = true
 		c.tune = func(s *stream) { s.refresh = 0 }
 	}},
-	{"maxqp-51", func(t *testing.T, c *clipRun) { c.open = paramsEncoder(t, func(p *h264.Params) { p.MaxQP = 51 }) }},
-	{"maxqp-44", func(t *testing.T, c *clipRun) { c.open = paramsEncoder(t, func(p *h264.Params) { p.MaxQP = 44 }) }},
-	{"maxqp-40", func(t *testing.T, c *clipRun) { c.open = paramsEncoder(t, func(p *h264.Params) { p.MaxQP = 40 }) }},
-	{"maxqp-36", func(t *testing.T, c *clipRun) { c.open = paramsEncoder(t, func(p *h264.Params) { p.MaxQP = 36 }) }},
-	{"max-20mbps", func(_ *testing.T, c *clipRun) { c.maxKbps = 20_000 }},
+	{"maxqp-51", func(c *clipRun) { c.open = paramsEncoder(func(p *h264.Params) { p.MaxQP = 51 }) }},
+	{"maxqp-44", func(c *clipRun) { c.open = paramsEncoder(func(p *h264.Params) { p.MaxQP = 44 }) }},
+	{"maxqp-40", func(c *clipRun) { c.open = paramsEncoder(func(p *h264.Params) { p.MaxQP = 40 }) }},
+	{"maxqp-36", func(c *clipRun) { c.open = paramsEncoder(func(p *h264.Params) { p.MaxQP = 36 }) }},
+	{"max-20mbps", func(c *clipRun) { c.maxKbps = 20_000 }},
 }
 
 // TestVideoQualityMatrix streams a longer clip at each matrix size over
 // each matrix link and prints the numbers the ADR records. It is a
-// measuring aid: set ROBIN_VQ=1, and ROBIN_VQ_SIZE, ROBIN_VQ_LINK or
-// ROBIN_VQ_VARIANT to a comma-separated list of names to pick sizes, links
-// and variants; the default variant is "current".
+// measuring aid: ROBIN_VQ=1 runs the current variant, ROBIN_VQ=all every
+// variant, and -run picks cells by size, link and variant, as in
+// -run 'TestVideoQualityMatrix/^1440p$/tight/unpaced$'.
 func TestVideoQualityMatrix(t *testing.T) {
-	if os.Getenv("ROBIN_VQ") == "" {
-		t.Skip("set ROBIN_VQ=1")
+	mode := os.Getenv("ROBIN_VQ")
+	if mode == "" {
+		t.Skip("set ROBIN_VQ=1, or ROBIN_VQ=all for every variant")
 	}
 	needVideoHarness(t)
-	picked := func(env, name, fallback string) bool {
-		list := os.Getenv(env)
-		if list == "" {
-			list = fallback
-		}
-		return list == "" || slices.Contains(strings.Split(list, ","), name)
-	}
 	for _, size := range matrixSizes {
-		if !picked("ROBIN_VQ_SIZE", size.name, "") {
-			continue
-		}
-		clip := mustClip(t, vqtest.Captured, size.w, size.h,
-			seconds(vqtest.Still, 6), seconds(vqtest.Typing, 3), seconds(vqtest.Scroll, 3),
-			seconds(vqtest.Drag, 3), seconds(vqtest.Video, 3), seconds(vqtest.Still, 6))
-		for _, link := range matrixLinks {
-			if !picked("ROBIN_VQ_LINK", link.Name, "") {
-				continue
+		t.Run(size.name, func(t *testing.T) {
+			clip := mustClip(t, vqtest.Captured, size.w, size.h,
+				seconds(vqtest.Still, 6), seconds(vqtest.Typing, 3), seconds(vqtest.Scroll, 3),
+				seconds(vqtest.Drag, 3), seconds(vqtest.Video, 3), seconds(vqtest.Still, 6))
+			for _, link := range matrixLinks {
+				t.Run(link.Name, func(t *testing.T) {
+					for _, v := range variants {
+						t.Run(v.name, func(t *testing.T) {
+							if mode != "all" && v.name != "current" {
+								t.Skip("set ROBIN_VQ=all")
+							}
+							c := clipRun{
+								clip: clip, fps: 30, maxW: size.maxW, maxH: size.maxH, link: link,
+								open: softwareEncoder(), preroll: 3 * time.Second,
+							}
+							v.edit(&c)
+							r := c.run(t)
+							t.Logf("%s over %v, %s:\n%s%s", size.name, link, v.name, vqtest.Table(r.Spans()), r.Summary())
+						})
+					}
+				})
 			}
-			for _, v := range variants {
-				if !picked("ROBIN_VQ_VARIANT", v.name, "current") {
-					continue
-				}
-				c := clipRun{
-					clip: clip, fps: 30, maxW: size.maxW, maxH: size.maxH, link: link,
-					open: softwareEncoder(t), preroll: 3 * time.Second,
-				}
-				v.edit(t, &c)
-				r := c.run(t)
-				t.Logf("%s over %s (%v), %s:\n%s%s", size.name, link.Name, link, v.name, vqtest.Table(r.Spans()), r.Summary())
-			}
-		}
+		})
 	}
 }

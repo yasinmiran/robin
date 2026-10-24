@@ -332,8 +332,10 @@ if the browser would have had to ask for a keyframe. `ROBIN_VQ=1` with
 `go test -tags openh264 -run TestVideoQualityMatrix ./internal/agent/`
 (in the toolchain `make test` sets up) runs the longer clip at 1080p and
 1440p over three shaped links and prints, per stretch of the clip, what
-was sent, what was shown and how it scored against the screen;
-`ROBIN_VQ_SIZE`, `ROBIN_VQ_LINK` and `ROBIN_VQ_VARIANT` pick the rows.
+was sent, what was shown and how it scored against the screen.
+`ROBIN_VQ=all` adds the variants that put back each earlier policy, and
+`-run` picks cells by size, link and variant, as in
+`-run 'TestVideoQualityMatrix/^1440p$/tight/unpaced$'`.
 
 `make test-wayland` boots three desktops, each in its own container with a
 virtual monitor, PipeWire and the desktop's own portal: mutter 46 on Ubuntu
