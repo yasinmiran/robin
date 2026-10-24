@@ -298,6 +298,30 @@ test('a third transfer of a kind that takes two at once is refused on its header
   assert.deepEqual([await fourth.verdict, await fifth.verdict], [{ t: 'done' }, { t: 'done' }]);
 });
 
+// A kind whose accept waits, as one that asks the user or the disk would.
+registerKind('slow', 1024);
+let accepted = 0;
+let letIn;
+const gate = new Promise((resolve) => { letIn = resolve; });
+onBulk('slow', async () => {
+  accepted++;
+  await gate;
+  return memSink();
+}, { inbound: 2 });
+
+test('a place is taken before accept runs, so two headers cannot both take the last one while it waits', async () => {
+  const first = fromAgent({ kind: 'slow', id: '1' });
+  const second = fromAgent({ kind: 'slow', id: '2' });
+  const refused = await within(fromAgent({ kind: 'slow', id: '3' }).verdict);
+  assert.equal(refused.t, 'error', `the third transfer: ${JSON.stringify(refused)}`);
+  assert.match(refused.error, /too many slow transfers under way: the page takes 2 at once/);
+  assert.equal(accepted, 2, 'accept ran for the third');
+  letIn();
+  first.end();
+  second.end();
+  assert.deepEqual([await first.verdict, await second.verdict], [{ t: 'done' }, { t: 'done' }]);
+});
+
 test('Inbound aborts on a close before the end', async () => {
   const sink = memSink();
   const r = inbound(() => () => sink);
