@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/rand/v2"
 	"strings"
 	"testing"
@@ -21,27 +22,30 @@ func init() { RegisterBulkKind(testKind, testLimit) }
 
 func TestBulkWireShape(t *testing.T) {
 	for _, tc := range []struct {
+		name  string
 		frame Bulk
 		want  string
 	}{
-		{Bulk{T: BulkHeader, Kind: "file", ID: "7", Name: "a.txt", MIME: "text/plain", Size: 3},
+		{"header", Bulk{T: BulkHeader, Kind: "file", ID: "7", Name: "a.txt", MIME: "text/plain", Size: 3},
 			`{"t":"header","kind":"file","id":"7","name":"a.txt","mime":"text/plain","size":3}`},
-		{Bulk{T: BulkHeader, Kind: "file"}, `{"t":"header","kind":"file"}`},
-		{Bulk{T: BulkEnd, SHA256: "ab"}, `{"t":"end","sha256":"ab"}`},
-		{Bulk{T: BulkDone}, `{"t":"done"}`},
-		{Bulk{T: BulkError, Error: "no"}, `{"t":"error","error":"no"}`},
+		{"empty header", Bulk{T: BulkHeader, Kind: "file"}, `{"t":"header","kind":"file"}`},
+		{"end", Bulk{T: BulkEnd, SHA256: "ab"}, `{"t":"end","sha256":"ab"}`},
+		{"done", Bulk{T: BulkDone}, `{"t":"done"}`},
+		{"error", Bulk{T: BulkError, Error: "no"}, `{"t":"error","error":"no"}`},
 	} {
-		b, err := json.Marshal(tc.frame)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(b) != tc.want {
-			t.Errorf("%+v marshals as %s, want %s", tc.frame, b, tc.want)
-		}
-		back, err := ParseBulk(b)
-		if err != nil || back != tc.frame {
-			t.Errorf("ParseBulk(%s) = %+v, %v", b, back, err)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := json.Marshal(tc.frame)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(b) != tc.want {
+				t.Errorf("%+v marshals as %s, want %s", tc.frame, b, tc.want)
+			}
+			back, err := ParseBulk(b)
+			if err != nil || back != tc.frame {
+				t.Errorf("ParseBulk(%s) = %+v, %v", b, back, err)
+			}
+		})
 	}
 }
 
@@ -51,9 +55,11 @@ func TestParseBulkRefusesJunk(t *testing.T) {
 		"wrong type": []byte(`{"t":"header","size":"big"}`),
 		"oversized":  []byte(`{"t":"header","name":"` + strings.Repeat("x", BulkChunkSize) + `"}`),
 	} {
-		if _, err := ParseBulk(data); !errors.Is(err, ErrBulkFrame) {
-			t.Errorf("%s: %v, want ErrBulkFrame", name, err)
-		}
+		t.Run(name, func(t *testing.T) {
+			if _, err := ParseBulk(data); !errors.Is(err, ErrBulkFrame) {
+				t.Errorf("%v, want ErrBulkFrame", err)
+			}
+		})
 	}
 }
 
@@ -96,41 +102,45 @@ func TestCheckHeader(t *testing.T) {
 		{"unknown kind", Bulk{T: BulkHeader, Kind: "nobody", Size: 1}, ErrBulkKind},
 		{"not a header", Bulk{T: BulkEnd, Kind: testKind}, ErrBulkFrame},
 	} {
-		if err := tc.h.CheckHeader(); !errors.Is(err, tc.want) || (tc.want == nil) != (err == nil) {
-			t.Errorf("%s: %v, want %v", tc.name, err, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.h.CheckHeader(); !errors.Is(err, tc.want) {
+				t.Errorf("%v, want %v", err, tc.want)
+			}
+		})
 	}
 }
 
 func TestBulkSumMatchesSHA256(t *testing.T) {
 	rng := rand.New(rand.NewPCG(1, 2))
 	for _, size := range []int{0, 1, 63, 64, 65, BulkChunkSize, BulkChunkSize + 1, 3*BulkChunkSize + 17} {
-		payload := make([]byte, size)
-		for i := range payload {
-			payload[i] = byte(rng.Uint32())
-		}
-		sender, receiver := NewBulkSum(int64(size)), NewBulkSum(int64(size))
-		for rest := payload; len(rest) > 0; {
-			n := min(len(rest), 1+rng.IntN(BulkChunkSize))
-			if err := sender.Add(rest[:n]); err != nil {
-				t.Fatalf("size %d: sender: %v", size, err)
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			payload := make([]byte, size)
+			for i := range payload {
+				payload[i] = byte(rng.Uint32())
 			}
-			if err := receiver.Add(rest[:n]); err != nil {
-				t.Fatalf("size %d: receiver: %v", size, err)
+			sender, receiver := NewBulkSum(int64(size)), NewBulkSum(int64(size))
+			for rest := payload; len(rest) > 0; {
+				n := min(len(rest), 1+rng.IntN(BulkChunkSize))
+				if err := sender.Add(rest[:n]); err != nil {
+					t.Fatalf("sender: %v", err)
+				}
+				if err := receiver.Add(rest[:n]); err != nil {
+					t.Fatalf("receiver: %v", err)
+				}
+				rest = rest[n:]
 			}
-			rest = rest[n:]
-		}
-		end, err := sender.End()
-		if err != nil {
-			t.Fatalf("size %d: %v", size, err)
-		}
-		sum := sha256.Sum256(payload)
-		if end.T != BulkEnd || end.SHA256 != hex.EncodeToString(sum[:]) {
-			t.Fatalf("size %d: end %+v, want sha256 %x", size, end, sum)
-		}
-		if err := receiver.Check(end); err != nil {
-			t.Fatalf("size %d: receiver refuses a good end: %v", size, err)
-		}
+			end, err := sender.End()
+			if err != nil {
+				t.Fatal(err)
+			}
+			sum := sha256.Sum256(payload)
+			if end.T != BulkEnd || end.SHA256 != hex.EncodeToString(sum[:]) {
+				t.Fatalf("end %+v, want sha256 %x", end, sum)
+			}
+			if err := receiver.Check(end); err != nil {
+				t.Fatalf("receiver refuses a good end: %v", err)
+			}
+		})
 	}
 }
 
