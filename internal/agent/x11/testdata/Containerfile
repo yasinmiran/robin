@@ -4,3 +4,5 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         picom xcompmgr pulseaudio pulseaudio-utils \
     && rm -rf /var/lib/apt/lists/*
 ENV LANG=C.UTF-8
+# A second account, for tests of what another user of the host can reach.
+RUN useradd -M -U -u 1001 -s /usr/sbin/nologin robin-stranger
