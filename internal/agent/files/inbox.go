@@ -185,14 +185,8 @@ func (u *Upload) open() error {
 
 // freeBytes is the space statfs(2) reports free to unprivileged users. It
 // counts blocks in f_frsize, which a filesystem may report smaller than
-// f_bsize; the kernel fills in f_bsize where a filesystem leaves it 0.
-func freeBytes(st *unix.Statfs_t) int64 {
-	unit := int64(st.Frsize)
-	if unit == 0 {
-		unit = int64(st.Bsize)
-	}
-	return int64(st.Bavail) * unit
-}
+// f_bsize; statfs(2) sets f_frsize to f_bsize when a filesystem leaves it 0.
+func freeBytes(st *unix.Statfs_t) int64 { return int64(st.Bavail) * int64(st.Frsize) }
 
 // discard undoes what open did, for an upload that never started.
 func (u *Upload) discard() {

@@ -272,10 +272,6 @@ func TestUploadFreeSpaceIsInFragmentUnits(t *testing.T) {
 	} else {
 		u.Abort(nil)
 	}
-	// A filesystem that reports no fragment size counts in blocks.
-	if got := freeBytes(&unix.Statfs_t{Bsize: 4096, Bavail: 3}); got != 3*4096 {
-		t.Errorf("free bytes with no f_frsize: %d, want %d", got, 3*4096)
-	}
 }
 
 func TestUploadNeedsFreeSpace(t *testing.T) {
