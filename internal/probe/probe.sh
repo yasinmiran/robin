@@ -249,6 +249,22 @@ encoders() {
 	return 0
 }
 
+# cameras reports the v4l2loopback devices this user can write, each with its
+# card label, for the browser's camera. They are the video devices with no
+# hardware behind them in sysfs.
+cameras() {
+	for d in /sys/devices/virtual/video4linux/video*; do
+		[ -d "$d" ] || continue
+		n=/dev/${d##*/}
+		[ -c "$n" ] || continue
+		(: <>"$n") 2>/dev/null || continue
+		label=
+		[ -r "$d/name" ] && IFS= read -r label <"$d/name"
+		kv v4l2loopback "$n $label"
+	done
+	return 0
+}
+
 reject() {
 	kv agentdir_rejected "$1:$2"
 }
@@ -384,6 +400,7 @@ main() {
 	commands
 	attachable
 	encoders
+	cameras
 	pick_agentdir
 	agents "$@"
 }
