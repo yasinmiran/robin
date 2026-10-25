@@ -18,6 +18,8 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/yasinmiran/robin/internal/runes"
 )
 
 // ErrNotSaved means robin-agent send ended with a file the browser did not
@@ -173,11 +175,12 @@ func pathError(p string, err error) error {
 	return fmt.Errorf("%s: %w", shown(p), err)
 }
 
-// printable replaces control characters, since a failure's detail can carry
-// the browser's own words to this terminal.
+// printable replaces control characters and those runes.ReordersText
+// reports, since a failure's detail can carry the browser's own words to
+// this terminal.
 func printable(s string) string {
 	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) {
+		if unicode.IsControl(r) || runes.ReordersText(r) {
 			return utf8.RuneError
 		}
 		return r

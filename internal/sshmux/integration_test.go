@@ -76,6 +76,38 @@ func TestOutput(t *testing.T) {
 	}
 }
 
+// TestOutputIsBounded: a host that prints without end costs the CLI at most
+// maxOutput of memory, and the command is stopped and fails saying why.
+// Exactly maxOutput still goes through, and so does a stderr far over it, of
+// which the error keeps the end.
+func TestOutputIsBounded(t *testing.T) {
+	m := dial(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	out, err := m.Output(ctx, "cat /dev/zero", nil)
+	if !errors.Is(err, errTooMuchOutput) {
+		t.Fatalf("endless output: %v, want the limit named", err)
+	}
+	if len(out) > maxOutput {
+		t.Fatalf("Output held %d bytes, the limit is %d", len(out), maxOutput)
+	}
+
+	out, err = m.Output(ctx, "head -c "+strconv.Itoa(maxOutput)+" /dev/zero", nil)
+	if err != nil || len(out) != maxOutput {
+		t.Fatalf("exactly maxOutput: %d bytes, %v", len(out), err)
+	}
+
+	_, err = m.Output(ctx, "head -c 20000000 /dev/zero >&2; echo last words >&2; exit 4", nil)
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 4 || !strings.HasSuffix(err.Error(), "last words") {
+		t.Fatalf("a failing command with a long stderr: %.200v", err)
+	}
+	if len(err.Error()) > tail.DefaultMax+100 {
+		t.Fatalf("the error holds %d bytes of stderr", len(err.Error()))
+	}
+}
+
 func TestCommandStreamsJSONLines(t *testing.T) {
 	m := dial(t)
 	cmd := m.Command(t.Context(), "cat")
@@ -119,8 +151,8 @@ func TestCommandStreamsJSONLines(t *testing.T) {
 
 func TestCommandIsBinarySafe(t *testing.T) {
 	m := dial(t)
-	payload := make([]byte, 0, 1<<16)
-	for len(payload) < cap(payload) {
+	var payload []byte
+	for len(payload) < 1<<16 {
 		for b := range 256 {
 			payload = append(payload, byte(b))
 		}

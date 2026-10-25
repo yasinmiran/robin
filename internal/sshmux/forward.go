@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -34,15 +35,15 @@ func (f *Forward) Dial() (net.Conn, error) {
 	return net.Dial(f.network, f.addr)
 }
 
-// Forward makes remote, "host:port" or a unix socket path on the remote
-// host, reachable from this machine until m.Close. It is a unix socket in
-// the master's private directory, served by the master or, without one,
-// by an ssh -N -L of its own. On Windows, whose OpenSSH forwards no unix
-// sockets, that ssh listens on a loopback TCP port instead, which any user
-// of this machine can connect to.
+// Forward makes remote, a loopback address and port on the remote host,
+// reachable from this machine until m.Close. It is a unix socket in the
+// master's private directory, served by the master or, without one, by an
+// ssh -N -L of its own. On Windows, whose OpenSSH forwards no unix sockets,
+// that ssh listens on a loopback TCP port instead, which any user of this
+// machine can connect to.
 func (m *Master) Forward(ctx context.Context, remote string) (*Forward, error) {
-	if remote == "" {
-		return nil, errors.New("sshmux: empty forward target")
+	if err := checkTarget(remote); err != nil {
+		return nil, err
 	}
 	if !m.mux {
 		return m.forwardOwn(ctx, remote)
@@ -52,6 +53,20 @@ func (m *Master) Forward(ctx context.Context, remote string) (*Forward, error) {
 		return nil, err
 	}
 	return &Forward{network: "unix", addr: sock}, nil
+}
+
+// checkTarget refuses a forward target that is not a loopback IP literal
+// and a port of 1 to 65535, written as netip writes it. The target comes
+// from the host, and ssh reads the -L spec as more than a target: it splits
+// it at colons, takes brackets and backslashes as quoting, and expands
+// ${VAR} from the client's environment, which would hand the host whatever
+// secret that environment holds.
+func checkTarget(remote string) error {
+	ap, err := netip.ParseAddrPort(remote)
+	if err != nil || !ap.Addr().IsLoopback() || ap.Addr().Zone() != "" || ap.Port() == 0 || ap.String() != remote {
+		return fmt.Errorf("sshmux: malformed forward target %q: want a loopback address and port", remote)
+	}
+	return nil
 }
 
 // ownArgs start an ssh that connects by itself, without a master. It reads

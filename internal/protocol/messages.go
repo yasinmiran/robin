@@ -139,8 +139,8 @@ type Ready struct {
 	Width      int    `json:"width"`
 	Height     int    `json:"height"`
 	// TunnelAddr is where the agent accepts ICE-TCP on the host, for the CLI to
-	// forward over SSH: "host:port", or a path for a unix socket. Empty when the
-	// agent offers no tunnel.
+	// forward over SSH: a loopback "host:port", the only target the CLI
+	// forwards to. Empty when the agent offers no tunnel.
 	TunnelAddr string `json:"tunnelAddr,omitempty"`
 	// Mode says how the desktop was obtained: ModeSpawn or ModeAttach.
 	Mode string `json:"mode"`

@@ -138,6 +138,33 @@ func TestConnRejectsOversizedLine(t *testing.T) {
 	}
 }
 
+// TestConnSendKeepsToThePeersLineLimit: Send writes a line the peer's
+// reader takes, up to exactly MaxLineBytes with its newline, and refuses one
+// byte more without writing it, so a message encoded larger than it arrived
+// cannot cost the peer its connection.
+func TestConnSendKeepsToThePeersLineLimit(t *testing.T) {
+	a, b, cleanup := pipePair(0, 0)
+	defer cleanup()
+	envelope := len(`{"type":"offer","sdp":""}` + "\n")
+	fits := Message{Type: TypeOffer, SDP: strings.Repeat("a", MaxLineBytes-envelope)}
+	over := Message{Type: TypeOffer, SDP: strings.Repeat("<", MaxLineBytes/6)}
+	sent := make(chan error, 2)
+	go func() {
+		sent <- a.Send(over)
+		sent <- a.Send(fits)
+	}()
+	m, err := b.Recv(context.Background())
+	if err != nil || len(m.SDP) != len(fits.SDP) {
+		t.Fatalf("Recv = %d bytes of SDP, %v; want the message that fits", len(m.SDP), err)
+	}
+	if err := <-sent; !errors.Is(err, ErrLineTooLong) {
+		t.Fatalf("Send of a line over the limit: %v, want ErrLineTooLong", err)
+	}
+	if err := <-sent; err != nil {
+		t.Fatalf("Send of a line at the limit: %v", err)
+	}
+}
+
 func TestConnSendAfterClose(t *testing.T) {
 	r, w := io.Pipe()
 	defer w.Close()

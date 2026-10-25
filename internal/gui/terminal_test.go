@@ -8,14 +8,16 @@ import (
 	"strings"
 	"testing"
 	"unicode"
+	"unicode/utf8"
 )
 
 // TestRunKeepsTerminalControlsFromTheHost stands in an ssh that fails with
-// colour codes, a bell and a carriage return on stderr, and checks that none
-// of them reaches the terminal, through Run's error or through its stderr.
+// colour codes, a bell, a carriage return and a right-to-left override on
+// stderr, and checks that none of them reaches the terminal, through Run's
+// error or through its stderr.
 func TestRunKeepsTerminalControlsFromTheHost(t *testing.T) {
 	ssh := filepath.Join(t.TempDir(), "ssh")
-	script := "#!/bin/sh\nprintf 'Permission denied \\033[1;31m(publickey)\\033[0m\\a\\r\\n' >&2\nexit 255\n"
+	script := "#!/bin/sh\nprintf 'Permission denied \\033[1;31m(publickey)\\033[0m\\a\\r \\342\\200\\256reversed\\n' >&2\nexit 255\n"
 	if err := os.WriteFile(ssh, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +33,8 @@ func TestRunKeepsTerminalControlsFromTheHost(t *testing.T) {
 			t.Errorf("%s lost the message: %q", what, text)
 		}
 		if i := strings.IndexFunc(text, unsafeOnTerminal); i >= 0 {
-			t.Errorf("%s carries %q to the terminal: %q", what, text[i], text)
+			r, _ := utf8.DecodeRuneInString(text[i:])
+			t.Errorf("%s carries %U to the terminal: %q", what, r, text)
 		}
 	}
 }
@@ -44,6 +47,11 @@ func TestPrintable(t *testing.T) {
 		"bell\a back\b cr\r del\x7f":      `bell\x07 back\x08 cr\x0d del\x7f`,
 		"c1 \u009b2J":                     `c1 \x9b2J`,
 		"raw \x9b2J byte":                 `raw \x9b2J byte`,
+		"\u202etxet":                      `\u202etxet`,
+		"a\u2066b\u2069":                  `a\u2066b\u2069`,
+		"mark\u200eleft":                  `mark\u200eleft`,
+		"p\u2028q\u2029":                  `p\u2028q\u2029`,
+		"arabic\u061cmark":                `arabic\u061cmark`,
 	} {
 		if got := printable(in); got != want {
 			t.Errorf("printable(%q) = %q, want %q", in, got, want)
@@ -52,5 +60,6 @@ func TestPrintable(t *testing.T) {
 }
 
 func unsafeOnTerminal(r rune) bool {
-	return r == unicode.ReplacementChar || (unicode.IsControl(r) && r != '\n' && r != '\t')
+	return r == unicode.ReplacementChar || (unicode.IsControl(r) && r != '\n' && r != '\t') ||
+		unicode.In(r, unicode.Zl, unicode.Zp, unicode.Bidi_Control)
 }

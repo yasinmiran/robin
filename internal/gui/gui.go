@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -25,7 +24,6 @@ import (
 	"github.com/yasinmiran/robin/internal/relay"
 	"github.com/yasinmiran/robin/internal/sshmux"
 	"github.com/yasinmiran/robin/internal/tail"
-	"github.com/yasinmiran/robin/internal/web"
 )
 
 // Options are the user's choices for one session. Zero values pick defaults.
@@ -130,11 +128,11 @@ func Run(ctx context.Context, o Options) (err error) {
 			return err
 		}
 	}
-	a, path, err := h.deployAgent(ctx)
+	a, err := agentbin.For(report.Arch)
 	if err != nil {
 		return err
 	}
-	resume, err := pickSession(o, report, a.Name())
+	resume, path, err := h.prepare(ctx, o, a)
 	if err != nil {
 		return err
 	}
@@ -186,7 +184,7 @@ func Run(ctx context.Context, o Options) (err error) {
 	}
 	defer t.Close()
 
-	srv, err := web.Listen(web.Options{Addr: o.Listen})
+	srv, err := listenPage(o)
 	if err != nil {
 		return h.abandon(err, ag, ready, path)
 	}
@@ -195,11 +193,7 @@ func Run(ctx context.Context, o Options) (err error) {
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve(serveCtx) }()
 
-	if o.NoBrowser {
-		fmt.Fprintln(o.Stdout, srv.URL())
-	} else if err := openBrowser(srv.URL()); err != nil {
-		fmt.Fprintf(o.Stderr, "open this URL in your browser: %s\n", srv.URL())
-	}
+	showPage(o, srv)
 	fmt.Fprintf(o.Stderr, "robin: %s; press Ctrl+C to end the session\n", sessionNote(o.Dest, ready))
 	if note := privateNote(ready); note != "" {
 		fmt.Fprintln(o.Stderr, note)
@@ -208,6 +202,7 @@ func Run(ctx context.Context, o Options) (err error) {
 	config := protocol.Config{ICEServers: iceServers(start.STUN), HiDPI: o.HiDPI, Keep: ready.Keep}
 	config.Mic, config.Camera = offeredDevices(ready)
 	b := newBridge(ag.conn, relay.New(relay.Policy{Transport: o.Transport, TunnelPort: t.Port()}), config, userMacros(o.Dest, o.Stderr), log)
+	b.answered = t.answered
 	go b.accept(ctx, srv)
 	defer b.close()
 
@@ -330,21 +325,35 @@ func (h *host) close() {
 	}
 }
 
-// deployAgent puts this CLI's agent for the host's architecture in place and
-// returns it and its path there.
-func (h *host) deployAgent(ctx context.Context) (agentbin.Agent, string, error) {
-	a, err := agentbin.For(h.report.Arch)
-	if err != nil {
-		return agentbin.Agent{}, "", err
+// prepare decides which kept session, if any, to resume with agent a, and
+// only then puts a in place, since a CLI that refuses to resume must leave
+// the host as it found it.
+func (h *host) prepare(ctx context.Context, o Options, a agentbin.Agent) (resume, path string, err error) {
+	if resume, err = pickSession(o, h.report, a.Name()); err != nil {
+		return "", "", err
+	}
+	if path, err = h.deployAgent(ctx, a); err != nil {
+		return "", "", err
+	}
+	return resume, path, nil
+}
+
+// deployAgent puts agent a in place on the host and returns its path there.
+// The agents kept sessions run from stay beside it.
+func (h *host) deployAgent(ctx context.Context, a agentbin.Agent) (string, error) {
+	var inUse []string
+	for _, s := range h.report.Kept {
+		inUse = append(inUse, s.Agent)
 	}
 	path, err := deploy.Ensure(ctx, h.m, deploy.Target{
 		Dir: h.report.AgentDir, PresentHash: h.report.AgentHash(a.Name()), SHA256Tool: h.report.SHA256Tool,
+		InUse: inUse,
 	}, a)
 	if err != nil {
-		return agentbin.Agent{}, "", fmt.Errorf("deploy agent: %w", err)
+		return "", fmt.Errorf("deploy agent: %w", err)
 	}
 	h.log.Info("agent in place", "path", path)
-	return a, path, nil
+	return path, nil
 }
 
 // end finishes session id on purpose: bye over the connection when it is
@@ -406,16 +415,28 @@ func dial(ctx context.Context, o Options) (*sshmux.Master, error) {
 // reconnect redials the host with backoff and resumes session id, until it
 // works, ctx ends or the keep window closes at until. The tunnel is
 // forwarded again over the new connection. When ctx ends first it ends the
-// session instead and returns no agent, with the end's error.
+// session instead and returns no agent, with the end's error, unless a try
+// found the session busy: then another controller may hold it, and ending
+// it would take the desktop from under them. A try that reaches no agent
+// says nothing to the contrary.
 func (h *host) reconnect(ctx context.Context, path, id string, until time.Time, t *tunnel) (*agentProc, *protocol.Ready, error) {
 	backoff := reconnectFirst
+	busy := false
 	for attempt := 1; ; attempt++ {
 		h.close()
 		ag, ready, err := h.redial(ctx, path, id, until, t)
 		if err == nil {
 			return ag, ready, nil
 		}
+		var agentErr *agentError
+		if errors.As(err, &agentErr) && agentErr.code == protocol.CodeBusy {
+			busy = true
+		}
 		if ctx.Err() != nil {
+			if busy {
+				return nil, nil, fmt.Errorf("another robin gui holds session %s on %s, or the host has yet to notice this one's connection is gone, so it was left running; robin end %s %s ends it",
+					id, h.o.Dest, h.o.Dest, id)
+			}
 			// Nothing is connected to send bye to.
 			return nil, nil, h.end(nil, id, until, path)
 		}
@@ -597,6 +618,8 @@ func runProbe(ctx context.Context, m *sshmux.Master) (*probe.Report, error) {
 // startMessage fills in the session parameters, with lower defaults on
 // small hosts, and picks the encoder when o leaves it to auto. The string
 // says why it picked the one it did; it is empty when the user chose.
+// Through the tunnel alone no STUN server is asked: every UDP candidate is
+// dropped, and the question would only tell the server both addresses.
 func startMessage(o Options, r *probe.Report) (protocol.Start, string) {
 	s := protocol.Start{
 		Version: protocol.Version, MaxWidth: o.MaxWidth, MaxHeight: o.MaxHeight,
@@ -604,6 +627,9 @@ func startMessage(o Options, r *probe.Report) (protocol.Start, string) {
 		Attach: o.Attach, Monitor: o.Monitor, Audio: o.Audio, Encoder: o.Encoder,
 		Mic: o.Mic, Camera: o.Camera,
 		Curtain: o.Curtain, Silent: o.Silent,
+	}
+	if o.Transport == relay.Tunnel {
+		s.STUN = nil
 	}
 	if o.Camera {
 		s.CameraDevice = r.CameraDevice()
@@ -865,99 +891,4 @@ func endSession(ctx context.Context, m *sshmux.Master, path, id string) error {
 		return fmt.Errorf("%w: %v", errNoSession, err)
 	}
 	return err
-}
-
-// tunnel is the client end of the ICE-TCP fallback: a loopback TCP listener
-// whose connections are spliced into an SSH forward to the agent's listener.
-// The listener lives as long as the session; the forward is remade on each
-// SSH connection, so the port the browser was told never changes.
-type tunnel struct {
-	ln  net.Listener
-	log *slog.Logger
-
-	mu  sync.Mutex
-	fwd *sshmux.Forward // nil while there is none
-}
-
-// openTunnel sets the tunnel up for transport: none for Direct, and for
-// the others the listener plus the forward over m, where a forward that
-// fails is an error only when the tunnel is all the user allowed.
-func openTunnel(ctx context.Context, m *sshmux.Master, remote string, transport relay.Transport, log *slog.Logger) (*tunnel, error) {
-	t := &tunnel{log: log}
-	if remote == "" || transport == relay.Direct {
-		return t, nil
-	}
-	ln, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		return nil, err
-	}
-	t.ln = ln
-	go func() {
-		for {
-			c, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			go t.splice(c)
-		}
-	}()
-	if err := t.forward(ctx, m, remote); err != nil {
-		if transport == relay.Tunnel {
-			ln.Close()
-			return nil, err
-		}
-		log.Warn("SSH tunnel unavailable; direct UDP only", "err", err)
-	}
-	return t, nil
-}
-
-// forward points the tunnel at remote through m.
-func (t *tunnel) forward(ctx context.Context, m *sshmux.Master, remote string) error {
-	if t.ln == nil {
-		return nil
-	}
-	fwd, err := m.Forward(ctx, remote)
-	if err != nil {
-		return fmt.Errorf("forward ICE-TCP over SSH: %w", err)
-	}
-	t.mu.Lock()
-	t.fwd = fwd
-	t.mu.Unlock()
-	return nil
-}
-
-// Port is the loopback port the browser's tunnel candidate names, or 0
-// without a tunnel.
-func (t *tunnel) Port() int {
-	if t.ln == nil {
-		return 0
-	}
-	return t.ln.Addr().(*net.TCPAddr).Port
-}
-
-func (t *tunnel) Close() error {
-	if t.ln == nil {
-		return nil
-	}
-	return t.ln.Close()
-}
-
-func (t *tunnel) splice(c net.Conn) {
-	defer c.Close()
-	t.mu.Lock()
-	fwd := t.fwd
-	t.mu.Unlock()
-	if fwd == nil {
-		return
-	}
-	u, err := fwd.Dial()
-	if err != nil {
-		t.log.Warn("tunnel dial", "err", err)
-		return
-	}
-	defer u.Close()
-	done := make(chan struct{}, 2)
-	go func() { io.Copy(u, c); done <- struct{}{} }()
-	go func() { io.Copy(c, u); done <- struct{}{} }()
-	<-done
 }

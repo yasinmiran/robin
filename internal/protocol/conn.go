@@ -27,6 +27,10 @@ const (
 // ErrIdle is returned by Recv when nothing arrived within the idle timeout.
 var ErrIdle = errors.New("protocol: peer silent past idle timeout")
 
+// ErrLineTooLong is returned by Send for a message whose line would be over
+// MaxLineBytes, which the peer would take for a broken stream.
+var ErrLineTooLong = fmt.Errorf("protocol: message longer than a line of %d bytes", MaxLineBytes)
+
 // Conn carries Messages as JSON lines over a byte stream. It sends a ping every
 // interval and fails with ErrIdle when the peer sends nothing for timeout.
 // Pings are consumed here and never returned by Recv.
@@ -56,13 +60,18 @@ func NewConn(r io.Reader, w io.Writer, interval, timeout time.Duration) *Conn {
 	return c
 }
 
-// Send writes one message. It is safe for concurrent use.
+// Send writes one message. It is safe for concurrent use. Send returns
+// ErrLineTooLong, writing nothing, for a message whose line would be over
+// MaxLineBytes; the connection stays up.
 func (c *Conn) Send(m Message) error {
 	b, err := json.Marshal(m)
 	if err != nil {
 		return err
 	}
 	b = append(b, '\n')
+	if len(b) > MaxLineBytes {
+		return ErrLineTooLong
+	}
 	c.wm.Lock()
 	defer c.wm.Unlock()
 	select {

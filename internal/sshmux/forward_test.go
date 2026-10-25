@@ -479,6 +479,67 @@ func TestForwardOverMaster(t *testing.T) {
 	}
 }
 
+// tripwireMasters are a master and a master-less connection whose ssh only
+// records that it ran, by creating the returned path.
+func tripwireMasters(t *testing.T) (map[string]*Master, string) {
+	t.Helper()
+	dir := t.TempDir()
+	ran := filepath.Join(dir, "ran")
+	tripwire := filepath.Join(dir, "ssh")
+	if err := os.WriteFile(tripwire, []byte("#!/bin/sh\ntouch "+ran+"\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return map[string]*Master{
+		"master":    {ssh: tripwire, dest: "host", dir: dir, ctl: filepath.Join(dir, "ctl"), mux: true},
+		"no master": {ssh: tripwire, dest: "host", dir: dir, freeAddr: freeLoopbackAddr, done: make(chan struct{})},
+	}, ran
+}
+
+// refusedBeforeSSH checks every target is refused as malformed, with a
+// master and without, and that ssh never ran for any of them.
+func refusedBeforeSSH(t *testing.T, targets ...string) {
+	t.Helper()
+	masters, ran := tripwireMasters(t)
+	for name, m := range masters {
+		for _, remote := range targets {
+			_, err := m.Forward(t.Context(), remote)
+			if err == nil || !strings.Contains(err.Error(), "malformed forward target") {
+				t.Errorf("%s: Forward(%q) = %v, want it refused as malformed", name, remote, err)
+			}
+		}
+	}
+	if _, err := os.Stat(ran); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("ssh ran for a refused target: %v", err)
+	}
+}
+
+// TestForwardRefusesAMalformedTarget: the target comes from the host, and
+// anything but a loopback address and port could be split by ssh into
+// other fields of the -L spec. It is refused before ssh runs.
+func TestForwardRefusesAMalformedTarget(t *testing.T) {
+	refusedBeforeSSH(t,
+		"", "a:b:c", "/run/x:1", "[::1]:22:3", "127.0.0.1:0", "127.0.0.1:70000", "127.0.0.1:022",
+		"[127.0.0.1]:1", "127.0.0.1:", ":22", "relative/x.sock", `/run/back\slash`, "[fe80::1%eth0]:22",
+		"[::1%lo]:22", "-oProxyCommand=x:22", "host name:22", `h\ost:22`, "127.0.0.1:22 ", "[::1]:+22",
+	)
+}
+
+// TestForwardRefusesTargetsSSHWouldExpand: ssh expands ${VAR} in a -L spec
+// from the client's environment, so a target the host chose could carry the
+// user's secrets to the host's sshd in the forward's connect path. Only the
+// agent's own loopback address and port get to ssh.
+func TestForwardRefusesTargetsSSHWouldExpand(t *testing.T) {
+	refusedBeforeSSH(t, "/tmp/${HOME}", "/run/x${PATH}y", "127.0.0.1:${PORT}", "localhost:4000", "10.0.0.5:4000", "/run/user/1000/robin/ice.sock")
+}
+
+func TestCheckTargetTakesWhatTheAgentSends(t *testing.T) {
+	for _, remote := range []string{"127.0.0.1:41234", "127.0.0.1:1", "127.0.0.1:65535", "[::1]:22"} {
+		if err := checkTarget(remote); err != nil {
+			t.Errorf("checkTarget(%q): %v", remote, err)
+		}
+	}
+}
+
 func TestForwardLocalNeedsMaster(t *testing.T) {
 	m := &Master{dest: "host"}
 	if err := m.forwardLocal(t.Context(), "/tmp/x.sock", "127.0.0.1:1"); err == nil {

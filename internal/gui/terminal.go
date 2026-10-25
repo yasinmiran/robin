@@ -6,12 +6,17 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/yasinmiran/robin/internal/runes"
 )
 
 // printable makes text from the host safe to show on the user's terminal.
 // Control characters other than newline and tab, and bytes that are not
 // UTF-8, become visible escapes, so an error message or a log line cannot
 // move the cursor, retitle the window or send the terminal other commands.
+// So do the characters runes.ReordersText reports, which the agent also
+// refuses in a file name, so a host cannot make a path or a command it
+// prints read as another.
 func printable(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); {
@@ -21,6 +26,8 @@ func printable(s string) string {
 			fmt.Fprintf(&b, `\x%02x`, s[i])
 		case unicode.IsControl(r) && r != '\n' && r != '\t':
 			fmt.Fprintf(&b, `\x%02x`, r)
+		case runes.ReordersText(r):
+			fmt.Fprintf(&b, `\u%04x`, r)
 		default:
 			b.WriteString(s[i : i+n])
 		}

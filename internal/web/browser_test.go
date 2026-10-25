@@ -72,7 +72,7 @@ func TestBrowserSmoke(t *testing.T) {
 	}()
 
 	var out bytes.Buffer
-	cmd := exec.CommandContext(ctx, node, "smoke.mjs", s.URL(), shots, frames)
+	cmd := exec.CommandContext(ctx, node, "smoke.mjs", s.URL(), shots, frames, s.LaunchURL())
 	cmd.Dir = dir
 	cmd.Stdout, cmd.Stderr = &out, &out
 	err = cmd.Run()

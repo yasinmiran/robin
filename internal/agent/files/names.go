@@ -11,6 +11,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/yasinmiran/robin/internal/runes"
 )
 
 // MaxName is the longest file name in bytes, Linux's NAME_MAX.
@@ -22,7 +24,7 @@ var ErrName = errors.New("files: bad file name")
 // CheckName reports whether name may name a file the browser sends or the
 // host offers: one path component of valid UTF-8, at most MaxName bytes,
 // neither "." nor "..", with no control characters (NUL and newlines
-// included) and none of the invisible ones that reorder text, which could
+// included) and none that runes.ReordersText reports, which could
 // make a name read as something it is not.
 func CheckName(name string) error {
 	switch {
@@ -38,7 +40,7 @@ func CheckName(name string) error {
 		return fmt.Errorf("%w: %q is a path, not a name", ErrName, name)
 	}
 	for _, r := range name {
-		if unicode.IsControl(r) || unicode.In(r, unicode.Zl, unicode.Zp, unicode.Bidi_Control) {
+		if unicode.IsControl(r) || runes.ReordersText(r) {
 			return fmt.Errorf("%w: %q holds the control character %U", ErrName, name, r)
 		}
 	}

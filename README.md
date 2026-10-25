@@ -76,8 +76,11 @@ connection as before. Name a `--keep` and it is kept like any other.
 
 A resumed session is the same session: the agent on the host kept its
 identity, so the fingerprint the CLI pinned still holds, and a CLI that
-carries a different agent than the one running refuses to resume and says to
-run `robin end`, since its upload would have replaced the daemon's binary.
+carries a different agent than the one running refuses to resume, before it
+uploads anything, and says to run `robin end`, since the daemon runs code
+this CLI does not carry. Started beside it with `--new`, the upload leaves
+the kept session's agent in place, so `robin-send` in that desktop keeps
+working.
 
 With `--attach`, nothing new is started: the agent streams a desktop that is
 already running on the host, usually the one you are logged in to at the
@@ -143,7 +146,7 @@ once, at the start, where each went on the host or why it could not.
 | `--camera` | off | offer your camera to the host's programs, through PipeWire or a v4l2loopback device; off until switched on |
 | `--curtain` | off | attached desktops: black out the host's screen while the page still shows it. The keyboard and mouse at the host still work; see [A private session](#a-private-session) |
 | `--silent` | off | attached desktops: keep the host's speakers quiet while the page still plays the sound |
-| `--stun` | Google's public server | STUN servers for NAT traversal, comma-separated, or `none` |
+| `--stun` | Google's public server | STUN servers for NAT traversal, comma-separated, or `none`; the browser and the agent each ask them for their public address (see [Security](#security)), except with `--transport tunnel`, which asks none |
 | `--no-browser` | | print the page URL on stdout instead of opening a browser |
 | `--listen` | `127.0.0.1:0` | address for the local page; loopback only |
 | `--ssh` | `ssh` | the ssh client to drive |
@@ -596,7 +599,8 @@ The agent's DTLS fingerprint reaches the browser only through SSH and the
 local page, and the CLI pins it for the session, so nobody who can merely
 reach the UDP or TCP path can stand in for the agent. The page and its
 websocket listen on 127.0.0.1 and require a random 256-bit token from the URL
-fragment, an exact `Origin` and `Host`, and allow one browser at a time. On
+fragment, an exact `Origin` and `Host`, and allow one browser at a time; the
+token never goes on a command line (see the client side below). On
 the host, the agent's ICE-TCP listener binds loopback and only accepts ICE
 connections carrying the session's credentials; the X display is protected by
 a fresh cookie in a 0600 file; the sound server of a desktop robin starts
@@ -736,21 +740,61 @@ screen lit, but a screen plugged in while it is drawn stays lit, with an
 error under the switch, and so does a program that refuses to move out of
 the room's speakers.
 
-One exposure is on the client side: to open your browser the CLI hands the
-page URL, token included, to `open`, `xdg-open`, `rundll32` on Windows or
-`termux-open-url` on Android, so for that moment another user logged in to
-the same client machine could read it from the process list. On a shared
-client, use `--no-browser` and open the printed URL yourself. The ICE-TCP
-tunnel's client end, where the browser connects, is a loopback TCP port in
-every mode, so another user of the client machine can connect to it too;
-what answers is the agent's ICE-TCP listener through SSH, which takes
-nothing without the session's ICE credentials, and the DTLS fingerprint is
-pinned as before. Behind that port the SSH forward is a unix socket in a
-private directory, with ControlMaster or without, except on Windows, whose
-OpenSSH forwards no unix sockets: there it is a second loopback port, which
-ssh binds only once it has logged in. The CLI uses it only once the
-system's table of listeners shows ssh holding it, so another user who
-takes the port first gets the tunnel refused, not connected to them.
+On the client, other users of the same machine can read your processes'
+command lines and connect to any loopback port, so the CLI puts nothing on
+the first that would let them in through the second. To open your browser
+it hands `open`, `xdg-open`, `rundll32` on Windows or `termux-open-url` on
+Android a launch link, not the page URL: the link holds a second random
+secret, sends the browser on to the page with its token once, and is not
+found after, though a browser the opener starts keeps it on its own command
+line for as long as it runs. Someone who reads the link and opens it before
+your browser does gets the page; your browser then shows Not Found, and the
+CLI says on stderr that the link was opened again, so end the session with
+Ctrl+C. The CLI also says when a browser first opens the page, so a tab of
+yours still loading after that line means the same. `--no-browser` prints
+the page URL, token included, on stdout instead, and an opener that fails to
+start has it printed on stderr. The page server closes a connection that
+sits idle for 30 s or sends no request within 2 s, and holds at most 32 at
+once: past that it makes room for a new one by closing the oldest that is
+idle or has sent nothing, never the page's websocket. Another user can
+neither run the CLI out of file descriptors through it nor keep your
+browser waiting behind connections they hold.
+
+The ICE-TCP tunnel's client end, where the browser connects, is a loopback
+TCP port in every mode, so another user of the client machine can connect to
+it too. The CLI passes a connection on into SSH only once its first message,
+within 5 s, is a connectivity check signed with the ICE password of the
+agent's latest answer, which only the page has seen; anything else is closed
+without an SSH channel opened for it, and the DTLS fingerprint is pinned as
+before. At most 16 connections wait for that check at once, and past that
+the oldest is closed, so connections that say nothing cannot run the CLI out
+of file descriptors either. Behind that port the SSH forward is a unix socket in a private
+directory, with ControlMaster or without, except on Windows, whose OpenSSH
+forwards no unix sockets: there it is a second loopback port, which ssh
+binds only once it has logged in. The CLI uses it only once the system's
+table of listeners shows ssh holding it, so another user who takes the port
+first gets the tunnel refused, not connected to them. The forward's target
+comes from the agent and is refused unless it is a loopback address and port,
+as the agent's listener has, so a host can neither slip other fields into
+ssh's `-L` nor have ssh expand `${VAR}` in it from your environment.
+
+Text from the host that the CLI prints, the agent's log and errors, the
+probe's findings and what ssh writes, has its control characters, the
+invisible marks that reorder text and the Unicode line separators replaced
+with escapes, so a host can neither send your terminal commands nor make a
+path or a command read as another. The CLI keeps at most 1 MiB of what a
+command on the host prints, and shows a log line with no end in 8 KiB
+pieces, so a host cannot fill its memory either.
+
+The browser and the agent each ask the STUN server that `--stun` names,
+Google's public one by default, for their public address at the start of
+every peer connection, which tells that server the public addresses of the
+host and of your machine. Its answers are not authenticated: whoever can
+steer DNS or the path to it can give either end a wrong address, which costs
+a candidate pair or the direct UDP path, never the session, since the agent
+is known by the fingerprint pinned over SSH. `--stun none`, or a server of
+your own, avoids the disclosure at the cost of direct UDP through NAT;
+`--transport tunnel` asks no STUN server at all.
 
 ## Testing
 
@@ -1120,6 +1164,11 @@ verified against a Linux build.
   refused as busy. A CLI that lost its network keeps the daemon's socket
   busy until the daemon's 20 s idle timeout notices, so a fresh `robin gui`
   started sooner has to retry.
+- Ctrl+C while the CLI redials a session the host reports busy leaves the
+  session running, since another `robin gui` may be using it. The host
+  cannot tell that from this CLI's own lost connection, which keeps the
+  session busy for up to 20 s, so Ctrl+C in those seconds leaves the
+  desktop too; the CLI says so, and `robin end` ends it.
 - Reconnecting keeps the desktop, not the picture: the browser builds a
   fresh peer connection each time, so the first second after a reconnect is
   a new keyframe, anything held down in the page is released, and a
@@ -1235,6 +1284,13 @@ verified against a Linux build.
   Safari, attached to an X11 desktop over Tailscale. Building the agents
   from a Mac is untried.
 - One browser per session; a second tab is refused until the first closes.
+- On a client shared with other users, the launch link the browser opener
+  gets is on a command line they can read. One who opens it before your
+  browser does gets the page, and your browser shows Not Found; the CLI
+  says the link was opened again. `--no-browser` leaves nothing to read.
+- With `--transport tunnel`, a resumed session that was started without it
+  still has the agent ask the STUN servers it started with; the page asks
+  none.
 - `make cover` counts only runs that end normally. A test binary that
   times out or panics, and a CLI or agent that is killed, hand in nothing,
   so a failing e2e scenario lowers the numbers, and without a GPU render

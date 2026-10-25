@@ -183,6 +183,42 @@ func waitResult(t *testing.T, result <-chan error) error {
 	}
 }
 
+// TestBridgeTellsTheTunnelEachAnswerFirst: the tunnel learns an answer's
+// ICE credentials before the page sees the answer, since the browser checks
+// through the tunnel with them as soon as it has it; an answer the relay
+// rejects teaches it nothing.
+func TestBridgeTellsTheTunnelEachAnswerFirst(t *testing.T) {
+	b, s, ctx := testBridge(t)
+	answers := make(chan string, 4)
+	b.answered = func(sdp string) { answers <- sdp }
+	agent := newFakeAgent()
+	result, _ := runBridge(ctx, b, agent)
+	pg := openPage(t, s)
+	pg.recv()
+
+	sdp := iceAnswer("agentufrag", "agentpasswordagentpasswo")
+	agent.in <- protocol.Message{Type: protocol.TypeAnswer, SDP: sdp}
+	if m := pg.recv(); m.Type != protocol.TypeAnswer {
+		t.Fatalf("page got %+v, want the answer", m)
+	}
+	select {
+	case got := <-answers:
+		if got != sdp {
+			t.Fatalf("the tunnel got %q", got)
+		}
+	default:
+		t.Fatal("the page had the answer before the tunnel")
+	}
+
+	agent.in <- protocol.Message{Type: protocol.TypeAnswer, SDP: strings.Replace(sdp, "AB:CD", "EF:01", 1)}
+	if err := waitResult(t, result); !errors.Is(err, relay.ErrFingerprintChanged) {
+		t.Fatalf("run: %v, want the fingerprint change", err)
+	}
+	if len(answers) > 0 {
+		t.Fatal("the tunnel took the credentials of an answer the relay refused")
+	}
+}
+
 func TestBridgeRelaysAndSurvivesAnAgentConnection(t *testing.T) {
 	b, s, ctx := testBridge(t)
 	agent := newFakeAgent()
@@ -362,5 +398,60 @@ func TestBridgeHangsUpWhenThePageLeaves(t *testing.T) {
 	next := openPage(t, s)
 	if m := next.recv(); m.Type != protocol.TypeConfig {
 		t.Fatalf("next page got %+v", m)
+	}
+}
+
+// TestBridgeDropsAnOfferTooLongForTheAgent: a page frame within the
+// websocket's limit can grow sixfold when the bridge encodes it again, every
+// '<' becoming `\u003c`, six bytes for one, past the line the agent reads.
+// The bridge drops it rather than write a line that would end the agent's
+// connection.
+func TestBridgeDropsAnOfferTooLongForTheAgent(t *testing.T) {
+	s, ctx := testServer(t)
+	toAgentR, toAgentW := io.Pipe()
+	fromAgentR, fromAgentW := io.Pipe()
+	cli := protocol.NewConn(fromAgentR, toAgentW, 0, 0)
+	agent := protocol.NewConn(toAgentR, fromAgentW, 0, 0)
+	t.Cleanup(func() {
+		cli.Close()
+		agent.Close()
+		toAgentR.Close()
+		fromAgentR.Close()
+	})
+	b := newBridge(cli, relay.New(relay.Policy{Transport: relay.Direct}),
+		protocol.Config{ICEServers: []protocol.ICEServer{}}, slog.New(slog.DiscardHandler))
+	go b.accept(ctx, s)
+	t.Cleanup(b.close)
+
+	got := make(chan protocol.Message, 4)
+	failed := make(chan error, 1)
+	go func() {
+		for {
+			m, err := agent.Recv(context.Background())
+			if err != nil {
+				failed <- err
+				return
+			}
+			got <- m
+		}
+	}()
+
+	pg := openPage(t, s)
+	pg.recv()
+	// Written by hand: json.Marshal would escape the '<'s already.
+	frame := `{"type":"offer","sdp":"` + strings.Repeat("<", 900<<10) + `"}`
+	if err := pg.c.Write(ctx, websocket.MessageText, []byte(frame)); err != nil {
+		t.Fatal(err)
+	}
+	pg.send(protocol.Message{Type: protocol.TypeOffer, SDP: "v=0"})
+	select {
+	case m := <-got:
+		if m.Type != protocol.TypeOffer || m.SDP != "v=0" {
+			t.Fatalf("the agent got %s of %d bytes, want the small offer", m.Type, len(m.SDP))
+		}
+	case err := <-failed:
+		t.Fatalf("the agent's connection failed: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("nothing reached the agent")
 	}
 }

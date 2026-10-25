@@ -264,6 +264,27 @@ func TestEnsureRemovesStaleFiles(t *testing.T) {
 	}
 }
 
+// TestEnsureKeepsAgentsInUse: an agent a kept session's daemon runs from
+// stays, since the desktop's robin-send links to it; other old ones go.
+func TestEnsureKeepsAgentsInUse(t *testing.T) {
+	m := dial(t)
+	a, _ := testAgent(t)
+	dir := t.TempDir()
+	for _, name := range []string{"robin-agent-0123456789abcdef", "robin-agent-fedcba9876543210"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := Ensure(t.Context(), m, Target{Dir: dir, SHA256Tool: "none", InUse: []string{"robin-agent-0123456789abcdef"}}, a); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"robin-agent-0123456789abcdef", a.Name()}
+	slices.Sort(want)
+	if names := ls(t, dir); !slices.Equal(names, want) {
+		t.Errorf("dir holds %q, want %q", names, want)
+	}
+}
+
 func TestEnsureKeepsRunningAgentAlive(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("relies on Linux keeping unlinked executables alive")

@@ -179,22 +179,62 @@ func ignoringInterrupt(ssh string, args ...string) (string, []string) {
 	return "/bin/sh", append([]string{"-c", `trap '' INT; exec "$0" "$@"`, ssh}, args...)
 }
 
+// maxOutput bounds the stdout Output keeps, so a host cannot fill the
+// client's memory by printing without end. The largest output a caller
+// reads is the probe's report: a few kilobytes, plus a line of a few
+// hundred bytes for each kept session, so a megabyte leaves room for
+// thousands of those.
+const maxOutput = 1 << 20
+
+// errTooMuchOutput fails a command that printed more than maxOutput.
+var errTooMuchOutput = fmt.Errorf("sshmux: the remote command printed more than %d bytes", maxOutput)
+
 // Output runs remoteCmd with stdin (nil for none) and returns its stdout. A
-// failed command's error includes its stderr.
+// failed command's error includes the end of its stderr. A command that
+// prints more than a megabyte is stopped and fails.
 func (m *Master) Output(ctx context.Context, remoteCmd string, stdin io.Reader) ([]byte, error) {
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
 	cmd := m.Command(ctx, remoteCmd)
 	cmd.Stdin = stdin
-	out, err := cmd.Output()
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
-		err = fmt.Errorf("%w: %s", err, bytes.TrimSpace(exitErr.Stderr))
+	stdout := &capped{max: maxOutput, over: stop}
+	var stderr tail.Buffer
+	cmd.Stdout, cmd.Stderr = stdout, &stderr
+	err := cmd.Run()
+	if stdout.full {
+		return stdout.b.Bytes(), errTooMuchOutput
 	}
-	return out, err
+	var exitErr *exec.ExitError
+	if msg := strings.TrimSpace(stderr.String()); errors.As(err, &exitErr) && msg != "" {
+		err = fmt.Errorf("%w: %s", err, msg)
+	}
+	return stdout.b.Bytes(), err
+}
+
+// capped keeps the first max bytes written to it. A write past them fails
+// with errTooMuchOutput and calls over, once.
+type capped struct {
+	max  int
+	over func()
+	b    bytes.Buffer
+	full bool
+}
+
+func (c *capped) Write(p []byte) (int, error) {
+	if room := c.max - c.b.Len(); len(p) > room {
+		c.b.Write(p[:room])
+		if !c.full {
+			c.full = true
+			c.over()
+		}
+		return room, errTooMuchOutput
+	}
+	return c.b.Write(p)
 }
 
 // forwardLocal makes the master listen on the unix socket path local and
-// forward each connection to remote, which is "host:port" or a unix socket
-// path on the remote host. local must not exist yet; socketPath gives a
+// forward each connection to remote, "host:port" on the remote host, which
+// Forward has checked. local must not exist yet; socketPath gives a
 // suitable one. The forward lasts until the master exits.
 func (m *Master) forwardLocal(ctx context.Context, local, remote string) error {
 	if !m.mux {

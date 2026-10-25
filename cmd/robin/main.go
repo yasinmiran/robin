@@ -80,7 +80,7 @@ func runGUI(args []string) int {
 	silent := fs.Bool("silent", false, "desktops attached to with --attach: keep the host's speakers quiet while the page still plays the sound")
 	hidpi := fs.Bool("hidpi", false, "size the remote display in device pixels: sharper on HiDPI screens, more to encode (raise --max-size to go native)")
 	encoder := fs.String("encoder", protocol.EncoderAuto, "video encoder on the host: auto (the GPU where the host has one and it pays, else software), software, vaapi or nvenc")
-	stun := fs.String("stun", defaultSTUN, `comma-separated STUN servers for NAT traversal, or "none"`)
+	stun := fs.String("stun", defaultSTUN, `comma-separated STUN servers for NAT traversal, or "none"; --transport tunnel asks none`)
 	keep := fs.String("keep", "", fmt.Sprintf("how long the host keeps a desktop after the connection drops or the page detaches, for robin gui to resume: a duration such as 8h, or 0 (default %s for a desktop robin started, 0 with --attach)", protocol.DefaultKeep))
 	resume := fs.String("id", "", "resume the kept session with this id (default: the one kept session, when there is one)")
 	fresh := fs.Bool("new", false, "start a new desktop even when a kept session could be resumed")

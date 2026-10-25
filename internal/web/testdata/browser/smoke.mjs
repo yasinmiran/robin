@@ -1,14 +1,15 @@
 // Drives the client in system Chrome against a live internal/web server.
 // TestBrowserSmoke starts the server, plays the CLI's and the agent's side,
-// and runs this script with the page URL, a directory for screenshots, and a
-// path to write the video frames its stand-in agent streams.
+// and runs this script with the page URL, a directory for screenshots, a
+// path to write the video frames its stand-in agent streams, and the launch
+// link the CLI hands a browser opener.
 import { chromium } from 'playwright-core';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const [url, shots, framesPath] = process.argv.slice(2);
-if (!url || !shots || !framesPath) {
-  console.error('usage: node smoke.mjs <page url> <screenshot dir> <frames.json>');
+const [url, shots, framesPath, launchURL] = process.argv.slice(2);
+if (!url || !shots || !framesPath || !launchURL) {
+  console.error('usage: node smoke.mjs <page url> <screenshot dir> <frames.json> <launch url>');
   process.exit(2);
 }
 mkdirSync(shots, { recursive: true });
@@ -26,7 +27,11 @@ try {
   await rejected('no token', base, 'This link is incomplete');
   await rejected('wrong token', `${base}#${'0'.repeat(64)}`, 'Could not connect');
   await connecting();
-  for (const scheme of ['dark', 'light']) await connects(scheme);
+  // The first page arrives as a browser opener would bring it, through the
+  // launch link, which works once.
+  await connects('dark', launchURL);
+  await connects('light', url);
+  await spentLaunch();
 } finally {
   await browser.close();
 }
@@ -137,7 +142,15 @@ async function connecting() {
   await page.close();
 }
 
-async function connects(scheme) {
+// spentLaunch checks a launch link that brought a page once finds nothing.
+async function spentLaunch() {
+  const page = await browser.newPage();
+  const response = await page.goto(launchURL);
+  check(response.status() === 404 && !page.url().includes('#'), 'a used launch link is not found');
+  await page.close();
+}
+
+async function connects(scheme, target) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, colorScheme: scheme });
   await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base.replace(/\/$/, '') });
   const page = await context.newPage();
@@ -145,9 +158,10 @@ async function connects(scheme) {
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   page.on('pageerror', (e) => errors.push(String(e)));
 
-  await page.goto(url);
+  await page.goto(target);
   await page.waitForFunction(() => window.robin.pc?.localDescription?.type === 'offer');
   check((await page.evaluate(() => location.hash)) === '', `${scheme}: token removed from the address bar`);
+  check(page.url() === base, `${scheme}: page at ${page.url()}`);
 
   await page.waitForFunction(() => window.robin.state === 'connected', null, { timeout: 15000 });
   const stats = await page.evaluate(() => window.robin.stats());
