@@ -2066,6 +2066,92 @@ while typing ahead of their manifest, each a frame of blur over the whole
 picture; sent before the conversion and the encode, none of 20 to 22 in
 three runs.
 
+### Key macros: kept by the CLI, played by the page as keys
+
+The page plays a macro through the controls the keyboard already uses: a
+chord's keys go down in order as `ControlKey` and up in reverse, text goes
+as `ControlText` in pieces of `MaxTextBytes`, and a pause waits in the
+page. The agent gained no message, and its typing lane keeps a text step
+ahead of the keys that follow it, as it does for an input method. Playing
+in the page also stops a macro where the keyboard would stop: when the
+window loses the keyboard, the moment `Input` releases every key, and when
+the control channel closes, where the agent's own release on a closed peer
+covers what the page can no longer send. Whatever the macro pressed is let
+go before it ends, so it never leaves a key down.
+
+A chord is held 20 ms and steps are 30 ms apart, so the desktop sees each
+chord pressed and let go; the macro does not wait for the desktop beyond
+the pauses in it. In the direct e2e scenario a recorded macro of two
+steps, a text step and Enter, had its file on the host 0.38 s after the
+click. Recorded one chord per letter, as it was at first, the same line
+took 30 steps and 1.7 s, against the 1.45 s their holds and gaps add up
+to. Type clipboard of 250 characters, one `ControlText`, had its file
+there in 0.2 s.
+
+The CLI keeps the macros because the page cannot: its origin is
+`http://127.0.0.1:PORT` with a new port every session, and browser storage
+belongs to an origin, so whatever the page stored would be gone the next
+time. The CLI's home is stable: `macros.json` in `os.UserConfigDir()`, a
+path the page never names. The page asks for one change per message (put
+or delete one macro, by an ID the page made up) instead of sending its
+whole list, because two sessions to different hosts both show the unpinned
+macros, and a whole list from one would drop whatever the other saved
+since it loaded. Each change reads the file afresh, so it keeps what
+another CLI wrote before, and holds an exclusive lock on
+`macros.json.lock` beside the file (`flock`, `LockFileEx` on Windows) from
+the read to the rename. Without it a put from one CLI inside another's
+delete wrote the deleted macro back, password text included. A change
+waits 2 s at most for the lock, since it runs on the page's read loop, and
+then fails with a note to save again.
+
+The file is schema-checked JSON: version 1, nothing the schema does not
+name, one value, and every macro within the caps the page restates
+(`TestPageLimitsMatchTheAgent` holds the two to each other). The 256 KiB
+cap keeps one change well inside a websocket message (`MaxLineBytes`,
+1 MiB). Indented as the CLI writes it, an everyday macro of four steps
+takes about 0.5 KiB, so 100 of them take 66 KiB, while a macro of 100
+three-key chords takes 32 KiB and eight of those fill the file. A file that
+does not read, hand-edited or from a newer Robin, is reported once in the
+terminal and in every Config, and every change is refused until it reads,
+so it is never overwritten silently. What the file holds is typed on a
+host at a click, so on unix it is read through one open with `O_NOFOLLOW`
+and `O_NONBLOCK`, and the descriptor's own stat has to show a regular file
+of the effective user that group and others cannot write; anything else
+does not read. A file someone else could write, or a CLI run with
+`sudo -E` on the user's environment, would otherwise plant a macro that
+types a command, and a FIFO swapped in between a stat and an open would
+hold the open, and the page's read loop with it. A write goes to a
+temporary file in the same directory, made 0600 by `os.CreateTemp`,
+synced and renamed over the old one. The directory is opened the same way
+and has to belong to the user, not be a link, before it is set to 0700 on
+every write, since an existing `~/.config/robin` may be wider. The text in
+a macro may be a password, and it is stored as plain text: the page says
+so where it is typed.
+
+A pinned macro names the host argument as the user typed it, not what ssh
+makes of it: the CLI does not know what `~/.ssh/config` resolves a name
+to, and the user recognises what they typed. A new macro starts pinned.
+Unpinned by default, what one host's session recorded showed and played
+in every other, including a clipboard that host had set while Type
+clipboard recorded it; sharing a macro across hosts is now an untick.
+
+Recording takes a key that types one character, alone or with Shift, as
+text, which joins the text before it, and any other key as a chord with
+the modifiers held as it went down; modifiers pressed and let go with no
+other key, such as Super alone, are a chord of their own. Repeats are
+dropped. One chord per letter put a command of about 95 characters at the
+100-step cap and filled the editor with a chip per key; as text it is one
+step, played as `ControlText` like an input method's, which on Wayland
+means keysyms for ASCII and a paste for anything else. While recording, `Input.capture` takes every key
+in place of the remote, except the release of a key the remote saw
+pressed. Keys the browser keeps for itself never reach the page, so while
+recording the Keys row's buttons add their chord instead of sending it.
+Those buttons are the keys a browser or desktop keeps outside full screen,
+where keyboard lock does not apply: Ctrl+Alt+Delete, Alt+Tab, Alt+F4,
+Super, Ctrl+W, Ctrl+T, Ctrl+N, Ctrl+Q and Print Screen. No Ctrl+Alt+F key
+is offered, since on an attached desktop it would switch the host's
+console away from the session.
+
 ## Verification parked
 
 Two checks were parked by decision on 2026-10-18. Both needed hardware the

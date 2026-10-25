@@ -207,7 +207,7 @@ func Run(ctx context.Context, o Options) (err error) {
 
 	config := protocol.Config{ICEServers: iceServers(start.STUN), HiDPI: o.HiDPI, Keep: ready.Keep}
 	config.Mic, config.Camera = offeredDevices(ready)
-	b := newBridge(ag.conn, relay.New(relay.Policy{Transport: o.Transport, TunnelPort: t.Port()}), config, log)
+	b := newBridge(ag.conn, relay.New(relay.Policy{Transport: o.Transport, TunnelPort: t.Port()}), config, userMacros(o.Dest, o.Stderr), log)
 	go b.accept(ctx, srv)
 	defer b.close()
 

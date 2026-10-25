@@ -1,6 +1,7 @@
 import { test, expect, type BrowserContext, type Page, type TestInfo } from '@playwright/test';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { Cli, robin, sshProcesses } from './helpers/cli';
 import { pagePoint } from './helpers/coords';
@@ -1287,6 +1288,120 @@ if (SCENARIO === 'attach') {
 }
 
 if (SCENARIO === 'direct') {
+  // showKeys brings the status tab out and opens the keys section folded
+  // in it.
+  const showKeys = async () => {
+    await page.mouse.move(640, 5);
+    const toggle = page.locator('#keys');
+    if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
+    await expect(page.locator('#hud').getByRole('button', { name: 'Ctrl+Alt+Delete', exact: true })).toBeVisible();
+  };
+  // macrosFile is where the CLI under test keeps the macros.
+  const macrosFile = () => path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'robin', 'macros.json');
+
+  test('macros: a macro recorded in the page outlives a reload, kept by the CLI, and plays into the xterm', async ({}, testInfo) => {
+    testInfo.setTimeout(120_000);
+    const n = Date.now().toString(36);
+    const file = `/tmp/robin-e2e-macro-${n}`;
+    const marker = '/tmp/robin-e2e-macro-T';
+    const sentinel = `/tmp/robin-e2e-macro-after-${n}`;
+    await host.ssh(`rm -f ${file} ${marker} ${sentinel}`);
+    // A client container kept from an earlier run keeps its macros too.
+    const saved = macrosFile();
+    fs.rmSync(saved, { force: true });
+    await expect.poll(host.terminal, { message: 'an xterm is mapped', timeout: 15_000 }).not.toBeNull();
+    await host.focusTerminal();
+    const hud = page.locator('#hud');
+    await showKeys();
+    await hud.getByRole('button', { name: 'New macro', exact: true }).click();
+    await hud.getByLabel('Macro name').fill('E2E touch');
+    await hud.getByLabel('Text to type').fill(`echo robin-macro-${n} > ${file}; `);
+    await hud.getByRole('button', { name: 'Add text', exact: true }).click();
+
+    // While recording, keys go into the macro and never to the xterm. The
+    // typed letters join the text before them; Enter is a key of its own.
+    await hud.getByRole('button', { name: 'Record keys', exact: true }).click();
+    await page.keyboard.type(`touch ${marker.slice(0, -1)}`, { delay: 20 });
+    await page.keyboard.press('Shift+KeyT');
+    await page.keyboard.press('Enter');
+    await hud.getByRole('button', { name: 'Stop recording', exact: true }).click();
+    const steps = await hud.locator('.steps li span').allTextContents();
+    expect(steps.length, `the steps ${JSON.stringify(steps)}`).toBe(2);
+    expect(steps[0], 'the text step').toMatch(/^“echo robin-macro-.*…”$/);
+    expect(steps[1], 'the last chord').toBe('Enter');
+
+    await hud.getByRole('button', { name: 'Save', exact: true }).click();
+    const play = hud.getByRole('button', { name: 'E2E touch', exact: true });
+    await expect(play, 'the saved macro').toBeVisible();
+    await expect(hud.locator('.macro-editor')).toBeHidden();
+
+    // The CLI wrote it, private, with the text in plain text as the page
+    // said it would be.
+    expect(fs.statSync(saved).mode & 0o777, 'macros.json mode').toBe(0o600);
+    expect(fs.statSync(path.dirname(saved)).mode & 0o777, 'its directory mode').toBe(0o700);
+    const kept = JSON.parse(fs.readFileSync(saved, 'utf8'));
+    expect(kept.version).toBe(1);
+    expect(kept.macros.map((m: { name: string }) => m.name)).toEqual(['E2E touch']);
+    expect(kept.macros[0].steps[0]).toEqual({ text: `echo robin-macro-${n} > ${file}; touch ${marker}` });
+
+    // WebKit's Linux build crashes the page on some reloads, the more
+    // often the longer the page has stood, with this page and the one
+    // before it alike. What a reload shows here is the CLI's doing, the
+    // same in every browser, so WebKit plays the macro without one.
+    if (process.env.ROBIN_E2E_BROWSER !== 'webkit') {
+      await page.reload();
+      await expect.poll(() => state(page), { message: 'connected after the reload', timeout: 20_000 }).toBe('connected');
+      await expect(page.locator('#keys'), 'a new page starts with the keys section folded').toHaveAttribute('aria-expanded', 'false');
+      await showKeys();
+      await expect(play, 'the macro after a reload').toBeVisible({ timeout: 10_000 });
+    }
+
+    // Anything the recording let through would have reached the xterm
+    // before a line typed now does.
+    await host.focusTerminal();
+    await page.keyboard.type(`touch ${sentinel}`, { delay: 20 });
+    await page.keyboard.press('Enter');
+    await expect.poll(() => host.exists(sentinel), { message: `${sentinel} on the host`, timeout: 10_000 }).toBe(true);
+    expect(await host.exists(marker), 'the recorded keys reached the xterm').toBe(false);
+    const t0 = Date.now();
+    await play.click();
+    await expect
+      .poll(async () => (await host.sshRaw(`cat ${file}`)).stdout.trim(), { message: `${file} on the host`, timeout: 15_000 })
+      .toBe(`robin-macro-${n}`);
+    await expect.poll(() => host.exists(marker), { message: `${marker} on the host`, timeout: 5_000 }).toBe(true);
+    testInfo.annotations.push({ type: 'macro played', description: `${steps.length} steps in ${Date.now() - t0} ms` });
+  });
+
+  test('keys: Ctrl+W from the keys section reaches the xterm instead of closing the tab', async () => {
+    const file = `/tmp/robin-e2e-ctrlw-${Date.now().toString(36)}`;
+    await host.focusTerminal();
+    await page.keyboard.type('echo robin-kept robin-gone', { delay: 20 });
+    await showKeys();
+    await page.locator('#hud').getByRole('button', { name: 'Ctrl+W', exact: true }).click();
+    await page.keyboard.type(` > ${file}`, { delay: 20 });
+    await page.keyboard.press('Enter');
+    await expect
+      .poll(async () => (await host.sshRaw(`cat ${file}`)).stdout.trim(), { message: `${file} on the host`, timeout: 10_000 })
+      .toBe('robin-kept');
+    expect(await state(page), 'the tab is still open and connected').toBe('connected');
+  });
+
+  test('keys: Type clipboard types the local clipboard into the xterm, as keys', async ({}, testInfo) => {
+    test.skip(process.env.ROBIN_E2E_BROWSER !== 'chrome', 'Playwright grants clipboard reads in Chrome only');
+    const file = `/tmp/robin-e2e-typed-${Date.now().toString(36)}`;
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    const line = `echo robin-typed-${'x'.repeat(200)} > ${file}`;
+    await page.evaluate((t) => navigator.clipboard.writeText(t), `${line}\n`);
+    await host.focusTerminal();
+    await showKeys();
+    const t0 = Date.now();
+    await page.locator('#hud').getByRole('button', { name: 'Type clipboard', exact: true }).click();
+    await expect
+      .poll(async () => (await host.sshRaw(`cat ${file}`)).stdout.trim(), { message: `${file} on the host`, timeout: 15_000 })
+      .toBe(`robin-typed-${'x'.repeat(200)}`);
+    testInfo.annotations.push({ type: 'clipboard typed', description: `${line.length + 1} characters in ${Date.now() - t0} ms` });
+  });
+
   test('end: the End session button ends the desktop on the host, and the page is told once it did', async ({}, testInfo) => {
     testInfo.setTimeout(60_000);
     const dir = await host.runDir();

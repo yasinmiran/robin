@@ -37,6 +37,10 @@ export class Input {
   // true when it did.
   onPinch = null;
 
+  // capture, while set, takes every key and text message in place of the
+  // remote, as a macro being recorded does.
+  capture = null;
+
   // text is the hidden text box that holds the keyboard's focus, so input
   // methods and soft keyboards have somewhere to type, and preedit shows
   // what an input method is composing. send delivers one Control message;
@@ -281,6 +285,13 @@ export class Input {
     }
     const msg = { t: 'key', key, code, down, repeat: e.repeat };
 
+    // The release of a key the remote saw pressed still goes there.
+    if (this.capture && (down || !this.#held.has(code))) {
+      e.preventDefault();
+      this.capture(msg);
+      return;
+    }
+
     // Let the browser run its paste shortcut so the paste event carries the
     // local clipboard; the key itself goes out once the clipboard has.
     if (down && !this.#pasteQueue && isPasteShortcut(e)) {
@@ -312,6 +323,12 @@ export class Input {
     else this.#send(msg);
   }
 
+  // typed sends what the text box typed, or hands it to capture.
+  #typed(msg) {
+    if (this.capture) this.capture(msg);
+    else this.#key(msg);
+  }
+
   #showPreedit(text) {
     this.#preedit.textContent = text ?? '';
     this.#preedit.hidden = !text;
@@ -321,7 +338,7 @@ export class Input {
     this.#showPreedit('');
     this.#text.value = '';
     if (!this.#active()) return;
-    for (const m of fromComposition(e.data)) this.#key(m);
+    for (const m of fromComposition(e.data)) this.#typed(m);
   }
 
   // onBeforeInput sends what a soft keyboard typed without naming a key.
@@ -330,7 +347,7 @@ export class Input {
     if (e.isComposing || e.inputType === 'insertCompositionText') return;
     e.preventDefault();
     if (!this.#active()) return;
-    for (const m of fromInput(e.inputType, e.data)) this.#key(m);
+    for (const m of fromInput(e.inputType, e.data)) this.#typed(m);
   }
 
   #onPaste(e) {

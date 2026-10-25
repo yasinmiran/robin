@@ -401,14 +401,15 @@ func TestPageMessagesRestricted(t *testing.T) {
 	}
 }
 
-// TestPageMayEndOrDetach: besides offers and candidates, the page may say
-// bye and detach, which the bridge acts on itself.
-func TestPageMayEndOrDetach(t *testing.T) {
+// TestPageSignalsTheBridgeTakes: besides offers and candidates, the page
+// may say bye and detach, and change the user's macros, which the bridge
+// acts on itself.
+func TestPageSignalsTheBridgeTakes(t *testing.T) {
 	s, _ := start(t)
 	c, b := connect(t, s)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	for _, typ := range []protocol.Type{protocol.TypeDetach, protocol.TypeBye} {
+	for _, typ := range []protocol.Type{protocol.TypeDetach, protocol.TypeBye, protocol.TypeMacros} {
 		c.Write(ctx, websocket.MessageText, []byte(`{"type":"`+string(typ)+`"}`))
 		if m, err := b.Recv(ctx); err != nil || m.Type != typ {
 			t.Fatalf("Recv = %v, %v; want %s", m, err, typ)

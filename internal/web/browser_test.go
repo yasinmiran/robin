@@ -191,7 +191,17 @@ func checkControls(t *testing.T, got []protocol.Control) {
 // answered with remote clipboard text.
 func playAgent(ctx context.Context, b *Browser, frames string, onOffer func(string), onControl func(protocol.Control)) error {
 	defer b.Close()
-	if err := b.Send(protocol.Message{Type: protocol.TypeConfig, Config: &protocol.Config{ICEServers: []protocol.ICEServer{}}}); err != nil {
+	macros := &protocol.Macros{Host: "build-box", List: []protocol.Macro{{
+		ID: "term", Name: "Terminal", Steps: []protocol.MacroStep{{Keys: []protocol.MacroKey{
+			{Key: "Control", Code: "ControlLeft"}, {Key: "Alt", Code: "AltLeft"}, {Key: "t", Code: "KeyT"},
+		}}},
+	}, {
+		// Long enough to overflow a phone, unless the page cuts it short.
+		ID: "nginx", Name: "Restart the nginx service on the build box", Host: "build-box", Steps: []protocol.MacroStep{
+			{Text: "sudo systemctl restart nginx.service && journalctl -u nginx.service -n 50 --no-pager\n"},
+		},
+	}}}
+	if err := b.Send(protocol.Message{Type: protocol.TypeConfig, Config: &protocol.Config{ICEServers: []protocol.ICEServer{}, Macros: macros}}); err != nil {
 		return err
 	}
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})

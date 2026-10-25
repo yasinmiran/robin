@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light;
   --veil: rgb(244 246 247 / 0.9);
   --veil-edge: rgb(24 32 38 / 0.12);
   --ink: #1a2228;
@@ -6,12 +7,17 @@
   --ok: #0f8a68;
   --wait: #b6741a;
   --down: #c1453a;
+  /* Text on a filled accent, and the green to fill behind text: --ok is
+     for dots and bars, too light under white text. */
+  --on-accent: #fff;
+  --ok-fill: #0b7457;
   --shadow: 0 8px 24px rgb(0 0 0 / 0.3);
   --ui: system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", Cantarell, Ubuntu, sans-serif;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
+    color-scheme: dark;
     --veil: rgb(29 36 43 / 0.86);
     --veil-edge: rgb(255 255 255 / 0.09);
     --ink: #e5eaee;
@@ -19,6 +25,8 @@
     --ok: #52d2a6;
     --wait: #f1b54a;
     --down: #f27e6e;
+    --on-accent: #0d1f19;
+    --ok-fill: #52d2a6;
   }
 }
 
@@ -228,6 +236,7 @@ body:has(#hud[data-state="reconnecting"]) #wire { opacity: 1; }
 
 #sound,
 #keyboard,
+#keys,
 #fullscreen {
   display: grid;
   place-items: center;
@@ -242,15 +251,20 @@ body:has(#hud[data-state="reconnecting"]) #wire { opacity: 1; }
 }
 #sound:hover,
 #keyboard:hover,
+#keys:hover,
 #fullscreen:hover { color: var(--ink); background: var(--veil-edge); }
 #sound:focus-visible,
 #keyboard:focus-visible,
+#keys:focus-visible,
 #fullscreen:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 #sound[aria-pressed="true"],
-#keyboard[aria-pressed="true"] { color: var(--ink); }
-#keyboard[aria-pressed="true"] { background: var(--veil-edge); }
+#keyboard[aria-pressed="true"],
+#keys[aria-expanded="true"] { color: var(--ink); }
+#keyboard[aria-pressed="true"],
+#keys[aria-expanded="true"] { background: var(--veil-edge); }
 #sound svg,
 #keyboard svg,
+#keys svg,
 #fullscreen svg {
   width: 16px;
   height: 16px;
@@ -376,7 +390,7 @@ body:has(#hud[data-state="reconnecting"]) #wire { opacity: 1; }
 .section button:hover { box-shadow: inset 0 0 0 1px var(--ink-soft); }
 .section button:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 .section button.save,
-.section button.send { color: #fff; background: var(--ok); }
+.section button.send { color: var(--on-accent); background: var(--ok-fill); }
 .transfers {
   display: grid;
   gap: 6px;
@@ -527,6 +541,165 @@ body[data-dropping]::after {
   margin: 2px 0 0;
   color: var(--ink-soft);
   font-weight: 400;
+}
+
+/* Keys and macros: a labelled row of chord buttons, a row of macros led
+   by Type clipboard, and the editor below them while one is made or
+   changed, indented under the buttons. */
+.keys-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 80ch;
+}
+.keys-row + .keys-row { margin-top: 4px; }
+.keys-label {
+  flex: none;
+  width: 52px;
+  color: var(--ink-soft);
+  font-weight: 400;
+  line-height: 24px;
+}
+.keys-list {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+.section .keys-row .key { font-variant-numeric: normal; }
+.section .keys-list button:disabled,
+.macro-editor button:disabled { opacity: 0.55; cursor: default; box-shadow: none; }
+.macro-group { display: inline-flex; max-width: 100%; }
+.section .macro-group .macro {
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-radius: 6px 0 0 6px;
+}
+.section .macro-group .edit {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  padding: 0;
+  color: var(--ink);
+  border-left: 1px solid var(--veil);
+  border-radius: 0 6px 6px 0;
+}
+.section .macro-group .edit svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.7;
+}
+/* Playing, a macro fills and shows a stop square: a click stops it. */
+.section .macro[data-playing] { color: var(--on-accent); background: var(--ok-fill); }
+.section .macro[data-playing]::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 1px;
+  background: currentColor;
+}
+.section .record[data-recording],
+.section .delete[data-confirm] { color: var(--on-accent); background: var(--down); }
+.macro-editor {
+  display: grid;
+  gap: 6px;
+  max-width: 60ch;
+  margin: 8px 0 0 60px;
+  padding: 8px;
+  border: 1px solid var(--veil-edge);
+  border-radius: 8px;
+  user-select: text;
+}
+/* Recording, the editor is ringed in red: keys go nowhere else. */
+.macro-editor[data-recording] { box-shadow: inset 0 0 0 1px var(--down); }
+.editor-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.editor-row.actions { justify-content: flex-end; }
+.editor-row.actions .delete { margin-right: auto; }
+.macro-editor .field-label { color: var(--ink-soft); font-weight: 400; }
+/* Fields are wells, outlined, so they do not read as buttons. */
+.macro-editor input,
+.macro-editor textarea {
+  min-width: 0;
+  padding: 3px 6px;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px var(--ink-soft);
+  font: 400 13px/18px var(--ui);
+}
+.macro-editor input[aria-invalid="true"] { box-shadow: inset 0 0 0 2px var(--down); }
+.macro-editor input:focus-visible,
+.macro-editor textarea:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.macro-editor .macro-name { flex: 1 1 18ch; }
+.macro-editor .pause { width: 9ch; }
+.macro-editor .macro-text { flex: 1 1 30ch; resize: vertical; }
+.macro-editor .pin { display: inline-flex; align-items: center; gap: 4px; font-weight: 400; }
+.macro-editor .pin input { box-shadow: none; accent-color: var(--ok-fill); }
+.macro-editor .hint { margin: 0; color: var(--ink-soft); font-weight: 400; }
+.macro-editor .recording { color: var(--ink); }
+.steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 30vh;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.steps li {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  padding-left: 8px;
+  border: 1px solid var(--veil-edge);
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.steps li span { overflow: hidden; text-overflow: ellipsis; }
+.section .steps .remove { flex: none; min-width: 24px; height: 24px; padding: 0 6px; color: var(--ink-soft); background: none; }
+.keys-note {
+  max-width: 60ch;
+  margin: 6px 0 0 60px;
+  color: var(--ink-soft);
+  font-weight: 400;
+}
+/* An error reads in ink behind the red dot of the device switches; red
+   text would be too faint on the light veil over a dark desktop. */
+.keys-note[data-tone="error"] { color: var(--ink); }
+.keys-note[data-tone="error"]::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--down);
+  vertical-align: 1px;
+}
+/* On a phone each label sits above its buttons. */
+@media (max-width: 480px) {
+  .keys-row { flex-direction: column; gap: 2px; }
+  .keys-label { width: auto; line-height: 16px; }
+  .macro-editor,
+  .keys-note { margin-left: 0; }
 }
 
 .notice {

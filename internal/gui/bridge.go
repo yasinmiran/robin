@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/yasinmiran/robin/internal/macros"
 	"github.com/yasinmiran/robin/internal/protocol"
 	"github.com/yasinmiran/robin/internal/relay"
 	"github.com/yasinmiran/robin/internal/web"
@@ -40,6 +41,9 @@ var (
 	// errPageEnded: the page asked to end the session; the CLI has yet to
 	// make the host do it.
 	errPageEnded = errors.New("the page ended the session")
+	// errNoMacros: the page asked to change macros in a session that keeps
+	// none.
+	errNoMacros = errors.New("this session keeps no macros")
 )
 
 // bridge relays signaling between whichever page is connected and the agent.
@@ -51,6 +55,9 @@ type bridge struct {
 	relay  *relay.Relay
 	config protocol.Config
 	log    *slog.Logger
+	// macros hands every Config the macros as they are then and makes the
+	// page's changes to them; nil when this session keeps none.
+	macros *macros.Store
 
 	mu    sync.Mutex
 	cur   *web.Browser
@@ -64,8 +71,8 @@ type bridge struct {
 
 // newBridge makes a bridge whose first agent connection is agent, so a page
 // that connects before run begins is not left without one.
-func newBridge(agent signaling, r *relay.Relay, config protocol.Config, log *slog.Logger) *bridge {
-	return &bridge{agent: agent, relay: r, config: config, log: log, events: make(chan error, 2)}
+func newBridge(agent signaling, r *relay.Relay, config protocol.Config, m *macros.Store, log *slog.Logger) *bridge {
+	return &bridge{agent: agent, relay: r, config: config, macros: m, log: log, events: make(chan error, 2)}
 }
 
 // accept takes pages as they connect, one at a time, for the life of ctx.
@@ -99,9 +106,46 @@ func (b *bridge) accept(ctx context.Context, srv browsers) {
 }
 
 func (b *bridge) sendConfig(br *web.Browser) {
-	if err := br.Send(protocol.Message{Type: protocol.TypeConfig, Config: &b.config}); err != nil {
+	config := b.config
+	if b.macros != nil {
+		config.Macros = b.macroView(b.macros.Load())
+	}
+	if err := br.Send(protocol.Message{Type: protocol.TypeConfig, Config: &config}); err != nil {
 		b.log.Warn("send config", "err", err)
 	}
+}
+
+// changeMacros makes the page's change to the macros and tells the page
+// what it shows now. The page names no file and asks for one change; the
+// keeper checks it before anything is written.
+func (b *bridge) changeMacros(br *web.Browser, c *protocol.MacroChange) {
+	list, err := []protocol.Macro(nil), errNoMacros
+	if b.macros != nil {
+		list, err = b.macros.Change(c)
+	}
+	if err != nil {
+		b.log.Warn("macros not changed", "err", err)
+	}
+	if err := br.Send(protocol.Message{Type: protocol.TypeMacros, Macros: b.macroView(list, err)}); err != nil {
+		b.log.Debug("send macros", "err", err)
+	}
+}
+
+// macroView is what the page shows of the macros, and why the last read or
+// change failed.
+func (b *bridge) macroView(list []protocol.Macro, err error) *protocol.Macros {
+	v := &protocol.Macros{List: list}
+	if b.macros != nil {
+		v.Host = b.macros.Host()
+	}
+	if v.List == nil {
+		v.List = []protocol.Macro{}
+	}
+	if err != nil {
+		v.Error = err.Error()
+		v.ReadOnly = errors.Is(err, macros.ErrUnreadable)
+	}
+	return v
 }
 
 // run relays one agent connection until it ends: the agent or SSH goes
@@ -248,6 +292,9 @@ func (b *bridge) fromBrowser(ctx context.Context, br *web.Browser, done chan<- s
 		case protocol.TypeBye:
 			// The CLI ends the session, and waits for the host to say so.
 			b.decided(errPageEnded)
+			continue
+		case protocol.TypeMacros:
+			b.changeMacros(br, m.MacroChange)
 			continue
 		}
 		agent := b.currentAgent()

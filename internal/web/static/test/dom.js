@@ -1,6 +1,6 @@
-// Just enough of a DOM for files.js, clipboard.js, devicebar.js and
-// sharp.js under node: elements that hold children, attributes and click
-// listeners, a window and a body, and animation frames on timers.
+// Just enough of a DOM for files.js, clipboard.js, devicebar.js, sharp.js,
+// keys.js and input.js under node: elements that hold children, attributes,
+// focus and listeners, a window and a body, and animation frames on timers.
 // installDom puts it on globalThis.
 
 export class FakeElement extends EventTarget {
@@ -24,7 +24,13 @@ export class FakeElement extends EventTarget {
 
   remove() {}
 
-  blur() {}
+  focus() {
+    document.activeElement = this;
+  }
+
+  blur() {
+    if (document.activeElement === this) document.activeElement = document.body;
+  }
 
   click() {
     this.dispatchEvent(new Event('click'));
@@ -40,6 +46,10 @@ export class FakeElement extends EventTarget {
 
   setAttribute(name, value = '') {
     this.#attrs.set(name, String(value));
+  }
+
+  removeAttribute(name) {
+    this.#attrs.delete(name);
   }
 
   toggleAttribute(name, force = !this.#attrs.has(name)) {
@@ -64,15 +74,18 @@ export function installDom() {
   const saved = [];
   const body = new FakeElement('body');
   globalThis.window = new EventTarget();
-  globalThis.document = {
+  globalThis.document = Object.assign(new EventTarget(), {
     body,
+    activeElement: body,
+    documentElement: new FakeElement('html'),
     createElement(tag) {
       const el = new FakeElement(tag);
       if (tag === 'a') el.addEventListener('click', () => saved.push({ name: el.download, href: el.href }));
       return el;
     },
     createElementNS: (_, tag) => new FakeElement(tag),
-  };
+    createTextNode: (textContent) => ({ textContent }),
+  });
   globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0);
   // The page's long timers, clearing rows and revoking URLs, must not keep
   // a finished test alive.
