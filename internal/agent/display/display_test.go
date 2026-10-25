@@ -20,8 +20,13 @@ import (
 )
 
 // helperEnv makes the test binary act as an agent that spawns a display and
-// waits to be killed; see TestAgentDeathKillsEverything.
-const helperEnv = "ROBIN_DISPLAY_TEST_HELPER"
+// waits to be killed; see TestAgentDeathKillsEverything. With
+// helperCloseEnv set too, it starts closing the display once a line comes
+// on stdin and kills itself while Close waits for the session's groups.
+const (
+	helperEnv      = "ROBIN_DISPLAY_TEST_HELPER"
+	helperCloseEnv = "ROBIN_DISPLAY_TEST_DIE_IN_CLOSE"
+)
 
 func TestMain(m *testing.M) {
 	if dir := os.Getenv(helperEnv); dir != "" {
@@ -31,6 +36,24 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 		os.Stdout.WriteString("ready " + d.Name + "\n")
+		if os.Getenv(helperCloseEnv) != "" {
+			bufio.NewReader(os.Stdin).ReadString('\n')
+			sleeper := findProcs(func(_ int, cmdline, environ string) bool {
+				return cmdline == "sleep\x001000\x00" && strings.Contains("\x00"+environ, "\x00XAUTHORITY="+d.XAuthority+"\x00")
+			})
+			if len(sleeper) == 0 {
+				os.Stdout.WriteString("no sleep 1000 in the session\n")
+				select {}
+			}
+			go d.Close()
+			// SIGTERM takes the sleep; Close then waits on the one that
+			// ignores it.
+			for len(living(sleeper)) > 0 {
+				time.Sleep(5 * time.Millisecond)
+			}
+			os.Stdout.WriteString("closing\n")
+			syscall.Kill(os.Getpid(), syscall.SIGKILL)
+		}
 		select {}
 	}
 	os.Exit(m.Run())
@@ -366,6 +389,53 @@ func TestAgentDeathKillsEverything(t *testing.T) {
 	}
 	if len(w) > 0 {
 		t.Errorf("watchdog still running: %v", describe(w))
+	}
+}
+
+// TestAgentDeathDuringCloseKillsEverything kills the agent while Close
+// waits for the session's groups to go after SIGTERM: whatever ignored it
+// still has to die with the agent, which only the watchdog can see to.
+func TestAgentDeathDuringCloseKillsEverything(t *testing.T) {
+	needXvfb(t)
+	dir := t.TempDir()
+	helper := exec.Command(os.Args[0], "-test.run=^$")
+	helper.Env = append(os.Environ(), helperEnv+"="+dir, helperCloseEnv+"=1")
+	stdin, _ := helper.StdinPipe()
+	stdout, _ := helper.StdoutPipe()
+	if err := helper.Start(); err != nil {
+		t.Fatal(err)
+	}
+	lines := bufio.NewReader(stdout)
+	line, _ := lines.ReadString('\n')
+	if !strings.HasPrefix(line, "ready ") {
+		helper.Process.Kill()
+		t.Fatalf("helper: %q", line)
+	}
+	pids := waitTree(t, dir, filepath.Join(dir, "Xauthority"))
+
+	stdin.Write([]byte("close\n"))
+	if line, _ := lines.ReadString('\n'); line != "closing\n" {
+		helper.Process.Kill()
+		helper.Wait()
+		for _, p := range living(pids) {
+			syscall.Kill(p, syscall.SIGKILL)
+		}
+		t.Fatalf("helper: %q, want it killed while Close waits", line)
+	}
+	helper.Wait()
+	deadline := time.Now().Add(6 * time.Second)
+	var alive []int
+	for time.Now().Before(deadline) {
+		if alive = living(pids); len(alive) == 0 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if len(alive) > 0 {
+		t.Errorf("outlived an agent killed in Close: %v", describe(alive))
+		for _, p := range alive {
+			syscall.Kill(p, syscall.SIGKILL)
+		}
 	}
 }
 

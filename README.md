@@ -601,11 +601,19 @@ reach the UDP or TCP path can stand in for the agent. The page and its
 websocket listen on 127.0.0.1 and require a random 256-bit token from the URL
 fragment, an exact `Origin` and `Host`, and allow one browser at a time; the
 token never goes on a command line (see the client side below). On
-the host, the agent's ICE-TCP listener binds loopback and only accepts ICE
-connections carrying the session's credentials; the X display is protected by
-a fresh cookie in a 0600 file; the sound server of a desktop robin starts
-listens only on a socket inside the run directory; the agent and its run
-directory are 0700.
+the host, the agent's ICE-TCP listener binds loopback, hangs up at once on
+any connection unless a process of yours, or root's, still holds its other
+end open, which it asks the kernel, lets go within 5 s of any that has not
+started ICE, and completes ICE only with the session's credentials; the X
+display is protected by a fresh cookie in a 0600 file,
+which the agent hands only to the Xvfb it started, checked through the
+socket's peer credentials, whatever else listens at the display's socket
+names; the sound server of a desktop robin starts listens only on a socket
+inside the run directory; the agent and its run directory are 0700. The
+probe counts only `X<digits>` in `/tmp/.X11-unix`, which any user can write,
+and prints nothing that would span lines, so no file name there can add to
+what it reports. `robin-agent end` and the sweep of old run directories take
+only a process of yours for a session's daemon.
 The page can do on the host what a keyboard, a pointer and a clipboard can do
 in that session, give it the sound and picture of a microphone or camera you
 switched on (with `--mic` or `--camera`), flip the two switches of a private
@@ -635,6 +643,21 @@ macro pinned to another host is out of the page's reach: it can neither
 see, replace nor delete it. Within that, whatever drives the page can read
 the macros of this host and every unpinned one, text included, type them,
 and replace or delete them.
+
+What a page can make the agent hold is bounded too. It gets one control
+channel at a time; a second closes the first. A bulk channel that has not
+sent its header within 10 s is closed, and past 8 such channels at once a
+new one is refused. The agent takes media only on the microphone and camera
+lines the session asked for, and the answer turns down every other line the
+page adds; what the page sends on the agent's own video or sound line, which
+the answer cannot turn down, is read and dropped. Of the ICE candidates the
+page names, the agent counts 256 per ICE restart, drops those at the host's
+loopback or a link-local address, never asks the host's network to resolve
+a `.local` name, and never connects out over TCP. It refuses an offer whose
+sections disagree on their ICE credentials, or whose credentials hold
+anything but the letters, digits, `+` and `/` RFC 8839 allows. So the most
+the page can aim at other addresses is ICE's own connectivity checks over
+UDP, carrying only those credentials.
 
 Text from an input method or a soft keyboard, from Type clipboard and from
 a macro's text steps types what keys could type: through spare keycodes on
@@ -667,7 +690,8 @@ copy and keeps it in its history.
   the session its descriptor over a socket in the 0700 run directory, which
   also checks that the caller's uid is yours, so the page never names a path
   on the host and the session reads nothing its sender could not. Offers end
-  when `robin-send` exits.
+  when `robin-send` exits, and at most 256 files are on offer at once, from
+  every `robin-send` together; past that a request is refused whole.
 - **The clipboard**, as text, HTML or a PNG image, up to 16 MiB, held in
   memory, two transfers at a time each way.
 
@@ -1276,6 +1300,15 @@ verified against a Linux build.
   decodes; High profile measured at most 5% smaller on an Intel iGPU.
 - Through the SSH tunnel video is TCP inside TCP, so a lossy link shows
   head-of-line stalls that direct UDP would not.
+- The agent tells who opened an ICE-TCP connection from `/proc/net/tcp`.
+  Where it cannot read that (some sandboxes hide it), it refuses every
+  connection to its tunnel listener and the session has no TCP path; so it
+  does for one from an IPv6 socket, which sshd never opens for the
+  forward's IPv4 address. The SSH server has to make the forward's
+  connection as you or as root, as OpenSSH's does.
+- The page can still send media on the agent's own video and sound lines,
+  which the answer cannot turn down without its own sending; the agent
+  reads and drops it, so it costs the link and nothing else.
 - Safari's picture is checked by hand only: the WebKit the tests drive on
   Linux renders no remote WebRTC video (see What the client needs).
 - Firefox shows no picture until it has fetched its OpenH264 plugin, which

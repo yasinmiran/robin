@@ -3,13 +3,11 @@
 package daemon
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -66,59 +64,18 @@ func daemonPID(dir, id string) (int, error) {
 	st, err := agent.ReadSession(dir)
 	switch {
 	case err == nil:
-		if isDaemon(st.PID, id) {
+		if agent.IsDaemon(st.PID, id) {
 			return st.PID, nil
 		}
 		return 0, nil
 	case !errors.Is(err, os.ErrNotExist):
 		return 0, err
 	}
-	if pid := findDaemon(id); pid != 0 {
+	if pid := agent.FindDaemon(id); pid != 0 {
 		return pid, nil
 	}
 	if fi, err := os.Lstat(filepath.Join(dir, SocketFile)); err == nil && fi.Mode()&os.ModeSocket != 0 {
 		return 0, nil
 	}
 	return 0, &NoSessionError{id}
-}
-
-// isDaemon reports whether pid runs `robin-agent daemon -id id`.
-func isDaemon(pid int, id string) bool {
-	if pid <= 0 {
-		return false
-	}
-	return commandIsDaemon(cmdline(pid), id)
-}
-
-// findDaemon is the pid of the process running `robin-agent daemon -id id`,
-// or 0.
-func findDaemon(id string) int {
-	entries, _ := os.ReadDir("/proc")
-	for _, e := range entries {
-		pid, err := strconv.Atoi(e.Name())
-		if err != nil {
-			continue
-		}
-		if commandIsDaemon(cmdline(pid), id) {
-			return pid
-		}
-	}
-	return 0
-}
-
-func cmdline(pid int) [][]byte {
-	b, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
-	if err != nil {
-		return nil
-	}
-	return bytes.Split(b, []byte{0})
-}
-
-func commandIsDaemon(argv [][]byte, id string) bool {
-	for i := 1; i+2 < len(argv); i++ {
-		if string(argv[i]) == "daemon" && string(argv[i+1]) == "-id" && string(argv[i+2]) == id {
-			return true
-		}
-	}
-	return false
 }

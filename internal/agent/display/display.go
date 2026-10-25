@@ -145,7 +145,7 @@ func Spawn(ctx context.Context, o Options) (_ *Display, err error) {
 		}
 		group = d.companion.group
 		wctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		if err := waitForWindow(wctx, num, cookie); err != nil {
+		if err := waitForWindow(wctx, num, cookie, d.xvfb.cmd.Process.Pid); err != nil {
 			log.Warn("terminal window not mapped yet; starting the window manager anyway", "err", err)
 		}
 		cancel()
@@ -167,11 +167,13 @@ func (d *Display) Done() <-chan error { return d.done }
 // It is safe to call more than once.
 func (d *Display) Close() error {
 	d.closeOnce.Do(func() {
-		// Stop the watchdog first: once our own Waits reap the group leaders,
-		// their ids may be reused, and it must not signal a stranger.
+		// The watchdog stays up while terminate waits on the groups: should
+		// the agent die meanwhile, it is the one thing that reaches what in
+		// them ignored SIGTERM. Then it goes before the guard closes, since
+		// the EOF would have it signal group ids that, reaped, may be reused.
+		terminate(d.session, d.companion, d.xvfb)
 		d.watchdog.kill()
 		d.watchdog.wait(termGrace)
-		terminate(d.session, d.companion, d.xvfb)
 		if d.guard != nil {
 			d.guard.Close()
 		}

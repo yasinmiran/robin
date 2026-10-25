@@ -169,7 +169,7 @@ func (u *Upload) open() error {
 	in.mu.Lock()
 	others := in.reserved - u.size
 	in.mu.Unlock()
-	if free := int64(st.Bavail)*int64(st.Bsize) - others; u.size > free-in.margin {
+	if free := freeBytes(&st) - others; u.size > free-in.margin {
 		unix.Close(dir)
 		return fmt.Errorf("%w in %s for %s: %s free, of which %s stays free",
 			ErrNoSpace, in.dir, humanSize(u.size), humanSize(max(free, 0)), humanSize(in.margin))
@@ -182,6 +182,11 @@ func (u *Upload) open() error {
 	u.dir, u.f = dir, f
 	return nil
 }
+
+// freeBytes is the space statfs(2) reports free to unprivileged users. It
+// counts blocks in f_frsize, which a filesystem may report smaller than
+// f_bsize; statfs(2) sets f_frsize to f_bsize when a filesystem leaves it 0.
+func freeBytes(st *unix.Statfs_t) int64 { return int64(st.Bavail) * int64(st.Frsize) }
 
 // discard undoes what open did, for an upload that never started.
 func (u *Upload) discard() {

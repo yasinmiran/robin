@@ -19,7 +19,10 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/yasinmiran/robin/internal/agent"
+	"github.com/yasinmiran/robin/internal/agent/peercred"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
@@ -136,28 +139,14 @@ func (l *Listener) admit(c net.Conn) {
 // checkPeer accepts only a connection from a process of this uid: the run
 // directory already keeps everyone else out, and this makes sure of it.
 func checkPeer(c net.Conn) error {
-	uc, ok := c.(*net.UnixConn)
-	if !ok {
-		return fmt.Errorf("daemon: not a unix connection: %T", c)
-	}
-	raw, err := uc.SyscallConn()
+	cred, err := peercred.Of(c)
 	if err != nil {
-		return err
-	}
-	var cred *syscall.Ucred
-	var credErr error
-	if err := raw.Control(func(fd uintptr) {
-		cred, credErr = syscall.GetsockoptUcred(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
-	}); err != nil {
-		return err
-	}
-	if credErr != nil {
-		return fmt.Errorf("daemon: peer credentials: %w", credErr)
+		return fmt.Errorf("daemon: %w", err)
 	}
 	return checkUID(cred, os.Getuid())
 }
 
-func checkUID(cred *syscall.Ucred, us int) error {
+func checkUID(cred *unix.Ucred, us int) error {
 	if int(cred.Uid) != us {
 		return fmt.Errorf("daemon: connection from uid %d, not %d", cred.Uid, us)
 	}

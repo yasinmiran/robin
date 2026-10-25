@@ -776,7 +776,7 @@ func TestPeerRoutesChannelsByLabel(t *testing.T) {
 
 func TestPeerHandsOverRemoteTracks(t *testing.T) {
 	tracks := make(chan *webrtc.TrackRemote, 1)
-	bp := newBulkPair(t, Config{Audio: true}, Handlers{Track: func(tr *webrtc.TrackRemote, _ *webrtc.RTPReceiver) { tracks <- tr }})
+	bp := newBulkPair(t, Config{Audio: true, Mic: true}, Handlers{Track: func(tr *webrtc.TrackRemote, _ *webrtc.RTPReceiver) { tracks <- tr }})
 	mic, err := webrtc.NewTrackLocalStaticSample(opusCapability, "audio", "browser")
 	if err != nil {
 		t.Fatal(err)

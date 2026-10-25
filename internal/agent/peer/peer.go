@@ -6,6 +6,7 @@
 package peer
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -78,6 +79,9 @@ type Config struct {
 	// for measurements, which the agent does neither of.
 	FeedWhileLimited, SoundBehindVideo bool
 	Log                                *slog.Logger
+
+	// headerWait replaces bulkHeaderWait, for tests that cannot wait it out.
+	headerWait time.Duration
 }
 
 // Handlers receive the peer's events. Each may be nil. They are called from
@@ -94,8 +98,9 @@ type Handlers struct {
 	// Bulk is asked about each transfer the browser opens; see BulkSink.
 	// Without it every transfer is refused.
 	Bulk func(protocol.Bulk) (BulkSink, error)
-	// Track receives each media track the browser sends. Without it the
-	// tracks are left unread.
+	// Track receives the microphone's and camera's tracks, on the lines
+	// Config.Mic and Config.Camera take. The peer refuses or drops any
+	// other media the browser sends, and all of it without Track.
 	Track func(*webrtc.TrackRemote, *webrtc.RTPReceiver)
 }
 
@@ -112,6 +117,15 @@ type Peer struct {
 	mu      sync.Mutex
 	control *webrtc.DataChannel
 	bwe     *estimator
+
+	// taken are the receivers of the microphone and camera lines, as
+	// takeMedia picked them; mu guards them.
+	taken       [2]*webrtc.RTPReceiver
+	mic, camera bool
+
+	remote      remoteCandidates
+	waitingBulk atomic.Int32 // bulk channels the browser opened, before their first frame
+	headerWait  time.Duration
 }
 
 // New builds the peer connection and its video track. Nothing is sent until
@@ -216,6 +230,14 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 		})
 	}
 	se.SetIncludeLoopbackCandidate(cfg.IncludeLoopback)
+	// No mDNS: whoever answers a query on the host's network would pick
+	// where the agent sends checks for the browser's .local names, and the
+	// browser reaches the agent as a peer-reflexive candidate anyway.
+	se.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
+	// ICE-TCP comes in through the tunnel listener only. Connecting out to
+	// the passive TCP candidates the page names would aim the agent at any
+	// port the host can reach.
+	se.DisableActiveTCP(true)
 	if cfg.Net != nil {
 		se.SetNet(cfg.Net)
 	}
@@ -234,7 +256,10 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 		return nil, err
 	}
 	pcRef.Store(pc)
-	p := &Peer{pc: pc, h: h, log: log, unpaced: cfg.Unpaced}
+	p := &Peer{
+		pc: pc, h: h, log: log, unpaced: cfg.Unpaced,
+		mic: cfg.Mic, camera: cfg.Camera, headerWait: cmp.Or(cfg.headerWait, bulkHeaderWait),
+	}
 
 	select {
 	case p.bwe = <-bweReady:
@@ -305,9 +330,12 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 		log.Info("remote track", "kind", tr.Kind().String(), "codec", tr.Codec().MimeType)
 		// The browser's sender reports reach the interceptors only if read.
 		go drainRTCP(r)
-		if h.Track != nil {
-			h.Track(tr, r)
+		if h.Track == nil || !p.wanted(r) {
+			log.Warn("dropping media the agent did not ask for", "kind", tr.Kind().String())
+			go drop(tr)
+			return
 		}
+		h.Track(tr, r)
 	})
 	pc.OnDataChannel(p.route)
 	return p, nil
@@ -316,9 +344,15 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 // Answer applies an offer and returns the answer SDP. A later offer on the
 // same peer is a renegotiation, typically the browser's ICE restart.
 func (p *Peer) Answer(offerSDP string) (string, error) {
-	if err := p.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: offerSDP}); err != nil {
+	sdp, commit, err := p.remote.offer(offerSDP)
+	if err != nil {
+		return "", err
+	}
+	if err := p.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: sdp}); err != nil {
 		return "", fmt.Errorf("peer: apply offer: %w", err)
 	}
+	commit()
+	p.takeMedia()
 	answer, err := p.pc.CreateAnswer(nil)
 	if err != nil {
 		return "", fmt.Errorf("peer: create answer: %w", err)
@@ -330,8 +364,22 @@ func (p *Peer) Answer(offerSDP string) (string, error) {
 }
 
 // AddCandidate applies a browser candidate. An empty candidate marks the end
-// of the browser's gathering.
+// of the browser's gathering. Past maxRemoteCandidates since the last ICE
+// restart it drops the candidate and returns ErrTooManyCandidates. One at
+// an address the browser is never at counts, and is dropped.
 func (p *Peer) AddCandidate(c protocol.Candidate) error {
+	if c.Candidate != "" {
+		if warn, err := p.remote.add(c.Candidate); err != nil {
+			if warn {
+				p.log.Warn("dropping the browser's candidates past the bound", "max", maxRemoteCandidates)
+			}
+			return err
+		}
+		if outOfReach(c.Candidate) {
+			p.log.Debug("dropping a candidate at loopback, link-local or no unicast address")
+			return nil
+		}
+	}
 	return p.pc.AddICECandidate(webrtc.ICECandidateInit{
 		Candidate: c.Candidate, SDPMid: c.SDPMid,
 		SDPMLineIndex: c.SDPMLineIndex, UsernameFragment: c.UsernameFragment,
@@ -388,17 +436,24 @@ func (p *Peer) route(dc *webrtc.DataChannel) {
 	case protocol.ControlChannel:
 		p.attachControl(dc)
 	case protocol.BulkChannel:
-		receiveBulk(dc, p.h.Bulk, p.log)
+		p.takeBulk(dc)
 	default:
 		p.log.Warn("ignoring unexpected data channel", "label", dc.Label())
 		dc.Close()
 	}
 }
 
+// attachControl makes dc the control channel. The page opens one; a second
+// replaces the first, which is closed, so one channel at a time dispatches.
 func (p *Peer) attachControl(dc *webrtc.DataChannel) {
 	p.mu.Lock()
+	old := p.control
 	p.control = dc
 	p.mu.Unlock()
+	if old != nil {
+		p.log.Warn("the browser opened a second control channel; closing the first")
+		old.Close()
+	}
 	dc.OnOpen(func() {
 		if p.h.ControlOpen != nil {
 			p.h.ControlOpen()

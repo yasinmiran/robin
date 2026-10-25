@@ -282,10 +282,11 @@ func prepareRunDir(o Options) (string, error) {
 }
 
 // sweepRunRoot removes every session directory under root but keep whose
-// owner is gone. A directory with session.json belongs to the daemon the
-// file names; one with a socket but no session.json belongs to a daemon
-// still starting, and stays; one with neither was named by its pid, as a
-// stdio session names its own.
+// owner is gone. A daemon names its directory after its session: one with
+// session.json or a socket stays as long as this user's process runs that
+// daemon, the socket alone meaning it is still starting. One with neither
+// was named by its pid, as a stdio session names its own, and stays while
+// that pid is one this user can signal.
 func sweepRunRoot(root, keep string) {
 	entries, _ := os.ReadDir(root)
 	for _, e := range entries {
@@ -293,17 +294,23 @@ func sweepRunRoot(root, keep string) {
 		if dir == keep || !e.IsDir() {
 			continue
 		}
-		pid := sessionPID(dir)
-		if pid == 0 {
-			if hasSocket(dir) {
-				continue
+		if pid := sessionPID(dir); pid != 0 {
+			if pid != os.Getpid() && !IsDaemon(pid, e.Name()) {
+				os.RemoveAll(dir)
 			}
-			pid, _ = strconv.Atoi(e.Name())
+			continue
 		}
+		if hasSocket(dir) {
+			if FindDaemon(e.Name()) == 0 {
+				os.RemoveAll(dir)
+			}
+			continue
+		}
+		pid, _ := strconv.Atoi(e.Name())
 		if pid == 0 || pid == os.Getpid() {
 			continue
 		}
-		if syscall.Kill(pid, 0) == syscall.ESRCH {
+		if err := syscall.Kill(pid, 0); err == syscall.ESRCH || err == syscall.EPERM {
 			os.RemoveAll(dir)
 		}
 	}

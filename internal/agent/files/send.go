@@ -63,8 +63,8 @@ func Send(ctx context.Context, sock string, paths []string, out io.Writer) error
 	switch {
 	case len(paths) == 0:
 		return errors.New("no files to send")
-	case len(paths) > maxOffer:
-		return fmt.Errorf("%d files; send at most %d at a time", len(paths), maxOffer)
+	case len(paths) > MaxOffer:
+		return fmt.Errorf("%d files; send at most %d at a time", len(paths), MaxOffer)
 	}
 	req := request{Names: make([]string, len(paths))}
 	fds := make([]int, len(paths))

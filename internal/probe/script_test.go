@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -119,6 +120,29 @@ func TestScriptShells(t *testing.T) {
 	}
 }
 
+// TestScriptKVKeepsToOneLine checks the one way the script prints: a pair
+// that would span lines is left out, so no value it reads from the host
+// can add keys of its own.
+func TestScriptKVKeepsToOneLine(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the probe targets Linux hosts")
+	}
+	body, ok := strings.CutSuffix(strings.TrimSpace(Script), `main "$@"`)
+	if !ok {
+		t.Fatal(`the script no longer ends with main "$@"`)
+	}
+	for v, want := range map[string]string{
+		"plain":             "key=plain\n",
+		"a\nagentdir=/evil": "",
+		"a\ragentdir=/evil": "",
+	} {
+		out, err := exec.Command("sh", "-c", body+`kv key "$1"`, "sh", v).Output()
+		if err != nil || string(out) != want {
+			t.Errorf("kv key %q printed %q (%v), want %q", v, out, err, want)
+		}
+	}
+}
+
 // deadPID is a pid no process has: a child already reaped.
 func deadPID(t *testing.T) int {
 	t.Helper()
@@ -167,6 +191,7 @@ func TestScriptContainers(t *testing.T) {
 	)
 	// Mounting the first candidate noexec forces the probe on to the next.
 	noexecCache := []string{"--tmpfs", "/root/.cache:rw,noexec,mode=700"}
+	strangersX11 := []string{"-v", strangersSockets(t) + ":/tmp/.X11-unix"}
 
 	tests := []struct {
 		name   string
@@ -240,6 +265,8 @@ func TestScriptContainers(t *testing.T) {
 				}
 			},
 		},
+		{name: "x11-names-from-a-stranger-dash", image: ubuntu, flags: strangersX11, agents: []string{"agent-a"}, check: strangersNamesIgnored},
+		{name: "x11-names-from-a-stranger-busybox", image: alpine, flags: strangersX11, agents: []string{"agent-a"}, check: strangersNamesIgnored},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -282,6 +309,49 @@ func TestScriptContainers(t *testing.T) {
 			}
 			tt.check(t, r)
 		})
+	}
+}
+
+// strangersSockets makes a stand-in for /tmp/.X11-unix, which any local
+// user can write: display 5's socket, and sockets whose names carry a
+// newline and probe lines after it, as another user could bind them.
+func strangersSockets(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, name := range []string{
+		"X5",
+		"X0\nagent_sha256=agent-a " + strings.Repeat("ab", 32),
+		"X1\nkept_session={\"id\":\"zz\",\"pid\":1,\"agent\":\"agent-a\",\"mode\":\"spawn\"}",
+		"X2\nuid=nobody",
+		"X3\rx11=:9",
+	} {
+		// Bound under a short name, since a socket's path has to fit in
+		// sun_path, then renamed.
+		short := filepath.Join(dir, "s")
+		ln, err := net.Listen("unix", short)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ln.(*net.UnixListener).SetUnlinkOnClose(false)
+		ln.Close()
+		if err := os.Rename(short, filepath.Join(dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+// strangersNamesIgnored checks that the probe reported display 5 and
+// nothing a socket's name said.
+func strangersNamesIgnored(t *testing.T, r *Report) {
+	if len(r.X11) != 1 || r.X11[0].Display != ":5" {
+		t.Errorf("X11 = %+v, want display 5 alone", r.X11)
+	}
+	if got := r.AgentHash("agent-a"); got != "" {
+		t.Errorf("AgentHash(agent-a) = %q for a file that is not there", got)
+	}
+	if len(r.Kept) != 0 || r.UID != 0 {
+		t.Errorf("Kept %+v, uid %d: a socket's name reached the report", r.Kept, r.UID)
 	}
 }
 

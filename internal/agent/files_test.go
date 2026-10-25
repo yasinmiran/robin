@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -291,5 +292,84 @@ func TestFailureGivesTheBrowsersReason(t *testing.T) {
 	}
 	if got, want := failure(errors.New("peer: bulk transfer cancelled")), "peer: bulk transfer cancelled"; got != want {
 		t.Errorf("cancelled: %q, want %q", got, want)
+	}
+}
+
+// rawOffer offers path n times over one connection, under names f0, f1 and
+// so on, as robin-agent send would, and stays connected.
+func rawOffer(t *testing.T, sock, path string, n int) *net.UnixConn {
+	t.Helper()
+	c, err := net.DialUnix("unixpacket", nil, &net.UnixAddr{Name: sock, Net: "unixpacket"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+	var names []string
+	var fds []int
+	for i := range n {
+		f, err := os.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		names = append(names, "f"+strconv.Itoa(i))
+		fds = append(fds, int(f.Fd()))
+	}
+	req, _ := json.Marshal(map[string][]string{"names": names})
+	if _, _, err := c.WriteMsgUnix(req, unix.UnixRights(fds...), nil); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// TestOffersAreBounded keeps offering files without hanging up: a request
+// that would bring more than maxSessionOffers on offer is refused whole,
+// its descriptors closed, even when part of it would fit, and once a
+// sender goes there is room again.
+func TestOffersAreBounded(t *testing.T) {
+	s, runDir, _ := sharedSession(t, &fakeDesktop{})
+	sock := filepath.Join(runDir, files.SocketName)
+	path := hostFile(t, "a.txt", "a")
+	var senders []*net.UnixConn
+	for range maxSessionOffers/files.MaxOffer - 1 {
+		senders = append(senders, rawOffer(t, sock, path, files.MaxOffer))
+	}
+	rawOffer(t, sock, path, files.MaxOffer-1)
+	openOffers(t, s, maxSessionOffers-1)
+
+	refused(t, rawOffer(t, sock, path, 2), "offering 2 more")
+	openOffers(t, s, maxSessionOffers-1)
+	rawOffer(t, sock, path, 1)
+	openOffers(t, s, maxSessionOffers)
+	refused(t, rawOffer(t, sock, path, 1), "offering 1 more")
+	openOffers(t, s, maxSessionOffers)
+
+	if err := senders[0].CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	openOffers(t, s, maxSessionOffers-files.MaxOffer)
+	rawOffer(t, sock, path, 1)
+	openOffers(t, s, maxSessionOffers-files.MaxOffer+1)
+}
+
+// refused checks that the session refused c's whole request, saying want,
+// and hung up.
+func refused(t *testing.T, c *net.UnixConn, want string) {
+	t.Helper()
+	c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	buf := make([]byte, 4096)
+	n, err := c.Read(buf)
+	if err != nil {
+		t.Fatalf("no answer to an offer past the bound: %v", err)
+	}
+	var rep struct {
+		I      int    `json:"i"`
+		Detail string `json:"detail"`
+	}
+	if err := json.Unmarshal(buf[:n], &rep); err != nil || rep.I != -1 || !strings.Contains(rep.Detail, want) {
+		t.Errorf("an offer past the bound got %s, want a refusal of the request saying %q", buf[:n], want)
+	}
+	if _, err := c.Read(buf); !errors.Is(err, io.EOF) {
+		t.Errorf("the refused sender was not hung up on: %v", err)
 	}
 }

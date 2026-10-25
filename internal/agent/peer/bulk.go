@@ -21,7 +21,9 @@ import (
 const closeGrace = 5 * time.Second
 
 // maxBulkReason bounds the reason a receiver sends back, so the verdict
-// frame stays within protocol.BulkChunkSize after JSON escaping.
+// frame stays within protocol.BulkChunkSize after JSON escaping, and the
+// reason the agent takes from the browser's refusals, which reaches
+// robin-send's terminal and the log.
 const maxBulkReason = 1 << 10
 
 // ErrBulkCancelled means the other side closed a bulk channel before the
@@ -285,7 +287,7 @@ func refusal(v protocol.Bulk) error {
 	if v.T == protocol.BulkDone {
 		return &BulkRefusedError{Reason: "receiver finished before the end"}
 	}
-	return &BulkRefusedError{Reason: v.Error}
+	return &BulkRefusedError{Reason: bounded(v.Error)}
 }
 
 func outcome(v protocol.Bulk) error {
@@ -308,19 +310,56 @@ type bulkReceiver struct {
 	sum   *protocol.BulkSum
 	grant protocol.BulkGrant
 	over  bool // a verdict went out or the channel closed
+	// While the header is awaited, late refuses the transfer and settled
+	// is called once the first frame or the close comes.
+	late    *time.Timer
+	settled func()
 }
 
 // receiveBulk takes one transfer the remote side opened on dc. accept
 // decides on its header; nil refuses everything.
-func receiveBulk(dc *webrtc.DataChannel, accept func(protocol.Bulk) (BulkSink, error), log *slog.Logger) {
+func receiveBulk(dc *webrtc.DataChannel, accept func(protocol.Bulk) (BulkSink, error), log *slog.Logger) *bulkReceiver {
 	r := &bulkReceiver{dc: dc, accept: accept, log: log}
 	dc.OnMessage(r.message)
 	dc.OnClose(r.closed)
+	return r
+}
+
+// awaitHeader refuses the transfer unless its first frame comes within
+// wait, and calls settled once that frame or the close has come. It must
+// be called from the handler that took the channel, before Pion delivers
+// anything on it.
+func (r *bulkReceiver) awaitHeader(wait time.Duration, settled func()) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.settled = settled
+	r.late = time.AfterFunc(wait, func() { r.expire(wait) })
+}
+
+// expire refuses a transfer that has sent nothing within wait.
+func (r *bulkReceiver) expire(wait time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.sink == nil && !r.over {
+		r.fail(fmt.Errorf("peer: no header within %s", wait))
+	}
+}
+
+// settle ends the wait for the header.
+func (r *bulkReceiver) settle() {
+	if r.late != nil {
+		r.late.Stop()
+	}
+	if r.settled != nil {
+		r.settled()
+		r.settled = nil
+	}
 }
 
 func (r *bulkReceiver) message(m webrtc.DataChannelMessage) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.settle()
 	if r.over {
 		return
 	}
@@ -339,8 +378,7 @@ func (r *bulkReceiver) message(m webrtc.DataChannelMessage) {
 			return
 		}
 		if credit, ok := r.grant.Take(len(m.Data)); ok {
-			// A send fails only once the channel is closing.
-			r.send(credit)
+			sendFrame(r.dc, credit)
 		}
 	default:
 		end, err := protocol.ParseBulk(m.Data)
@@ -391,24 +429,36 @@ func (r *bulkReceiver) fail(err error) {
 	}
 }
 
-// reply sends the verdict and closes the channel, which ends the transfer.
-// A send fails only once the channel is closing, and the sender learns from
-// the close instead.
 func (r *bulkReceiver) reply(v protocol.Bulk) {
 	r.over = true
-	r.send(v)
-	r.dc.Close()
+	sendVerdict(r.dc, v)
 }
 
-func (r *bulkReceiver) send(v protocol.Bulk) {
-	if b, err := json.Marshal(v); err == nil {
-		_ = r.dc.SendText(string(b))
+// sendVerdict sends v and closes dc, which ends the transfer. A send fails
+// only once the channel is closing, and the sender learns from the close
+// instead.
+func sendVerdict(dc *webrtc.DataChannel, v protocol.Bulk) {
+	sendFrame(dc, v)
+	dc.Close()
+}
+
+// sendFrame sends f on dc. It fails only once the channel is closing.
+func sendFrame(dc *webrtc.DataChannel, f protocol.Bulk) {
+	if b, err := json.Marshal(f); err == nil {
+		_ = dc.SendText(string(b))
 	}
+}
+
+// refuseBulk turns down the transfer on dc, which the remote side opened,
+// as soon as the channel is open.
+func refuseBulk(dc *webrtc.DataChannel, err error) {
+	dc.OnOpen(func() { sendVerdict(dc, protocol.Bulk{T: protocol.BulkError, Error: reason(err)}) })
 }
 
 func (r *bulkReceiver) closed() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.settle()
 	if r.over {
 		return
 	}
@@ -418,8 +468,9 @@ func (r *bulkReceiver) closed() {
 	}
 }
 
-func reason(err error) string {
-	s := err.Error()
+func reason(err error) string { return bounded(err.Error()) }
+
+func bounded(s string) string {
 	if len(s) > maxBulkReason {
 		s = s[:maxBulkReason]
 	}

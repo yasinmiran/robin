@@ -24,6 +24,13 @@ Input from the page is limited to what a keyboard, a pointer and a clipboard can
 
 On your own computer the page can ask the CLI to write one file, your [macros](/macros), and nothing else. It names no path; the CLI writes `macros.json` in your config directory. The page asks for one change at a time, to add, replace or delete one macro, and the CLI checks it against the file's rules before it writes: names of up to 64 bytes, 1 to 100 steps of a chord of up to 8 keys, up to 16 KiB of text or a pause of up to 60 s, and at most 100 macros and 256 KiB in all. It refuses every change while the file does not read, and writes the whole file anew through a rename, 0600 in a 0700 directory, under a lock on `macros.json.lock` from read to rename. On Linux and macOS it reads the file through one open that follows no link, and takes it only as a regular file of yours that group and others cannot write; the directory has to be yours, and no link, before it is made 0700. New macros are pinned to the host they were made for. A macro pinned to another host is out of the page's reach. Within that, whatever drives the page can read, play, replace or delete this host's macros and the unpinned ones, text included.
 
+What a page can make the agent hold is bounded too, so even a compromised one cannot wear the host down:
+
+- One control channel at a time; a second closes the first.
+- A file or clipboard channel must send its header within 10 seconds, and no more than 8 may wait for one at once.
+- Media only on the microphone and camera lines the session asked for. The answer turns down every other line the page adds, and what it sends on the agent's own video or sound line is read and dropped.
+- At most 256 ICE candidates per ICE restart, and none at the host's loopback or a link-local address. The agent never asks the host's network to resolve a `.local` name and never connects out over TCP, and it refuses an offer whose sections disagree on their ICE credentials or whose credentials hold anything but the letters, digits, `+` and `/` RFC 8839 allows. So the most the page can aim at other addresses is ICE's own connectivity checks over UDP, carrying only those credentials.
+
 The page server closes a connection that sits idle for 30 seconds or sends no request within 2 seconds, and holds at most 32 at once. Past that it makes room for a new connection by closing the oldest one that is idle or has sent nothing, never the page's websocket, so another user of your machine can neither run the CLI out of file descriptors nor keep your browser waiting behind connections they hold.
 
 ## On a shared client
@@ -43,8 +50,11 @@ The browser and the agent each ask the STUN server that `--stun` names, Google's
 
 ## On the host
 
-- The agent's ICE-TCP listener binds loopback and only accepts ICE connections carrying the session's credentials. It is reached through the SSH forward, never from the network.
-- A spawned X display is protected by a fresh cookie in a 0600 file.
+- The agent's ICE-TCP listener binds loopback and only accepts ICE connections carrying the session's credentials. It is reached through the SSH forward, never from the network, and it hangs up at once on a connection unless a process of yours, or root's, still holds its other end open, which it asks the kernel. A connection that has not started ICE goes within 5 seconds.
+- A spawned X display is protected by a fresh cookie in a 0600 file, which the agent hands only to the Xvfb it started, checked through the socket's peer credentials.
+- The probe counts only `X<digits>` in `/tmp/.X11-unix`, which any user can write, and prints nothing that would span lines, so no file name there can add to what it reports.
+- At most 256 files are on offer from `robin-send` at once, each holding a descriptor open in the agent.
+- `robin-agent end` and the sweep of old run directories take only a process of yours for a session's daemon.
 - A spawned session's sound server listens only on a socket inside the run directory, with its own cookie.
 - The agent's directory and each session's run directory are 0700. The agent is uploaded, verified by SHA-256 on the host and renamed into place.
 - Everything the agent starts dies with it, through process groups, a parent-death signal and a display watchdog, and its run directory is removed.

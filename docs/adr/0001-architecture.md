@@ -2250,6 +2250,99 @@ config, and a host behind one may still be reachable over UDP. Nothing
 here is measured: the e2e network reaches no STUN server, and the choice
 rests on what ICE does with the answers.
 
+### The host agent bounds what a page or another user can hold
+
+The first security audit found two attackers the agent did not bound: a
+compromised page, which holds the token and the peer connection, and
+another unprivileged account on the host. Each fix below came with a test
+that failed before it.
+
+Another user on the host. The ICE-TCP listener binds loopback, which every
+account reaches, and Pion's mux held each idle connection for its 30 s
+first-packet wait with no count, so a stream of connections could take the
+agent's descriptors (before the fix, the regression test's stranger
+connection was still open after 2 s, and the run took the mux's full 30 s
+to end). Moving the forward to a unix socket in the run directory
+would have needed the CLI, the SSH server's streamlocal forwarding and a
+shim for the mux's `*net.TCPAddr` assertions; a cap alone can be held full
+by the same attacker and would then block the tunnel. TCP carries no
+credentials, but the kernel records who made each socket, so the listener
+looks the connecting end up and hangs up unless it is this user's or
+root's (OpenSSH's forward runs as the user; root is trusted anyway). A
+connection it cannot place is refused. The same user stays trusted, as the
+README says of every socket of the session.
+
+Review of that fix found two ways round it. The kernel shows a socket
+whose process has closed it as root's, with no inode, so a stranger who
+connected, wrote one STUN request and closed passed as root (the
+regression test's `connUID` returned uid 0 for a dialer closed before the
+accept), and each made-up ufrag held a mux entry for Pion's 30 s. Only an
+established socket with an inode counts now, and the mux's first-request
+wait and its life for a ufrag nobody gathered are 5 s. And reading
+`/proc/net/tcp` cost a walk of the whole table per connection, on the one
+goroutine that accepts, while any user can grow the table with TIME_WAIT
+entries. The lookup is now one exact `NETLINK_SOCK_DIAG` request, which
+needs no privilege (the kernel's `tcp_diag`, built in or loaded on demand
+in the usual configurations), run by up to 8 checkers beside the accept
+loop; a connection that comes while all are busy is closed, and a slow
+lookup holds up no other. The other three openings were
+names any user can create: `waitForWindow` sent the spawned display's
+cookie to whatever listened at `/tmp/.X11-unix/X<n>` or its abstract name
+(the test's stranger socket received the 48-byte setup with the cookie in
+it), and now checks `SO_PEERCRED` against Xvfb's own pid; the probe printed
+socket names there verbatim, so a name with a newline added keys of its own
+(an injected `uid=` line made the CLI's parse fail outright), and now its
+one printer drops any pair that would span lines and only `X<digits>`
+counts as a display; and `robin-agent end` and the run directory sweep took
+any process whose command line named a session's daemon, and any pid that
+existed, for a live one, and now require a process of this user's, read
+from `/proc/<pid>/status`; the sweep counts a directory named after a pid
+it cannot signal as gone.
+
+A page. Pion gives every data channel a read loop and a 64 KiB buffer and
+negotiates up to 65535 streams; a bulk channel waited for its header for
+ever and a second control channel left the first dispatching. Now at most 8
+bulk channels may wait for a header (the page runs at most 4 uploads and 2
+clipboard transfers), each for 10 s, and a second control channel closes
+the first. Every media line the page offered got a receiver and the unread
+SRTP buffer behind it, up to 1 MB a stream: the answer now stops every line
+the page added past the one microphone and one camera the session takes,
+which marks it inactive, and media on the agent's own lines, which Pion
+turns sendrecv when the offer does and which cannot be stopped without the
+agent's own sending, is read and dropped. Candidates are capped at 256
+distinct ones per ICE generation, counting those in the offer; the test
+machine's stand-in browser gathers about 20, and a generation starts with
+each offer under a new ufrag, as Pion's own forgetting does. Pion takes
+that ufrag from the section the BUNDLE group names first and checks no
+other against it, so a page that kept that one and changed another
+section's in every offer started a new count each time while Pion kept
+every candidate (768 over three offers in the regression test); an offer
+whose sections disagree is refused now, as is one whose credentials go
+outside RFC 8839's ice-char, since every check carries the browser's
+ufrag. Candidates at the host's loopback, a link-local address or no
+unicast address are counted and dropped: the browser is never there, and
+services on loopback trust what comes from it (the test's UDP listener on
+127.0.0.1 got the agent's checks before). Pion's remote IP filter would
+have dropped them too, along with the tunnel's peer-reflexive candidate,
+which comes from loopback, so the agent filters what the page names
+instead. Two Pion
+defaults went with it, beside those listed earlier: mDNS is off, since
+whoever answers a query on the host's network chose where the agent sent
+checks for a `.local` name and the browser reaches the agent peer-reflexive
+anyway (above), and active ICE-TCP is off, since the agent dialled every
+passive TCP candidate the page named, a TCP path the rule that TCP media
+takes the SSH forward only never meant to allow. A browser's refusal reason
+is cut to the 1 KiB the agent keeps for its own.
+
+Two bounds stay on the host side. A program of this user's could offer
+files and never hang up, each holding a descriptor: at most 256, four full
+requests, are on offer at once, and a request that would pass that is
+refused whole. And `Display.Close` killed the watchdog before it sent
+SIGTERM, so an agent that died in the two seconds terminate waits left
+whatever ignored SIGTERM running (the test's `trap '' TERM` grandchild
+outlived it); the watchdog now goes once terminate has reaped the groups,
+before its guard closes, so it never signals ids that may be reused.
+
 ## Verification parked
 
 Two checks were parked by decision on 2026-10-18. Both needed hardware the

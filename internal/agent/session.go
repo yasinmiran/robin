@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -204,12 +203,10 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 		}
 	}
 
-	// The tunnel listener is loopback-only: the SSH forward is the one way in.
-	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	tcpMux, tunnelAddr, err := listenTunnel(log)
 	if err != nil {
-		return fail(conn, fmt.Errorf("listen for ICE-TCP: %w", err))
+		return fail(conn, err)
 	}
-	tcpMux := ice.NewTCPMuxDefault(ice.TCPMuxParams{Listener: ln, ReadBufferSize: 64})
 	defer tcpMux.Close()
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -243,7 +240,7 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 	width, height := d.desk.Size()
 	ready := &protocol.Ready{
 		Version: protocol.Version, AgentBuild: o.Build, Display: d.name, Session: d.session,
-		Width: width, Height: height, TunnelAddr: ln.Addr().String(),
+		Width: width, Height: height, TunnelAddr: tunnelAddr,
 		Mode: d.mode, Audio: audio != nil, AudioError: audioErr, Encoder: encoderName, EncoderError: encoderErr,
 		ID: filepath.Base(runDir), Keep: int(o.Keep / time.Second),
 		Mic: micReady, Camera: cameraReady,
@@ -368,7 +365,8 @@ func (s *session) handle(m protocol.Message) (done bool, err error) {
 		p := s.peer
 		s.mu.Unlock()
 		if p != nil && m.Candidate != nil {
-			if err := p.AddCandidate(*m.Candidate); err != nil {
+			// The peer logs the first candidate past its bound itself.
+			if err := p.AddCandidate(*m.Candidate); err != nil && !errors.Is(err, peer.ErrTooManyCandidates) {
 				s.log.Warn("remote candidate rejected", "err", err)
 			}
 		}

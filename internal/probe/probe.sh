@@ -6,7 +6,15 @@
 # Runs unprivileged on dash, bash and busybox ash. Every optional tool is
 # guarded, so a missing one only leaves its keys out.
 
+nl='
+'
+cr=$(printf '\r')
+
+# kv prints one key=value line, and nothing for a pair that would span more:
+# a file name, which another user may choose, can hold a newline, and the
+# lines after it would read as keys of their own.
 kv() {
+	case $1$2 in *"$nl"* | *"$cr"*) return 0 ;; esac
 	printf '%s=%s\n' "$1" "$2"
 }
 
@@ -137,6 +145,8 @@ sessions() {
 displays() {
 	for s in /tmp/.X11-unix/X*; do
 		[ -S "$s" ] || continue
+		# Anyone can create a socket here; only X<digits> names a display.
+		case ${s##*/X} in '' | *[!0-9]*) continue ;; esac
 		kv x11 ":${s##*/X}"
 		lsfields "$s"
 		kv x11_uid "$st_uid"
