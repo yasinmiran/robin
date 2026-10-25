@@ -566,7 +566,7 @@ test('files: uploads land in the download folder and never replace a file', asyn
 // A transfer has a credit window of its own, so the one SCTP association
 // it shares with the keyboard never fills behind it.
 test('files: keys typed while a 256 MiB upload moves show within 400 ms', async ({}, testInfo) => {
-  test.skip(!FILES, NO_FILES);
+  test.skip(!XTERM_CLICKABLE, NO_FILES);
   testInfo.setTimeout(180_000);
   await host.ssh('rm -rf ~/Downloads');
   let term: host.Rect | null = null;
@@ -643,7 +643,7 @@ test('files: the host offers a file, shown as text, saved only on a click', asyn
 });
 
 test('files: a file that grew after its offer is not saved, and both ends say why', async () => {
-  test.skip(!FILES, NO_FILES);
+  test.skip(!XTERM_CLICKABLE, NO_FILES);
   const name = 'robin-e2e-grows.log';
   const path = `/tmp/${name}`;
   await host.ssh(`head -c 1000 /dev/urandom > ${path}`);
