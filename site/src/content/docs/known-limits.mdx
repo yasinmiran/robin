@@ -66,3 +66,11 @@ These are the current limits of the shipped tool. Some of them have planned work
 
 - Hardware encoding answers a keyframe request about 35 ms later than software and adds a few milliseconds to every frame, which is the price on the hosts and sizes where `auto` picks it.
 - The NVENC route is untested on real NVIDIA hardware. See [Hardware encoding](/hardware-encoding).
+
+## Sharp text and actual size
+
+- Sharp text works on X11 desktops only. Wayland's portal hands the agent its frames already at 4:2:0, so there the switch is greyed out with the reason under it.
+- Sharp text needs the browser to report the RTP timestamp of the frame it shows, which Chrome, Edge and Firefox do; in a browser that does not, the switch is greyed out with the reason under it. Safari is unchecked, since the tests cannot see its picture.
+- When the message that says which tiles a frame changes is held up behind a lost packet, the frame can reach the screen first. The page then hides every tile until the message arrives, so the whole picture is plain video for that long: a round trip or two.
+- A tile that changes again within 2 s of being sent waits twice as long the next time, up to 4.8 s, so a blinking caret, a clock or a progress bar stays plain video.
+- In the fit view the tiles go through the browser's scaling as the video does; only actual size shows them pixel for pixel. Actual size pans with the pointer at the window's edge, or with two fingers moved apart and along on a touch screen, and does not zoom.

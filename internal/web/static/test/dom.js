@@ -1,13 +1,13 @@
-// Just enough of a DOM for files.js, clipboard.js and devicebar.js under
-// node: elements that hold children, attributes and click listeners, a
-// window and a body, and animation frames on timers. installDom puts it on
-// globalThis.
+// Just enough of a DOM for files.js, clipboard.js, devicebar.js and
+// sharp.js under node: elements that hold children, attributes and click
+// listeners, a window and a body, and animation frames on timers.
+// installDom puts it on globalThis.
 
 export class FakeElement extends EventTarget {
   children = [];
   dataset = {};
   classList = new Set(); // add and has, as a DOMTokenList has
-  #attrs = new Set();
+  #attrs = new Map();
 
   constructor(tag) {
     super();
@@ -34,12 +34,16 @@ export class FakeElement extends EventTarget {
     return this.#attrs.has(name);
   }
 
-  setAttribute(name) {
-    this.#attrs.add(name);
+  getAttribute(name) {
+    return this.#attrs.get(name) ?? null;
+  }
+
+  setAttribute(name, value = '') {
+    this.#attrs.set(name, String(value));
   }
 
   toggleAttribute(name, force = !this.#attrs.has(name)) {
-    if (force) this.#attrs.add(name);
+    if (force) this.#attrs.set(name, '');
     else this.#attrs.delete(name);
     return force;
   }

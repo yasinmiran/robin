@@ -1935,6 +1935,135 @@ cell over the fast link was a scroll at 11 fps. A link that narrows under a stil
 about a second when motion resumes. And the first second after some
 spells is openh264's rate control at half the frame rate.
 
+### Sharp text: lossless tiles behind a per-frame manifest
+
+H.264 as browsers decode it is 4:2:0: colour at a quarter of the
+resolution, which smears coloured text, and quantised luma, which softens
+the rest. A still screen is where that shows and where it is cheapest to
+fix, since a still screen costs the video almost nothing. So the agent
+sends the parts of the screen that stay still a second time without loss,
+and the page draws them over the video.
+
+**Tiles.** The grid is 64x64 desktop pixels; edge tiles are cut short. On
+every frame it captures, the stream compares the frame with a copy of the
+previous one, row by row per tile (`bytes.Equal`, which stops at the first
+difference), and copies only the tiles that changed. A comparison is exact,
+not a hash: a collision would be a stale tile. A tile still for 300 ms, and
+shown by a frame that was written to the page, is cut: its pixels are
+copied into an atlas, sixteen tiles a row, up to 256 tiles a transfer, and a
+goroutine converts the atlas to RGBA and compresses it with `image/png` at
+`BestSpeed`, then sends it as one bulk transfer of kind `tile` through
+`Peer.SendBulk`, which track T paces. Two transfers may be under way at
+once, so a still 1920x1080 screen goes in two and a 2560x1440 one in four,
+not in hundreds. Encoding is held to a quarter of one core: a budget charges
+each batch's encoding time and refills at 0.25 s a second, banking at most
+100 ms, and no batch starts while it is overdrawn. A tile that changes
+cancels its transfer once every tile in that transfer has changed; a
+transfer with some current tiles goes on, and the page drops the stale ones
+by the manifest. A transfer that failed may have reached the page all the
+same, so its tiles still count as held there: their next change is named,
+and they are cut again after another still spell. A tile that changes
+within 2 s of being sent waits twice as long the next time, up to 16 times:
+a caret blinking every 530 ms is sent once or twice and then stays video,
+where it would otherwise flicker between sharp and blurred on every blink.
+Wayland is left out: the portal's pipeline hands the agent I420, the very
+loss tiles undo, and the agent says so to the page.
+
+**The manifest.** A stale tile over changed content is the one failure
+worse than blur, so the design starts from it. Before every frame the agent
+writes while tiles are on, it sends a `ControlFrame` on the control channel
+naming the frame's RTP timestamp, the grid (its size and a generation that
+any reset, resize or new peer bumps) and the tiles that frame changes among
+those the page may hold. The control channel is ordered and reliable, so the
+page holds every manifest up to the latest it received. A batch carries the
+RTP timestamp of the frame whose pixels it shows. The page draws a tile only
+over a frame at or after the batch's, and through `requestVideoFrameCallback`
+it reads the RTP timestamp of every frame it shows: a frame newer than the
+newest manifest hides the whole canvas until that manifest arrives. A
+manifest clears the tiles it names at once, unless the tile on the canvas
+came from that frame or a later one: the manifest was held up behind the
+batch that already shows the change (the first e2e run found this, as tiles
+that never came back after a held-up manifest). So a lost packet on the
+control channel costs blur until SCTP repairs it, never a stale tile.
+`requestVideoFrameCallback` runs at the next rendering step after the frame
+is presented, so the bound is one frame on screen; the e2e test checks the
+logic against its own account, frame by frame.
+
+The page needs the RTP timestamp, so the agent has to know it before the
+frame goes out. Pion's `TrackLocalStaticSample` keeps its packetizer's clock
+private, so the peer creates the track with a random first timestamp of its
+own choosing and keeps the same sums the packetizer does: a sample is
+stamped with the clock, and the clock then moves on by the sample's
+duration in 90 kHz ticks, the fraction carried to the next. It moves only
+once the track is bound, so the sums run under one lock with `Bind`.
+`TestNextFrameRTPIsTheFramesTimestamp` writes frames of uneven durations,
+fractions of a tick included, to a Pion receiver and checks every one
+against `NextFrameRTP`. The manifest goes out before the frame is converted
+and encoded, a head start on its packets. A frame that then never goes out,
+because the encoder skipped it or failed, still spends its timestamp: the
+stream writes an empty sample of its duration, which moves the clock and
+sends nothing. Otherwise the next frame would share the timestamp, and a
+page holding only the first of its two manifests would show tiles the
+second names.
+
+**Actual size.** A picture the browser scales by a fraction blurs text
+however it was encoded. Actual size lays the video out with each desktop
+pixel as many device pixels as fit whole in a CSS pixel, at least one: at
+`devicePixelRatio` 2 that is two, since one would halve a desktop sized to
+the window in CSS pixels, the default spawned session, and a switch that
+shrinks the picture on every Retina screen helps no one. The desktop's size
+comes from the tile grid where the video is scaled down to `--max-size` and
+from the video otherwise; the tiles, and a video at that size, are drawn
+with `image-rendering: pixelated`, every edge on a device pixel, centred
+while it fits and panned while it does not: by the pointer within 24 px of
+the window's edge, outside the status tab, or by two fingers through the
+gesture E's `view.js` reports as a pinch, which pans there instead of
+zooming. The tile canvas follows the picture's box in either view, since
+`getBoundingClientRect` includes the zoom and the pan.
+
+**What the page trusts.** Nothing of the agent's tile geometry. A manifest
+must name a grid of 1 to 16384 pixels a side (`MaxTileGrid`, the largest
+canvas side a browser draws) and gone ranges that ascend within it, and a
+batch only tiles of its grid, each once; anything else drops every tile, a
+bad agent costing blur rather than a page spinning over a range of 2^31
+tiles. An atlas's PNG header must give the size its tiles take before
+`createImageBitmap` sees it, since a few MiB of deflate can declare a
+picture a thousand times larger, and its transfer counts against the four
+the page takes at once until the decode is done.
+
+**Measured.** On this workstation (i7-13800H), by `BenchmarkTiles` over
+the vqtest 2560x1440 screen of small text: comparing a frame takes 2.6 ms
+(5.6 GB/s), and encoding the whole screen takes 56 ms, 61 µs a tile, for
+690 KB in four transfers. `DefaultCompression` saves 2% for 30% more time and
+`BestCompression` 8% for five times as much, so `BestSpeed` stays. A paletted
+PNG would suit the 72% of those tiles that hold 256 colours or fewer, but not
+an atlas of many of them, so it waits for a reason.
+
+In e2e, a still screen with coloured text in the xterm, composed in the page
+from the video and the tile canvas, against `xwd -root` on the host:
+
+| desktop | under tiles | differ, with tiles | differ, video alone |
+|---|---|---|---|
+| spawned 1000x700, Chrome | 700,000 | 0 | 35,746 |
+| spawned 1000x700, Firefox | 700,000 | 0 | 35,587 |
+| attached monitor 1280x800 | 1,024,000 | 0 | 24,422 |
+| attached 2304x800, video scaled to 1918x666 | 1,843,200 | 0 | 66,035 |
+
+One still screen of that xterm desktop costs 26 KB in one transfer at
+1000x700 and 30 KB in two at 1280x800, all of it sharp 0.87 s after the
+switch goes on: 300 ms of stillness, then the encode and the transfer. While
+typing, a changed tile is sharp again 0.52 to 1.08 s after the manifest of
+its last change; the later ones are tiles typed into twice within 2 s,
+which wait 600 ms. Frames shown with a stale tile, in traces of every frame
+shown while typing: none, in any run. With every control message held 300 ms
+behind the video, as a lost packet holds the ordered stream, still none;
+each frame that came before its manifest found it 266 to 284 ms later, and
+the tiles hid for 2.5 to 2.7 s of a 5 s trace. Sending the manifest after
+the encode, as the first version did, left 5 to 7 of about 22 frames shown
+while typing ahead of their manifest, each a frame of blur over the whole
+picture; sent before the conversion and the encode, none of 20 to 22 in
+three runs.
+
 ## Verification parked
 
 Two checks were parked by decision on 2026-10-18. Both needed hardware the

@@ -39,6 +39,11 @@ func TestPageLimitsMatchTheAgent(t *testing.T) {
 	}{
 		{"ime.js", "MAX_TEXT_BYTES", protocol.MaxTextBytes},
 		{"bulkframe.js", "CHUNK_SIZE", protocol.BulkChunkSize},
+		{"tiles.js", "TILE_SIZE", protocol.TileSize},
+		{"tiles.js", "MAX_TILE_BATCH", protocol.MaxTileBatch},
+		{"tiles.js", "TILE_ATLAS_COLUMNS", protocol.TileAtlasColumns},
+		{"tiles.js", "TILE_BATCH_LIMIT", protocol.TileBatchLimit},
+		{"tiles.js", "MAX_TILE_GRID", protocol.MaxTileGrid},
 	} {
 		got, err := pageConst(filepath.Join("static", c.file), c.name)
 		if err != nil {

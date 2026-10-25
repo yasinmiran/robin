@@ -15,6 +15,11 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && dbus-uuidgen > /etc/machine-id
 
+# xwd: the screen as X has it, which sharp text's tiles must match exactly.
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends x11-apps \
+ && rm -rf /var/lib/apt/lists/*
+
 # The base image ships user "ubuntu" at uid 1000. A "*" password keeps the
 # account unlocked for sshd without PAM while allowing no password login.
 RUN userdel -r ubuntu \

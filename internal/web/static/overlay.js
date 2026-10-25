@@ -63,6 +63,7 @@ export class Overlay {
   #monitorButton = document.getElementById('monitor');
   #monitorMenu = document.getElementById('monitor-menu');
   #sections = null;
+  #lastSection = null;
   #pickMonitor = null;
   #tuckTimer = 0;
   #hovered = false;
@@ -172,9 +173,11 @@ export class Overlay {
 
   // addSection gives a feature its own part of the tab, below the row of
   // stats, and returns the element for it to fill. Sections stack in the
-  // order they were added, take no room while empty, and go with the rest
-  // of the tab when the session ends.
-  addSection(name) {
+  // order they were added, except that one added with last stays below
+  // every other, as how to leave goes below what one can do. They take no
+  // room while empty, and go with the rest of the tab when the session
+  // ends.
+  addSection(name, { last = false } = {}) {
     if (!this.#sections) {
       this.#sections = document.createElement('div');
       this.#sections.className = 'sections';
@@ -187,7 +190,8 @@ export class Overlay {
     const section = document.createElement('section');
     section.className = 'section';
     section.dataset.section = name;
-    this.#sections.append(section);
+    this.#sections.insertBefore(section, this.#lastSection);
+    if (last) this.#lastSection = section;
     return section;
   }
 

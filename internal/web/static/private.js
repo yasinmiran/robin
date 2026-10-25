@@ -5,6 +5,7 @@
 
 import { onControl } from './control.js';
 import { next, request, settle, view } from './privatestate.js';
+import { switchButton } from './switches.js';
 
 export class PrivateSwitches {
   #overlay;
@@ -46,7 +47,7 @@ export class PrivateSwitches {
     row.className = 'switches';
     const errors = [];
     for (const item of items) {
-      row.append(this.#button(item));
+      row.append(switchButton(item, (key) => this.#toggle(key)));
       if (item.error) {
         const p = document.createElement('p');
         p.className = 'switch-error';
@@ -56,28 +57,5 @@ export class PrivateSwitches {
       }
     }
     this.#section.replaceChildren(row, ...errors);
-  }
-
-  #button(item) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'switch';
-    b.dataset.switch = item.key;
-    b.dataset.keys = 'local';
-    b.setAttribute('role', 'switch');
-    b.setAttribute('aria-checked', String(item.on));
-    b.setAttribute('aria-busy', String(item.busy));
-    b.title = item.title;
-    const track = document.createElement('span');
-    track.className = 'track';
-    track.setAttribute('aria-hidden', 'true');
-    const label = document.createElement('span');
-    label.textContent = item.label;
-    b.append(track, label);
-    b.addEventListener('click', () => {
-      b.blur(); // keys belong to the remote, not to this switch
-      this.#toggle(item.key);
-    });
-    return b;
   }
 }

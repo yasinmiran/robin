@@ -98,7 +98,9 @@ instead of resizing the screen, and a desktop larger than `--max-size` (a 4K
 monitor) is scaled down to fit, with the pointer mapped back onto the
 full-size screen. Scaled text is soft: a 2560x1440 monitor squeezed into
 1920x1080 and stretched back by the browser loses its small text, which
-is why 2560x1440 is the default where the host has the cores for it.
+is why 2560x1440 is the default where the host has the cores for it, and
+why sharp text draws still parts of the screen at the desktop's own size
+(see [Sharp text and actual size](#sharp-text-and-actual-size)).
 
 A desktop of several monitors shows one of them at a time, starting with the
 primary one; `--monitor` picks another by name (`--monitor DP-2`) or by its
@@ -149,6 +151,35 @@ once, at the start, where each went on the host or why it could not.
 | `-v` | | log the CLI and the agent to stderr |
 
 `robin ls` and `robin end` take `--ssh`, `--ssh-mux` and `-v` as well.
+
+## Sharp text and actual size
+
+H.264 as browsers decode it keeps colour at a quarter of the picture's
+resolution, which smears coloured text and softens the rest, and a picture
+the browser scales by a fraction blurs it again. The status tab has a switch
+for each.
+
+**Sharp text**, on by default, sends the parts of the screen that have been
+still for 300 ms again without loss: 64x64 tiles, compressed to PNG on the
+host within a quarter of one core and drawn on a layer over the video, at
+the desktop's own resolution even where the video is scaled down to
+`--max-size`. A tile goes the moment its part of the screen changes, before
+the frame that changes it shows, so what moves is plain video and text you
+stop at sharpens about half a second later. A screen full of small text
+costs about 700 KB once at 2560x1440, and nothing more while it stays still.
+A tile that keeps changing soon after it was sent, as one with a blinking
+caret does, waits longer each time and soon stays video rather than flicker.
+Sharp text needs an X11 desktop and a browser that says which frame it shows
+(the RTP timestamp in `requestVideoFrameCallback`, which Chrome, Edge and
+Firefox give); otherwise the switch is greyed out with the reason under it.
+
+**Actual size** shows each desktop pixel as a whole number of your screen's
+pixels instead of fitting the picture to the window: one, or two on a screen
+of twice the density, so text never goes through a fractional scale. A
+desktop larger than the window pans, and the status tab says how: hold the
+pointer near an edge of the window, or on a touch screen drag with two
+fingers. Pointer and touch input land where the picture shows them either
+way.
 
 ## Files and the clipboard
 
@@ -580,6 +611,15 @@ it offered, never your uploads. The page keeps at most 128 pointer images
 of at most 256 KiB each, and puts nothing from the host into the pointer's
 CSS but base64 and whole-pixel hot spots.
 
+Sharp text brings pictures of the screen into the page a second way: tile
+transfers from the agent, taken only while the switch is on, at most 4 MiB
+each and four at once, open or still being decoded. Each atlas's PNG header
+must give the size its tiles take, at most 1024x1024, before the browser's
+own image decoder reads it, and a tile manifest or batch that strays outside
+its grid drops every tile instead of growing what the page keeps. Tiles are
+drawn on a canvas and nowhere else; the page sends nothing new because of
+them but the switch itself.
+
 A kept session is reached through a unix socket in its 0700 run directory,
 and the daemon accepts a connection only from a process of its own uid
 (`SO_PEERCRED`), one controller at a time. Resuming goes through the same
@@ -736,6 +776,13 @@ so the second lands as `(1)`, offer one from the host (`robin-send` typed
 in the spawned xterm, `robin-agent send` over ssh for the attached desktop)
 under a name full of markup that the page must show as text and save only
 on a click, and paste an image and HTML into the host's clipboard and back.
+They check sharp text too: once the screen is still, the page's frame
+composed with its tiles matches `xwd -root` on the host in every pixel,
+where the video alone does not, also with every monitor shown and the video
+scaled down; a trace of every frame shown while typing finds no stale tile,
+with the control channel held 300 ms behind the video as well; and actual
+size lays the attached monitor out pixel for pixel, pans at the window's
+edge and still lands the pointer within 2 px.
 A fifth scenario, `wayland`,
 runs the same CLI and browser against the headless GNOME session of
 `make test-wayland` over sshd: `--attach auto` picks it, the CLI waits while
@@ -908,6 +955,24 @@ verified against a Linux build.
   picture, gaps included, scaled to fit `--max-size`, so small text gets
   hard to read. Monitors come from RandR 1.5; an X server older than that
   shows the whole desktop.
+- Sharp text works on X11 desktops only. Wayland's portal hands the agent
+  its frames already at 4:2:0, so there the switch is greyed out with the
+  reason under it.
+- Sharp text needs the browser to report the RTP timestamp of the frame it
+  shows, which Chrome, Edge and Firefox do; in a browser that does not, the
+  switch is greyed out with the reason under it. Safari is unchecked, since
+  the tests cannot see its picture.
+- When the message that says which tiles a frame changes is held up behind
+  a lost packet, the frame can reach the screen first. The page then hides
+  every tile until the message arrives, so the whole picture is plain video
+  for that long: a round trip or two.
+- A tile that changes again within 2 s of being sent waits twice as long the
+  next time, up to 4.8 s, so a blinking caret, a clock or a progress bar
+  stays plain video.
+- In the fit view the tiles go through the browser's scaling as the video
+  does; only actual size shows them pixel for pixel. Actual size pans with
+  the pointer at the window's edge, or with two fingers moved apart and
+  along on a touch screen, and does not zoom.
 - Attached to X11, autorepeat is off for the whole display, keys held at the
   machine itself included, until the session ends.
 - Text pasted from the browser into an attached desktop outlives the session

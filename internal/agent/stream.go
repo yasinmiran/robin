@@ -64,7 +64,14 @@ type stream struct {
 	// scale is how frames are shrunk on their way out, nil while they go
 	// out at desktop size.
 	scale atomic.Pointer[scale]
+	// tilesWanted is the page's latest ControlTiles, nil until it sends one.
+	tilesWanted atomic.Pointer[tileRequest]
 }
+
+// tileRequest is one ControlTiles from the page. Each is a value of its own,
+// so a request starts the tiles afresh even when the one before it, the
+// other way, came and went between two frames.
+type tileRequest struct{ on bool }
 
 // scale is a desktop size and the smaller one its frames are encoded at.
 type scale struct{ deskW, deskH, w, h int }
@@ -88,9 +95,13 @@ func newStream(desk desktop.Desktop, fps, maxW, maxH int, newEncoder NewEncoderF
 }
 
 func (s *stream) setPeer(p *peer.Peer) {
+	s.tilesWanted.Store(nil)
 	s.peer.Store(p)
 	s.keyframe.Store(true)
 }
+
+// wantTiles applies the page's ControlTiles.
+func (s *stream) wantTiles(on bool) { s.tilesWanted.Store(&tileRequest{on: on}) }
 
 func (s *stream) requestKeyframe() { s.keyframe.Store(true) }
 
@@ -112,6 +123,11 @@ func (s *stream) run(ctx context.Context) {
 		began          = time.Now()
 		lastWrite      time.Time
 		lastKey        time.Time
+		// lastClock is when the RTP clock last moved: a frame written, or
+		// one spent unwritten.
+		lastClock time.Time
+		tracker   = newTileTracker(s.log)
+		setup     tileSetup
 	)
 	closeEncoder := func() {
 		if enc != nil {
@@ -120,6 +136,7 @@ func (s *stream) run(ctx context.Context) {
 		}
 	}
 	defer closeEncoder()
+	defer tracker.close()
 
 	for {
 		select {
@@ -140,8 +157,41 @@ func (s *stream) run(ctx context.Context) {
 			s.log.Warn("capture", "err", err)
 			continue
 		}
+		withTiles := setup.apply(tracker, p, s.tilesWanted.Load(), f)
 		if !changed && !force && !stale && !refresh {
+			if withTiles {
+				tracker.cut(p, now)
+			}
 			continue
+		}
+		// The sample duration advances the RTP clock, so it must be the real
+		// gap since the previous frame, not the nominal frame interval.
+		d := interval
+		if !lastClock.IsZero() {
+			d = min(max(now.Sub(lastClock), interval/2), time.Second)
+		}
+		// The manifest goes out before the frame is converted and encoded, a
+		// head start on the frame's packets. A frame that then never goes
+		// out still spends its timestamp, so no later frame shares it and
+		// a manifest the page holds always covers the whole frame.
+		rtp, manifest := uint32(0), false
+		if withTiles {
+			tracker.update(f, now)
+			if rtp, manifest = p.NextFrameRTP(); manifest {
+				if err := p.SendControl(tracker.manifest(rtp)); err != nil {
+					// The page must never see a later manifest without
+					// this one: a new grid drops whatever it holds.
+					s.log.Debug("tile manifest", "err", err)
+					tracker.reset()
+					manifest = false
+				}
+			}
+		}
+		skipTimestamp := func() {
+			if manifest {
+				p.WriteFrame(nil, d)
+				lastClock = now
+			}
 		}
 		w, h := f.Width&^1, f.Height&^1
 		// An I420 desktop already delivers frames at the size it was asked for.
@@ -154,6 +204,7 @@ func (s *stream) run(ctx context.Context) {
 			br := s.bitrate.Load()
 			if enc, err = s.newEncoder(w, h, s.fps, int(br)); err != nil {
 				s.log.Error("encoder", "w", w, "h", h, "err", err)
+				skipTimestamp()
 				continue
 			}
 			appliedBitrate = br
@@ -185,6 +236,7 @@ func (s *stream) run(ctx context.Context) {
 		au, err := enc.Encode(img, now.Sub(began), force)
 		if err != nil {
 			s.log.Warn("encode", "err", err)
+			skipTimestamp()
 			continue
 		}
 		if force {
@@ -198,17 +250,48 @@ func (s *stream) run(ctx context.Context) {
 		}
 		stale = len(au) == 0
 		if stale {
+			skipTimestamp()
 			continue
-		}
-		// The sample duration advances the RTP clock, so it must be the real
-		// gap since the previous frame, not the nominal frame interval.
-		d := interval
-		if !lastWrite.IsZero() {
-			d = min(max(now.Sub(lastWrite), interval/2), time.Second)
 		}
 		if err := p.WriteFrame(au, d); err != nil {
 			s.log.Debug("write frame", "err", err)
 		}
-		lastWrite = now
+		lastWrite, lastClock = now, now
+		if manifest {
+			tracker.wrote(rtp)
+			tracker.cut(p, now)
+		}
 	}
+}
+
+// tileSetup is what the stream's tiles were last set up for: the peer, the
+// request of that page, and whether it has been answered.
+type tileSetup struct {
+	peer     *peer.Peer
+	req      *tileRequest
+	answered bool
+}
+
+// apply follows the page's latest request for tiles: a new peer or request
+// starts the tiles afresh, and the page hears once whether tiles are on:
+// off when it asked them off, and when it asked them on, on or why this
+// desktop cannot have them. The answer to an off request comes after every
+// manifest, so none follows it. apply reports whether f gets tiles.
+func (st *tileSetup) apply(t *tileTracker, p *peer.Peer, req *tileRequest, f *desktop.Frame) bool {
+	if p != st.peer || req != st.req {
+		t.reset()
+		*st = tileSetup{peer: p, req: req}
+	}
+	if req == nil || (req.on && f == nil) {
+		return false
+	}
+	ok := req.on && f.Format == desktop.BGRX
+	if !st.answered {
+		answer := protocol.Tiles{On: ok}
+		if req.on && !ok {
+			answer.Unsupported = noTilesReason
+		}
+		st.answered = p.SendControl(protocol.Control{T: protocol.ControlTiles, Tiles: &answer}) == nil
+	}
+	return ok
 }

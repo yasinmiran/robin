@@ -203,7 +203,8 @@ async function sound(page, scheme) {
 }
 
 // sections checks a feature can add its own part of the status tab, below
-// the row of stats, and that an empty one takes no room.
+// the row of stats and above the session's buttons, and that an empty one
+// takes no room.
 async function sections(page, scheme) {
   const got = await page.evaluate(() => {
     const s = window.robin.addSection('smoke');
@@ -220,10 +221,11 @@ async function sections(page, scheme) {
       belowRow: s.parentElement.previousElementSibling?.classList.contains('row'),
       shown: s.offsetHeight > 0,
       emptyHeight: empty.offsetHeight,
+      sessionLast: s.parentElement.lastElementChild?.dataset.section === 'session',
       twice,
     };
   });
-  check(got.inHud && got.belowRow && got.shown && got.emptyHeight === 0 && /added twice/.test(got.twice),
+  check(got.inHud && got.belowRow && got.shown && got.emptyHeight === 0 && got.sessionLast && /added twice/.test(got.twice),
     `${scheme}: a feature adds its own section to the status tab (${JSON.stringify(got)})`);
 }
 

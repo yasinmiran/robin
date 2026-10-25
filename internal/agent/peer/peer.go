@@ -102,7 +102,7 @@ type Handlers struct {
 // Peer is one browser session.
 type Peer struct {
 	pc    *webrtc.PeerConnection
-	track *webrtc.TrackLocalStaticSample
+	track *videoTrack
 	audio *webrtc.TrackLocalStaticSample // nil without Config.Audio
 	h     Handlers
 	log   *slog.Logger
@@ -249,10 +249,7 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 		}
 	})
 
-	p.track, err = webrtc.NewTrackLocalStaticSample(
-		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: 90000, SDPFmtpLine: H264Fmtp},
-		"video", "robin",
-	)
+	p.track, err = newVideoTrack()
 	if err != nil {
 		pc.Close()
 		return nil, err
@@ -343,7 +340,7 @@ func (p *Peer) AddCandidate(c protocol.Candidate) error {
 
 // WriteFrame sends one encoded access unit in Annex-B form.
 func (p *Peer) WriteFrame(annexB []byte, d time.Duration) error {
-	return p.track.WriteSample(media.Sample{Data: annexB, Duration: d})
+	return p.track.write(annexB, d)
 }
 
 // WriteAudio sends one Opus packet. It is a no-op without Config.Audio.
