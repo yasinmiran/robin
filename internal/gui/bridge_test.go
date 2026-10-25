@@ -419,7 +419,7 @@ func TestBridgeDropsAnOfferTooLongForTheAgent(t *testing.T) {
 		fromAgentR.Close()
 	})
 	b := newBridge(cli, relay.New(relay.Policy{Transport: relay.Direct}),
-		protocol.Config{ICEServers: []protocol.ICEServer{}}, slog.New(slog.DiscardHandler))
+		protocol.Config{ICEServers: []protocol.ICEServer{}}, nil, slog.New(slog.DiscardHandler))
 	go b.accept(ctx, s)
 	t.Cleanup(b.close)
 
