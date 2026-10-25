@@ -623,19 +623,18 @@ reach the UDP or TCP path can stand in for the agent. The page and its
 websocket listen on 127.0.0.1 and require a random 256-bit token from the URL
 fragment, an exact `Origin` and `Host`, and allow one browser at a time; the
 token never goes on a command line (see the client side below). On
-the host, the agent's ICE-TCP listener binds loopback, hangs up at once on
-any connection unless a process of yours, or root's, still holds its other
-end open, which it asks the kernel, lets go within 5 s of any that has not
-started ICE, and completes ICE only with the session's credentials; the X
-display is protected by a fresh cookie in a 0600 file,
-which the agent hands only to the Xvfb it started, checked through the
-socket's peer credentials, whatever else listens at the display's socket
-names; the sound server of a desktop robin starts listens only on a socket
-inside the run directory; the agent and its run directory are 0700. The
-probe counts only `X<digits>` in `/tmp/.X11-unix`, which any user can write,
-and prints nothing that would span lines, so no file name there can add to
-what it reports. `robin-agent end` and the sweep of old run directories take
-only a process of yours for a session's daemon.
+the host, the agent's ICE-TCP listener binds loopback, hangs up at once on any
+connection unless a process of yours, or root's, still holds its other end
+open, which it asks the kernel, lets go within 5 s of any that has not started
+ICE, and completes ICE only with the session's credentials; the X display is
+protected by a fresh cookie in a 0600 file, which the agent hands only to the
+Xvfb it started, checked through the socket's peer credentials, whatever else
+listens at the display's socket names; the sound server of a desktop robin
+starts listens only on a socket inside the run directory; the agent and its
+run directory are 0700. The probe counts only `X<digits>` in `/tmp/.X11-unix`,
+which any user can write, and prints nothing that would span lines, so no file
+name there can add to what it reports. `robin-agent end` and the sweep of old
+run directories take only a process of yours for a session's daemon.
 The page can do on the host what a keyboard, a pointer and a clipboard can do
 in that session, give it the sound and picture of a microphone or camera you
 switched on (with `--mic` or `--camera`), flip the two switches of a private
