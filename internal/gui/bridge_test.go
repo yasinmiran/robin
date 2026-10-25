@@ -191,10 +191,10 @@ func waitResult(t *testing.T, result <-chan error) error {
 // through the tunnel with them as soon as it has it; an answer the relay
 // rejects teaches it nothing.
 func TestBridgeTellsTheTunnelEachAnswerFirst(t *testing.T) {
-	b, s, ctx := testBridge(t)
+	agent := newFakeAgent()
+	b, s, ctx := testBridge(t, agent)
 	answers := make(chan string, 4)
 	b.answered = func(sdp string) { answers <- sdp }
-	agent := newFakeAgent()
 	result, _ := runBridge(ctx, b, agent)
 	pg := openPage(t, s)
 	pg.recv()
