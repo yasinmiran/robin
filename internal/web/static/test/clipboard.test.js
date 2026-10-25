@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Sum } from '../bulkframe.js';
+import { BULK_WINDOW, CHUNK_SIZE, Sum } from '../bulkframe.js';
 import { CLIP_KIND, CLIP_LIMIT, MAX_CLIP, encodeClip } from '../clip.js';
 import { Clipboard } from '../clipboard.js';
 import { dispatchControl } from '../control.js';
@@ -47,6 +47,32 @@ test('what the host copied reaches the browser in chunks', async () => {
   assert.deepEqual(await t.verdict, { t: 'done' });
   assert.deepEqual(clipboard.last, { text: 'robin', html });
   assert.deepEqual(written.at(-1)[0].types, ['text/plain', 'text/html']);
+});
+
+test('a host copy past the credit window arrives as the page grants more', async () => {
+  const html = `<p>${'robin '.repeat(250000)}</p>`;
+  const bytes = encodeClip({ text: 'robin', html });
+  const t = clipFromAgent(bytes.length);
+  let credit = BULK_WINDOW;
+  let grants = 0;
+  t.agent.addEventListener('message', (e) => {
+    const frame = JSON.parse(e.data);
+    if (frame.t === 'credit') {
+      credit = frame.credit;
+      grants++;
+    }
+  });
+  const sum = new Sum(bytes.length);
+  for (let at = 0; at < bytes.length; at += CHUNK_SIZE) {
+    const chunk = bytes.slice(at, at + CHUNK_SIZE);
+    await until(`credit for ${at + chunk.length} bytes`, () => at + chunk.length <= credit);
+    sum.add(chunk);
+    t.agent.send(chunk);
+  }
+  t.agent.send(JSON.stringify(sum.end()));
+  assert.deepEqual(await within(t.verdict), { t: 'done' });
+  assert.ok(grants > 0, 'the page granted no credit');
+  assert.deepEqual(clipboard.last, { text: 'robin', html });
 });
 
 test('headers alone reserve no memory, and a third at once pushes out the oldest', async () => {

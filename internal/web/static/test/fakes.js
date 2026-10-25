@@ -124,14 +124,23 @@ export class FakePeer {
 
 // fromAgent opens a channel to the page as the agent would for a transfer
 // and sends header on it, leaving the rest of the frames to the caller.
-// verdict resolves with the page's answer.
+// verdict resolves with the page's answer, past the credit it grants on
+// the way.
 export function fromAgent(header) {
   const page = new FakeChannel('bulk');
   const agent = new FakeChannel('bulk');
   page.peer = agent;
   agent.peer = page;
   page.readyState = agent.readyState = 'open';
-  const verdict = new Promise((resolve) => agent.addEventListener('message', (e) => resolve(JSON.parse(e.data)), { once: true }));
+  const verdict = new Promise((resolve) => {
+    const hear = (e) => {
+      const frame = JSON.parse(e.data);
+      if (frame.t === 'credit') return;
+      agent.removeEventListener('message', hear);
+      resolve(frame);
+    };
+    agent.addEventListener('message', hear);
+  });
   acceptBulk(page);
   agent.send(JSON.stringify({ t: 'header', ...header }));
   return { page, agent, verdict };
