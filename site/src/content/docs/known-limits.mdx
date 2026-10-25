@@ -47,6 +47,9 @@ These are the current limits of the shipped tool. Some of them have planned work
 ## Network
 
 - Through the SSH tunnel, video is TCP inside TCP, so a lossy link shows head-of-line stalls that direct UDP would not.
+- Motion after a still screen starts at the bitrate the screen went still with. If the link narrowed meanwhile, that motion overflows it for about a second before congestion control comes down.
+- Files and clipboard content from the host go under the video's congestion target, which is held while the screen is still: a download started before anything has moved goes at the starting 2 Mbit/s, and none goes faster than `--max-kbps`. Uploads are not paced, only held to 512 KiB in flight, about 40 Mbit/s over a 100 ms round trip.
+- Sound goes out ahead of the picture, but shares the link's own buffer, so on a slow link a keyframe can still delay it by as much as that buffer holds.
 
 ## Clients and browsers
 

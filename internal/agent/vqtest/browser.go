@@ -1,6 +1,7 @@
 package vqtest
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"runtime"
@@ -42,9 +43,25 @@ type Request struct {
 	Why PLIReason
 }
 
+// Sound is one sound packet the browser received: when it was sent, as
+// SoundPayload put it in the packet, and when it arrived.
+type Sound struct {
+	Sent, At time.Time
+}
+
+// SoundPayload is a sound packet of size bytes that carries its send time,
+// for a sender to write as Opus where the browser measures how long sound
+// takes to arrive. The audio decoder never sees it.
+func SoundPayload(size int, sent time.Time) []byte {
+	b := make([]byte, max(size, 8))
+	binary.BigEndian.PutUint64(b, uint64(sent.UnixNano()))
+	return b
+}
+
 // Result is what a browser saw.
 type Result struct {
 	Shown        []Shown
+	Sound        []Sound
 	Requests     []Request
 	Stats        ReceiverStats
 	DecodeErrors int
@@ -112,6 +129,13 @@ func NewBrowser(net *vnet.Net, clip *Clip, cfg ReceiverConfig) (*Browser, error)
 		dec.Close()
 		return nil, err
 	}
+	if err := m.RegisterCodec(webrtc.RTPCodecParameters{
+		RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2},
+		PayloadType:        111,
+	}, webrtc.RTPCodecTypeAudio); err != nil {
+		dec.Close()
+		return nil, err
+	}
 	reg := &interceptor.Registry{}
 	if err := webrtc.ConfigureTWCCSender(m, reg); err != nil {
 		dec.Close()
@@ -139,10 +163,12 @@ func NewBrowser(net *vnet.Net, clip *Clip, cfg ReceiverConfig) (*Browser, error)
 		scores: make(chan scoreJob, 64), frames: make(chan decodeJob, 256), done: make(chan struct{}),
 		rx: NewReceiver(cfg, time.Now()),
 	}
-	if _, err := pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
-		pc.Close()
-		dec.Close()
-		return nil, err
+	for _, kind := range []webrtc.RTPCodecType{webrtc.RTPCodecTypeVideo, webrtc.RTPCodecTypeAudio} {
+		if _, err := pc.AddTransceiverFromKind(kind, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
+			pc.Close()
+			dec.Close()
+			return nil, err
+		}
 	}
 	pc.OnTrack(func(tr *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 		b.mu.Lock()
@@ -150,9 +176,13 @@ func NewBrowser(net *vnet.Net, clip *Clip, cfg ReceiverConfig) (*Browser, error)
 		if b.closed {
 			return
 		}
+		b.readers.Add(1)
+		if tr.Kind() == webrtc.RTPCodecTypeAudio {
+			go b.listen(tr)
+			return
+		}
 		b.ssrc = uint32(tr.SSRC())
 		b.rx = NewReceiver(cfg, time.Now())
-		b.readers.Add(1)
 		go b.read(tr)
 	})
 	workers := max(runtime.NumCPU()/2, 1)
@@ -235,6 +265,25 @@ func (b *Browser) read(tr *webrtc.TrackRemote) {
 		for _, f := range frames {
 			b.frames <- decodeJob{f, now}
 		}
+	}
+}
+
+// listen records when each sound packet arrives.
+func (b *Browser) listen(tr *webrtc.TrackRemote) {
+	defer b.readers.Done()
+	for {
+		p, _, err := tr.ReadRTP()
+		if err != nil {
+			return
+		}
+		now := time.Now()
+		if len(p.Payload) < 8 {
+			continue
+		}
+		sent := time.Unix(0, int64(binary.BigEndian.Uint64(p.Payload)))
+		b.mu.Lock()
+		b.result.Sound = append(b.result.Sound, Sound{Sent: sent, At: now})
+		b.mu.Unlock()
 	}
 }
 

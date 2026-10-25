@@ -83,10 +83,15 @@ func wrapBrowser(t *testing.T, pc *webrtc.PeerConnection, dc *webrtc.DataChannel
 func (b *fileBrowser) take(ch *webrtc.DataChannel) {
 	var r received
 	sum := sha256.New()
+	var grant protocol.BulkGrant
 	ch.OnMessage(func(m webrtc.DataChannelMessage) {
 		if !m.IsString {
 			r.data = append(r.data, m.Data...)
 			sum.Write(m.Data)
+			if credit, ok := grant.Take(len(m.Data)); ok {
+				c, _ := json.Marshal(credit)
+				ch.SendText(string(c))
+			}
 			return
 		}
 		f, _ := protocol.ParseBulk(m.Data)
@@ -159,6 +164,9 @@ func (b *fileBrowser) upload(h protocol.Bulk, data []byte, mutate func(*protocol
 	ch.OnClose(func() { close(closed) })
 	ch.OnMessage(func(m webrtc.DataChannelMessage) {
 		v, _ := protocol.ParseBulk(m.Data)
+		if v.T == protocol.BulkCredit {
+			return // the agent's sink keeps up; nothing here waits for credit
+		}
 		select {
 		case verdict <- v:
 		default:

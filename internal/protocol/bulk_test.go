@@ -32,6 +32,7 @@ func TestBulkWireShape(t *testing.T) {
 		{"end", Bulk{T: BulkEnd, SHA256: "ab"}, `{"t":"end","sha256":"ab"}`},
 		{"done", Bulk{T: BulkDone}, `{"t":"done"}`},
 		{"error", Bulk{T: BulkError, Error: "no"}, `{"t":"error","error":"no"}`},
+		{"credit", Bulk{T: BulkCredit, Credit: 1 << 20}, `{"t":"credit","credit":1048576}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b, err := json.Marshal(tc.frame)
@@ -201,5 +202,23 @@ func TestBulkSumRefuses(t *testing.T) {
 	}
 	if err := s.Check(goodEnd); err != nil {
 		t.Errorf("good end: %v", err)
+	}
+}
+
+// TestBulkGrant: from the zero value, a window before any credit, and a
+// window past what the sink took once it has taken half of one.
+func TestBulkGrant(t *testing.T) {
+	var g BulkGrant
+	if _, ok := g.Take(BulkWindow/2 - 1); ok {
+		t.Fatal("credit before half a window was taken")
+	}
+	if c, ok := g.Take(1); !ok || c != (Bulk{T: BulkCredit, Credit: BulkWindow/2 + BulkWindow}) {
+		t.Fatalf("credit %+v, %v", c, ok)
+	}
+	if _, ok := g.Take(BulkWindow/2 - 1); ok {
+		t.Fatal("a second credit too soon")
+	}
+	if c, ok := g.Take(1); !ok || c.Credit != 2*BulkWindow {
+		t.Fatalf("second credit %+v, %v", c, ok)
 	}
 }

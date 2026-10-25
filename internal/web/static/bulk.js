@@ -2,12 +2,8 @@
 // in the frames bulkframe.js defines. Features register the kinds they
 // send with registerKind and the kinds they take with onBulk.
 
-import { BULK_CHANNEL, CHUNK_SIZE, Sum, checkHeader, parseFrame } from './bulkframe.js';
+import { BULK_CHANNEL, BULK_WINDOW, CHUNK_SIZE, Grant, Sum, checkHeader, parseFrame } from './bulkframe.js';
 
-// A sender keeps between LOW_WATER and HIGH_WATER bytes queued, as the
-// agent does.
-const HIGH_WATER = 1024 * 1024;
-const LOW_WATER = 256 * 1024;
 const MAX_REASON = 1024;
 
 const receivers = new Map();
@@ -27,9 +23,9 @@ export class BulkRefused extends Error {
 // message reaches the agent. A sink has write(chunk), commit() and
 // abort(err), each of which may return a promise: writes come in order,
 // then commit once every byte arrived intact, its throw refusing the
-// transfer after all, or abort with the reason it failed. Frames wait in
-// memory while a sink is slow, since a page cannot stop a data channel
-// reading.
+// transfer after all, or abort with the reason it failed. The agent sends
+// no more than the credit the page grants as its sink takes chunks, so a
+// slow sink holds at most a window of a transfer in memory.
 export function onBulk(kind, accept) {
   if (receivers.has(kind)) throw new Error(`bulk: kind ${JSON.stringify(kind)} taken twice`);
   receivers.set(kind, accept);
@@ -37,15 +33,16 @@ export function onBulk(kind, accept) {
 
 // sendBulk sends blob, a Blob or File, as one transfer described by header
 // on a channel of its own from pc, and resolves once the agent kept it.
-// Aborting signal cancels the transfer; progress, when given, hears how
-// many bytes have gone out after each chunk.
+// It sends no further ahead of the agent's sink than its credit, which
+// keeps the channel's queue to a window. Aborting signal cancels the
+// transfer; progress, when given, hears how many bytes have gone out
+// after each chunk.
 export async function sendBulk(pc, header, blob, { signal, progress } = {}) {
   const h = { ...header, t: 'header', size: blob.size };
   checkHeader(h);
   signal?.throwIfAborted();
   const channel = pc.createDataChannel(BULK_CHANNEL, { ordered: true });
   channel.binaryType = 'arraybuffer';
-  channel.bufferedAmountLowThreshold = LOW_WATER;
   const out = new Outbound(channel, signal);
   try {
     await out.until('open');
@@ -54,8 +51,7 @@ export async function sendBulk(pc, header, blob, { signal, progress } = {}) {
     for (let at = 0; at < blob.size; at += CHUNK_SIZE) {
       const chunk = new Uint8Array(await blob.slice(at, at + CHUNK_SIZE).arrayBuffer());
       sum.add(chunk);
-      while (channel.bufferedAmount > HIGH_WATER) await out.until('bufferedamountlow');
-      out.throwIfStopped();
+      await out.credit(at + chunk.length);
       channel.send(chunk);
       progress?.(at + chunk.length);
     }
@@ -69,12 +65,14 @@ export async function sendBulk(pc, header, blob, { signal, progress } = {}) {
 const DONE = Symbol('done');
 
 // Outbound follows what the agent and the page say about a transfer being
-// sent: its verdict, a close, or an abort.
+// sent: its credit, its verdict, a close, or an abort.
 class Outbound {
   #channel;
   #reason = null; // DONE for the agent's done, otherwise why it failed
   #stopped;
   #stop;
+  #credit = BULK_WINDOW;
+  #more = null; // ends the wait for credit
 
   constructor(channel, signal) {
     this.#channel = channel;
@@ -86,7 +84,10 @@ class Outbound {
       } catch {
         // Junk is a refusal like any other.
       }
-      if (v?.t === 'done') this.#end(DONE);
+      if (v?.t === 'credit' && Number.isSafeInteger(v.credit)) {
+        this.#credit = Math.max(this.#credit, v.credit);
+        this.#more?.();
+      } else if (v?.t === 'done') this.#end(DONE);
       else this.#end(new BulkRefused(v?.t === 'error' ? v.error : 'malformed verdict'));
     });
     channel.addEventListener('close', () => this.#end(new Error('bulk transfer cancelled')));
@@ -104,6 +105,15 @@ class Outbound {
   async until(type) {
     if (this.#reason === null) {
       await Promise.race([new Promise((resolve) => this.#channel.addEventListener(type, resolve, { once: true })), this.#stopped]);
+    }
+    this.throwIfStopped();
+  }
+
+  // credit waits until the agent lets the sender have sent upTo bytes, and
+  // throws if the transfer stops first.
+  async credit(upTo) {
+    while (this.#reason === null && upTo > this.#credit) {
+      await Promise.race([new Promise((resolve) => { this.#more = resolve; }), this.#stopped]);
     }
     this.throwIfStopped();
   }
@@ -126,26 +136,60 @@ class Outbound {
 export function acceptBulk(channel) {
   channel.binaryType = 'arraybuffer';
   const inbound = new Inbound(channel, (kind) => receivers.get(kind));
-  // Sinks may be slow; frames are handled one at a time, in order.
-  let queue = Promise.resolve();
-  channel.addEventListener('message', (e) => { queue = queue.then(() => inbound.message(e.data)); });
-  channel.addEventListener('close', () => { queue = queue.then(() => inbound.closed()); });
+  channel.addEventListener('message', (e) => inbound.receive(e.data));
+  channel.addEventListener('close', () => inbound.closed());
 }
 
-// Inbound is the receiving end of one transfer.
+// Inbound is the receiving end of one transfer. Sinks may be slow, so it
+// handles frames one at a time, in order.
 export class Inbound {
   #channel;
   #lookup;
   #sink = null;
   #sum = null;
+  #grant = new Grant();
+  #queue = Promise.resolve();
   #over = false; // a verdict went out or the channel closed
+  #ended = false; // the sink was committed or aborted
 
   constructor(channel, lookup) {
     this.#channel = channel;
     this.#lookup = lookup;
   }
 
-  async message(data) {
+  // receive takes the next frame as it arrives, and returns the promise of
+  // its handling. Payload counts against the credit at once: a sender past
+  // its credit fails the transfer there and then, however long the sink
+  // takes over the frames before, and nothing more from it is kept.
+  receive(data) {
+    if (this.#over || this.#ended) return this.#queue;
+    if (typeof data !== 'string') {
+      try {
+        this.#grant.arrive(data.byteLength);
+      } catch (err) {
+        this.#reply({ t: 'error', error: reasonOf(err) });
+        return this.#then(() => this.#abort(err));
+      }
+    }
+    return this.#then(() => this.#message(data));
+  }
+
+  // closed takes the channel's close, once the frames before it are
+  // handled.
+  closed() {
+    return this.#then(async () => {
+      if (this.#over) return;
+      this.#over = true;
+      await this.#abort(new Error('bulk transfer cancelled'));
+    });
+  }
+
+  #then(step) {
+    this.#queue = this.#queue.then(step);
+    return this.#queue;
+  }
+
+  async #message(data) {
     if (this.#over) return;
     try {
       if (this.#sink === null) {
@@ -156,6 +200,8 @@ export class Inbound {
         const chunk = new Uint8Array(data);
         this.#sum.add(chunk);
         await this.#sink.write(chunk);
+        const credit = this.#grant.take(chunk.length);
+        if (credit && !this.#over) this.#send(credit);
         return;
       }
       this.#sum.check(parseFrame(data));
@@ -163,6 +209,7 @@ export class Inbound {
       await this.#fail(err);
       return;
     }
+    this.#ended = true;
     try {
       await this.#sink.commit();
     } catch (err) {
@@ -170,12 +217,6 @@ export class Inbound {
       return;
     }
     this.#reply({ t: 'done' });
-  }
-
-  async closed() {
-    if (this.#over) return;
-    this.#over = true;
-    await this.#sink?.abort(new Error('bulk transfer cancelled'));
   }
 
   async #open(data) {
@@ -191,21 +232,34 @@ export class Inbound {
   async #fail(err) {
     // The verdict goes first: a sink's abort may take a while.
     this.#reply({ t: 'error', error: reasonOf(err) });
+    await this.#abort(err);
+  }
+
+  async #abort(err) {
+    if (this.#sink === null || this.#ended) return;
+    this.#ended = true;
     try {
-      await this.#sink?.abort(err);
+      await this.#sink.abort(err);
     } catch (abortErr) {
       console.warn('robin: bulk abort', abortErr);
     }
   }
 
+  // reply sends the verdict and closes the channel, which ends the
+  // transfer. Only the first verdict counts.
   #reply(verdict) {
+    if (this.#over) return;
     this.#over = true;
+    this.#send(verdict);
+    this.#channel.close();
+  }
+
+  #send(frame) {
     try {
-      this.#channel.send(JSON.stringify(verdict));
+      this.#channel.send(JSON.stringify(frame));
     } catch {
       // Already closing: the sender learns from the close.
     }
-    this.#channel.close();
   }
 }
 

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { BulkRefused, Inbound, acceptBulk, onBulk, sendBulk } from '../bulk.js';
-import { CHUNK_SIZE, registerKind } from '../bulkframe.js';
+import { BULK_WINDOW, CHUNK_SIZE, registerKind } from '../bulkframe.js';
 import { FakeChannel, FakePeer } from './fakes.js';
 
 registerKind('test', 16 * 1024 * 1024);
@@ -10,13 +10,22 @@ registerKind('test', 16 * 1024 * 1024);
 const later = () => new Promise((resolve) => setTimeout(resolve, 0));
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
-// memSink keeps a transfer and says how it ended.
-function memSink() {
+// memSink keeps a transfer and says how it ended. A stalled one takes
+// nothing until it is released.
+function memSink({ stalled = false } = {}) {
   const parts = [];
   let settle;
+  let release;
+  const released = new Promise((resolve) => { release = resolve; });
   const sink = {
     ended: new Promise((resolve) => { settle = resolve; }),
-    write: async (chunk) => { parts.push(chunk.slice()); },
+    writes: 0,
+    release,
+    write: async (chunk) => {
+      sink.writes++;
+      if (stalled) await released;
+      parts.push(chunk.slice());
+    },
     commit: async () => settle({ ok: true }),
     abort: async (err) => settle({ ok: false, err }),
     bytes: () => Buffer.concat(parts),
@@ -27,14 +36,14 @@ function memSink() {
 // The far end answers with the page's own receiver.
 const sinks = [];
 onBulk('test', (h) => {
-  const sink = memSink();
+  const sink = memSink({ stalled: h.id === 'stall' });
   sink.header = h;
   sinks.push(sink);
   if (h.id === 'refuse') throw new Error('not today');
   return sink;
 });
 
-test('a transfer arrives whole on the far side, flow control and all', async () => {
+test('a transfer arrives whole on the far side, credit and all', async () => {
   let farChannel;
   const pc = new FakePeer((ch) => {
     farChannel = ch;
@@ -44,13 +53,13 @@ test('a transfer arrives whole on the far side, flow control and all', async () 
   const bytes = new Uint8Array(randomBytes(3 * 1024 * 1024 + 3));
   let peak = 0;
   const sending = sendBulk(pc, { kind: 'test', id: 'up', name: 'n.bin', mime: 'application/octet-stream' }, new Blob([bytes]));
-  // Let the sender fill its queue, then let it drain.
+  // Let the sender send its credit, then let it drain.
   for (let i = 0; i < 200; i++) {
     await later();
     peak = Math.max(peak, pc.channels[0]?.bufferedAmount ?? 0);
   }
-  // One chunk past the high-water mark, and the header.
-  assert.ok(peak > 1024 * 1024 && peak <= 1024 * 1024 + CHUNK_SIZE + 1024, `queue peaked at ${peak} bytes`);
+  // The first window, and the header.
+  assert.ok(peak > BULK_WINDOW && peak <= BULK_WINDOW + 1024, `queue peaked at ${peak} bytes`);
   farChannel.peer.resume();
   await sending;
   const sink = sinks.at(-1);
@@ -59,6 +68,25 @@ test('a transfer arrives whole on the far side, flow control and all', async () 
   assert.equal(sha(sink.bytes()), sha(bytes));
   assert.equal(farChannel.binaryType, 'arraybuffer');
   assert.notEqual(pc.channels[0].readyState, 'open');
+});
+
+test('sendBulk waits for credit, and goes on as it comes', async () => {
+  let far;
+  const pc = new FakePeer((ch) => { far = ch; });
+  const sending = sendBulk(pc, { kind: 'test' }, new Blob([new Uint8Array(BULK_WINDOW + 3 * CHUNK_SIZE)]));
+  const chunks = () => pc.channels[0].sent.filter((f) => typeof f !== 'string').length;
+  for (let i = 0; i < 50; i++) await later();
+  assert.equal(chunks(), BULK_WINDOW / CHUNK_SIZE, 'chunks sent on the first window');
+  // Credit that does not grow changes nothing.
+  far.send(JSON.stringify({ t: 'credit', credit: BULK_WINDOW }));
+  for (let i = 0; i < 20; i++) await later();
+  assert.equal(chunks(), BULK_WINDOW / CHUNK_SIZE);
+  far.send(JSON.stringify({ t: 'credit', credit: BULK_WINDOW + 2 * CHUNK_SIZE }));
+  for (let i = 0; i < 20; i++) await later();
+  assert.equal(chunks(), BULK_WINDOW / CHUNK_SIZE + 2, 'chunks sent on the second credit');
+  // A refusal ends the wait for more.
+  far.send(JSON.stringify({ t: 'error', error: 'enough' }));
+  await assert.rejects(sending, /refused: enough/);
 });
 
 test('progress hears the bytes sent after each chunk', async () => {
@@ -106,6 +134,7 @@ test('sendBulk reads the verdict', async () => {
     ['junk', (ch) => ch.send('junk'), /refused: malformed verdict/],
     ['binary', (ch) => ch.send(new Uint8Array(1)), /refused: malformed verdict/],
     ['an error', (ch) => ch.send('{"t":"error","error":"disk full"}'), /refused: disk full/],
+    ['credit that is no number', (ch) => ch.send('{"t":"credit","credit":"lots"}'), /refused: malformed verdict/],
     ['a close', (ch) => ch.close(), /cancelled/],
   ];
   for (const [name, reply, want] of cases) {
@@ -179,13 +208,13 @@ test('Inbound refuses what does not add up', async () => {
       if (h.id === 'no') throw new Error('not here');
       return sink;
     }));
-    for (const f of frames) await rx.message(f);
+    for (const f of frames) await rx.receive(f);
     assert.equal(verdicts.length, 1, name);
     assert.equal(verdicts[0].t, 'error', name);
     assert.match(verdicts[0].error, why, name);
     assert.ok(closed(), `${name}: channel left open`);
     if (aborts) assert.match((await sink.ended).err.message, why, name);
-    await rx.message('{"t":"end"}'); // nothing after the verdict counts
+    await rx.receive('{"t":"end"}'); // nothing after the verdict counts
     assert.equal(verdicts.length, 1, name);
   }
 });
@@ -196,7 +225,7 @@ test('Inbound keeps a good transfer and reports a sink that fails', async () => 
 
   const good = memSink();
   let r = inbound(() => () => good);
-  for (const f of [header(1000), bytes.buffer, end]) await r.rx.message(f);
+  for (const f of [header(1000), bytes.buffer, end]) await r.rx.receive(f);
   assert.deepEqual(r.verdicts, [{ t: 'done' }]);
   assert.equal(sha(good.bytes()), sha(bytes));
   await r.rx.closed(); // the close after the verdict changes nothing
@@ -204,14 +233,14 @@ test('Inbound keeps a good transfer and reports a sink that fails', async () => 
 
   const full = { ...memSink(), write: async () => { throw new Error('disk full'); } };
   r = inbound(() => () => full);
-  for (const f of [header(1000), bytes.buffer]) await r.rx.message(f);
+  for (const f of [header(1000), bytes.buffer]) await r.rx.receive(f);
   assert.match(r.verdicts[0].error, /disk full/);
   assert.match((await full.ended).err.message, /disk full/);
 
   let aborted = false;
   const stuck = { ...memSink(), commit: async () => { throw new Error('rename failed'); }, abort: () => { aborted = true; } };
   r = inbound(() => () => stuck);
-  for (const f of [header(1000), bytes.buffer, end]) await r.rx.message(f);
+  for (const f of [header(1000), bytes.buffer, end]) await r.rx.receive(f);
   assert.deepEqual(r.verdicts, [{ t: 'error', error: 'rename failed' }]);
   assert.equal(aborted, false, 'a failed commit is not aborted too');
 
@@ -221,7 +250,7 @@ test('Inbound keeps a good transfer and reports a sink that fails', async () => 
   try {
     const clumsy = { ...memSink(), abort: () => { throw new Error('abort broke'); } };
     r = inbound(() => () => clumsy);
-    for (const f of [header(10), bytes.buffer]) await r.rx.message(f);
+    for (const f of [header(10), bytes.buffer]) await r.rx.receive(f);
     assert.equal(r.verdicts[0].t, 'error');
     assert.equal(warned.length, 1);
   } finally {
@@ -229,17 +258,125 @@ test('Inbound keeps a good transfer and reports a sink that fails', async () => 
   }
 
   r = inbound(() => () => { throw new Error('x'.repeat(5000)); });
-  await r.rx.message(header(1));
+  await r.rx.receive(header(1));
   assert.equal(r.verdicts[0].error.length, 1024);
 });
 
 test('Inbound aborts on a close before the end', async () => {
   const sink = memSink();
   const r = inbound(() => () => sink);
-  await r.rx.message(header(100));
+  await r.rx.receive(header(100));
   await r.rx.closed();
   assert.match((await sink.ended).err.message, /cancelled/);
   await r.rx.closed();
   const idle = inbound(() => () => sink);
   await idle.rx.closed(); // nothing opened, nothing to abort
+});
+
+test('Inbound grants credit as its sink takes chunks', async () => {
+  const sink = memSink();
+  const r = inbound(() => () => sink);
+  await r.rx.receive(header(2 * BULK_WINDOW));
+  for (let sent = 0; sent < BULK_WINDOW; sent += CHUNK_SIZE) await r.rx.receive(new ArrayBuffer(CHUNK_SIZE));
+  assert.deepEqual(r.verdicts, [
+    { t: 'credit', credit: BULK_WINDOW + BULK_WINDOW / 2 },
+    { t: 'credit', credit: 2 * BULK_WINDOW },
+  ]);
+});
+
+test('Inbound refuses a sender past its credit before its sink sees the rest', async () => {
+  const sink = memSink();
+  const r = inbound(() => () => sink);
+  await r.rx.receive(header(2 * BULK_WINDOW));
+  // The frames arrive faster than the sink takes them.
+  let last;
+  for (let sent = 0; sent <= BULK_WINDOW; sent += CHUNK_SIZE) last = r.rx.receive(new ArrayBuffer(CHUNK_SIZE));
+  await r.rx.receive('{"t":"end"}'); // text is not payload
+  await last;
+  assert.equal(r.verdicts.length, 1);
+  assert.match(r.verdicts[0].error, /past the credit/);
+  assert.ok(r.closed());
+  assert.match((await sink.ended).err.message, /past the credit/);
+  assert.equal(sink.bytes().length, 0);
+});
+
+test('acceptBulk refuses a sender past its credit at once, while its sink is still writing', async () => {
+  const channel = new FakeChannel('bulk');
+  channel.readyState = 'open';
+  const sent = [];
+  channel.send = (data) => sent.push(JSON.parse(data));
+  channel.close = () => { channel.readyState = 'closing'; };
+  acceptBulk(channel);
+  const arrive = (data) => channel.dispatchEvent(Object.assign(new Event('message'), { data }));
+  const before = sinks.length;
+  arrive(header(16 * 1024 * 1024, { id: 'stall' }));
+  while (sinks.length === before) await later();
+  const sink = sinks.at(-1);
+  // The sink stalls on the first chunk, and the rest of a window and a
+  // chunk arrive behind it.
+  arrive(new ArrayBuffer(CHUNK_SIZE));
+  while (sink.writes === 0) await later();
+  for (let n = CHUNK_SIZE; n <= BULK_WINDOW; n += CHUNK_SIZE) arrive(new ArrayBuffer(CHUNK_SIZE));
+  for (let i = 0; i < 10; i++) await later();
+  assert.equal(sink.writes, 1, 'the sink is on its first chunk');
+  assert.equal(sent.length, 1, 'a verdict while the sink writes');
+  assert.match(sent[0].error, /past the credit/);
+  assert.equal(channel.readyState, 'closing');
+  for (let i = 0; i < 4; i++) arrive(new ArrayBuffer(CHUNK_SIZE));
+  sink.release();
+  assert.match((await sink.ended).err.message, /past the credit/);
+  for (let i = 0; i < 10; i++) await later();
+  assert.equal(sink.writes, 1, 'the sink took nothing after the overrun');
+  assert.equal(sent.length, 1);
+});
+
+test('Inbound aborts a sink once, whatever fails first', async () => {
+  // A write that fails after the sender overran is the one abort.
+  let fail;
+  let aborts = 0;
+  const failing = {
+    ...memSink(),
+    write: () => new Promise((_, reject) => { fail = reject; }),
+    abort: () => { aborts++; },
+  };
+  const r = inbound(() => () => failing);
+  await r.rx.receive(header(2 * BULK_WINDOW));
+  r.rx.receive(new ArrayBuffer(CHUNK_SIZE));
+  await later();
+  let last;
+  for (let n = CHUNK_SIZE; n <= BULK_WINDOW; n += CHUNK_SIZE) last = r.rx.receive(new ArrayBuffer(CHUNK_SIZE));
+  fail(new Error('disk full'));
+  await last;
+  assert.equal(aborts, 1);
+  assert.equal(r.verdicts.length, 1);
+  assert.match(r.verdicts[0].error, /past the credit/);
+  await r.rx.closed();
+  assert.equal(aborts, 1, 'the close after the verdict aborts nothing');
+
+  // Frames after the end, while the sink commits, change nothing.
+  let commit;
+  const committing = { ...memSink(), commit: () => new Promise((resolve) => { commit = resolve; }), abort: () => { aborts++; } };
+  const c = inbound(() => () => committing);
+  await c.rx.receive(header(0));
+  const ending = c.rx.receive(JSON.stringify({ t: 'end', sha256: sha(new Uint8Array(0)) }));
+  await later();
+  for (let n = 0; n <= BULK_WINDOW; n += CHUNK_SIZE) c.rx.receive(new ArrayBuffer(CHUNK_SIZE));
+  commit();
+  await ending;
+  assert.deepEqual(c.verdicts, [{ t: 'done' }]);
+  assert.equal(aborts, 1, 'a committed sink is not aborted');
+
+  // A sink that throws on abort is warned about on a close too.
+  const warned = [];
+  const warn = console.warn;
+  console.warn = (...args) => warned.push(args);
+  try {
+    const clumsy = { ...memSink(), abort: () => { throw new Error('abort broke'); } };
+    const k = inbound(() => () => clumsy);
+    await k.rx.receive(header(10));
+    await k.rx.closed();
+    assert.equal(warned.length, 1);
+  } finally {
+    console.warn = warn;
+  }
 });

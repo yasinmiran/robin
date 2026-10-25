@@ -2,12 +2,15 @@
 // on a data channel of its own the sender writes a header, binary chunks
 // of at most CHUNK_SIZE bytes and an end frame with the payload's SHA-256,
 // and the receiver answers with one verdict, done or error, and closes the
-// channel. Either side closing first cancels. Nothing here touches the DOM.
+// channel. Either side closing first cancels. The receiver grants credit
+// as its sink takes chunks: the sender sends BULK_WINDOW bytes before the
+// first and never past the latest. Nothing here touches the DOM.
 
 import { Sha256 } from './sha256.js';
 
 export const BULK_CHANNEL = 'bulk';
 export const CHUNK_SIZE = 64 * 1024;
+export const BULK_WINDOW = 512 * 1024;
 
 const limits = new Map();
 
@@ -82,5 +85,33 @@ export class Sum {
   check(frame) {
     if (frame?.t !== 'end') throw new Error('malformed bulk frame: not the end');
     if (frame.sha256 !== this.end().sha256) throw new Error('bulk transfer SHA-256 mismatch');
+  }
+}
+
+// Grant is a receiver's side of the credit: what its sink has taken, how
+// much of that it had taken at the last credit, and what has arrived. A new
+// one is the start of a transfer, which the sender may send BULK_WINDOW
+// bytes of before any credit.
+export class Grant {
+  #taken = 0;
+  #last = 0;
+  #arrived = 0;
+
+  // arrive counts n bytes that arrived, and throws once they run past the
+  // credit, which a page that cannot stop a channel reading would
+  // otherwise hold in memory.
+  arrive(n) {
+    this.#arrived += n;
+    const granted = this.#last + BULK_WINDOW;
+    if (this.#arrived > granted) throw new Error(`bulk data past the credit: ${this.#arrived} bytes with ${granted} granted`);
+  }
+
+  // take counts n bytes the sink took, and returns the credit frame to
+  // send once half a window has been taken since the last, or null.
+  take(n) {
+    this.#taken += n;
+    if (this.#taken - this.#last < BULK_WINDOW / 2) return null;
+    this.#last = this.#taken;
+    return { t: 'credit', credit: this.#taken + BULK_WINDOW };
   }
 }

@@ -19,11 +19,23 @@ import (
 // BulkError early. Either side closing the channel before the verdict
 // cancels the transfer. Every bulk channel is ordered and reliable, the
 // default for a data channel: the frames mean nothing out of order.
+//
+// The receiver also paces the sender with BulkCredit frames. The sender
+// may send BulkWindow bytes of payload before the first, and never more
+// than the latest credit allows; the receiver grants more as its sink
+// takes the bytes.
 const BulkChannel = "bulk"
 
 // BulkChunkSize bounds every frame on a bulk channel, text or binary. It
 // keeps a chunk well under the 256 KiB message size browsers accept.
 const BulkChunkSize = 64 << 10
+
+// BulkWindow is how many bytes of payload a receiver holds room for beyond
+// what its sink has taken. Every transfer shares one SCTP association with
+// the control channel, and a sink that stalls holds back no more than
+// this, where it would otherwise fill the association's receive buffer
+// and stall the keyboard with it.
+const BulkWindow = 512 << 10
 
 // BulkType identifies a text frame on a bulk channel. Binary frames are
 // always chunks.
@@ -41,6 +53,9 @@ const (
 	// BulkError is the receiver's verdict when it refused or lost the
 	// transfer, with the reason.
 	BulkError BulkType = "error"
+	// BulkCredit is the receiver letting the sender go on, any time
+	// before its verdict.
+	BulkCredit BulkType = "credit"
 )
 
 // Bulk is one text frame of a bulk transfer. Only the fields that belong to
@@ -62,6 +77,9 @@ type Bulk struct {
 
 	// Error: why the receiver refused or failed the transfer.
 	Error string `json:"error,omitempty"`
+
+	// Credit: how many bytes of payload the sender may have sent in all.
+	Credit int64 `json:"credit,omitempty"`
 }
 
 // Reasons a bulk transfer fails. Each is wrapped with the detail.
@@ -186,4 +204,23 @@ func (s *BulkSum) Check(end Bulk) error {
 		return ErrBulkHash
 	}
 	return nil
+}
+
+// BulkGrant is the receiving end's side of the credit: what its sink has
+// taken, and how much of that it had taken at the last credit. The zero
+// value is the start of a transfer, which the sender may send BulkWindow
+// bytes of before any credit.
+type BulkGrant struct {
+	taken, last int64
+}
+
+// Take counts n bytes the sink took, and returns the credit frame to send
+// once half a window has been taken since the last.
+func (g *BulkGrant) Take(n int) (Bulk, bool) {
+	g.taken += int64(n)
+	if g.taken-g.last < BulkWindow/2 {
+		return Bulk{}, false
+	}
+	g.last = g.taken
+	return Bulk{T: BulkCredit, Credit: g.taken + BulkWindow}, true
 }

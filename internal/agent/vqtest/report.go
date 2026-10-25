@@ -72,6 +72,10 @@ func (r *Run) Spans() []Span {
 	return append(out, r.span("all", 0, r.Clip.Len(), false))
 }
 
+// Window is the numbers of clip frames [from, to), counted as motion: a
+// part of a segment, such as its first second.
+func (r *Run) Window(name string, from, to int) Span { return r.span(name, from, to, true) }
+
 func countKind(segs []Segment, k Kind) int {
 	n := 0
 	for _, s := range segs {
@@ -180,11 +184,36 @@ func formatCounts(m map[PLIReason]int) string {
 	return strings.Join(parts, " ")
 }
 
-// Summary is one line about the transport over a whole run.
+// Summary is one line about the transport over a whole run, and one about
+// its sound when it had some.
 func (r *Run) Summary() string {
 	st := r.Result.Stats
-	return fmt.Sprintf("packets %d (dup %d), NACKed %d, recovered %d, abandoned %d, frames %d (keyframes %d), "+
+	line := fmt.Sprintf("packets %d (dup %d), NACKed %d, recovered %d, abandoned %d, frames %d (keyframes %d), "+
 		"decode errors %d, no picture %d, untagged %d, requests %s",
 		st.Packets, st.Duplicates, st.NACKed, st.Recovered, st.Abandoned, st.Frames, st.Keyframes,
 		r.Result.DecodeErrors, r.Result.NoPicture, r.Result.Untagged, formatCounts(r.Requests()))
+	if d := r.SoundDelays(); d.N > 0 {
+		line += fmt.Sprintf("\nsound %d packets, one way %v median, %v at the 99th percentile, %v at most",
+			d.N, d.Median.Round(time.Millisecond), d.P99.Round(time.Millisecond), d.Max.Round(time.Millisecond))
+	}
+	return line
+}
+
+// Delays is how long sound packets took to arrive.
+type Delays struct {
+	N                int
+	Median, P99, Max time.Duration
+}
+
+// SoundDelays sums up how long the run's sound took to arrive.
+func (r *Run) SoundDelays() Delays {
+	ds := make([]time.Duration, len(r.Result.Sound))
+	for i, s := range r.Result.Sound {
+		ds[i] = s.At.Sub(s.Sent)
+	}
+	if len(ds) == 0 {
+		return Delays{}
+	}
+	slices.Sort(ds)
+	return Delays{N: len(ds), Median: ds[len(ds)/2], P99: ds[len(ds)*99/100], Max: ds[len(ds)-1]}
 }

@@ -35,6 +35,11 @@ const H264Fmtp = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-i
 // 256 KiB, so larger clipboard text could not cross anyway.
 const MaxControlBytes = 256 << 10
 
+// sctpReceiveBuffer holds the credit of eight bulk transfers from the
+// browser whose sinks have stalled, and room for control beside them.
+// Pion's default holds two.
+const sctpReceiveBuffer = 8*protocol.BulkWindow + 256<<10
+
 // ErrNoControl means the browser has not opened the control channel yet, so
 // nothing was sent.
 var ErrNoControl = errors.New("peer: control channel not open")
@@ -64,10 +69,15 @@ type Config struct {
 	Mic, Camera bool
 
 	MinBitrate, StartBitrate, MaxBitrate int // bits per second
-	// Unpaced sends every packet the moment it is written, as a
-	// comparison for measurements; the agent paces.
+	// Unpaced sends every packet and every bulk chunk the moment it is
+	// written, as a comparison for measurements; the agent paces.
 	Unpaced bool
-	Log     *slog.Logger
+	// FeedWhileLimited hands GCC the browser's feedback while the agent
+	// sends too little to test the link, as Pion does on its own, and
+	// SoundBehindVideo queues sound with video in the pacer: comparisons
+	// for measurements, which the agent does neither of.
+	FeedWhileLimited, SoundBehindVideo bool
+	Log                                *slog.Logger
 }
 
 // Handlers receive the peer's events. Each may be nil. They are called from
@@ -96,10 +106,12 @@ type Peer struct {
 	audio *webrtc.TrackLocalStaticSample // nil without Config.Audio
 	h     Handlers
 	log   *slog.Logger
+	// unpaced sends bulk as fast as the browser's credit allows.
+	unpaced bool
 
 	mu      sync.Mutex
 	control *webrtc.DataChannel
-	bwe     cc.BandwidthEstimator
+	bwe     *estimator
 }
 
 // New builds the peer connection and its video track. Nothing is sent until
@@ -133,7 +145,7 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 	}
 
 	reg := &interceptor.Registry{}
-	bweReady := make(chan cc.BandwidthEstimator, 1)
+	bweReady := make(chan *estimator, 1)
 	ccf, err := cc.NewInterceptor(func() (cc.BandwidthEstimator, error) {
 		// Not Pion's pacer: it queues without bound, so a burst sent while
 		// the target falls drains for seconds and the delay that adds keeps
@@ -143,33 +155,27 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 		if !cfg.Unpaced {
 			p = newPacer(cfg.StartBitrate)
 		}
-		e, err := gcc.NewSendSideBWE(
-			gcc.SendSideBWEPacer(p),
-			gcc.SendSideBWEInitialBitrate(cfg.StartBitrate),
-			gcc.SendSideBWEMinBitrate(cfg.MinBitrate),
-			gcc.SendSideBWEMaxBitrate(cfg.MaxBitrate),
-		)
+		e, err := newEstimator(cfg, p, log, time.Now)
 		if err != nil {
-			p.Close()
 			return nil, err
 		}
+		bweReady <- e
 		return e, nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	ccf.OnNewPeerConnection(func(_ string, e cc.BandwidthEstimator) { bweReady <- e })
 	reg.Add(ccf)
 	if err := webrtc.ConfigureTWCCHeaderExtensionSender(m, reg); err != nil {
 		return nil, err
 	}
 	// Registered after the TWCC and congestion-control interceptors so
 	// retransmissions carry transport sequence numbers and count as sent.
-	var bwe atomic.Pointer[cc.BandwidthEstimator]
+	var bwe atomic.Pointer[estimator]
 	reg.Add(&nackResponderFactory{
 		budget: func() int {
 			if e := bwe.Load(); e != nil {
-				return (*e).GetTargetBitrate()
+				return e.GetTargetBitrate()
 			}
 			return cfg.StartBitrate
 		},
@@ -195,6 +201,7 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 
 	se := webrtc.SettingEngine{}
 	se.SetSCTPMaxMessageSize(MaxControlBytes)
+	se.SetSCTPMaxReceiveBufferSize(sctpReceiveBuffer)
 	// Disconnected after 2 s lets followNomination react quickly; failing late
 	// gives the browser's ICE restart time to land.
 	se.SetICETimeouts(2*time.Second, 30*time.Second, time.Second)
@@ -227,11 +234,11 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 		return nil, err
 	}
 	pcRef.Store(pc)
-	p := &Peer{pc: pc, h: h, log: log}
+	p := &Peer{pc: pc, h: h, log: log, unpaced: cfg.Unpaced}
 
 	select {
 	case p.bwe = <-bweReady:
-		bwe.Store(&p.bwe)
+		bwe.Store(p.bwe)
 	case <-time.After(5 * time.Second):
 		pc.Close()
 		return nil, errors.New("peer: congestion controller did not start")

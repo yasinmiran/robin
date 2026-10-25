@@ -77,7 +77,8 @@ The X11 scenarios of `tests/gui.spec.ts` also check, in this order:
    `echo robin-e2e > /tmp/robin-e2e-<scenario>` creates that file on the host, and
    the xterm region of the picture changes.
 3. **Latency**: after 20 s of a still screen, four keystrokes 250 ms apart
-   each reach the screen within 400 ms (`requestVideoFrameCallback`). Without
+   each reach the screen within 400 ms: from the keydown to the first frame
+   whose xterm shows the echo (`requestVideoFrameCallback`). Without
    the agent's zero playout delay, Chrome held the first of them for most of
    a second.
 4. **Pointer**: moving to two points on the page puts the X pointer within 2 px
@@ -106,6 +107,8 @@ The X11 scenarios of `tests/gui.spec.ts` also check, in this order:
    input lands in `~/Downloads` with its SHA-256 intact, the same name again
    lands as `robin-e2e-upload (1).bin` and the tab says so, and a file
    dropped on the page arrives too, with nothing else left in the folder.
+   Four keys typed while a 256 MiB upload moves must echo within the same
+   400 ms, and the upload must have moved on by the last of them.
    Then the host offers a file named `<b>robin<b> & co.bin`: `robin-send`
    typed into the spawned session's xterm, or in `attach`
    `~/.cache/robin/robin-agent-* send` over ssh, which finds the one

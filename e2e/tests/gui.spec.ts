@@ -6,7 +6,7 @@ import { Cli, robin, sshProcesses } from './helpers/cli';
 import { pagePoint } from './helpers/coords';
 import { savePageCoverage, startPageCoverage } from './helpers/cover';
 import { TONE_HZ, pcm, toneOf } from './helpers/fakemedia';
-import { CHANGED_FLOOR, isNonBlack, sampleFrame, waitForStillFrame } from './helpers/frames';
+import { CHANGED_FLOOR, LUMA_DELTA, isNonBlack, sampleFrame, waitForStillFrame } from './helpers/frames';
 import * as host from './helpers/host';
 
 // One robin session per scenario, shared by the tests below in order.
@@ -269,37 +269,85 @@ test('latency: after 20 s of a still screen, keystrokes show within 400 ms', asy
   testInfo.annotations.push({ type: 'still screen', description: JSON.stringify(still) });
   expect.soft(still.pliCount, `keyframes Chrome asked for during 19 s of a still screen: ${JSON.stringify(still)}`).toBe(0);
 
-  await page.evaluate((selector) => {
-    const w = window as any;
-    const video = document.querySelector(selector) as HTMLVideoElement;
-    w.robinKeys = [];
-    w.robinFrames = [];
-    window.addEventListener('keydown', (e) => e.key === 'x' && w.robinKeys.push(performance.now()), { capture: true });
-    const onFrame = (_: number, m: VideoFrameCallbackMetadata) => {
-      w.robinFrames.push({ presented: m.presentationTime, received: m.receiveTime ?? m.presentationTime });
+  const { keys, lag, held } = await typeAndTime(page, t);
+  testInfo.annotations.push({ type: 'latency', description: JSON.stringify({ lag, held }) });
+  expect(keys, 'keystrokes seen by the page').toBe(4);
+  expect(Math.max(...lag), `ms from each keystroke to its echo on screen: ${lag}`).toBeLessThan(400);
+});
+
+// ECHO_PIXELS is how many pixels of the xterm a keystroke's echo changes
+// at the least: its glyph and the cursor's move to the next cell change
+// many more, and a refresh of the still picture none (waitForStillFrame
+// counts under 20 over the whole screen as still).
+const ECHO_PIXELS = 20;
+
+// typeAndTime types x four times, 250 ms apart, into the focused xterm at
+// term, and clears the line. typed, when given, runs right after the last
+// keystroke. It returns how many keystrokes the page saw and, for each,
+// how long until its echo showed: the first frame after it whose xterm
+// differs by ECHO_PIXELS from the frame showing when it was typed. held
+// is how long each frame waited in the browser between arriving and
+// showing.
+async function typeAndTime(page: Page, term: host.Rect, typed?: () => Promise<void>): Promise<{ keys: number; lag: number[]; held: number[] }> {
+  await page.evaluate(
+    ({ selector, term, delta, floor }) => {
+      const w = window as any;
+      const video = document.querySelector(selector) as HTMLVideoElement;
+      const canvas = document.createElement('canvas');
+      canvas.width = term.width;
+      canvas.height = term.height;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+      // luma is the xterm in the frame showing now.
+      const luma = () => {
+        ctx.drawImage(video, term.x, term.y, term.width, term.height, 0, 0, term.width, term.height);
+        const rgba = ctx.getImageData(0, 0, term.width, term.height).data;
+        const out = new Uint8Array(term.width * term.height);
+        for (let p = 0, i = 0; p < out.length; p++, i += 4) out[p] = (rgba[i] * 77 + rgba[i + 1] * 150 + rgba[i + 2] * 29) >> 8;
+        return out;
+      };
+      const differs = (a: Uint8Array, b: Uint8Array) => {
+        let n = 0;
+        for (let p = 0; p < a.length; p++) if (Math.abs(a[p] - b[p]) > delta && ++n >= floor) return true;
+        return false;
+      };
+      w.robinTiming?.abort();
+      const timing = (w.robinTiming = new AbortController());
+      type Key = { at: number; before: Uint8Array; echo: number | null };
+      const keys: Key[] = (w.robinKeys = []);
+      const held: number[] = (w.robinHeld = []);
+      let showing = luma();
+      window.addEventListener('keydown', (e) => e.key === 'x' && keys.push({ at: performance.now(), before: showing, echo: null }), {
+        capture: true,
+        signal: timing.signal,
+      });
+      const onFrame = (_: number, m: VideoFrameCallbackMetadata) => {
+        if (timing.signal.aborted) return;
+        showing = luma();
+        held.push(Math.round(m.presentationTime - (m.receiveTime ?? m.presentationTime)));
+        for (const k of keys) {
+          if (k.echo === null && m.presentationTime > k.at && differs(showing, k.before)) k.echo = m.presentationTime;
+        }
+        video.requestVideoFrameCallback(onFrame);
+      };
       video.requestVideoFrameCallback(onFrame);
-    };
-    video.requestVideoFrameCallback(onFrame);
-  }, SCREEN);
+    },
+    { selector: SCREEN, term, delta: LUMA_DELTA, floor: ECHO_PIXELS },
+  );
   for (let i = 0; i < 4; i++) {
     await page.keyboard.press('x');
-    await page.waitForTimeout(250);
+    if (i < 3) await page.waitForTimeout(250);
   }
-  // Held frames still surface, so a failure says by how much.
+  await typed?.();
+  // Held echoes still surface, so a failure says by how much.
   await page.waitForTimeout(1_500);
+  const { keys, held } = await page.evaluate(() => {
+    const w = window as any;
+    w.robinTiming.abort();
+    return { keys: w.robinKeys.map((k: any) => ({ at: k.at, echo: k.echo })) as { at: number; echo: number | null }[], held: w.robinHeld as number[] };
+  });
   await page.keyboard.press('Control+U');
-
-  type Shown = { presented: number; received: number };
-  const { keys, frames } = await page.evaluate(() => ({
-    keys: (window as any).robinKeys as number[],
-    frames: (window as any).robinFrames as Shown[],
-  }));
-  const lag = keys.map((k) => Math.round((frames.find((f) => f.presented > k)?.presented ?? Infinity) - k));
-  const held = frames.map((f) => Math.round(f.presented - f.received));
-  testInfo.annotations.push({ type: 'latency', description: JSON.stringify({ lag, held }) });
-  expect(keys, 'keystrokes seen by the page').toHaveLength(4);
-  expect(Math.max(...lag), `ms from each keystroke to the next frame on screen: ${lag}`).toBeLessThan(400);
-});
+  return { keys: keys.length, lag: keys.map((k) => Math.round((k.echo ?? Infinity) - k.at)), held };
+}
 
 test('pointer: the remote cursor lands where the page points, within 2 px', async () => {
   test.skip(!PICTURE, NO_PICTURE);
@@ -509,6 +557,43 @@ test('files: uploads land in the download folder and never replace a file', asyn
   expect((await host.ssh('ls -A ~/Downloads')).split('\n').sort()).toEqual(
     ['robin-e2e-drop.txt', 'robin-e2e-upload (1).bin', 'robin-e2e-upload.bin'],
   );
+});
+
+// A transfer has a credit window of its own, so the one SCTP association
+// it shares with the keyboard never fills behind it.
+test('files: keys typed while a 256 MiB upload moves show within 400 ms', async ({}, testInfo) => {
+  test.skip(!FILES, NO_FILES);
+  testInfo.setTimeout(180_000);
+  await host.ssh('rm -rf ~/Downloads');
+  let term: host.Rect | null = null;
+  await expect.poll(async () => (term = await host.terminal()), { message: 'an xterm is mapped', timeout: 15_000 }).not.toBeNull();
+  const t = term!;
+  const centre = await pagePoint(page, SCREEN, t.x + t.width / 2, t.y + t.height / 2);
+  await page.mouse.click(centre.x, centre.y);
+  await page.waitForTimeout(1_000);
+
+  const size = 256 << 20;
+  await page.evaluate((n) => {
+    const dt = new DataTransfer();
+    dt.items.add(new File([new Uint8Array(n)], 'robin-e2e-big.bin', { type: 'application/octet-stream' }));
+    window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, cancelable: true }));
+  }, size);
+  const row = page.locator('.transfer[data-dir="up"]').filter({ hasText: 'robin-e2e-big.bin' });
+  await expect(row).toHaveAttribute('data-state', 'sending', { timeout: 15_000 });
+  // sent is how much of the upload has gone out: all of it once kept.
+  const sent = () =>
+    row.evaluate((li, n) => (li.dataset.state === 'kept' ? n : Number(li.querySelector('progress')?.value ?? 0)), size);
+  const before = await sent();
+  let during = before;
+  const { keys, lag, held } = await typeAndTime(page, t, async () => { during = await sent(); });
+  testInfo.annotations.push({ type: 'latency during the upload', description: JSON.stringify({ lag, held, before, during }) });
+  expect(during, `bytes of the upload sent by the last key, of ${size}, from ${before} at the first`).toBeGreaterThan(before);
+  expect(keys, 'keystrokes seen by the page').toBe(4);
+  expect(Math.max(...lag), `ms from each keystroke to its echo on screen: ${lag}`).toBeLessThan(400);
+
+  await expect(row).toHaveAttribute('data-state', 'kept', { timeout: 150_000 });
+  expect(await host.ssh('stat -c %s ~/Downloads/robin-e2e-big.bin')).toBe(String(size));
+  await host.ssh('rm -rf ~/Downloads');
 });
 
 test('files: the host offers a file, shown as text, saved only on a click', async () => {

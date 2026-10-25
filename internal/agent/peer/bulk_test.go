@@ -40,11 +40,13 @@ type memSink struct {
 	slowAbort chan struct{} // when set, Abort waits until it is closed
 	writeErr  error
 	commitErr error
+	writes    atomic.Int32 // Write calls begun
 	ends      atomic.Int32
 	result    chan error
 }
 
 func (m *memSink) Write(p []byte) (int, error) {
+	m.writes.Add(1)
 	if m.block != nil {
 		<-m.block
 	}
@@ -146,7 +148,9 @@ func newBulkPair(t *testing.T, cfg Config, h Handlers) *bulkPair {
 	if h.Bulk == nil {
 		h.Bulk = sinks(bp.atAgent)
 	}
-	cfg.MinBitrate, cfg.StartBitrate, cfg.MaxBitrate, cfg.IncludeLoopback = 100_000, 1_000_000, 5_000_000, true
+	// No video streams here, so the target stays where it starts, and
+	// bulk from the agent is paced under it.
+	cfg.MinBitrate, cfg.StartBitrate, cfg.MaxBitrate, cfg.IncludeLoopback = 100_000, 200_000_000, 200_000_000, true
 	p, err := New(cfg, h)
 	if err != nil {
 		t.Fatal(err)
@@ -554,8 +558,8 @@ func TestBulkSendFails(t *testing.T) {
 }
 
 // TestBulkCancelWhileBlocked closes the browser's end while the agent waits
-// for its queue to drain, which Pion's buffered-amount callback alone would
-// never report.
+// for credit from a sink that stopped taking chunks, a wait no credit ever
+// ends.
 func TestBulkCancelWhileBlocked(t *testing.T) {
 	bp := newBulkPair(t, Config{}, Handlers{})
 	dc, err := bp.agent.pc.CreateDataChannel(protocol.BulkChannel, nil)
@@ -569,22 +573,7 @@ func TestBulkCancelWhileBlocked(t *testing.T) {
 	}()
 	s := receive(t, bp.atBrowser)
 	defer close(s.block)
-	// The browser takes one chunk and stops reading, so the queue fills and
-	// then stands still above the low-water mark, the sender waiting.
-	deadline := time.Now().Add(10 * time.Second)
-	for last, still := uint64(0), 0; still < 5; {
-		if time.Now().After(deadline) {
-			t.Fatalf("queue never stood still: %d bytes", dc.BufferedAmount())
-		}
-		time.Sleep(20 * time.Millisecond)
-		n := dc.BufferedAmount()
-		if n == last && n > bulkLowWater {
-			still++
-		} else {
-			still = 0
-		}
-		last = n
-	}
+	waitStalled(t, dc, s)
 	(<-bp.browserChannels).Close()
 	select {
 	case err := <-result:
@@ -593,6 +582,127 @@ func TestBulkCancelWhileBlocked(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("blocked sender never noticed the close")
+	}
+}
+
+// waitStalled waits until the sink is in its first Write, which blocks, and
+// dc's queue has stopped moving since. With the credit the queue is empty
+// then: the sender has sent its credit and waits for more.
+func waitStalled(t *testing.T, dc *webrtc.DataChannel, s *memSink) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	queued := dc.BufferedAmount()
+	for still := 0; still < 5; {
+		if time.Now().After(deadline) {
+			t.Fatalf("the transfer never stalled: %d writes begun, %d bytes queued", s.writes.Load(), dc.BufferedAmount())
+		}
+		time.Sleep(20 * time.Millisecond)
+		now := dc.BufferedAmount()
+		if s.writes.Load() > 0 && now == queued {
+			still++
+		} else {
+			still = 0
+		}
+		queued = now
+	}
+}
+
+// TestBulkLeavesControlLiveBehindAStalledSink: a sink that stops taking
+// its transfer holds back that transfer and nothing else. Each way, a
+// 16 MiB transfer runs into a sink that has stalled while control
+// messages cross the same SCTP association, and each must arrive at once.
+// The credit keeps the stalled transfer from filling the association's
+// receive buffer, where the messages would wait on the sink.
+func TestBulkLeavesControlLiveBehindAStalledSink(t *testing.T) {
+	atAgent := make(chan protocol.Control, 64)
+	bp := newBulkPair(t, Config{}, Handlers{Control: func(m protocol.Control) { atAgent <- m }})
+	// stall starts a transfer from pc to a sink that takes nothing, and
+	// returns once it waits for credit. The transfer ends with the subtest.
+	stall := func(t *testing.T, pc *webrtc.PeerConnection, pace bulkPace, sinks <-chan *memSink) {
+		t.Helper()
+		dc, err := pc.CreateDataChannel(protocol.BulkChannel, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		sender := newBulkSender(dc)
+		sender.pace = pace
+		errc := make(chan error, 1)
+		go func() {
+			errc <- sender.send(ctx, protocol.Bulk{T: protocol.BulkHeader, Kind: testKind, ID: "block", Size: testLimit}, bytes.NewReader(make([]byte, testLimit)))
+		}()
+		s := receiveID(t, sinks, "block")
+		t.Cleanup(func() {
+			cancel()
+			close(s.block)
+			if err := <-errc; !errors.Is(err, context.Canceled) {
+				t.Errorf("the stalled transfer ended with %v, want context.Canceled", err)
+			}
+			if err := s.end(t); !errors.Is(err, ErrBulkCancelled) {
+				t.Errorf("the stalled sink ended with %v, want ErrBulkCancelled", err)
+			}
+		})
+		waitStalled(t, dc, s)
+	}
+	check := func(t *testing.T, send func(i int) error, got <-chan protocol.Control) {
+		t.Helper()
+		var worst time.Duration
+		for i := range 5 {
+			sent := time.Now()
+			if err := send(i); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case m := <-got:
+				lag := time.Since(sent)
+				worst = max(worst, lag)
+				if lag > 500*time.Millisecond || m.Text != fmt.Sprint(i) {
+					t.Errorf("control message %q arrived %v after it was sent", m.Text, lag.Round(time.Millisecond))
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatalf("control message %d held back behind the stalled transfer", i)
+			}
+		}
+		t.Logf("control messages beside a stalled transfer took %v at most", worst.Round(100*time.Microsecond))
+	}
+	t.Run("browser to agent", func(t *testing.T) {
+		stall(t, bp.browser.pc, nil, bp.atAgent)
+		check(t, func(i int) error {
+			b, _ := json.Marshal(protocol.Control{T: protocol.ControlClipboard, Text: fmt.Sprint(i)})
+			return bp.browser.control.SendText(string(b))
+		}, atAgent)
+	})
+	t.Run("agent to browser", func(t *testing.T) {
+		stall(t, bp.agent.pc, bp.agent.bwe, bp.atBrowser)
+		check(t, func(i int) error {
+			return bp.agent.SendControl(protocol.Control{T: protocol.ControlClipboard, Text: fmt.Sprint(i)})
+		}, bp.browser.got)
+	})
+}
+
+// TestBulkReceiverGrantsCredit: a window of chunks sent by hand earns a
+// credit at half of it and another at the whole.
+func TestBulkReceiverGrantsCredit(t *testing.T) {
+	bp := newBulkPair(t, Config{}, Handlers{})
+	dc, frames, _ := bp.rawBulk(t)
+	sendJSON(t, dc, protocol.Bulk{T: protocol.BulkHeader, Kind: testKind, ID: "raw", Size: testLimit})
+	receiveID(t, bp.atAgent, "raw")
+	chunk := make([]byte, protocol.BulkChunkSize)
+	for sent := 0; sent < protocol.BulkWindow; sent += len(chunk) {
+		if err := dc.Send(chunk); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, want := range []int64{protocol.BulkWindow + protocol.BulkWindow/2, 2 * protocol.BulkWindow} {
+		select {
+		case f := <-frames:
+			if f != (protocol.Bulk{T: protocol.BulkCredit, Credit: want}) {
+				t.Fatalf("frame %+v, want a credit of %d", f, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("no credit of %d", want)
+		}
 	}
 }
 

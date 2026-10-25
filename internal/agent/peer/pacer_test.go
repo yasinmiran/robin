@@ -115,6 +115,128 @@ func TestPacerKeepsOrderBehindAQueue(t *testing.T) {
 	}
 }
 
+// TestPacerSendsSoundAhead: a prioritized stream's packet goes out at once
+// while a keyframe drains, and the keyframe's last packet goes out that
+// much later.
+func TestPacerSendsSoundAhead(t *testing.T) {
+	now := time.Unix(0, 0)
+	log := &sentLog{now: &now}
+	p := newPacerAt(1_000_000, func() time.Time { return now })
+	p.AddStream(1, log.writer())
+	p.AddStream(2, log.writer())
+	p.Prioritize(2)
+	big := make([]byte, 1188)
+	for i := range 50 {
+		p.Write(&rtp.Header{SSRC: 1, SequenceNumber: uint16(i)}, big, nil)
+	}
+	queued := len(log.seqs)
+	sound := make([]byte, 288)
+	var soundAt []time.Time
+	for i := range 200 {
+		now = now.Add(pacingTick)
+		if i%10 == 0 {
+			p.Write(&rtp.Header{SSRC: 2, SequenceNumber: uint16(1000 + i)}, sound, nil)
+			if s := log.seqs[len(log.seqs)-1]; s != uint16(1000+i) {
+				t.Fatalf("sound packet %d did not go out at once: last sent %d", 1000+i, s)
+			}
+			soundAt = append(soundAt, now)
+		}
+		p.drain()
+	}
+	if queued == 50 {
+		t.Fatal("the keyframe was not queued")
+	}
+	var last time.Time
+	for i, s := range log.seqs {
+		if s == 49 {
+			last = log.at[i]
+		}
+	}
+	// 60 KB at 1.5 Mbit/s less the burst is 280 ms; the sound sent
+	// meanwhile, 15 packets of 300 bytes, adds 24 ms.
+	if took := last.Sub(time.Unix(0, 0)); took < 290*time.Millisecond || took > 330*time.Millisecond {
+		t.Fatalf("the keyframe's last packet went out after %v", took)
+	}
+}
+
+// TestPacerNumbersPacketsAsTheyLeave: with sound sent ahead of a queued
+// keyframe, the transport-wide sequence numbers on the wire still count up
+// one by one, as the browser's feedback needs them to.
+func TestPacerNumbersPacketsAsTheyLeave(t *testing.T) {
+	const ext = 5
+	now := time.Unix(0, 0)
+	var seqs []uint16
+	w := interceptor.RTPWriterFunc(func(h *rtp.Header, _ []byte, _ interceptor.Attributes) (int, error) {
+		if h.SSRC == 0 {
+			if h.GetExtension(ext) != nil {
+				t.Error("a stream without the extension left with it")
+			}
+			return 0, nil
+		}
+		var tcc rtp.TransportCCExtension
+		if err := tcc.Unmarshal(h.GetExtension(ext)); err != nil {
+			t.Fatalf("packet %d left without its number: %v", h.SequenceNumber, err)
+		}
+		seqs = append(seqs, tcc.TransportSequence)
+		return 0, nil
+	})
+	p := newPacerAt(1_000_000, func() time.Time { return now })
+	for ssrc := range uint32(3) {
+		p.AddStream(ssrc, w)
+	}
+	p.SetTransportCC(1, ext)
+	p.SetTransportCC(2, ext)
+	p.Prioritize(2)
+	transport := uint16(65500) // wraps on the way
+	write := func(ssrc uint32, size int) {
+		h := &rtp.Header{SSRC: ssrc, SequenceNumber: transport}
+		if ssrc != 0 {
+			b, _ := rtp.TransportCCExtension{TransportSequence: transport}.Marshal()
+			h.SetExtension(ext, b)
+			transport++
+		}
+		if _, err := p.Write(h, make([]byte, size), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 60 {
+		write(1, 1200)
+	}
+	for i := range 300 {
+		now = now.Add(pacingTick)
+		if i%10 == 0 {
+			write(2, 300)
+		}
+		if i == 50 {
+			write(0, 100) // a stream without the extension is left alone
+		}
+		p.drain()
+	}
+	if len(seqs) != 90 {
+		t.Fatalf("%d numbered packets left, want 90", len(seqs))
+	}
+	for i := 1; i < len(seqs); i++ {
+		if seqs[i] != seqs[i-1]+1 {
+			t.Fatalf("numbers on the wire skip: ... %d, %d ...", seqs[i-1], seqs[i])
+		}
+	}
+	if seqs[0] != 65500 {
+		t.Fatalf("first number %d", seqs[0])
+	}
+}
+
+func TestTransportSeqsHandOutTheSmallestFirst(t *testing.T) {
+	var s transportSeqs
+	for _, seq := range []uint16{65534, 0, 65535, 2, 1} {
+		s.add(seq)
+	}
+	for _, want := range []uint16{65534, 65535, 0, 1, 2} {
+		if got := s.next(); got != want {
+			t.Fatalf("next %d, want %d", got, want)
+		}
+	}
+}
+
 func TestPacerFollowsTheTarget(t *testing.T) {
 	now := time.Unix(0, 0)
 	p := newPacerAt(1_000_000, func() time.Time { return now })

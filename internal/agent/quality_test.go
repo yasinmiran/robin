@@ -4,9 +4,11 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/yasinmiran/robin/internal/agent/desktop"
 	"github.com/yasinmiran/robin/internal/agent/h264"
+	"github.com/yasinmiran/robin/internal/agent/hwenc"
 	"github.com/yasinmiran/robin/internal/agent/peer"
 	"github.com/yasinmiran/robin/internal/agent/vqtest"
 	"github.com/yasinmiran/robin/internal/agent/yuv"
@@ -145,6 +148,11 @@ type clipRun struct {
 	tune func(*stream)
 	// unpaced sends without the peer's pacer.
 	unpaced bool
+	// sound streams 20 ms Opus-sized packets of 240 bytes, 96 kbit/s,
+	// as a desktop playing sound does.
+	sound bool
+	// feedWhileLimited and soundBehindVideo put back what Pion does.
+	feedWhileLimited, soundBehindVideo bool
 }
 
 func softwareEncoder() NewEncoderFunc {
@@ -210,7 +218,7 @@ func (c clipRun) run(t *testing.T) *vqtest.Run {
 	cands := make(chan protocol.Candidate, 64)
 	p, err := peer.New(peer.Config{
 		Net: net.Agent, MinBitrate: minBitrate, StartBitrate: min(startBitrate, maxBitrate), MaxBitrate: maxBitrate,
-		Unpaced: c.unpaced, Log: log,
+		Unpaced: c.unpaced, Audio: c.sound, FeedWhileLimited: c.feedWhileLimited, SoundBehindVideo: c.soundBehindVideo, Log: log,
 	}, peer.Handlers{
 		Candidate: func(pc protocol.Candidate) { cands <- pc },
 		Keyframe:  s.requestKeyframe,
@@ -235,9 +243,27 @@ func (c clipRun) run(t *testing.T) *vqtest.Run {
 		s.run(ctx)
 		close(done)
 	}()
+	sounding := make(chan struct{})
+	go func() {
+		defer close(sounding)
+		if !c.sound {
+			return
+		}
+		tick := time.NewTicker(20 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-tick.C:
+				p.WriteAudio(vqtest.SoundPayload(240, now), 20*time.Millisecond)
+			}
+		}
+	}()
 	stop := func() {
 		cancel()
 		<-done
+		<-sounding
 	}
 	t.Cleanup(stop)
 	if err := b.WaitShown(20 * time.Second); err != nil {
@@ -359,6 +385,30 @@ var variants = []variant{
 	{"maxqp-40", func(c *clipRun) { c.open = paramsEncoder(func(p *h264.Params) { p.MaxQP = 40 }) }},
 	{"maxqp-36", func(c *clipRun) { c.open = paramsEncoder(func(p *h264.Params) { p.MaxQP = 36 }) }},
 	{"max-20mbps", func(c *clipRun) { c.maxKbps = 20_000 }},
+	{"vaapi", func(c *clipRun) { c.open = hardwareEncoder(hwenc.VAAPI) }},
+}
+
+// hardwareEncoder opens a host tool's encoder, as the agent does for
+// --encoder vaapi or nvenc.
+func hardwareEncoder(kind hwenc.Kind) NewEncoderFunc {
+	o := hwenc.NewOpener(kind, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return func(w, h, fps, bps int) (Encoder, error) {
+		e, err := o.Open(w, h, fps, bps)
+		if err != nil {
+			return nil, err
+		}
+		return e, nil
+	}
+}
+
+// needHardware skips unless this host has a working route for kind.
+func needHardware(t *testing.T, kind hwenc.Kind) {
+	t.Helper()
+	e, err := hardwareEncoder(kind)(64, 64, 30, 1_000_000)
+	if err != nil {
+		t.Skip(err)
+	}
+	e.Close()
 }
 
 // TestVideoQualityMatrix streams a longer clip at each matrix size over
@@ -384,6 +434,9 @@ func TestVideoQualityMatrix(t *testing.T) {
 							if mode != "all" && v.name != "current" {
 								t.Skip("set ROBIN_VQ=all")
 							}
+							if v.name == "vaapi" {
+								needHardware(t, hwenc.VAAPI)
+							}
 							c := clipRun{
 								clip: clip, fps: 30, maxW: size.maxW, maxH: size.maxH, link: link,
 								open: softwareEncoder(), preroll: 3 * time.Second,
@@ -394,6 +447,93 @@ func TestVideoQualityMatrix(t *testing.T) {
 						})
 					}
 				})
+			}
+		})
+	}
+}
+
+// afterStill is a clip that scrolls until congestion control has settled,
+// sits still and scrolls again, with sound throughout: the first motion
+// after a still screen, which goes out at whatever target the spell left.
+type afterStill struct {
+	link  vqtest.Link
+	still float64 // seconds
+	edit  func(*clipRun)
+}
+
+// afterStillScroll and afterStillSettled are how long the first scroll
+// runs and how much of its end counts as the steady state.
+const (
+	afterStillScroll  = 8.0
+	afterStillSettled = 4.0
+)
+
+// run returns the run, the settled end of the first scroll and the first
+// second of the second.
+func (a afterStill) run(t *testing.T) (r *vqtest.Run, steady, first vqtest.Span) {
+	t.Helper()
+	clip := mustClip(t, vqtest.Captured, 1920, 1080,
+		seconds(vqtest.Scroll, afterStillScroll), seconds(vqtest.Still, a.still), seconds(vqtest.Scroll, 4))
+	c := clipRun{clip: clip, fps: 30, link: a.link, open: softwareEncoder(), preroll: 3 * time.Second, sound: true}
+	if a.edit != nil {
+		a.edit(&c)
+	}
+	r = c.run(t)
+	second := int((afterStillScroll + a.still) * 30)
+	steady = r.Window("steady", int((afterStillScroll-afterStillSettled)*30), int(afterStillScroll*30))
+	first = r.Window("first", second, second+30)
+	var targets strings.Builder
+	for i, f := range r.Sent {
+		if i == 0 || f.Target != r.Sent[i-1].Target {
+			fmt.Fprintf(&targets, " %.1fs:%d", float64(f.Index)/30, f.Target/1000)
+		}
+	}
+	t.Logf("%v, %g s still:\n%s%s\ntarget in kbit/s by clip time:%s",
+		a.link, a.still, vqtest.Table(append(r.Spans(), steady, first)), r.Summary(), targets.String())
+	return r, steady, first
+}
+
+// TestVideoQualityAfterStill streams the after-still clip over the
+// matrix's tight link, where a target that rose over the still spell
+// overflows the link's buffer: with feed-while-limited, the first second
+// of the second scroll shows 0 to 3 pictures. That second must show at
+// least a third as many as the settled scroll, encoded against at least
+// half its target, which a target that fell over the spell would not be.
+// The bounds leave room for what is not the link's: after some spells
+// openh264's rate control skips every other frame for a second, at QP 35
+// where the settled scroll had QP 18, and GCC's target saws by 15% at a
+// time on a link it fills, so the spell can begin at a low of the saw.
+func TestVideoQualityAfterStill(t *testing.T) {
+	if testing.Short() {
+		t.Skip("streams for about 40 s")
+	}
+	needVideoHarness(t)
+	_, steady, first := afterStill{link: matrixLinks[2], still: 20}.run(t)
+	if first.FPS < steady.FPS/3 {
+		t.Errorf("first second after the still: %.1f fps, settled %.1f", first.FPS, steady.FPS)
+	}
+	if first.KbpsTarget < steady.KbpsTarget/2 {
+		t.Errorf("first second after the still encoded at %.0f kbit/s, settled at %.0f", first.KbpsTarget, steady.KbpsTarget)
+	}
+}
+
+// TestVideoQualityAfterStillMatrix streams the after-still clip with a
+// minute still over each matrix link three ways: as the agent does, with
+// GCC fed while limited, and with sound queued behind video. Like the
+// matrix, it is a measuring aid for ROBIN_VQ.
+func TestVideoQualityAfterStillMatrix(t *testing.T) {
+	if os.Getenv("ROBIN_VQ") == "" {
+		t.Skip("set ROBIN_VQ=1")
+	}
+	needVideoHarness(t)
+	for _, link := range matrixLinks {
+		t.Run(link.Name, func(t *testing.T) {
+			for _, v := range []variant{
+				{"current", func(*clipRun) {}},
+				{"feed-while-limited", func(c *clipRun) { c.feedWhileLimited = true }},
+				{"sound-behind-video", func(c *clipRun) { c.soundBehindVideo = true }},
+			} {
+				t.Run(v.name, func(t *testing.T) { afterStill{link: link, still: 60, edit: v.edit}.run(t) })
 			}
 		})
 	}
