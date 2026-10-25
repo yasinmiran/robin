@@ -286,34 +286,29 @@ func TestProbeOverADeadConnection(t *testing.T) {
 	}
 }
 
-// A host of an architecture this CLI carries no agent for is refused; one
-// it does gets the agent, by its content's name, in the directory the
-// probe chose.
+// The agent lands by its content's name in the directory the probe chose,
+// and a deploy into a file fails as the deploy's.
 func TestDeployAgent(t *testing.T) {
 	h, _, _ := sshHost(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	h.report = &probe.Report{Arch: "sparc64", AgentDir: t.TempDir()}
-	if _, _, err := h.deployAgent(ctx); err == nil {
-		t.Fatal("deployed an agent for sparc64")
-	}
 	a, err := agentbin.For(runtime.GOARCH)
 	if err != nil {
 		t.Skipf("no agent for %s in this build (make builds them): %v", runtime.GOARCH, err)
 	}
 	h.report = &probe.Report{Arch: runtime.GOARCH, AgentDir: t.TempDir(), SHA256Tool: "sha256sum"}
-	got, path, err := h.deployAgent(ctx)
+	path, err := h.deployAgent(ctx, a)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Name() != a.Name() || path != filepath.Join(h.report.AgentDir, a.Name()) {
-		t.Fatalf("deployed %s to %s", got.Name(), path)
+	if path != filepath.Join(h.report.AgentDir, a.Name()) {
+		t.Fatalf("deployed %s to %s", a.Name(), path)
 	}
 	if fi, err := os.Stat(path); err != nil || fi.Size() != a.Size || fi.Mode().Perm()&0o100 == 0 {
 		t.Fatalf("the agent on the host: %v, %v", fi, err)
 	}
 	h.report.AgentDir = filepath.Join(path, "not-a-dir")
-	if _, _, err := h.deployAgent(ctx); err == nil || !strings.Contains(err.Error(), "deploy agent") {
+	if _, err := h.deployAgent(ctx, a); err == nil || !strings.Contains(err.Error(), "deploy agent") {
 		t.Fatalf("deploy into a file: %v", err)
 	}
 }
