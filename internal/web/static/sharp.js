@@ -15,7 +15,9 @@ import { actualBox, edgePan } from './actualsize.js';
 
 const KIND = 'tile';
 // MAX_OPEN bounds the tile transfers open at once. The agent keeps two
-// under way; more than a few means something else is sending them.
+// under way; more than a few means something else is sending them. A
+// transfer's place lasts until its verdict, which waits for the atlas to
+// decode, so this bounds the decodes under way as well as the bytes held.
 const MAX_OPEN = 4;
 // TRACE_FRAMES bounds what a trace keeps, about a minute of video.
 const TRACE_FRAMES = 4096;
@@ -42,7 +44,6 @@ export class SharpText {
   #open = false; // the control channel
   #answer = null; // the agent's protocol.Tiles to the latest request
   #clock = null; // whether the browser reports frames' RTP timestamps
-  #transfers = 0; // open, or committed and still being decoded
   #warned = false;
   #epoch = 0; // counts resets, so a batch decoded across one is dropped
   #bytes = 0;
@@ -77,7 +78,7 @@ export class SharpText {
       this.#answer = answer;
       this.#render();
     });
-    onBulk(KIND, (h) => this.#accept(h));
+    onBulk(KIND, (h) => this.#accept(h), { inbound: MAX_OPEN });
 
     input.onPinch = (g) => this.#pinch(g);
     window.addEventListener('resize', () => this.#layout());
@@ -182,41 +183,24 @@ export class SharpText {
     if (this.#actual) this.#layout();
   }
 
-  // accept takes a tile transfer. It stays counted until its atlas is
-  // decoded, so MAX_OPEN bounds the decodes under way as well as the bytes
-  // held.
+  // accept takes a tile transfer.
   #accept(h) {
     if (!this.#asked) throw new Error('sharp text is off');
-    if (this.#transfers >= MAX_OPEN) throw new Error(`more than ${MAX_OPEN} tile transfers at once`);
-    this.#transfers++;
     const parts = [];
-    let counted = true;
-    let committing = false;
-    const end = () => {
-      if (counted) this.#transfers--;
-      counted = false;
-    };
     return {
       write: (chunk) => { parts.push(chunk); },
       commit: async () => {
-        committing = true;
-        try {
-          const bytes = new Uint8Array(h.size ?? 0);
-          let at = 0;
-          for (const p of parts) {
-            bytes.set(p, at);
-            at += p.length;
-          }
-          this.#bytes += bytes.length;
-          this.#batches++;
-          await this.#take(parseTileBatch(bytes));
-        } finally {
-          end();
+        const bytes = new Uint8Array(h.size ?? 0);
+        let at = 0;
+        for (const p of parts) {
+          bytes.set(p, at);
+          at += p.length;
         }
+        this.#bytes += bytes.length;
+        this.#batches++;
+        await this.#take(parseTileBatch(bytes));
       },
-      abort: () => {
-        if (!committing) end();
-      },
+      abort: () => {},
     };
   }
 

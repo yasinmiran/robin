@@ -153,7 +153,7 @@ test('a transfer stays counted until its atlas is decoded', async () => {
   await until('four decodes started', () => decodes.length === 4);
   const fifth = transfer(oneTile(5));
   await until('the fifth refused', () => fifth.length === 1);
-  assert.deepEqual(fifth, [{ t: 'error', error: 'more than 4 tile transfers at once' }]);
+  assert.deepEqual(fifth, [{ t: 'error', error: 'too many tile transfers under way: the page takes 4 at once' }]);
   assert.equal(decodes.length, 4, 'the fifth was never decoded');
   for (const settle of decodes.splice(0)) settle(bitmap(64, 64));
   await until('the four ended', () => open.every((v) => v.length === 1));

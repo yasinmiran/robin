@@ -988,7 +988,9 @@ a newer one without waiting, and the page hears that close only after the
 stream reset, about a round trip, so three rich copies inside one round
 trip used to leave the newest refused and the browser holding an older
 item, which is what a paste then gave. Files take any number, because
-each download already needs a click on Save of its own. The
+each download already needs a click on Save of its own. Tiles take four,
+and a tile transfer's verdict waits for its atlas to decode, so the four
+bound the decodes under way too. The
 clipboard's sink used to reserve the size a header declared, up to 16 MiB,
 before a byte came. It now gathers chunks as they arrive and joins them at
 the commit, which the hash and the size check have already passed. In
