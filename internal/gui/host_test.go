@@ -192,8 +192,8 @@ func TestTunnelCarriesTheBrowsersTCPToTheHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := roundTrip(t, tun.Port()); got != "ice" || err != nil {
-		t.Fatalf("through the tunnel: %q, %v", got, err)
+	if echoed, err := roundTrip(t, tun); !echoed || err != nil {
+		t.Fatalf("through the tunnel: echoed %v, %v", echoed, err)
 	}
 
 	direct, err := openTunnel(ctx, h.m, remote, relay.Direct, h.log)
@@ -204,8 +204,8 @@ func TestTunnelCarriesTheBrowsersTCPToTheHost(t *testing.T) {
 	// The master gone, the forward's socket goes with it: the tunnel
 	// still accepts, and hangs up.
 	h.m.Close()
-	if got, err := roundTrip(t, tun.Port()); got != "" || !hungUp(err) {
-		t.Fatalf("through a tunnel whose forward is gone: %q, %v, want a hang-up", got, err)
+	if echoed, err := roundTrip(t, tun); echoed || !hungUp(err) {
+		t.Fatalf("through a tunnel whose forward is gone: echoed %v, %v, want a hang-up", echoed, err)
 	}
 	if _, err := openTunnel(ctx, h.m, remote, relay.Tunnel, h.log); err == nil || !strings.Contains(err.Error(), "forward ICE-TCP over SSH") {
 		t.Fatalf("a tunnel-only session without its forward: %v", err)
@@ -215,8 +215,8 @@ func TestTunnelCarriesTheBrowsersTCPToTheHost(t *testing.T) {
 		t.Fatalf("an auto session without its forward: %v", err)
 	}
 	defer auto.Close()
-	if got, err := roundTrip(t, auto.Port()); got != "" || !hungUp(err) {
-		t.Fatalf("through a tunnel that never had a forward: %q, %v, want a hang-up", got, err)
+	if echoed, err := roundTrip(t, auto); echoed || !hungUp(err) {
+		t.Fatalf("through a tunnel that never had a forward: echoed %v, %v, want a hang-up", echoed, err)
 	}
 
 	port := tun.Port()
@@ -227,21 +227,28 @@ func TestTunnelCarriesTheBrowsersTCPToTheHost(t *testing.T) {
 	}
 }
 
-// roundTrip sends "ice" through the tunnel at port and returns what came
-// back, with the error that ended the read: none once all of it came, EOF
-// or a reset when the tunnel hung up, a timeout when it held on.
-func roundTrip(t *testing.T, port int) (string, error) {
+// tunnelUfrag and tunnelPwd stand in for the ICE credentials of the
+// agent's answer.
+const tunnelUfrag, tunnelPwd = "agentufrag", "agentpasswordagentpasswo"
+
+// roundTrip tells tun the agent's answer, sends a check signed with it
+// through tun, and reports whether it came back whole, with the error that
+// ended the read: none once all of it came, EOF or a reset when the tunnel
+// hung up, a timeout when it held on.
+func roundTrip(t *testing.T, tun *tunnel) (bool, error) {
 	t.Helper()
-	c, err := net.Dial("tcp4", fmt.Sprintf("127.0.0.1:%d", port))
+	tun.answered(iceAnswer(tunnelUfrag, tunnelPwd))
+	check := framedCheck(t, tunnelUfrag+":brws", tunnelPwd)
+	c, err := net.Dial("tcp4", fmt.Sprintf("127.0.0.1:%d", tun.Port()))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c.Close()
 	c.SetDeadline(time.Now().Add(10 * time.Second))
-	c.Write([]byte("ice"))
-	b := make([]byte, 3)
+	c.Write(check)
+	b := make([]byte, len(check))
 	n, err := io.ReadFull(c, b)
-	return string(b[:n]), err
+	return bytes.Equal(b[:n], check), err
 }
 
 // hungUp reports whether a read's err says the other end closed the
