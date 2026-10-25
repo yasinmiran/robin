@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -22,6 +23,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/yasinmiran/robin/internal/agent"
+	"github.com/yasinmiran/robin/internal/agent/agenttest"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
@@ -189,6 +191,37 @@ func TestListenRefusesAnOpenDirectory(t *testing.T) {
 	}
 }
 
+// A directory in the socket's place, which removing a stale socket cannot
+// clear, fails Listen.
+func TestListenWhereTheSocketCannotBe(t *testing.T) {
+	dir := privateDir(t)
+	os.MkdirAll(filepath.Join(dir, SocketFile, "x"), 0o700)
+	if _, err := Listen(dir, "a", nil); err == nil || !strings.Contains(err.Error(), "daemon: listen") {
+		t.Fatalf("Listen over a directory: %v", err)
+	}
+}
+
+// A daemon given no logger logs its refusals to slog's default.
+func TestListenLogsToTheDefaultLogger(t *testing.T) {
+	var logged agenttest.LockedBuffer
+	defer slog.SetDefault(slog.Default())
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	dir := privateDir(t)
+	ln, err := Listen(dir, "a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	// Nobody calls Next, so the controller is turned away as busy.
+	cli, _ := dialConn(t, dir)
+	ctx, cancel := context.WithTimeout(context.Background(), handoffWait+5*time.Second)
+	defer cancel()
+	cli.Recv(ctx)
+	if !strings.Contains(logged.String(), "controller refused") {
+		t.Fatalf("the default log:\n%s", logged.String())
+	}
+}
+
 func TestChangedWithoutItsDirectoryOnlyWarns(t *testing.T) {
 	dir := privateDir(t)
 	var logged bytes.Buffer
@@ -208,8 +241,71 @@ func TestCheckPeerWantsAUnixConnection(t *testing.T) {
 	c, peer := net.Pipe()
 	defer c.Close()
 	defer peer.Close()
-	if err := checkPeer(c); err == nil || !strings.Contains(err.Error(), "not a unix connection") {
+	if err := checkPeer(c, os.Getuid()); err == nil || !strings.Contains(err.Error(), "not a unix connection") {
 		t.Fatalf("checkPeer on a pipe: %v", err)
+	}
+}
+
+// A controller that dialed and hung up before the check still passes it:
+// the kernel keeps a peer's credentials from when it connected. Only a
+// connection already closed on our side has none to read.
+func TestCheckPeerOfAControllerThatHungUp(t *testing.T) {
+	dir := privateDir(t)
+	ln, err := net.Listen("unix", filepath.Join(dir, SocketFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	cli, err := net.Dial("unix", filepath.Join(dir, SocketFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli.Close()
+	c, err := ln.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkPeer(c, os.Getuid()); err != nil {
+		t.Fatalf("checkPeer of a controller that hung up: %v", err)
+	}
+	c.Close()
+	if err := checkPeer(c, os.Getuid()); err == nil {
+		t.Fatal("checkPeer of a connection closed on our side passed")
+	}
+}
+
+// A controller of another uid is turned away before a byte of what it
+// sent is read: a unix socket closed with data still unread resets its
+// peer's connection, where one closed after a read reads as EOF there.
+func TestAdmitRefusesAnotherUIDBeforeReading(t *testing.T) {
+	dir := privateDir(t)
+	ln, err := net.Listen("unix", filepath.Join(dir, SocketFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	cli, err := net.Dial("unix", filepath.Join(dir, SocketFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cli.Close()
+	if _, err := cli.Write(hostile(t)); err != nil {
+		t.Fatal(err)
+	}
+	c, err := ln.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logged agenttest.LockedBuffer
+	other := os.Getuid() + 1
+	l := &Listener{uid: other, log: slog.New(slog.NewTextHandler(&logged, nil))}
+	l.admit(c)
+	cli.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if n, err := cli.Read(make([]byte, 1)); !errors.Is(err, syscall.ECONNRESET) {
+		t.Fatalf("the refused controller read %d bytes: %v, want a reset", n, err)
+	}
+	if want := fmt.Sprintf("connection from uid %d, not %d", os.Getuid(), other); !strings.Contains(logged.String(), want) {
+		t.Fatalf("the log, want %q:\n%s", want, logged.String())
 	}
 }
 
@@ -360,15 +456,9 @@ func TestEndRemovesAStaleDirectoryWithoutSignaling(t *testing.T) {
 	if err := End(ctx, root, "s1"); !errors.As(err, &noSession) || !strings.Contains(err.Error(), "no session s1") {
 		t.Fatalf("End of nothing: %v", err)
 	}
-	// A socket nobody listens on is what a killed daemon leaves.
 	stale := filepath.Join(root, "s2")
 	os.Mkdir(stale, 0o700)
-	ln, err := net.Listen("unix", filepath.Join(stale, SocketFile))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ln.(*net.UnixListener).SetUnlinkOnClose(false)
-	ln.Close()
+	abandonSocket(t, stale)
 	os.WriteFile(filepath.Join(stale, "x"), nil, 0o600)
 	if err := End(ctx, root, "s2"); err != nil {
 		t.Fatalf("End of a dir with a dead socket: %v", err)
@@ -539,4 +629,16 @@ func TestNewIDNeverReadsAsAPid(t *testing.T) {
 			t.Fatalf("id %q", id)
 		}
 	}
+}
+
+// abandonSocket leaves in dir the socket a killed daemon leaves: bound,
+// with nobody listening.
+func abandonSocket(t *testing.T, dir string) {
+	t.Helper()
+	ln, err := net.Listen("unix", filepath.Join(dir, SocketFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	ln.Close()
 }

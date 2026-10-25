@@ -1,8 +1,12 @@
 #!/bin/sh
 # Runs the X-dependent tests of internal/agent, internal/agent/display and
-# internal/agent/x11, the sound server tests of internal/agent/audio, and
-# the session daemon's lifetime tests of cmd/robin-agent, inside a container
-# with Xvfb and pulseaudio. Extra arguments go to every test binary:
+# internal/agent/x11, the sound server tests of internal/agent/audio, the
+# session daemon's lifetime tests of cmd/robin-agent, and the tests of
+# internal/agent/daemon and internal/agent/files that need a second account
+# on the host, inside a container with Xvfb, pulseaudio and that account.
+# The tests run as the container's root, with ROBIN_XTEST set, so a test
+# that needs the second account fails here rather than skip. Extra
+# arguments go to every test binary:
 #
 #   internal/agent/x11/testdata/xtest.sh
 #   internal/agent/x11/testdata/xtest.sh -test.run=Clipboard
@@ -29,7 +33,7 @@ trap 'rm -rf "$out"; podman rm -f "robin-xtest-$$" >/dev/null 2>&1 || true' EXIT
 # Run by ID: another checkout may retag the image between build and run.
 id=$(podman build -q -t "$image" -f "$here/Containerfile" "$here")
 cd "$root"
-for pkg in display x11 .; do
+for pkg in display x11 . daemon files; do
 	go test ${XTEST_GOFLAGS--race} $coverflags -c -o "$out/$(basename "$(cd "internal/agent/$pkg" && pwd)").test" "./internal/agent/$pkg"
 done
 # The audio tests encode with libopus, so they link statically with the
@@ -46,10 +50,10 @@ CGO_ENABLED=1 CC="$zig cc -target $target" CXX="$zig c++ -target $target" \
 	CGO_CFLAGS="-I$h264/include -I$prefix/include" CGO_LDFLAGS="-L$h264/lib -L$prefix/lib" \
 	go test -tags openh264,opus,netgo,osusergo $coverflags -c \
 	-ldflags "-linkmode external -extldflags -static" -o "$out/robin-agent.test" ./cmd/robin-agent
-podman run --rm --init --name "robin-xtest-$$" -v "$out:/t:ro" ${cover:+-v "$cover:/cover"} -e "XTEST_COVER=${cover:+/cover}" "$id" sh -c '
+podman run --rm --init --name "robin-xtest-$$" -v "$out:/t:ro" ${cover:+-v "$cover:/cover"} -e "XTEST_COVER=${cover:+/cover}" -e ROBIN_XTEST=1 "$id" sh -c '
 	cd /tmp
 	status=0
-	for t in /t/display.test /t/x11.test /t/agent.test /t/audio.test /t/robin-agent.test; do
+	for t in /t/display.test /t/x11.test /t/agent.test /t/audio.test /t/robin-agent.test /t/daemon.test /t/files.test; do
 		echo "== $t"
 		profile=
 		[ -z "$XTEST_COVER" ] || profile=-test.coverprofile=$XTEST_COVER/$(basename "$t" .test).out

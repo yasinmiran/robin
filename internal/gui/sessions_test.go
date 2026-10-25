@@ -18,11 +18,12 @@ import (
 	"github.com/yasinmiran/robin/internal/sshmux/sshtest"
 )
 
-// localhost is this machine over sshtest's throwaway sshd: the probe runs
-// here for real, reads only, and finds no kept session of this test's.
-func localhost(t *testing.T) (Options, *bytes.Buffer, *bytes.Buffer) {
+// localhost is this machine over sshtest's throwaway sshd, with env set
+// in its sessions: the probe runs here for real, reads only, and finds no
+// kept session of this test's.
+func localhost(t *testing.T, env ...string) (Options, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
-	s := sshtest.Start(t)
+	s := sshtest.Start(t, env...)
 	var stdout, stderr bytes.Buffer
 	return Options{
 		Dest: s.Dest, SSHArgs: s.Args, Stdout: &stdout, Stderr: &stderr,

@@ -9,13 +9,14 @@ resize and teardown all worked over a real network. The `wayland` scenario
 swaps the host for a headless GNOME Wayland session, reached the same way,
 the `firefox` and `webkit` scenarios swap Chrome for Playwright's own
 Firefox and WebKit, `nomux` runs the CLI without a ControlMaster as on
-Windows, and `touch` makes Chrome a touch screen.
+Windows, `touch` makes Chrome a touch screen, and `systemd` boots systemd
+in the host so a kept session has to live as a unit of the user's manager.
 
 ## Running
 
 ```sh
 # build bin/robin-linux-amd64 first (the repo Makefile does)
-e2e/run.sh                # direct, blocked, restart, resume, rejoin, attach, wayland, webkit, firefox, nomux, touch
+e2e/run.sh                # direct, blocked, restart, resume, rejoin, attach, wayland, webkit, firefox, nomux, touch, systemd
 e2e/run.sh direct         # one scenario
 e2e/run.sh selftest       # the harness itself, no CLI needed
 ROBIN_BIN=/path/to/robin e2e/run.sh restart
@@ -67,6 +68,7 @@ cannot leak into the next one. The tests run in order against one session.
 | `webkit` | open | the direct scenario in Playwright's WebKit (Safari's WebRTC stack): H.264 negotiates and decodes, keyboard, clipboard, resize, sound, UDP and teardown work; see below for what it cannot show |
 | `nomux` | UDP dropped (except loopback) before the CLI starts | the `blocked` checks with `--ssh-mux=false`, the way the CLI runs on Windows: no ControlMaster runs on the client, the agent and the tunnel's `ssh -N -L <private dir>/fwd1.sock:...` are ssh processes of their own, and ICE-TCP through that forward carries the session, and Ctrl+C reaches the CLI alone: its stderr announces no reconnect and no `ending the kept session`, the end command a fresh login would carry |
 | `touch` | open | Chrome as a touch screen (`isMobile`, `hasTouch`), fingers sent through the DevTools protocol; see below |
+| `systemd` | open, systemd host image | systemd is PID 1, logind kills what a login started when it ends (`KillUserProcesses=yes`) and `robin` lingers, so the probe has the CLI start the kept session's daemon with `systemd-run --user`; see below |
 
 The X11 scenarios of `tests/gui.spec.ts` also check, in this order:
 
@@ -215,6 +217,24 @@ a 1024x640 touch screen. In order:
    the button lets go.
 6. **Teardown**: as in the X11 scenarios.
 
+The `systemd` scenario runs `tests/systemd.spec.ts` against the systemd host
+image. In order:
+
+1. **logind**: a `setsid sleep` started over ssh is gone once that login
+   ends, so a daemon that only left the process session would die too.
+2. **Unit**: the CLI's session comes up with a picture and no warning about
+   lingering; `systemctl --user` shows `robin-<id>.service` active with the
+   daemon as its main process, the daemon's cgroup is that unit under
+   `user@1000.service`, and the proxy and its sshd are in the login's
+   `session-*.scope`.
+3. **Kept**: the CLI is SIGKILLed; the proxy and its sshd go, while the
+   daemon, its unit and Xvfb stay, and `session.json` says kept.
+4. **Resume**: `robin ls` lists it as kept, and a new `robin gui` resumes
+   the same daemon in the same unit, with a picture.
+5. **End**: `robin end robinhost <id>` ends it while that CLI is connected;
+   the CLI exits 0, the page says the session ended, the unit is inactive,
+   the run directory is gone and nothing of the session runs.
+
 The `wayland` scenario runs `tests/wayland.spec.ts` instead, since its host
 has no X server for xdotool to ask. The probe window logs the input it gets
 in monitor pixels, and each key press or `robin-wayland redraw` moves its
@@ -321,6 +341,10 @@ Open a trace with `npx playwright show-trace <zip>` from `e2e/` (after
   the probe window, answers the dialog, reads what the probe logged, redraws
   it, and lists agent, `gst-launch-1.0`, portal and mutter sessions still
   alive.
+- `sdhost.Containerfile`, `sdhost/`: the systemd host image, layered on the
+  X11 host image: systemd as init, sshd with `UsePAM yes` so each login is
+  a logind session, `KillUserProcesses=yes`, and `robin` lingering. `run.sh`
+  starts it with `--systemd=always` instead of `--init`.
 - `client.Containerfile`: Playwright plus Chrome stable and OpenSSH. The
   `PW_VERSION` build arg must match `@playwright/test` in `package.json`; the
   build fails if they drift.
@@ -329,8 +353,8 @@ Open a trace with `npx playwright show-trace <zip>` from `e2e/` (after
   pre-filled known_hosts), the CLI at `/usr/local/bin/robin`, and runs as
   root so the root-owned key mounts stay readable.
 - `tests/gui.spec.ts`: the X11 scenarios. `tests/touch.spec.ts`: the touch
-  screen. `tests/wayland.spec.ts`: the Wayland one. `tests/selftest.spec.ts`:
-  the harness.
+  screen. `tests/wayland.spec.ts`: the Wayland one. `tests/systemd.spec.ts`:
+  the systemd one. `tests/selftest.spec.ts`: the harness.
 - `tests/helpers/`: the CLI runner, the frame sampler, page-to-display
   coordinate mapping, page coverage, and host checks. Host checks use their own ssh
   connections (`ControlPath=none`), never the CLI's master.
@@ -345,3 +369,10 @@ key mounts are owned by root inside the container, and sshd reads
 under `/etc/ssh/authorized_keys.d/` instead of into `~robin/.ssh`. iptables works
 with `--cap-add NET_ADMIN`. CNI networks here have no DNS between containers,
 so the host gets a static IP (`ROBIN_E2E_SUBNET`, `ROBIN_E2E_HOST_IP` override it). `ROBIN_E2E_ID` (default `robin-e2e`) names the network, containers and images, so two checkouts can run at once with distinct subnets.
+
+The systemd host runs PAM after all, and logind works, but a rootless
+container cannot give a login an audit session of its own, so logind names
+every login after the one podman itself runs in (`session-8083.scope`, say),
+and a login that starts after another ended gets the same scope back.
+`tests/systemd.spec.ts` therefore follows the CLI's login by its processes,
+not by its scope's name.

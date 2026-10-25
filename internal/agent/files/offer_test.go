@@ -13,14 +13,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
-	"unicode"
 
 	"golang.org/x/sys/unix"
 
+	"github.com/yasinmiran/robin/internal/agent/agenttest"
 	"github.com/yasinmiran/robin/internal/protocol"
-	"github.com/yasinmiran/robin/internal/runes"
 )
 
 // serve listens in a fresh directory and hands each request to the
@@ -217,19 +217,6 @@ func TestSendRefusesWhatItCannotOffer(t *testing.T) {
 	}
 }
 
-// terminalSafe fails t when s holds anything that would act on a terminal
-// rather than show: control characters other than newlines, and what
-// runes.ReordersText reports.
-func terminalSafe(t *testing.T, what, s string) {
-	t.Helper()
-	for _, r := range s {
-		if r != '\n' && (unicode.IsControl(r) || runes.ReordersText(r)) {
-			t.Errorf("%s holds %U: %q", what, r, s)
-			return
-		}
-	}
-}
-
 // A name that holds escapes is refused by the session, and robin-send
 // says so without sending the escapes to the terminal it runs in.
 func TestSendPrintsNamesSafely(t *testing.T) {
@@ -242,7 +229,7 @@ func TestSendPrintsNamesSafely(t *testing.T) {
 	if !errors.Is(got.err, ErrNotSaved) {
 		t.Errorf("Send = %v, want ErrNotSaved", got.err)
 	}
-	terminalSafe(t, "the report", got.out)
+	agenttest.TerminalSafe(t, "the report", got.out)
 	if !strings.Contains(got.out, `a\x1b]0;owned\ab\u202e.txt`) {
 		t.Errorf("the report %q does not show the name escaped", got.out)
 	}
@@ -254,7 +241,7 @@ func TestSendPrintsNamesSafely(t *testing.T) {
 		if err == nil {
 			t.Fatalf("Send of %s succeeded", what)
 		}
-		terminalSafe(t, "the error for "+what, err.Error())
+		agenttest.TerminalSafe(t, "the error for "+what, err.Error())
 	}
 }
 
@@ -377,6 +364,45 @@ func TestListenerRefusesOtherUsers(t *testing.T) {
 	case <-reqs:
 		t.Error("an offer from another user reached the handler")
 	default:
+	}
+}
+
+// An offer from another user is refused before a byte of it is read: a
+// unix socket closed with a message still unread resets its peer's
+// connection, where one closed after the read reads as EOF there.
+func TestListenerRefusesOtherUsersBeforeReading(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), SocketName)
+	l, err := Listen(sock, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	l.uid = os.Getuid() + 1
+	cli, err := net.DialUnix("unixpacket", nil, &net.UnixAddr{Name: sock, Net: "unixpacket"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cli.Close()
+	f, err := os.Open(writeFile(t, "a", "1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	payload, _ := json.Marshal(request{Names: []string{"a"}})
+	if _, _, err := cli.WriteMsgUnix(payload, unix.UnixRights(int(f.Fd())), nil); err != nil {
+		t.Fatal(err)
+	}
+	c, err := l.ln.AcceptUnix()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, err := l.read(c); !errors.Is(err, errStranger) {
+		t.Fatalf("read of a stranger's offer: %+v, %v", r, err)
+	}
+	c.Close()
+	cli.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if n, err := cli.Read(make([]byte, 4096)); !errors.Is(err, syscall.ECONNRESET) {
+		t.Fatalf("the refused offer read %d bytes: %v, want a reset", n, err)
 	}
 }
 

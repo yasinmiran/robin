@@ -31,6 +31,9 @@ func TestCommandIsDaemon(t *testing.T) {
 	if FindDaemon("no-such-session-anywhere") != 0 {
 		t.Error("FindDaemon found a daemon where there is none")
 	}
+	if !ours(os.Getpid()) || ours(1<<30) {
+		t.Error("ours mistook whose process is whose")
+	}
 }
 
 // fakeDaemon runs a process whose command line is that of the daemon of
