@@ -187,7 +187,7 @@ func TestOfferFetchedOverAPeer(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	s.declineOffer(protocol.Control{T: protocol.ControlFileDecline, File: &protocol.File{ID: offered.ID}})
-	if r := waitSent(t, res); !errors.Is(r.err, files.ErrNotSaved) || !strings.Contains(r.out, "transfer failed, still on offer") {
+	if r := waitSent(t, res); !errors.Is(r.err, files.ErrNotSaved) || !strings.Contains(r.out, "notes.txt: transfer failed, still on offer: the browser refused it: no room\n") {
 		t.Errorf("after a refused transfer: %v, %q", r.err, r.out)
 	}
 }

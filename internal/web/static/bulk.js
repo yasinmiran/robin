@@ -6,7 +6,10 @@ import { BULK_CHANNEL, BULK_WINDOW, CHUNK_SIZE, Grant, Sum, checkHeader, parseFr
 
 const MAX_REASON = 1024;
 
-const receivers = new Map();
+const receivers = new Map(); // kind -> { accept, inbound, supersede }
+// underWay holds, by kind, the transfers from the agent that hold a place
+// under the kind's inbound limit, oldest first.
+const underWay = new Map();
 
 // BulkRefused is the far side turning a transfer down; reason is in its
 // own words.
@@ -18,17 +21,24 @@ export class BulkRefused extends Error {
   }
 }
 
-// onBulk registers accept for transfers of kind from the agent. accept is
-// called with the header and returns a sink, or throws to refuse; its
+// onBulk registers accept for transfers of kind from the agent, of which
+// the agent may have inbound open to the page at once: a positive integer,
+// or Infinity for a kind something else bounds. A header past that is
+// refused before accept sees it or, when supersede is set, ends the
+// oldest transfer of the kind still under way to take its place. accept
+// is called with the header and returns a sink, or throws to refuse; its
 // message reaches the agent. A sink has write(chunk), commit() and
 // abort(err), each of which may return a promise: writes come in order,
 // then commit once every byte arrived intact, its throw refusing the
 // transfer after all, or abort with the reason it failed. The agent sends
 // no more than the credit the page grants as its sink takes chunks, so a
 // slow sink holds at most a window of a transfer in memory.
-export function onBulk(kind, accept) {
+export function onBulk(kind, accept, { inbound, supersede = false } = {}) {
   if (receivers.has(kind)) throw new Error(`bulk: kind ${JSON.stringify(kind)} taken twice`);
-  receivers.set(kind, accept);
+  if (!(Number.isSafeInteger(inbound) && inbound > 0) && inbound !== Infinity) {
+    throw new Error(`bulk: kind ${JSON.stringify(kind)} needs how many may be inbound at once, not ${inbound}`);
+  }
+  receivers.set(kind, { accept, inbound, supersede });
 }
 
 // sendBulk sends blob, a Blob or File, as one transfer described by header
@@ -151,6 +161,7 @@ export class Inbound {
   #queue = Promise.resolve();
   #over = false; // a verdict went out or the channel closed
   #ended = false; // the sink was committed or aborted
+  #held = null; // the places of the kind, while this transfer holds one
 
   constructor(channel, lookup) {
     this.#channel = channel;
@@ -180,6 +191,7 @@ export class Inbound {
     return this.#then(async () => {
       if (this.#over) return;
       this.#over = true;
+      this.#release();
       await this.#abort(new Error('bulk transfer cancelled'));
     });
   }
@@ -223,9 +235,16 @@ export class Inbound {
     if (typeof data !== 'string') throw new Error('malformed bulk frame: data before the header');
     const h = parseFrame(data);
     checkHeader(h);
-    const accept = this.#lookup(h.kind);
-    if (!accept) throw new Error(`unknown bulk kind ${JSON.stringify(h.kind)}: this page takes none`);
-    this.#sink = await accept(h);
+    const receiver = this.#lookup(h.kind);
+    if (!receiver) throw new Error(`unknown bulk kind ${JSON.stringify(h.kind)}: this page takes none`);
+    const pushedOut = this.#hold(h.kind, receiver);
+    if (pushedOut) {
+      // The transfer it ended hears first, so at most inbound sinks of the
+      // kind are open at once.
+      await pushedOut;
+      if (this.#over) return; // pushed out in turn meanwhile
+    }
+    this.#sink = await receiver.accept(h);
     this.#sum = new Sum(h.size ?? 0);
   }
 
@@ -235,6 +254,7 @@ export class Inbound {
     await this.#abort(err);
   }
 
+  // abort hands the sink err, unless it has none yet or already ended.
   async #abort(err) {
     if (this.#sink === null || this.#ended) return;
     this.#ended = true;
@@ -245,11 +265,43 @@ export class Inbound {
     }
   }
 
+  // hold takes one of the kind's places before accept runs, so two headers
+  // cannot both take the last one while it does. A kind that supersedes
+  // takes the oldest's place when none is free, and hold returns a promise
+  // that settles once that transfer's sink has heard.
+  #hold(kind, { inbound, supersede }) {
+    let held = underWay.get(kind);
+    if (!held) underWay.set(kind, (held = new Set()));
+    let pushedOut = null;
+    if (held.size >= inbound) {
+      if (!supersede) throw new Error(`too many ${kind} transfers under way: the page takes ${inbound} at once`);
+      pushedOut = held.values().next().value.#supersede(kind);
+    }
+    held.add(this);
+    this.#held = held;
+    return pushedOut;
+  }
+
+  // supersede ends this transfer for a newer one of kind. The verdict and
+  // the place go at once; the sink hears in turn with the frames, so its
+  // abort never overlaps a write or follows a commit.
+  #supersede(kind) {
+    const err = new Error(`superseded by a newer ${kind} transfer`);
+    this.#reply({ t: 'error', error: err.message });
+    return this.#then(() => this.#abort(err));
+  }
+
+  #release() {
+    this.#held?.delete(this);
+    this.#held = null;
+  }
+
   // reply sends the verdict and closes the channel, which ends the
-  // transfer. Only the first verdict counts.
+  // transfer and frees its place. Only the first verdict counts.
   #reply(verdict) {
     if (this.#over) return;
     this.#over = true;
+    this.#release();
     this.#send(verdict);
     this.#channel.close();
   }

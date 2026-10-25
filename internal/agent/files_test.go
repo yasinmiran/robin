@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/yasinmiran/robin/internal/agent/desktop"
 	"github.com/yasinmiran/robin/internal/agent/files"
+	"github.com/yasinmiran/robin/internal/agent/peer"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
@@ -277,5 +279,17 @@ func TestUploadThroughTheSession(t *testing.T) {
 	}
 	if _, err := testSession(&fakeDesktop{}).acceptUpload(protocol.Bulk{Name: "x", Size: 1}); err == nil {
 		t.Error("a session without files took an upload")
+	}
+}
+
+// robin-send prints the browser's reason for refusing a transfer as its
+// own, and any other failure as it is.
+func TestFailureGivesTheBrowsersReason(t *testing.T) {
+	refused := fmt.Errorf("send: %w", &peer.BulkRefusedError{Reason: "no room"})
+	if got, want := failure(refused), "the browser refused it: no room"; got != want {
+		t.Errorf("refused: %q, want %q", got, want)
+	}
+	if got, want := failure(errors.New("peer: bulk transfer cancelled")), "peer: bulk transfer cancelled"; got != want {
+		t.Errorf("cancelled: %q, want %q", got, want)
 	}
 }

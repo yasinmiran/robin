@@ -638,6 +638,30 @@ test('files: the host offers a file, shown as text, saved only on a click', asyn
   expect(downloads).toBe(1);
 });
 
+test('files: a file that grew after its offer is not saved, and both ends say why', async () => {
+  test.skip(!FILES, NO_FILES);
+  const name = 'robin-e2e-grows.log';
+  const path = `/tmp/${name}`;
+  await host.ssh(`head -c 1000 /dev/urandom > ${path}`);
+  let downloads = 0;
+  page.on('download', () => downloads++);
+
+  const sending = offerFromHost(path);
+  const row = page.locator('.transfer[data-dir="down"]').filter({ hasText: name });
+  await expect(row).toHaveCount(1, { timeout: 20_000 });
+  await expect(row.locator('.size')).toHaveText('1000 B');
+  await host.ssh(`head -c 1000 /dev/urandom >> ${path}`);
+  await row.locator('.save').click();
+  const why = 'the file is 2.0 KiB now, larger than the 1000 B offered';
+  await expect(row.locator('.status')).toHaveText(`Download failed: ${why}`, { timeout: 15_000 });
+  // The offer stands until it is dismissed.
+  await row.locator('.dismiss').click();
+  const printed = await sending;
+  expect(printed).toContain(`${name}: transfer failed, still on offer: the browser refused it: ${why}`);
+  expect(printed).toContain(`${name}: declined in the browser`);
+  expect(downloads).toBe(0);
+});
+
 test('clipboard: an image and HTML pasted in the page reach the host, an image copied there reaches the page', async () => {
   test.skip(!FILES, NO_FILES);
   const png = Buffer.from(PNG_B64, 'base64');

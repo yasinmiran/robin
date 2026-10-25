@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { BulkRefused, Inbound, acceptBulk, onBulk, sendBulk } from '../bulk.js';
-import { BULK_WINDOW, CHUNK_SIZE, registerKind } from '../bulkframe.js';
-import { FakeChannel, FakePeer } from './fakes.js';
+import { BULK_WINDOW, CHUNK_SIZE, Sum, registerKind } from '../bulkframe.js';
+import { FakeChannel, FakePeer, fromAgent, until, within } from './fakes.js';
 
 registerKind('test', 16 * 1024 * 1024);
 
@@ -41,7 +41,7 @@ onBulk('test', (h) => {
   sinks.push(sink);
   if (h.id === 'refuse') throw new Error('not today');
   return sink;
-});
+}, { inbound: Infinity });
 
 test('a transfer arrives whole on the far side, credit and all', async () => {
   let farChannel;
@@ -169,8 +169,12 @@ test('aborting cancels a transfer under way', async () => {
   assert.match(result.err.message, /cancelled/);
 });
 
-test('onBulk takes each kind once', () => {
-  assert.throws(() => onBulk('test', () => null), /taken twice/);
+test('onBulk takes each kind once, with how many may be inbound at once', () => {
+  assert.throws(() => onBulk('test', () => null, { inbound: 1 }), /taken twice/);
+  for (const inbound of [undefined, 0, -1, 1.5, '2', null, NaN]) {
+    assert.throws(() => onBulk(`inbound-${inbound}`, () => null, { inbound }), /needs how many may be inbound at once/, String(inbound));
+  }
+  assert.throws(() => onBulk('inbound-none', () => null), /needs how many/);
 });
 
 // inbound feeds frames to a receiver and reports its verdict.
@@ -181,7 +185,10 @@ function inbound(lookup) {
   let closed = false;
   channel.send = (data) => verdicts.push(JSON.parse(data));
   channel.close = () => { closed = true; };
-  const rx = new Inbound(channel, lookup);
+  const rx = new Inbound(channel, (kind) => {
+    const accept = lookup(kind);
+    return accept && { accept, inbound: Infinity };
+  });
   return { rx, verdicts, closed: () => closed };
 }
 
@@ -260,6 +267,104 @@ test('Inbound keeps a good transfer and reports a sink that fails', async () => 
   r = inbound(() => () => { throw new Error('x'.repeat(5000)); });
   await r.rx.receive(header(1));
   assert.equal(r.verdicts[0].error.length, 1024);
+});
+
+// The agent may have two transfers of this kind open to the page at once.
+registerKind('capped', 1024);
+const capped = [];
+onBulk('capped', (h) => {
+  if (h.id === 'no') throw new Error('not this one');
+  const sink = memSink();
+  capped.push(sink);
+  return sink;
+}, { inbound: 2 });
+
+// emptyFromAgent sends the agent's header of an empty transfer; end
+// finishes it.
+function emptyFromAgent(header) {
+  const t = fromAgent({ size: 0, ...header });
+  return { ...t, end: () => t.agent.send(JSON.stringify(new Sum(0).end())) };
+}
+
+test('a third transfer of a kind that takes two at once is refused on its header', async () => {
+  const first = emptyFromAgent({ kind: 'capped', id: '1' });
+  const second = emptyFromAgent({ kind: 'capped', id: '2' });
+  await until('two sinks', () => capped.length === 2);
+  const refused = await within(emptyFromAgent({ kind: 'capped', id: '3' }).verdict);
+  assert.equal(refused.t, 'error', `the third transfer: ${JSON.stringify(refused)}`);
+  assert.match(refused.error, /too many capped transfers under way: the page takes 2 at once/);
+  assert.equal(capped.length, 2, 'the third transfer got a sink');
+
+  // The first two still finish, and each one that ends frees its place:
+  // by its verdict, by a close, or by the receiver refusing it.
+  first.end();
+  assert.deepEqual(await first.verdict, { t: 'done' });
+  assert.deepEqual(await capped[0].ended, { ok: true });
+  const fourth = emptyFromAgent({ kind: 'capped', id: '4' });
+  await until('a fourth sink once the first finished', () => capped.length === 3);
+  second.agent.close();
+  assert.equal((await capped[1].ended).ok, false);
+  assert.match((await emptyFromAgent({ kind: 'capped', id: 'no' }).verdict).error, /not this one/);
+  const fifth = emptyFromAgent({ kind: 'capped', id: '5' });
+  await until('a fifth sink once the second closed', () => capped.length === 4);
+  fourth.end();
+  fifth.end();
+  assert.deepEqual([await fourth.verdict, await fifth.verdict], [{ t: 'done' }, { t: 'done' }]);
+});
+
+// A kind whose accept waits, as one that asks the user or the disk would.
+registerKind('slow', 1024);
+let accepted = 0;
+let letIn;
+const gate = new Promise((resolve) => { letIn = resolve; });
+onBulk('slow', async () => {
+  accepted++;
+  await gate;
+  return memSink();
+}, { inbound: 2 });
+
+test('a place is taken before accept runs, so two headers cannot both take the last one while it waits', async () => {
+  const first = emptyFromAgent({ kind: 'slow', id: '1' });
+  const second = emptyFromAgent({ kind: 'slow', id: '2' });
+  const refused = await within(emptyFromAgent({ kind: 'slow', id: '3' }).verdict);
+  assert.equal(refused.t, 'error', `the third transfer: ${JSON.stringify(refused)}`);
+  assert.match(refused.error, /too many slow transfers under way: the page takes 2 at once/);
+  assert.equal(accepted, 2, 'accept ran for the third');
+  letIn();
+  first.end();
+  second.end();
+  assert.deepEqual([await first.verdict, await second.verdict], [{ t: 'done' }, { t: 'done' }]);
+});
+
+// A kind that takes one at a time, a newer one pushing out the one before;
+// accepting a waits.
+registerKind('latest', 1024);
+const latest = [];
+let admitA;
+const aGate = new Promise((resolve) => { admitA = resolve; });
+onBulk('latest', async (h) => {
+  const sink = memSink();
+  sink.header = h;
+  latest.push(sink);
+  if (h.id === 'a') await aGate;
+  return sink;
+}, { inbound: 1, supersede: true });
+
+test('a newer transfer of a kind that supersedes ends the oldest, whose sink hears first', async () => {
+  const a = emptyFromAgent({ kind: 'latest', id: 'a' });
+  await until('accepting a', () => latest.length === 1);
+  const b = emptyFromAgent({ kind: 'latest', id: 'b' });
+  assert.match((await within(a.verdict)).error ?? '', /superseded by a newer latest transfer/);
+  const c = emptyFromAgent({ kind: 'latest', id: 'c' });
+  assert.match((await within(b.verdict)).error ?? '', /superseded by a newer latest transfer/);
+  assert.equal(latest.length, 1, 'a newer one was accepted before the sink it pushed out heard');
+
+  admitA();
+  c.end();
+  assert.deepEqual(await within(c.verdict), { t: 'done' });
+  assert.deepEqual(latest.map((sink) => sink.header.id), ['a', 'c'], 'b was accepted after it was pushed out');
+  assert.match((await latest[0].ended).err.message, /superseded/);
+  assert.deepEqual(await latest[1].ended, { ok: true });
 });
 
 test('Inbound aborts on a close before the end', async () => {

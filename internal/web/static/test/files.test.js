@@ -1,11 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { acceptBulk } from '../bulk.js';
 import { Sum } from '../bulkframe.js';
 import { dispatchControl } from '../control.js';
 import { Clipboard } from '../clipboard.js';
 import { Files } from '../files.js';
-import { FakeChannel } from './fakes.js';
+import { fromAgent } from './fakes.js';
 import { fakeOverlay, installDom } from './dom.js';
 
 const saved = installDom();
@@ -27,17 +26,11 @@ const clipboard = new Clipboard({
   propose: (list) => files.propose(list),
 });
 
-// fromAgent sends one file transfer to the page as the agent would, and
-// resolves with the page's verdict.
-async function fromAgent(id, bytes) {
-  const page = new FakeChannel('bulk');
-  const agent = new FakeChannel('bulk');
-  page.peer = agent;
-  agent.peer = page;
-  page.readyState = agent.readyState = 'open';
-  const verdict = new Promise((resolve) => agent.addEventListener('message', (e) => resolve(JSON.parse(e.data)), { once: true }));
-  acceptBulk(page);
-  agent.send(JSON.stringify({ t: 'header', kind: 'file', id, name: `${id}.bin`, size: bytes.length }));
+// fileFromAgent sends one file transfer to the page as the agent would,
+// with header's fields over the usual ones, and resolves with the page's
+// verdict.
+async function fileFromAgent(id, bytes, header = {}) {
+  const { agent, verdict } = fromAgent({ kind: 'file', id, name: `${id}.bin`, size: bytes.length, ...header });
   const sum = new Sum(bytes.length);
   sum.add(bytes);
   agent.send(bytes);
@@ -58,26 +51,26 @@ test('one click on Save takes one download, and a dismissed one is not saved', a
   dispatchControl({ t: 'file-offer', file: { id: 'd1', name: 'd1.bin', size: 3 } });
   button(await row('d1'), 'save').click();
   assert.deepEqual(controls.at(-1), { t: 'file-fetch', file: { id: 'd1' } });
-  assert.deepEqual(await fromAgent('d1', new Uint8Array([1, 2, 3])), { t: 'done' });
+  assert.deepEqual(await fileFromAgent('d1', new Uint8Array([1, 2, 3])), { t: 'done' });
   assert.deepEqual(saved.map((s) => s.name), ['d1.bin']);
   // The host cannot spend that click again.
-  const again = await fromAgent('d1', new Uint8Array([4, 5, 6]));
+  const again = await fileFromAgent('d1', new Uint8Array([4, 5, 6]));
   assert.equal(again.t, 'error');
   assert.match(again.error, /nobody asked/);
   assert.equal(saved.length, 1);
 
   dispatchControl({ t: 'file-offer', file: { id: 'd2', name: 'd2.bin', size: 3 } });
   button(await row('d2'), 'save').click();
-  const second = fromAgent('d2', new Uint8Array([7, 8, 9]));
+  const second = fileFromAgent('d2', new Uint8Array([7, 8, 9]));
   // Two channels for one click: the second is refused on its header.
-  const third = await fromAgent('d2', new Uint8Array([7, 8, 9]));
+  const third = await fileFromAgent('d2', new Uint8Array([7, 8, 9]));
   assert.match(third.error ?? '', /nobody asked/);
   assert.equal((await second).t, 'done');
   assert.equal(saved.length, 2);
 
   dispatchControl({ t: 'file-offer', file: { id: 'd3', name: 'd3.bin', size: 3 } });
   button(await row('d3'), 'save').click();
-  const dismissed = fromAgent('d3', new Uint8Array([1, 1, 1]));
+  const dismissed = fileFromAgent('d3', new Uint8Array([1, 1, 1]));
   button(await row('d3'), 'dismiss').click();
   assert.deepEqual(controls.at(-1), { t: 'file-decline', file: { id: 'd3' } });
   assert.equal((await dismissed).t, 'error');
@@ -105,4 +98,46 @@ test('files pasted wait for a click on Upload', async () => {
   await later();
   assert.equal(files.list().some((t) => t.name === 'old.zip'), false);
   assert.equal(bulks.length, 1);
+});
+
+test('the host cannot withdraw an upload', async () => {
+  const before = bulks.length;
+  files.upload([{ name: 'w1.bin', size: 1 }, { name: 'w2.bin', size: 2 }]);
+  const ids = files.list().filter((t) => ['w1.bin', 'w2.bin'].includes(t.name)).map((t) => t.id);
+  assert.deepEqual(files.list().filter((t) => ids.includes(t.id)).map((t) => t.state), ['sending', 'queued']);
+  for (const id of ids) dispatchControl({ t: 'file-withdraw', file: { id } });
+  await later();
+  assert.deepEqual(files.list().filter((t) => ids.includes(t.id)).map((t) => t.state), ['kept', 'kept']);
+  assert.deepEqual(bulks.slice(before).map((b) => b.header.name), ['w1.bin', 'w2.bin']);
+
+  dispatchControl({ t: 'file-offer', file: { id: 'w3', name: 'w3.bin', size: 1 } });
+  dispatchControl({ t: 'file-withdraw', file: { id: 'w3' } });
+  assert.equal(files.list().some((t) => t.id === 'w3'), false, 'an offer the host withdrew is still listed');
+});
+
+test('a download may not be larger than its offer', async () => {
+  const before = saved.length;
+  dispatchControl({ t: 'file-offer', file: { id: 'd4', name: 'd4.bin', size: 3 } });
+  button(await row('d4'), 'save').click();
+  const bigger = await fileFromAgent('d4', new Uint8Array(6));
+  assert.equal(bigger.t, 'error');
+  assert.match(bigger.error, /larger than the 3 B offered/);
+  assert.equal(saved.length, before, 'a download larger than its offer was saved');
+  const t = files.list().find((x) => x.id === 'd4');
+  assert.equal(t.state, 'offered');
+  assert.match(t.error, /larger than/);
+
+  // A file that shrank since its offer still comes, as it is now.
+  button(await row('d4'), 'save').click();
+  assert.deepEqual(await fileFromAgent('d4', new Uint8Array(2)), { t: 'done' });
+  assert.equal(saved.length, before + 1);
+
+  // The agent leaves out a size of 0.
+  dispatchControl({ t: 'file-offer', file: { id: 'd5', name: 'd5.bin', size: 0 } });
+  button(await row('d5'), 'save').click();
+  assert.deepEqual(await fileFromAgent('d5', new Uint8Array(0), { size: undefined }), { t: 'done' });
+  assert.equal(saved.length, before + 2);
+  // An offer has to say how big it is.
+  for (const size of ['lots', -1, 1.5]) dispatchControl({ t: 'file-offer', file: { id: 'd6', name: 'd6.bin', size } });
+  assert.equal(files.list().some((t) => t.id === 'd6'), false, 'an offer of no size is listed');
 });

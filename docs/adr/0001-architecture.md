@@ -898,7 +898,8 @@ itself and passes the descriptors with `SCM_RIGHTS` over `files.sock`, a
 sequenced-packet socket in the 0700 run directory, mode 0600, whose peer
 credentials must name the session's own uid. The page never names a path;
 the session sends exactly what its sender could open, re-reading the size
-when the user clicks Save, and an offer lasts as long as `robin-send`'s
+when the user clicks Save (the page takes no more than the offer said,
+below), and an offer lasts as long as `robin-send`'s
 connection, which hears saved, declined or failed for each file. It finds
 the session by `ROBIN_FILES_SOCK`, which spawned desktops get, or as the only
 `run/*/files.sock` that answers, and with several it refuses to guess.
@@ -961,6 +962,61 @@ copied as a file in a file manager therefore pastes as an image. Firefox
 keeps nothing of a script's `DataTransfer` in a `ClipboardEvent` it
 constructs, so its e2e run hands the page the `DataTransfer` through
 `robin.paste` while Chrome's goes through a real paste event.
+
+### What the page takes from the host
+
+The page holds the user's consent and the tab's memory, so it bounds what
+the host sends it as the agent bounds what the page sends, rather than
+trusting the agent to bound itself.
+
+**Transfers per kind.** `onBulk` takes, beside the feature's accept, how
+many transfers of the kind the agent may have open to the page at once,
+and has no default: a kind the page takes names its own, so a new one
+cannot inherit a number that fits another. The limit is the receiving
+side's, which is why it sits there and not with the size limit in
+`registerKind`, which both directions share. A place is taken when the
+header passes its checks, before accept runs, so two headers on two
+channels cannot both take the last one while accept awaits, and it is
+given back with the verdict or the close. One more header than that is
+refused with a reason and its channel closed, unless the kind supersedes:
+then it ends the oldest transfer of the kind still open, with an error
+verdict that frees the place at once, and waits for that transfer's sink
+to hear before its own accept runs, so the kind never has more sinks open
+than its limit. The clipboard takes two, as many as the agent takes from
+the page, and supersedes. The agent cancels an older copy's transfer for
+a newer one without waiting, and the page hears that close only after the
+stream reset, about a round trip, so three rich copies inside one round
+trip used to leave the newest refused and the browser holding an older
+item, which is what a paste then gave. Files take any number, because
+each download already needs a click on Save of its own. The
+clipboard's sink used to reserve the size a header declared, up to 16 MiB,
+before a byte came. It now gathers chunks as they arrive and joins them at
+the commit, which the hash and the size check have already passed. In
+node, two clipboard headers with no data held 33,260,488 bytes of
+`ArrayBuffer` before and 512 after.
+
+**Pointer images.** The agent keeps 64 and forgets them in the order the
+desktop reported them, which the page never learns; it sends an image by
+ID alone once it believes the page has it. A page that forgot its oldest
+past 64 by arrival could forget one the agent still counts as sent: images
+reported as 1 to 64 and sent to the page from 64 down to 1, then 65,
+leave the agent without 1 and the page without 64. While the agent still
+counts an image as sent, at most the 63 others it held then and 63 new ones
+can be sent after it, so the page keeps the newest 128 by arrival and
+never drops one it will be asked to wear. The PNG and hot spot go into a
+CSS `cursor` value, so only padded base64 up to 256 KiB, the size of a
+whole control message, and whole non-negative pixels get there; anything
+else is dropped. The page's CSP already limited a `url()` there to `data:`.
+
+**Downloads.** A click on Save consents to the size the offer showed. The
+agent re-reads the size at the click, so a file that shrank since still
+comes, as it is now, but a header larger than the offer is refused, the
+row goes back on offer with why, and `robin-send` prints the reason. A file
+that grows while on offer, a log say, has to be offered again. An offer
+whose size is not a whole number of bytes is not listed. The host may
+withdraw only what it offered: `file-withdraw` naming one of the page's
+uploads used to remove its row and its Cancel button while its bytes still
+went.
 
 ### Reproducible release binaries
 

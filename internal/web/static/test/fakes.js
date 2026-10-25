@@ -2,7 +2,20 @@
 // the bulk layer: ordered delivery, bufferedAmount with its low event, and
 // a close that lands after the frames sent before it.
 
+import assert from 'node:assert/strict';
+import { acceptBulk } from '../bulk.js';
+
 const later = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+// until waits a while for cond to hold, and fails with what if it never
+// does.
+export async function until(what, cond) {
+  for (let i = 0; i < 100 && !cond(); i++) await later();
+  assert.ok(cond(), what);
+}
+
+// within resolves with what p does, or 'no verdict' once ms pass first.
+export const within = (p, ms = 2000) => Promise.race([p, new Promise((resolve) => setTimeout(() => resolve('no verdict'), ms))]);
 
 export class FakeChannel extends EventTarget {
   readyState = 'connecting';
@@ -107,4 +120,19 @@ export class FakePeer {
     }, 0);
     return local;
   }
+}
+
+// fromAgent opens a channel to the page as the agent would for a transfer
+// and sends header on it, leaving the rest of the frames to the caller.
+// verdict resolves with the page's answer.
+export function fromAgent(header) {
+  const page = new FakeChannel('bulk');
+  const agent = new FakeChannel('bulk');
+  page.peer = agent;
+  agent.peer = page;
+  page.readyState = agent.readyState = 'open';
+  const verdict = new Promise((resolve) => agent.addEventListener('message', (e) => resolve(JSON.parse(e.data)), { once: true }));
+  acceptBulk(page);
+  agent.send(JSON.stringify({ t: 'header', ...header }));
+  return { page, agent, verdict };
 }

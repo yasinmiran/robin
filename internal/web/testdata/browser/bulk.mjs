@@ -41,7 +41,7 @@ try {
         },
         abort: () => {},
       };
-    });
+    }, { inbound: 1 });
 
     // Not a multiple of the chunk size, and several times the queue limit.
     const bytes = new Uint8Array(5 * 1024 * 1024 + 7);

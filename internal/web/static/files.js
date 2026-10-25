@@ -49,11 +49,16 @@ export class Files {
     this.#build(overlay.addSection('files'));
 
     onControl('file-offer', ({ file }) => {
-      if (file?.id) this.#transfers.offer(file.id, String(file.name ?? ''), Number(file.size ?? 0));
+      // The size is what the user agrees to on Save, so it must be a whole
+      // number of bytes.
+      const size = file?.size ?? 0;
+      if (file?.id && Number.isSafeInteger(size) && size >= 0) this.#transfers.offer(file.id, String(file.name ?? ''), size);
     });
-    onControl('file-withdraw', ({ file }) => this.#transfers.remove(file?.id));
+    onControl('file-withdraw', ({ file }) => this.#transfers.withdraw(file?.id));
     onControl('file-saved', ({ file }) => this.#transfers.saved(file?.id, String(file?.name ?? '')));
-    onBulk(FILE_KIND, (h) => this.#download(h));
+    // Each download needs a click on Save of its own, which bounds how many
+    // run at once.
+    onBulk(FILE_KIND, (h) => this.#download(h), { inbound: Infinity });
 
     window.addEventListener('dragover', (e) => {
       if (!carriesFiles(e)) return;
@@ -137,11 +142,19 @@ export class Files {
   }
 
   // download takes a transfer the agent opened, which must be a file the
-  // user asked to save, once for each click on Save. Dismissing it on the
-  // way makes the rest of its bytes nobody's.
+  // user asked to save, once for each click on Save, and no larger than
+  // the offer the user clicked: the agent sends what the file holds by
+  // then, which may be less. Dismissing it on the way makes the rest of
+  // its bytes nobody's.
   #download(h) {
     if (!this.#transfers.receive(h.id)) throw new Error('nobody asked for this file');
     const t = this.#transfers.get(h.id);
+    const size = h.size ?? 0;
+    if (size > t.size) {
+      const why = `the file is ${formatSize(size)} now, larger than the ${formatSize(t.size)} offered`;
+      this.#transfers.failed(h.id, why);
+      throw new Error(why);
+    }
     const wanted = () => this.#transfers.get(h.id) === t && t.state === RECEIVING;
     const pieces = [];
     let piece = [];
