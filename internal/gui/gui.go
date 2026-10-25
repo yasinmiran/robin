@@ -116,9 +116,8 @@ func Run(ctx context.Context, o Options) (err error) {
 		}
 		log.Info("attaching", "to", o.Attach)
 	}
-	if missing := report.SpawnMissing(); o.Attach == "" && len(missing) > 0 {
-		return fmt.Errorf("%s cannot run a headless desktop yet: missing %s\ninstall with: %s",
-			o.Dest, strings.Join(missing, ", "), report.InstallHint())
+	if err := checkSpawn(o, report); err != nil {
+		return err
 	}
 	if err := report.CheckEncoder(o.Encoder); err != nil {
 		return fmt.Errorf("%s: %w", o.Dest, err)
@@ -143,7 +142,7 @@ func Run(ctx context.Context, o Options) (err error) {
 		}
 	}
 
-	ag, err := startAgent(ctx, h.m, path, serveArgs{verbose: o.Verbose, keep: keep, resume: resume, detach: detachMode(report)}, o.Stderr)
+	ag, err := startAgent(h.m, path, serveArgs{verbose: o.Verbose, keep: keep, resume: resume, detach: detachMode(report)}, o.Stderr)
 	if err != nil {
 		return err
 	}
@@ -160,7 +159,7 @@ func Run(ctx context.Context, o Options) (err error) {
 		}
 		ready, err = ag.awaitReady(ctx, hostOf(o.Dest), o.Stderr)
 	} else {
-		ready, err = ag.resume(ctx, resume)
+		ready, err = ag.resume(ctx, resumeMessage(o, resume))
 	}
 	if err != nil {
 		return err
@@ -174,7 +173,8 @@ func Run(ctx context.Context, o Options) (err error) {
 	if o.Audio && !ready.Audio && !ready.Resumed {
 		fmt.Fprintf(o.Stderr, "robin: no sound from %s: %s\n", o.Dest, ready.AudioError)
 	}
-	for _, note := range deviceNotes(o.Dest, ready) {
+	mic, camera := askedDevices(o, ready)
+	for _, note := range deviceNotes(o.Dest, mic, camera) {
 		fmt.Fprintln(o.Stderr, note)
 	}
 
@@ -200,7 +200,7 @@ func Run(ctx context.Context, o Options) (err error) {
 	}
 
 	config := protocol.Config{ICEServers: iceServers(start.STUN), HiDPI: o.HiDPI, Keep: ready.Keep}
-	config.Mic, config.Camera = offeredDevices(ready)
+	config.Mic, config.Camera = offeredDevices(mic, camera)
 	b := newBridge(ag.conn, relay.New(relay.Policy{Transport: o.Transport, TunnelPort: t.Port()}), config, userMacros(o.Dest, o.Stderr), log)
 	b.answered = t.answered
 	go b.accept(ctx, srv)
@@ -465,11 +465,11 @@ func (h *host) redial(ctx context.Context, path, id string, until time.Time, t *
 		return nil, nil, err
 	}
 	h.m = m
-	ag, err := startAgent(ctx, m, path, serveArgs{verbose: h.o.Verbose, resume: id}, h.o.Stderr)
+	ag, err := startAgent(m, path, serveArgs{verbose: h.o.Verbose, resume: id}, h.o.Stderr)
 	if err != nil {
 		return nil, nil, err
 	}
-	ready, err := ag.resume(dialCtx, id)
+	ready, err := ag.resume(dialCtx, protocol.Resume{ID: id})
 	if err != nil {
 		ag.stop()
 		return nil, nil, err
@@ -493,10 +493,29 @@ func resumable(err error) bool {
 	return errors.Is(err, errSSHLost) || errors.Is(err, errAgentGone)
 }
 
+// checkSpawn refuses a new desktop on a host that lacks what spawning one
+// takes. A resume by id may be of an attached desktop, which needs none of
+// it, and the host has the session either way.
+func checkSpawn(o Options, r *probe.Report) error {
+	if missing := r.SpawnMissing(); o.Attach == "" && o.Resume == "" && len(missing) > 0 {
+		return fmt.Errorf("%s cannot run a headless desktop yet: missing %s\ninstall with: %s",
+			o.Dest, strings.Join(missing, ", "), r.InstallHint())
+	}
+	return nil
+}
+
+// resumeMessage is the Resume of a new robin gui for kept session id: it
+// asks for what the user names this time, which the session either gives or
+// refuses, rather than quietly keeping what it started with.
+func resumeMessage(o Options, id string) protocol.Resume {
+	return protocol.Resume{ID: id, Curtain: o.Curtain, Silent: o.Silent, Mic: o.Mic, Camera: o.Camera}
+}
+
 // pickSession decides which kept session, if any, robin gui resumes.
 func pickSession(o Options, r *probe.Report, agentName string) (string, error) {
 	if o.Attach != "" && o.Resume == "" {
-		// An attached desktop is never kept; nothing to resume.
+		// A new attach starts a session; a kept attached desktop is
+		// resumed only by --id.
 		return "", nil
 	}
 	var kept []protocol.Session
@@ -674,7 +693,8 @@ func iceServers(stun []string) []protocol.ICEServer {
 type agentProc struct {
 	conn  *protocol.Conn
 	stdin io.WriteCloser
-	// exited closes when the proxy's ssh process is gone.
+	// proc is the proxy's ssh process, and exited closes once it is gone.
+	proc   *os.Process
 	exited <-chan struct{}
 	log    *tail.Buffer // the end of the agent's stderr
 	once   sync.Once
@@ -709,8 +729,11 @@ func (a serveArgs) list(path string) []string {
 	return args
 }
 
-func startAgent(ctx context.Context, m *sshmux.Master, path string, args serveArgs, stderr io.Writer) (*agentProc, error) {
-	cmd := m.Command(ctx, sshmux.Quote(args.list(path)...))
+// startAgent runs the agent's proxy over m. No context ends it: Ctrl+C
+// ends Run's, and the session has to end over this connection then; stop
+// ends it.
+func startAgent(m *sshmux.Master, path string, args serveArgs, stderr io.Writer) (*agentProc, error) {
+	cmd := m.Command(context.Background(), sshmux.Quote(args.list(path)...))
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -735,7 +758,7 @@ func startAgent(ctx context.Context, m *sshmux.Master, path string, args serveAr
 	}()
 	return &agentProc{
 		conn:  protocol.NewConn(stdout, stdin, protocol.DefaultPingInterval, protocol.DefaultIdleTimeout),
-		stdin: stdin, exited: exited, log: logTail,
+		stdin: stdin, proc: cmd.Process, exited: exited, log: logTail,
 	}, nil
 }
 
@@ -781,11 +804,13 @@ type agentError struct {
 
 func (e *agentError) Error() string { return "agent: " + e.text }
 
-// resume asks the agent for kept session id and waits for its Ready. An
-// agent that has no such session, or does not speak this protocol, makes
-// the error final.
-func (a *agentProc) resume(ctx context.Context, id string) (*protocol.Ready, error) {
-	if err := a.conn.Send(protocol.Message{Type: protocol.TypeResume, Resume: &protocol.Resume{Version: protocol.Version, ID: id}}); err != nil {
+// resume asks the agent for the kept session r names and waits for its
+// Ready. An agent that has no such session, refuses what r asks, or does
+// not speak this protocol, makes the error final.
+func (a *agentProc) resume(ctx context.Context, r protocol.Resume) (*protocol.Ready, error) {
+	r.Version = protocol.Version
+	id := r.ID
+	if err := a.conn.Send(protocol.Message{Type: protocol.TypeResume, Resume: &r}); err != nil {
 		return nil, a.explain(err)
 	}
 	ready, err := a.awaitReady(ctx, "", io.Discard)
@@ -852,7 +877,8 @@ func (a *agentProc) bye() bool {
 }
 
 // stop closes the agent's stdin, which tells the host this controller is
-// gone, and waits briefly for the proxy to exit.
+// gone, and waits briefly for the proxy to exit, then kills its ssh, which
+// would otherwise outlive the CLI.
 func (a *agentProc) stop() {
 	if a == nil {
 		return
@@ -862,6 +888,9 @@ func (a *agentProc) stop() {
 		select {
 		case <-a.exited:
 		case <-time.After(5 * time.Second):
+			if a.proc != nil {
+				a.proc.Kill()
+			}
 		}
 		a.conn.Close()
 	})

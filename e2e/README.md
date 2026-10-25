@@ -60,12 +60,12 @@ cannot leak into the next one. The tests run in order against one session.
 | `blocked` | UDP dropped (except loopback) before the CLI starts | ICE-TCP through the SSH forward carries the whole session; the selected remote candidate is `127.0.0.1` |
 | `restart` | open, then UDP dropped mid-session | the page notices, restarts ICE and recovers onto TCP within 15 s (`ROBIN_RESTART_TIMEOUT_MS`; typically about 3 s), and input still works afterwards |
 | `resume` | open, SSH cut mid-session | the robin user's sshd processes are killed, dropping every connection at once; the page says Reconnecting, the CLI redials and resumes the same daemon, Xvfb and xterm, the marker typed before the cut is still on screen, and typing works again |
-| `rejoin` | open | the CLI is SIGKILLed, ssh master and all; the desktop stays, `robin ls` lists it as kept, a new `robin gui` resumes it with the marker on screen, the page's Disconnect, keep desktop button makes the CLI exit 0 and leaves the desktop, and `robin end` tears everything down |
+| `rejoin` | open | the CLI is SIGKILLed, ssh master and all; the desktop stays, `robin ls` lists it as kept, a `robin gui --mic` exits non-zero saying the session started without a microphone and leaves it kept, a new `robin gui` resumes it with the marker on screen, the page's Disconnect, keep desktop button makes the CLI exit 0 and leaves the desktop, and `robin end` tears everything down |
 | `attach` | open | `--attach auto` finds and streams the desktop the `robin` user already has running (`robin-live`: Xvfb on `:5` at 2304x800 split into two monitors with `xrandr --setmonitor`, its cookie in `~/.Xauthority`, an xterm and openbox, started over ssh before the CLI) and leaves it as it was; `--max-size 1920x1080` keeps the whole desktop larger than the session, so showing every monitor scales |
 | `wayland` | open, Wayland host image | `--attach auto` finds the `robin` user's GNOME Wayland session (`robin-wayland start`: mutter with a 1280x720 virtual monitor, PipeWire with pipewire-pulse, the GNOME portal and a fullscreen probe window, started over ssh before the CLI), the portal's consent dialog is answered once, and a second run restores without it; see below |
 | `firefox` | open | the direct scenario in Playwright's Firefox with the OpenH264 plugin: every check passes |
 | `webkit` | open | the direct scenario in Playwright's WebKit (Safari's WebRTC stack): H.264 negotiates and decodes, keyboard, clipboard, resize, sound, UDP and teardown work; see below for what it cannot show |
-| `nomux` | UDP dropped (except loopback) before the CLI starts | the `blocked` checks with `--ssh-mux=false`, the way the CLI runs on Windows: no ControlMaster runs on the client, the agent and the tunnel's `ssh -N -L <private dir>/fwd1.sock:...` are ssh processes of their own, and ICE-TCP through that forward carries the session |
+| `nomux` | UDP dropped (except loopback) before the CLI starts | the `blocked` checks with `--ssh-mux=false`, the way the CLI runs on Windows: no ControlMaster runs on the client, the agent and the tunnel's `ssh -N -L <private dir>/fwd1.sock:...` are ssh processes of their own, and ICE-TCP through that forward carries the session, and Ctrl+C reaches the CLI alone: its stderr announces no reconnect and no `ending the kept session`, the end command a fresh login would carry |
 | `touch` | open | Chrome as a touch screen (`isMobile`, `hasTouch`), fingers sent through the DevTools protocol; see below |
 
 The X11 scenarios of `tests/gui.spec.ts` also check, in this order:
@@ -150,12 +150,13 @@ The X11 scenarios of `tests/gui.spec.ts` also check, in this order:
    nothing but the URL. Set `ROBIN_SIGINT_PID_ONLY=1` to signal only the CLI.
    In `attach` the agent and its run dir go while the `robin` user's desktop stays:
    `robin-live state` (the same Xvfb, openbox and xterm, display size,
-   monitors, autorepeat and a hash of each keymap) must match what
+   monitors, autorepeat, a hash of each keymap, the screen's gamma and the
+   sound server's sinks) must match what
    `robin-live start` saved before the CLI ran. A test just before types a
    character the US keymap lacks (ж) and sees autorepeat off, so the session
    did change both before putting them back.
 
-In `attach` one more check runs before teardown. **Monitors**: the page is
+In `attach` more checks run before teardown. **Monitors**: the page is
 told about LEFT (1280x800, primary) and RIGHT (1024x768) and starts on LEFT;
 choosing RIGHT and then all from the status tab's menu turns the video into
 1024x768 and then the whole 2304x800 screen scaled to fit, and the pointer
@@ -168,6 +169,34 @@ drawn, the tile canvas lies exactly on the picture. **Sharp text,
 scaled**: with all monitors shown, the video scaled down to 1918x666, the
 tiles cover the 2304x800 screen at its own size and match the host's in
 every pixel.
+**Private**: the CLI says the room sees and hears the session and names
+`--curtain` and `--silent`, and the page is told both switches are off.
+The curtain switch in the status tab blacks out the room's screen
+(`robin-room brightness`, the brightness xrandr reads off the screen's
+gamma, goes to 0) while the page's picture of a retitled xterm stays lit,
+and switched off brings the brightness back above 0.5. The silent room
+switch keeps the room's speakers quiet (`robin-room loudness`, the RMS of a
+second of the sink `desk`'s monitor, stays below 50) while noise plays on
+the host and Chrome's `totalAudioEnergy` grows, and switched off lets it
+past 1000 again. No error shows under either switch, and both go on again
+before the teardown, which has to give the room its screen and speakers
+back.
+
+After the attach teardown, **Kept**: a second CLI attaches with
+`--keep 10m` (`session.json` says mode attach, keep 600). SSH is cut and
+new logins refused (an `iptables` REJECT on port 22) until the click is in,
+lifted over the one connection of its own the cut spares, or by a timer on
+the host after a minute; while the page says Reconnecting and has no peer
+connection, a click on the curtain switch leaves it busy, and once the CLI
+has redialed and the page is connected, the switch is on and the room's
+brightness reads 0. The CLI is then SIGKILLed: `robin gui --id <id> --mic`
+exits non-zero saying the session started without a microphone, leaving it
+kept with the same daemon, and `robin gui --id <id> --curtain --silent`
+resumes it with the room dark before the page loads and without the hint
+that the room sees the session; the page is told both switches are on, and
+noise played on the host stays below 50 RMS at the room's speakers. SIGINT
+then ends it with exit 0, no agent or run dir left and `robin-live state`
+as before.
 
 The `touch` scenario runs `tests/touch.spec.ts` against the X11 host, with
 a 1024x640 touch screen. In order:

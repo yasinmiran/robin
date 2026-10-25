@@ -4,7 +4,7 @@
 // what was clicked.
 
 import { onControl } from './control.js';
-import { next, request, settle, view } from './privatestate.js';
+import { next, request, requests, settle, view } from './privatestate.js';
 import { switchButton } from './switches.js';
 
 export class PrivateSwitches {
@@ -24,6 +24,13 @@ export class PrivateSwitches {
   // state is the private session as the agent last reported it.
   get state() {
     return this.#state;
+  }
+
+  // reopened sends the agent the switches still waiting on it, once a
+  // control channel opens: a click while the page reconnected stays busy
+  // until the new peer connection carries it.
+  reopened() {
+    for (const r of requests(this.#pending)) this.#send(r);
   }
 
   #apply(state) {

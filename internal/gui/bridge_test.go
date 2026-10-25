@@ -143,10 +143,13 @@ func (p *page) closed() {
 	}
 }
 
-func testBridge(t *testing.T) (*bridge, *web.Server, context.Context) {
+// testBridge serves pages to a bridge built with first as its agent
+// connection, as Run builds it, so a page that connects before run begins
+// has an agent to signal.
+func testBridge(t *testing.T, first signaling) (*bridge, *web.Server, context.Context) {
 	t.Helper()
 	s, ctx := testServer(t)
-	b := newBridge(nil, relay.New(relay.Policy{Transport: relay.Direct}),
+	b := newBridge(first, relay.New(relay.Policy{Transport: relay.Direct}),
 		protocol.Config{ICEServers: []protocol.ICEServer{}, Keep: 60}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	go b.accept(ctx, s)
 	t.Cleanup(b.close)
@@ -220,8 +223,8 @@ func TestBridgeTellsTheTunnelEachAnswerFirst(t *testing.T) {
 }
 
 func TestBridgeRelaysAndSurvivesAnAgentConnection(t *testing.T) {
-	b, s, ctx := testBridge(t)
 	agent := newFakeAgent()
+	b, s, ctx := testBridge(t, agent)
 	result, _ := runBridge(ctx, b, agent)
 
 	pg := openPage(t, s)
@@ -298,9 +301,26 @@ func TestBridgeRelaysAndSurvivesAnAgentConnection(t *testing.T) {
 	late.closed()
 }
 
-func TestBridgeTakesThePagesDecisions(t *testing.T) {
-	b, s, ctx := testBridge(t)
+// TestBridgeGivesAnEarlyPageOneConfig: a page that connects before run
+// begins gets its Config on arrival, and run sends it no second one, which
+// would land in the middle of the page's signaling.
+func TestBridgeGivesAnEarlyPageOneConfig(t *testing.T) {
 	agent := newFakeAgent()
+	b, s, ctx := testBridge(t, agent)
+	pg := openPage(t, s)
+	if m := pg.recv(); m.Type != protocol.TypeConfig {
+		t.Fatalf("first message to the page %+v, want config", m)
+	}
+	runBridge(ctx, b, agent)
+	agent.in <- protocol.Message{Type: protocol.TypeCandidate, Candidate: &protocol.Candidate{}}
+	if m := pg.recv(); m.Type != protocol.TypeCandidate {
+		t.Fatalf("page got %+v once run began, want the agent's candidate", m)
+	}
+}
+
+func TestBridgeTakesThePagesDecisions(t *testing.T) {
+	agent := newFakeAgent()
+	b, s, ctx := testBridge(t, agent)
 	result, _ := runBridge(ctx, b, agent)
 	pg := openPage(t, s)
 	pg.recv() // config
@@ -317,6 +337,8 @@ func TestBridgeTakesThePagesDecisions(t *testing.T) {
 	// page's socket stays until the host confirmed.
 	agent2 := newFakeAgent()
 	agent2.sent = make(chan protocol.Message) // unbuffered: a forwarded bye would block
+	b.reconnecting()
+	pg.recv() // reconnecting
 	result, _ = runBridge(ctx, b, agent2)
 	pg.recv() // config again
 	pg.send(protocol.Message{Type: protocol.TypeBye})
@@ -335,8 +357,8 @@ func TestBridgeTakesThePagesDecisions(t *testing.T) {
 }
 
 func TestBridgeRunOwnsTheAgentReader(t *testing.T) {
-	b, s, ctx := testBridge(t)
 	agent := newFakeAgent()
+	b, s, ctx := testBridge(t, agent)
 	result, _ := runBridge(ctx, b, agent)
 	pg := openPage(t, s)
 	pg.recv() // config
@@ -364,8 +386,8 @@ func TestBridgeRunOwnsTheAgentReader(t *testing.T) {
 }
 
 func TestBridgeReportsTheAgentsLastWord(t *testing.T) {
-	b, _, ctx := testBridge(t)
 	agent := newFakeAgent()
+	b, _, ctx := testBridge(t, agent)
 	result, _ := runBridge(ctx, b, agent)
 	agent.in <- protocol.Message{Type: protocol.TypeError, Error: "desktop went away: Xvfb exited"}
 	close(agent.in)
@@ -380,8 +402,8 @@ func TestBridgeReportsTheAgentsLastWord(t *testing.T) {
 }
 
 func TestBridgeHangsUpWhenThePageLeaves(t *testing.T) {
-	b, s, ctx := testBridge(t)
 	agent := newFakeAgent()
+	b, s, ctx := testBridge(t, agent)
 	runBridge(ctx, b, agent)
 	pg := openPage(t, s)
 	pg.recv()

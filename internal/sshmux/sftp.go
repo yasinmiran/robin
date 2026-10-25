@@ -17,7 +17,7 @@ import (
 // SFTP starts an sftp subsystem session over the master. Closing the client
 // stops the ssh process; cancelling ctx kills it.
 func (m *Master) SFTP(ctx context.Context) (*sftp.Client, error) {
-	cmd := exec.CommandContext(ctx, m.ssh, m.subsystemArgs("sftp")...)
+	cmd := m.session(ctx, m.subsystemArgs("sftp"))
 	cmd.WaitDelay = time.Second
 	var stderr tail.Buffer
 	cmd.Stderr = &stderr

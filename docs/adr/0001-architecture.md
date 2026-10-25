@@ -809,25 +809,32 @@ keeps the reflex and moves it one process out.
   the page itself outlive the SSH connection; only the master, the proxy
   and the forward are remade. The page is told `reconnecting`, drops its
   peer connection and builds a fresh one from the next `config`, the same
-  path a reload takes. Redials back off from 1 s to 15 s until the keep
-  window closes. Ctrl+C has to end the session, and a terminal delivers it
-  to ssh as well: OpenSSH's sessions over the master die of it, but the
-  master itself keeps an inherited SIGINT ignore, so the master is started
-  through `sh -c 'trap "" INT; exec ssh ...'` and the CLI runs the agent's
-  end command over it when bye got no answer (a bye that did arrive leaves
-  no session to end, which counts as done); only when the master is gone
-  too does it dial once more, bounded to 30 s, and failing that it names
-  the time the host lets the desktop go. In the e2e teardown after the
-  resume, the bye's answer was lost with the session's ssh, the end command
-  over the surviving master found the session already gone, and the CLI
-  exited 0 in 399 ms with one `connecting` line in its whole log. The
-  page's End session button takes the same path: the bridge reports the
-  wish and forwards nothing, the CLI sends bye and falls back to the end
-  command, and only then tells the page `ended`; a socket that closes
-  first leaves the page saying the end is unconfirmed. Errors that stop
-  the CLI after Ready end the desktop the same way. What the CLI acts on
-  crosses the wire as a code, not as wording: the daemon's busy refusal
-  carries `protocol.CodeBusy`, and `robin-agent end` exits
+  path a reload takes. A page gets one `config` per agent connection: on
+  arrival, or from the next connection when it waited through a redial,
+  and the bridge sends the word to wait under the lock the next
+  connection's `config` takes, so the two cannot cross. A page that
+  arrived before the first connection's relay began used to get a second
+  `config` in the middle of its signaling, which a bridge test caught one
+  run in many under load; the regression test now opens the page first.
+  Redials back off from 1 s to 15 s until the keep window closes. Ctrl+C
+  has to end the session, and a terminal delivers it to ssh as well:
+  OpenSSH's sessions over the master die of it, but the master itself
+  keeps an inherited SIGINT ignore, so the master is started through
+  `sh -c 'trap "" INT; exec ssh ...'` and the CLI runs the agent's end
+  command over it when bye got no answer (a bye that did arrive leaves no
+  session to end, which counts as done); only when the master is gone too
+  does it dial once more, bounded to 30 s, and failing that it names the
+  time the host lets the desktop go. In the e2e teardown after the resume,
+  the bye's answer was lost with the session's ssh, the end command over
+  the surviving master found the session already gone, and the CLI exited
+  0 in 399 ms with one `connecting` line in its whole log. The page's End
+  session button takes the same path: the bridge reports the wish and
+  forwards nothing, the CLI sends bye and falls back to the end command,
+  and only then tells the page `ended`; a socket that closes first leaves
+  the page saying the end is unconfirmed. Errors that stop the CLI after
+  Ready end the desktop the same way. What the CLI acts on crosses the
+  wire as a code, not as wording: the daemon's busy refusal carries
+  `protocol.CodeBusy`, and `robin-agent end` exits
   `protocol.ExitNoSession` when there is nothing left to end.
 - Measured in the `resume` e2e scenario on 2026-10-24: killing the host's
   sshd children drops every connection at once, the page shows
@@ -838,6 +845,59 @@ keeps the reflex and moves it one process out.
   page and ends with `robin end`, leaving no process or directory behind.
   In test-x a session with a 2 s keep window was gone, run directory and
   Xvfb included, 2.10 s after its controller left.
+
+### A resume asks for what its command line names
+
+Start is the only message that carries the user's flags, and a resume does
+not send one: the session it picks up already has its desktop. So a
+`robin gui --curtain` that resumed a kept attached desktop left the curtain
+as it was and said nothing. `Resume` now carries `Curtain`, `Silent`,
+`Mic` and `Camera`, and the agent gives the session what they name or
+refuses the resume with the reason, before Ready, so the CLI never shows a
+page for a session that is not what was asked.
+
+- The switches exist at runtime, since the page flips them, so the agent
+  turns on what a resume names as Start's would be, through the private
+  session's own goroutine (the one the page's switches go through, so the
+  two cannot race on a ramp or a sink) and waits until it has tried. One
+  that cannot go on refuses the resume and puts the other back to what the
+  page last asked, so a refused resume leaves the room as it was. A switch
+  the page turned on stays on: the flag means with this on, as Start's
+  does, not with only this on. A spawned desktop refuses either flag, as
+  the CLI refuses them for a new one; the CLI leaves a resume by `--id` to
+  the agent, since that session may be attached, and skips its spawn check
+  for the same reason.
+- Devices are made as the session starts: a spawned desktop's pulseaudio
+  loads the microphone before it runs, and Start names the camera's
+  v4l2loopback device. Adding one to a running session would be a second
+  path for each, so a resume that offers a device the session started
+  without is refused, and the message says to resume without the flag or
+  end the session and start another. The other way round, a resume without
+  `--mic` or `--camera` offers the page neither, though the host still has
+  it.
+- Everything else that shapes the desktop (size, frame rate, bit rate,
+  encoder, monitor, sound, a spawned session's command) applies to a new
+  desktop only, which the README says; changing it is a restart, which is
+  what `robin end` and a new `robin gui` are.
+- Only a new `robin gui` asks. The same CLI's redial after a drop sends a
+  bare Resume: the page may have switched the curtain off since, and a
+  redial must not switch it back on behind the user's back.
+- A switch clicked while the page reconnected had no control channel to go
+  on, so the click was dropped and the switch stayed busy. Each control
+  channel that opens now asks again for every switch still waiting, which
+  also covers an answer lost with the old channel; asking twice is
+  harmless, as the agent settles on the position asked last.
+- Measured in the `attach` e2e scenario on 2026-10-24, on a desktop kept
+  with `--keep 10m`: with SSH cut and new logins refused until the click
+  was in, a curtain click while the page had no peer connection went on
+  5 ms after the next peer connected, and the room's brightness read 0.
+  After the CLI was killed, `robin gui --id <id> --mic` was refused with
+  the session still kept by the same daemon, and
+  `--id <id> --curtain --silent` had both on 307 ms after that CLI
+  started, before Ready and 338 ms before the page's peer connected; noise
+  played on the host stayed below 50 RMS at the room's speakers. In the
+  `nomux` teardown the agent logged the session ended 27 ms after the page
+  let go, with no reconnect line and no end command.
 
 ### Files: into the download folder, out on a click
 
@@ -1171,10 +1231,25 @@ none for `Dial`, which no longer has anything to wait for.
 
 There is no master to watch either, so `Done` closes only with `Close`, and
 a dropped network is noticed through the agent connection's idle timeout.
-A kept session's redial and its end command after Ctrl+C, which kills
-every ssh in the terminal's process group, log in afresh as every command
-does. The Linux tests and the `nomux` e2e scenario force the mode, which
-is how it is tested at all: nothing here runs Windows.
+A kept session's redial logs in afresh, as every command does. Ctrl+C does
+not: it reaches every process in the terminal's foreground group, and it
+used to kill the agent's ssh and the tunnel's, so the CLI either saw the
+agent go before its own context ended and announced a reconnect it never
+made, or lost the bye and ran the end command over one more login than the
+README counted. Each ssh of its own now starts the way the master does,
+through `sh -c 'trap "" INT; exec ssh ...'`, and on Windows in a process
+group of its own (`CREATE_NEW_PROCESS_GROUP`), which a console's Ctrl+C
+does not reach and which still shares the console ssh prompts on. The
+agent's proxy no longer runs under the context Ctrl+C ends, either, which
+killed its ssh whatever the ssh did with the signal; the CLI stops it
+itself, and kills an ssh still there 5 s after its input closed. Ctrl+C
+then reaches the CLI alone, and bye ends the session over the agent's own
+connection. In the sshmux test a command's ssh sent SIGINT broke its pipe
+within 300 ms before the change and echoes on after it, as a forward's
+does; the `nomux` e2e teardown checks the CLI prints neither line. The
+Linux tests and the `nomux` e2e scenario force the mode, which is how it
+is tested at all: nothing here runs Windows, so the process group is
+checked only by `go vet` for Windows.
 
 ### Text: its own control, typed in order off the read loop
 

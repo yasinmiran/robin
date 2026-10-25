@@ -229,6 +229,7 @@ function createPeer(config) {
   channel.onopen = () => {
     lastControlAt = Date.now();
     input.sendResize();
+    privateSwitches.reopened();
     sharp.open();
   };
   channel.onclose = () => {

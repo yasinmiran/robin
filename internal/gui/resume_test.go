@@ -227,12 +227,56 @@ func TestAgentResume(t *testing.T) {
 					f.conn.Send(tc.reply)
 				}
 			}()
-			ready, err := a.resume(ctx, "ab12")
+			ready, err := a.resume(ctx, protocol.Resume{ID: "ab12"})
 			var final *finalError
 			if errors.As(err, &final) != tc.final || (err != nil) != (tc.err != "") || (err != nil && !strings.Contains(err.Error(), tc.err)) {
 				t.Fatalf("resume: %+v, %v (final %v); want err %q final %v", ready, err, errors.As(err, &final), tc.err, tc.final)
 			}
 		})
+	}
+}
+
+// TestResumeAsksWhatTheUserNames: a new robin gui's Resume carries the
+// switches and devices it names, and a redial's carries none of them.
+func TestResumeAsksWhatTheUserNames(t *testing.T) {
+	o := Options{Curtain: true, Silent: true, Mic: true, Camera: true}
+	if got, want := resumeMessage(o, "ab12"), (protocol.Resume{ID: "ab12", Curtain: true, Silent: true, Mic: true, Camera: true}); got != want {
+		t.Errorf("resume message %+v, want %+v", got, want)
+	}
+	if got := resumeMessage(Options{}, "ab12"); got != (protocol.Resume{ID: "ab12"}) {
+		t.Errorf("resume message %+v asks for what nobody named", got)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	a, f := agentOverPipes(t)
+	sent := make(chan protocol.Resume, 1)
+	go func() {
+		m := <-f.calls
+		sent <- *m.Resume
+		f.conn.Send(protocol.Message{Type: protocol.TypeError, Error: "--curtain: this desktop cannot be darkened"})
+	}()
+	_, err := a.resume(ctx, protocol.Resume{ID: "ab12", Curtain: true})
+	var final *finalError
+	if !errors.As(err, &final) || !strings.Contains(err.Error(), "--curtain: this desktop cannot be darkened") {
+		t.Fatalf("a refused resume: %v, want the agent's reason, final", err)
+	}
+	if got := <-sent; got != (protocol.Resume{Version: protocol.Version, ID: "ab12", Curtain: true}) {
+		t.Errorf("the agent was sent %+v", got)
+	}
+}
+
+// TestCheckSpawn: a host that lacks what spawning takes refuses a new
+// desktop, not an attach and not a resume by id, which may be attached.
+func TestCheckSpawn(t *testing.T) {
+	bare := &probe.Report{}
+	if err := checkSpawn(Options{Dest: "box"}, bare); err == nil || !strings.Contains(err.Error(), "box cannot run a headless desktop") {
+		t.Errorf("a new desktop on a bare host: %v", err)
+	}
+	for _, o := range []Options{{Attach: ":0"}, {Resume: "ab12"}} {
+		if err := checkSpawn(o, bare); err != nil {
+			t.Errorf("%+v on a bare host: %v", o, err)
+		}
 	}
 }
 

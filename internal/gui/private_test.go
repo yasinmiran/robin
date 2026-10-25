@@ -14,7 +14,9 @@ func TestCheckPrivate(t *testing.T) {
 			t.Errorf("%+v on a spawned desktop: %v", o, err)
 		}
 	}
-	for _, o := range []Options{{}, {Attach: ":0", Curtain: true}, {Attach: "auto", Silent: true}} {
+	// A resume by id may be of an attached desktop; the agent refuses the
+	// switches on one it spawned.
+	for _, o := range []Options{{}, {Attach: ":0", Curtain: true}, {Attach: "auto", Silent: true}, {Resume: "ab12", Curtain: true}} {
 		if err := checkPrivate(o); err != nil {
 			t.Errorf("%+v: %v", o, err)
 		}

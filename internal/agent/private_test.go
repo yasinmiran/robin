@@ -515,3 +515,58 @@ func TestResumedReadyCarriesThePrivateSessionNow(t *testing.T) {
 		t.Errorf("a spawned desktop's resumed ready has private %+v", got.Private)
 	}
 }
+
+func TestPrivateRequireTurnsOnWhatTheResumeAsks(t *testing.T) {
+	r, err := newPrivate(t, protocol.Start{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.p.require(switches{Curtain: true}); err != nil {
+		t.Fatal(err)
+	}
+	if st := r.p.snapshot(); !st.Curtain.On || st.Silent.On || !r.curtain.isDrawn() {
+		t.Fatalf("after --curtain: state %+v, drawn %v; want the curtain alone", st, r.curtain.isDrawn())
+	}
+	// Asked again with the silent room, the curtain stays as it is.
+	if err := r.p.require(switches{Curtain: true, Silent: true}); err != nil {
+		t.Fatal(err)
+	}
+	if st := r.p.snapshot(); !st.Curtain.On || !st.Silent.On || r.capture.followed() != "fake.monitor" {
+		t.Fatalf("after --curtain --silent: state %+v, capture followed %q", st, r.capture.followed())
+	}
+	// What the resume turned on is the page's to turn off.
+	for len(r.sent) > 0 {
+		<-r.sent
+	}
+	if st := r.set(protocol.ControlCurtain, false); st.Curtain.On || r.curtain.isDrawn() {
+		t.Fatalf("the page lifted the curtain: state %+v, drawn %v", st, r.curtain.isDrawn())
+	}
+}
+
+func TestPrivateRequireRefusesAndPutsBack(t *testing.T) {
+	r, err := newPrivate(t, protocol.Start{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.rooms.err = errors.New("no null sink")
+	err = r.p.require(switches{Curtain: true, Silent: true})
+	if err == nil || err.Error() != "--silent: no null sink" {
+		t.Fatalf("a silent room that cannot be: %v", err)
+	}
+	if st := r.p.snapshot(); st.Curtain.On || st.Silent.On || r.curtain.isDrawn() {
+		t.Fatalf("after the refusal: state %+v, drawn %v; want both off again", st, r.curtain.isDrawn())
+	}
+
+	unsupported, err := newPrivate(t, protocol.Start{}, func(d *openedDesktop, _ *Options) { d.openCurtain = nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unsupported.p.require(switches{Curtain: true}); err == nil || err.Error() != "--curtain: this desktop cannot be darkened" {
+		t.Fatalf("a desktop without a curtain: %v", err)
+	}
+
+	r.p.close()
+	if err := r.p.require(switches{Curtain: true}); err == nil || !strings.Contains(err.Error(), "--curtain") {
+		t.Fatalf("a closed private session: %v", err)
+	}
+}

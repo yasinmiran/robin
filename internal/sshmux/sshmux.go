@@ -108,8 +108,7 @@ func Dial(ctx context.Context, dest string, opts Options) (*Master, error) {
 		return m, nil
 	}
 
-	name, args := ignoringInterrupt(m.ssh, m.masterArgs()...)
-	m.cmd = exec.Command(name, args...)
+	m.cmd = shielded(context.Background(), m.ssh, m.masterArgs()...)
 	m.cmd.Stderr = io.MultiWriter(&m.stderr, m.out)
 	// A ProxyCommand child can hold stderr open after the master exits.
 	m.cmd.WaitDelay = time.Second
@@ -158,25 +157,19 @@ func (m *Master) waitReady(ctx context.Context) error {
 // remoteCmd through the user's login shell; build it with Quote. Cancelling
 // ctx kills the local ssh process.
 func (m *Master) Command(ctx context.Context, remoteCmd string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, m.ssh, m.childArgs(remoteCmd)...)
+	cmd := m.session(ctx, m.childArgs(remoteCmd))
 	cmd.WaitDelay = time.Second
 	return cmd
 }
 
-// ignoringInterrupt wraps the master's command line so ssh starts with
-// SIGINT ignored. Ctrl+C in a terminal reaches every process in the
-// foreground group, and the master would die of it before the CLI could
-// tell the host anything; ssh keeps an ignore it inherits (its client loop
-// installs a SIGINT handler only when the signal is not already ignored),
-// so the connection outlives the keystroke and the CLI ends the session
-// over it, then closes it. Sessions over the master install their handler
-// unconditionally and do die, which the CLI expects. Windows has no
-// /bin/sh to do it with.
-func ignoringInterrupt(ssh string, args ...string) (string, []string) {
-	if runtime.GOOS == "windows" {
-		return ssh, args
+// session is an unstarted ssh with args: a session over the master, or
+// without one a connection of its own, shielded from Ctrl+C as the master
+// is.
+func (m *Master) session(ctx context.Context, args []string) *exec.Cmd {
+	if m.mux {
+		return exec.CommandContext(ctx, m.ssh, args...)
 	}
-	return "/bin/sh", append([]string{"-c", `trap '' INT; exec "$0" "$@"`, ssh}, args...)
+	return shielded(ctx, m.ssh, args...)
 }
 
 // maxOutput bounds the stdout Output keeps, so a host cannot fill the

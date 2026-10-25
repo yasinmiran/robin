@@ -65,8 +65,8 @@ type bridge struct {
 	mu    sync.Mutex
 	cur   *web.Browser
 	agent signaling // nil while no agent connection is up
-	// redialing marks the gap between agent connections, so a page that
-	// arrives then is told to wait.
+	// redialing marks the gap between agent connections: a page that
+	// arrives then is told to wait, and the next run sends it the Config.
 	redialing bool
 	// events carries what the page decides: errDetached or errPageEnded.
 	events chan error
@@ -93,17 +93,18 @@ func (b *bridge) accept(ctx context.Context, srv browsers) {
 		}
 		done := make(chan struct{})
 		prevDone = done
+		// Under the lock, so the Config run sends a page that waited cannot
+		// overtake the word to wait.
 		b.mu.Lock()
 		b.cur = br
-		redialing := b.redialing
-		b.mu.Unlock()
-		if redialing {
+		if b.redialing {
 			if err := br.Send(protocol.Message{Type: protocol.TypeReconnecting}); err != nil {
 				b.log.Warn("send reconnecting", "err", err)
 			}
 		} else {
 			b.sendConfig(br)
 		}
+		b.mu.Unlock()
 		go b.fromBrowser(ctx, br, done)
 	}
 }
@@ -160,20 +161,19 @@ func (b *bridge) run(ctx context.Context, agent signaling, sshDone <-chan struct
 	defer cancel()
 	b.mu.Lock()
 	b.agent = agent
+	if b.redialing && b.cur != nil {
+		// The page waited through the redial and builds its peer
+		// connection anew from this. Any other page got its Config on
+		// arrival, and a second would land in the middle of its signaling.
+		b.sendConfig(b.cur)
+	}
 	b.redialing = false
-	br := b.cur
 	b.mu.Unlock()
 	defer func() {
 		b.mu.Lock()
 		b.agent = nil
 		b.mu.Unlock()
 	}()
-	if br != nil {
-		// A page that waited through a redial builds its peer connection
-		// anew from this; the first page got its Config on arrival and
-		// ignores a second.
-		b.sendConfig(br)
-	}
 	agentErr := make(chan error, 1)
 	go func() { agentErr <- b.fromAgent(ctx, agent) }()
 	var err error

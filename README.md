@@ -82,6 +82,20 @@ this CLI does not carry. Started beside it with `--new`, the upload leaves
 the kept session's agent in place, so `robin-send` in that desktop keeps
 working.
 
+A new `robin gui` that resumes a desktop gets what its own command line
+names, or is told why not. `--curtain` and `--silent` switch on the curtain
+and the silent room of a kept attached desktop before the page connects,
+as they would for a new one, and a switch the page had turned on stays on;
+when one cannot go on, the CLI says why and leaves the desktop as it was,
+still kept. The microphone and camera are the ones the desktop started
+with: a resume that offers one it lacks is refused, with how to get it
+(resume without the flag, or `robin end` and start again), and a resume
+without `--mic` or `--camera` offers neither to the page. The flags that
+shape the desktop itself (`--max-size`, `--fps`, `--max-kbps`, `--encoder`,
+`--monitor`, `--audio`, `--session`) apply to a new desktop only. The same
+CLI redialing after a drop asks for nothing, so a switch the page turned
+off stays off.
+
 With `--attach`, nothing new is started: the agent streams a desktop that is
 already running on the host, usually the one you are logged in to at the
 machine. `wayland` takes your Wayland session through the desktop's screen
@@ -144,8 +158,8 @@ once, at the start, where each went on the host or why it could not.
 | `--audio` | `true` | stream the desktop's sound; `--audio=false` leaves it out |
 | `--mic` | off | offer your microphone to the host's programs; it stays off until you switch it on in the page |
 | `--camera` | off | offer your camera to the host's programs, through PipeWire or a v4l2loopback device; off until switched on |
-| `--curtain` | off | attached desktops: black out the host's screen while the page still shows it. The keyboard and mouse at the host still work; see [A private session](#a-private-session) |
-| `--silent` | off | attached desktops: keep the host's speakers quiet while the page still plays the sound |
+| `--curtain` | off | attached desktops: black out the host's screen while the page still shows it, from the start or, with `--id`, as the CLI resumes a kept one. The keyboard and mouse at the host still work; see [A private session](#a-private-session) |
+| `--silent` | off | attached desktops: keep the host's speakers quiet while the page still plays the sound, from the start or as the CLI resumes |
 | `--stun` | Google's public server | STUN servers for NAT traversal, comma-separated, or `none`; the browser and the agent each ask them for their public address (see [Security](#security)), except with `--transport tunnel`, which asks none |
 | `--no-browser` | | print the page URL on stdout instead of opening a browser |
 | `--listen` | `127.0.0.1:0` | address for the local page; loopback only |
@@ -399,8 +413,12 @@ screen at the host and `--silent` keeps its speakers quiet, while the page
 still shows the picture and plays the sound. Both are off unless you ask,
 and the status tab has a switch for each that works mid-session; when you
 attach without them, the CLI says the room can see and hear you and names
-the two flags. A desktop robin starts has nobody in front of it, so there
-the flags are refused.
+the two flags. A switch clicked while the page reconnects waits, busy,
+and goes to the host once the page is back. `robin gui --id <id>
+--curtain` turns the curtain on as it resumes a desktop kept with
+`--keep`, and fails with the reason, the desktop still kept, when it
+cannot. A desktop robin starts has nobody in front of it, so there the
+flags are refused.
 
 The curtain hides the screen without locking it. The keyboard and mouse at
 the host keep working, so someone there can still type into your session,
@@ -510,12 +528,16 @@ OpenSSH and a browser that decodes H.264 in WebRTC, on one of:
 - **macOS or Linux**, where one ControlMaster connection carries the whole
   session, and `/bin/sh` starts that master with Ctrl+C ignored, so the
   keystroke ends the session through Robin rather than by cutting the
-  connection.
+  connection. With `--ssh-mux=false` every ssh starts that way.
 - **Windows 10 or 11**, with the OpenSSH client Windows ships
   (`ssh.exe` on `PATH`). It has no ControlMaster, so the CLI runs the probe,
   the upload, the agent and the tunnel as an ssh each, and each logs in on
   its own: with a key or `ssh-agent` that goes unnoticed, while a password or
   2FA prompt comes three times a session, five when the agent is uploaded.
+  Each ssh starts in a process group of its own, which Ctrl+C does not
+  reach, so the keystroke ends the session over the agent's connection
+  and asks for no further login; a redial after a dropped network logs in
+  again, as at the start.
   The tunnel's forward listens on a loopback TCP port, as Windows' OpenSSH
   forwards no unix sockets. `make dist` builds
   `robin-windows-amd64.exe` and `robin-windows-arm64.exe`; the page opens in
@@ -903,8 +925,9 @@ UDP, UDP blocked on the host from the start, UDP blocked mid-session, and
 `--attach auto` against a two-monitor desktop the test user already has
 running, where the page has to start on the primary monitor and switch to
 the other and to both. A fifth, `nomux`, is the blocked one with
-`--ssh-mux=false`, the Windows way, and checks no ControlMaster ran and no ssh
-outlives the CLI. Each
+`--ssh-mux=false`, the Windows way, and checks no ControlMaster ran, no ssh
+outlives the CLI, and Ctrl+C ends the session with no reconnect announced
+and no end command over a fresh login. Each
 asserts that decoded frames are not black and change after typing, that
 keystrokes after a 20 s pause reach the screen within 400 ms, that typed
 text runs in the remote shell, as does text an input method commits in
@@ -912,7 +935,16 @@ Chrome, pointer position, clipboard both ways, resize,
 that sound played on the host is heard once the speaker is on, which
 transport ICE picked, and that nothing survives the CLI; for the attached
 desktop that means a resize leaves its screen alone and it outlives the session
-with the same processes, autorepeat and keymaps. `direct` and `attach`
+with the same processes, autorepeat, keymaps, gamma and sinks. There the
+curtain must black out the room's screen (xrandr reads its brightness) while
+the page's picture stays lit, and the silent room must keep the room's
+speakers quiet while the page still hears the noise; then, kept with
+`--keep`, a curtain switch clicked while the page waits out an SSH cut must
+reach the host once it is back, a new `robin gui --id --mic` must be
+refused for a desktop that has no microphone, and `--id --curtain
+--silent` must darken and quiet the room before the page connects.
+`rejoin` refuses a `--mic` resume of a spawned desktop the same way.
+`direct` and `attach`
 also upload files from the status tab and by a drop, twice under one name
 so the second lands as `(1)`, offer one from the host (`robin-send` typed
 in the spawned xterm, `robin-agent send` over ssh for the attached desktop)
@@ -1272,7 +1304,9 @@ verified against a Linux build.
   the Windows client in cross-builds, `go vet` and the `nomux` scenario's
   forced mode on Linux. Neither has run on the real thing; in particular
   the check that ssh holds the forward's port on Windows has run only in
-  its Linux form, against `/proc`.
+  its Linux form, against `/proc`, and keeping Ctrl+C away from each ssh
+  (a process group of its own, where Linux ignores the signal) has not
+  run on Windows at all.
 - Without ControlMaster a dropped network is noticed only when the agent's
   connection goes quiet for its idle timeout, not at once, and every
   `LocalForward` in your ssh config for that host comes up with the

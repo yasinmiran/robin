@@ -33,8 +33,9 @@ const URL_LINE = /^http:\/\/127\.0\.0\.1:\d+\/#\S+$/;
 // ROBIN_SIGINT_PID_ONLY=1 to signal the CLI process alone.
 const signalGroup = process.env.ROBIN_SIGINT_PID_ONLY !== '1';
 
-// Cli runs `robin gui --no-browser <host>`: one URL line on stdout, logs on
-// stderr (appended to <dir>/cli.stderr.log), SIGINT to end the session.
+// Cli runs `robin gui --no-browser <host>`, with ROBIN_CLI_ARGS and then
+// args: one URL line on stdout, logs on stderr (appended to
+// <dir>/cli.stderr.log), SIGINT to end the session.
 export class Cli {
   readonly extraStdout: string[] = [];
   private exit?: Exit;
@@ -45,21 +46,24 @@ export class Cli {
     private readonly exited: Promise<Exit>,
     readonly url: string,
     readonly stderrPath: string,
+    private readonly stderrFrom: number,
   ) {
     exited.then((e) => (this.exit = e));
   }
 
-  static start(dir: string, host = 'robinhost', timeoutMs = 90_000): Promise<Cli> {
+  static start(dir: string, args: string[] = [], host = 'robinhost', timeoutMs = 90_000): Promise<Cli> {
     const stderrPath = path.join(dir, 'cli.stderr.log');
+    // Every CLI of the run appends to the log; this one's lines start here.
+    const stderrFrom = fs.statSync(stderrPath, { throwIfNoEntry: false })?.size ?? 0;
     const stderr = fs.createWriteStream(stderrPath, { flags: 'a' });
     const stdoutLog = fs.createWriteStream(path.join(dir, 'cli.stdout.log'), { flags: 'a' });
     // Verbose, so the saved stderr carries the agent's log (ICE states, resizes).
-    const args = ['gui', '--no-browser', '-v', ...(process.env.ROBIN_CLI_ARGS ?? '').split(' ').filter(Boolean), host];
-    const header = `--- ${new Date().toISOString()} robin ${args.join(' ')}\n`;
+    const argv = ['gui', '--no-browser', '-v', ...(process.env.ROBIN_CLI_ARGS ?? '').split(' ').filter(Boolean), ...args, host];
+    const header = `--- ${new Date().toISOString()} robin ${argv.join(' ')}\n`;
     stderr.write(header);
     stdoutLog.write(header);
 
-    const proc = spawn('robin', args, {
+    const proc = spawn('robin', argv, {
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true, // own process group, like a foreground job
     });
@@ -89,7 +93,7 @@ export class Cli {
           return;
         }
         clearTimeout(timer);
-        cli = new Cli(proc, exited, line, stderrPath);
+        cli = new Cli(proc, exited, line, stderrPath, stderrFrom);
         resolve(cli);
       });
     });
@@ -127,6 +131,15 @@ export class Cli {
       return { ...(await this.exited), afterMs: Date.now() - t0, killed: true };
     })();
     return this.stopping;
+  }
+
+  // said is what this CLI has written to stderr so far, from its header on.
+  said(): string {
+    try {
+      return fs.readFileSync(this.stderrPath).subarray(this.stderrFrom).toString('utf8');
+    } catch {
+      return '';
+    }
   }
 
   stderrTail(lines = 60): string {

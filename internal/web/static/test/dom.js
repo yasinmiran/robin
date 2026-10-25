@@ -1,7 +1,7 @@
-// Just enough of a DOM for files.js, clipboard.js, devicebar.js, sharp.js,
-// keys.js and input.js under node: elements that hold children, attributes,
-// focus and listeners, a window and a body, and animation frames on timers.
-// installDom puts it on globalThis.
+// Just enough of a DOM for files.js, clipboard.js, devicebar.js, private.js,
+// sharp.js, keys.js and input.js under node: elements that hold children,
+// attributes, focus and listeners, a window and a body, and animation frames
+// on timers. installDom puts it on globalThis.
 
 export class FakeElement extends EventTarget {
   children = [];
