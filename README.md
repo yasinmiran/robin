@@ -1347,11 +1347,11 @@ verified against a Linux build.
   decodes; High profile measured at most 5% smaller on an Intel iGPU.
 - Through the SSH tunnel video is TCP inside TCP, so a lossy link shows
   head-of-line stalls that direct UDP would not.
-- The agent tells who opened an ICE-TCP connection from `/proc/net/tcp`.
-  Where it cannot read that (some sandboxes hide it), it refuses every
-  connection to its tunnel listener and the session has no TCP path; so it
-  does for one from an IPv6 socket, which sshd never opens for the
-  forward's IPv4 address. The SSH server has to make the forward's
+- The agent asks the kernel, through `sock_diag`, who opened an ICE-TCP
+  connection. Where it cannot ask (a sandbox that blocks netlink), it
+  refuses every connection to its tunnel listener and the session has no
+  TCP path; so it does for one from an IPv6 socket, which sshd never opens
+  for the forward's IPv4 address. The SSH server has to make the forward's
   connection as you or as root, as OpenSSH's does.
 - The page can still send media on the agent's own video and sound lines,
   which the answer cannot turn down without its own sending; the agent
