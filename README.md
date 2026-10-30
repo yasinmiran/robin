@@ -739,7 +739,10 @@ transfers from the agent, taken only while the switch is on, at most 4 MiB
 each and four at once, open or still being decoded. Each atlas's PNG header
 must give the size its tiles take, at most 1024x1024, before the browser's
 own image decoder reads it, and a tile manifest or batch that strays outside
-its grid drops every tile instead of growing what the page keeps. Tiles are
+its grid, or a batch for a frame more than two seconds past the newest
+manifest, drops every tile instead of growing what the page keeps. At most
+8 decoded batches wait for their frame to show; the page closes older ones
+unshown, so a hidden tab costs those tiles their sharpness. Tiles are
 drawn on a canvas and nowhere else; the page sends nothing new because of
 them but the switch itself.
 

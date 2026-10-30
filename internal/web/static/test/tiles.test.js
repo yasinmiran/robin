@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MAX_TILE_BATCH, TileBook, after, atlasSize, parseTileBatch } from '../tiles.js';
+import { MAX_TILE_BATCH, MAX_WAITING_BATCHES, TILE_HORIZON, TileBook, after, atlasSize, parseTileBatch } from '../tiles.js';
 import { marshal, pngHead } from './tilebatch.js';
 
 // grid is the manifest that starts a 130x70 desktop: 3x2 tiles, the last
@@ -123,6 +123,38 @@ test('a batch newer than the frame on screen waits for it', () => {
   assert.deepEqual(book.batch(batch(200, [1])).draws, []);
   assert.deepEqual(book.frame(150).draws, []);
   assert.equal(book.frame(200).draws.length, 1);
+});
+
+test('batches waiting for a frame that never shows are bounded', () => {
+  // A hidden tab stops reporting frames, and a hostile agent can stamp
+  // batches for one that never comes: each holds a decoded atlas.
+  const book = new TileBook();
+  book.manifest(grid(10));
+  book.frame(10);
+  book.manifest(grid(20));
+  const sent = [];
+  for (let k = 0; k < 64; k++) {
+    const b = batch(20, [k % 6]);
+    sent.push(b.image);
+    for (const image of book.batch(b).spent) image.close();
+  }
+  const held = sent.filter((image) => !image.closed);
+  assert.equal(held.length, MAX_WAITING_BATCHES, 'the newest wait, the oldest are spent');
+  assert.deepEqual(held, sent.slice(-MAX_WAITING_BATCHES));
+  assert.equal(book.frame(20).draws.length, MAX_WAITING_BATCHES);
+});
+
+test('a batch for a frame far past every manifest is refused, and changes nothing', () => {
+  const book = new TileBook();
+  book.manifest(grid(10));
+  book.frame(10);
+  for (const rtp of [10 + TILE_HORIZON + 1, 10 + 2 ** 30]) {
+    assert.throws(() => book.batch(batch(rtp, [0])), /malformed tile batch/, String(rtp));
+  }
+  assert.deepEqual(book.batch(batch(10 + TILE_HORIZON, [0])).draws, [], 'one within the horizon waits');
+  // Across the 32-bit wrap.
+  book.manifest(grid(0xfffffff0));
+  assert.throws(() => book.batch(batch((0xfffffff0 + TILE_HORIZON + 1) >>> 0, [1])), /malformed tile batch/);
 });
 
 test('the atlas wraps every sixteen tiles', () => {

@@ -1135,6 +1135,19 @@ the commit, which the hash and the size check have already passed. In
 node, two clipboard headers with no data held 33,260,488 bytes of
 `ArrayBuffer` before and 512 after.
 
+**Tile batches that wait.** A transfer's place goes back once its atlas
+has decoded and the batch is in `TileBook`, so the four bound what is under
+way, not what waits there for its frame to show. Each waiting batch holds a
+decoded atlas, up to 4 MiB for a PNG of a few KB, and a host that stamped
+its batches 2^30 ticks ahead could pile them up without end; so could an
+honest agent while a hidden tab reports no frames. The book keeps the
+newest 8 and hands the oldest back to be closed, and refuses a batch whose
+frame is more than two seconds past the newest manifest, which drops every
+tile as any malformed batch does. The agent cuts a batch from a frame it
+already wrote, after that frame's manifest, so an honest one is never
+ahead. In node, 64 batches for a frame that never showed held 64 atlases
+before and 8 after.
+
 **Pointer images.** The agent keeps 64 and forgets them in the order the
 desktop reported them, which the page never learns; it sends an image by
 ID alone once it believes the page has it. A page that forgot its oldest
