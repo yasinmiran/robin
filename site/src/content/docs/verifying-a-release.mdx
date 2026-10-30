@@ -28,9 +28,14 @@ Compare the sums with the published ones. `make dist` builds the CLI for every c
 ## The check that keeps it true
 
 ```sh
-make repro                       # builds everything twice and compares
-REPRO_TOOLCHAIN=1 make repro     # also rebuilds openh264 and libopus for the copy
-REPRO_SELFTEST=1 make repro      # proves the comparison notices a difference
+# builds everything twice and compares
+make repro
+
+# also rebuilds openh264 and libopus for the copy
+REPRO_TOOLCHAIN=1 make repro
+
+# proves the comparison notices a difference
+REPRO_SELFTEST=1 make repro
 ```
 
 `make repro` builds the agents, the CLI and `dist/` from the checkout, then again from a copy of the tree in a temp directory outside any repository, with its own home, temp directory, Go build cache and zig, and fails on the first byte that differs, with the `strings` of both for a start on finding the cause.

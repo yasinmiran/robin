@@ -6,10 +6,17 @@ order: 10
 ---
 
 ```sh
-robin gui --max-size 3840x2160 build-box   # auto: the GPU, if build-box has one and it pays
-robin gui --encoder vaapi build-box        # Intel or AMD through VA-API, or fail
-robin gui --encoder nvenc gpu-box          # NVIDIA, or fail
-robin gui --encoder software build-box     # never the GPU
+# auto: the GPU, if build-box has one and it pays
+robin gui --max-size 3840x2160 build-box
+
+# Intel or AMD through VA-API, or fail
+robin gui --encoder vaapi build-box
+
+# NVIDIA, or fail
+robin gui --encoder nvenc gpu-box
+
+# never the GPU
+robin gui --encoder software build-box
 ```
 
 ## The software encoder

@@ -121,9 +121,14 @@ The `wayland` scenario runs the same CLI and Chrome against the headless GNOME s
 `make e2e` builds the linux/amd64 CLI the client container runs and then calls `e2e/run.sh`, which you can also run by hand once that binary exists:
 
 ```sh
-e2e/run.sh            # every scenario
-e2e/run.sh direct     # one scenario
-e2e/run.sh selftest   # the harness itself, no CLI needed
+# every scenario
+e2e/run.sh
+
+# one scenario
+e2e/run.sh direct
+
+# the harness itself, no CLI needed
+e2e/run.sh selftest
 ```
 
 The first run needs network access for image pulls and around 3.6 GB of disk for the two images; the `wayland` scenario adds the GNOME host image, about 1 GB, and needs Go on the machine. Containers and the network are removed on exit, Ctrl+C included. Two runs can share a machine when each sets its own `ROBIN_E2E_ID`, `ROBIN_E2E_SUBNET` and `ROBIN_E2E_HOST_IP`:

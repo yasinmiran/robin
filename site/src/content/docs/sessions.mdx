@@ -6,10 +6,17 @@ order: 2
 ---
 
 ```sh
-robin gui build-box          # again later: picks the desktop up where you left it
-robin gui --new build-box    # another desktop beside the kept one
-robin ls build-box           # the sessions the host keeps
-robin end build-box          # end one without opening it
+# again later: picks the desktop up where you left it
+robin gui build-box
+
+# another desktop beside the kept one
+robin gui --new build-box
+
+# the sessions the host keeps
+robin ls build-box
+
+# end one without opening it
+robin end build-box
 ```
 
 A desktop Robin started stays on the host when the connection drops, for `--keep` (8 hours by default), and the CLI keeps redialing meanwhile: the page says Reconnecting, then comes back to the same windows. Close the laptop, or change networks and lose the VPN with it, and the session is still where you left it.

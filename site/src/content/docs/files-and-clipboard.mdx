@@ -20,8 +20,11 @@ A file whose name starts with a dot is refused, so no upload is hidden. Nothing 
 It starts on the host:
 
 ```sh
-robin-send report.pdf build/*.log                # in a terminal of the desktop Robin started
-~/.cache/robin/robin-agent-* send report.pdf     # anywhere else on the host, an attached desktop or ssh
+# in a terminal of the desktop Robin started
+robin-send report.pdf build/*.log
+
+# anywhere else on the host, an attached desktop or ssh
+~/.cache/robin/robin-agent-* send report.pdf
 ```
 
 The page lists each offer by name and size, and nothing downloads until you click **Save**; **Dismiss** turns it down. Save takes the file as it is by then, but never more than the size shown: a file that grew since its offer is refused, and both the page and `robin-send` say so.

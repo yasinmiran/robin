@@ -7,7 +7,9 @@ order: 4
 
 ```sh
 robin gui --attach wayland workstation
-robin gui --attach auto workstation    # picks Wayland when that is the active session
+
+# picks Wayland when that is the active session
+robin gui --attach auto workstation
 ```
 
 `--attach wayland` streams the GNOME or KDE Plasma session you are logged in to on the host. It goes through xdg-desktop-portal, the same screen sharing a video call app uses, which means the desktop asks before anyone sees it, shows that sharing is on, and lets the person at the screen stop it. `--attach auto` picks Wayland when the session logind reports as active is a Wayland one.
