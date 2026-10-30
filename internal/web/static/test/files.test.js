@@ -77,6 +77,36 @@ test('one click on Save takes one download, and a dismissed one is not saved', a
   assert.equal(saved.length, 2, 'a dismissed download was saved');
 });
 
+test('withheld, uploads say why and go nowhere, until they are allowed again', async () => {
+  const pick = overlay.section.find((el) => el.tagName === 'BUTTON' && el.className === 'upload');
+  const note = overlay.section.find((el) => el.id === 'files-note');
+  const input = overlay.section.find((el) => el.id === 'files-input');
+  let picked = 0;
+  input.click = () => { picked++; };
+  files.withhold('Uploads need control from robin');
+  assert.equal(pick.getAttribute('aria-disabled'), 'true');
+  assert.equal(pick.getAttribute('aria-describedby'), 'files-note');
+  assert.equal(note.textContent, 'Uploads need control from robin');
+  assert.equal(note.hidden, false);
+  pick.click();
+  assert.equal(picked, 0, 'no file picker opens');
+  const before = bulks.length;
+  files.upload([{ name: 'dropped.txt', size: 1 }]);
+  files.propose([{ name: 'pasted.txt', size: 1 }]);
+  const pasted = files.list().find((t) => t.name === 'pasted.txt');
+  button(await row(pasted.id), 'send').click();
+  await later();
+  assert.equal(bulks.length, before, 'nothing went to the host');
+  assert.equal(files.list().some((t) => t.name === 'dropped.txt'), false);
+  button(await row(pasted.id), 'dismiss').click();
+
+  files.withhold('');
+  assert.equal(pick.hasAttribute('aria-disabled'), false);
+  assert.equal(note.hidden, true);
+  pick.click();
+  assert.equal(picked, 1, 'the file picker opens again');
+});
+
 test('files pasted wait for a click on Upload', async () => {
   const pdf = { name: 'report.pdf', type: 'application/pdf', size: 4 };
   const data = { getData: (type) => (type === 'text/plain' ? 'report.pdf' : ''), files: [pdf] };

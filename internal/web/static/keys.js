@@ -31,6 +31,8 @@ export class Keys {
   #macroList;
   #editorBox;
   #note;
+  #title;
+  #withheld = '';
   #macros = null; // protocol.Macros, as the CLI last told
   #editor = null; // the macro being edited and its controls
   #recorder = null;
@@ -43,6 +45,7 @@ export class Keys {
   constructor({ overlay, toggle, send, live, signal, input, sleep = wait }) {
     this.#overlay = overlay;
     this.#toggle = toggle;
+    this.#title = toggle.title;
     this.#signal = signal;
     this.#input = input;
     this.#live = live;
@@ -83,6 +86,15 @@ export class Keys {
     if (this.#editor && !macros.error) this.#closeEditor();
     this.#renderMacros();
     this.#say(macros.error ?? '', { error: Boolean(macros.error) });
+  }
+
+  // withhold says why what the section plays cannot reach the desktop, as
+  // on a guest's page without control, or lets it again for ''. Macros
+  // can still be recorded and kept.
+  withhold(reason) {
+    this.#withheld = reason;
+    this.#toggle.title = reason ? `Keys and macros: ${reason}` : this.#title;
+    this.#say(reason);
   }
 
   // stop ends whatever plays, as when the control channel closed.
@@ -138,6 +150,10 @@ export class Keys {
   }
 
   async #typeClipboard() {
+    if (this.#withheld) {
+      this.#say(this.#withheld, { error: true });
+      return;
+    }
     let text;
     try {
       text = await navigator.clipboard.readText();
@@ -159,6 +175,10 @@ export class Keys {
   }
 
   #play(steps, name) {
+    if (this.#withheld) {
+      this.#say(this.#withheld, { error: true });
+      return;
+    }
     if (!this.#live()) {
       this.#say('Not connected to the desktop', { error: true });
       return;

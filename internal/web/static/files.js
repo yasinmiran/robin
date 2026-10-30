@@ -32,6 +32,10 @@ export class Files {
   #section;
   #list;
   #picker;
+  #pick;
+  #hint;
+  #note;
+  #withheld = '';
   #queue = [];
   #proposed = new Map(); // pasted files waiting for a click, by id
   #pumping = false;
@@ -82,8 +86,26 @@ export class Files {
     return this.#transfers.list().map((t) => ({ ...t }));
   }
 
-  // upload sends files to the host, one at a time, in order.
+  // withhold says why uploads cannot go, as on a guest's page without
+  // control, where the agent would refuse them, or lets them again for ''.
+  withhold(reason) {
+    this.#withheld = reason;
+    if (reason) {
+      this.#pick.setAttribute('aria-disabled', 'true');
+      this.#pick.setAttribute('aria-describedby', this.#note.id);
+    } else {
+      this.#pick.removeAttribute('aria-disabled');
+      this.#pick.removeAttribute('aria-describedby');
+    }
+    this.#hint.hidden = Boolean(reason);
+    this.#note.textContent = reason;
+    this.#note.hidden = !reason;
+  }
+
+  // upload sends files to the host, one at a time, in order, unless
+  // uploads are withheld: then the tab says why.
   upload(files) {
+    if (this.#refused()) return;
     for (const file of files) {
       const id = `up-${++this.#uploads}`;
       this.#transfers.upload(id, file.name, file.size);
@@ -102,7 +124,13 @@ export class Files {
     }
   }
 
+  #refused() {
+    if (this.#withheld) this.#overlay.reveal();
+    return Boolean(this.#withheld);
+  }
+
   #confirm(id) {
+    if (this.#refused()) return;
     const file = this.#proposed.get(id);
     this.#proposed.delete(id);
     if (!file || !this.#transfers.confirm(id)) return;
@@ -194,8 +222,11 @@ export class Files {
     this.#section = section;
     const head = document.createElement('div');
     head.className = 'files-head';
-    const pick = button('upload', 'Upload files', () => this.#picker.click());
+    const pick = button('upload', 'Upload files', () => {
+      if (!this.#refused()) this.#picker.click();
+    });
     pick.title = 'Send files to the host’s download folder';
+    this.#pick = pick;
     this.#picker = document.createElement('input');
     this.#picker.type = 'file';
     this.#picker.multiple = true;
@@ -208,10 +239,15 @@ export class Files {
     const hint = document.createElement('span');
     hint.className = 'hint';
     hint.textContent = 'or drop them on the page';
+    this.#hint = hint;
     head.append(pick, this.#picker, hint);
+    this.#note = document.createElement('p');
+    this.#note.className = 'switch-note';
+    this.#note.id = 'files-note';
+    this.#note.hidden = true;
     this.#list = document.createElement('ul');
     this.#list.className = 'transfers';
-    section.append(head, this.#list);
+    section.append(head, this.#note, this.#list);
   }
 
   #changed() {

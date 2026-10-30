@@ -45,7 +45,7 @@ const session = new Session();
 const sessionControls = sessionSection(overlay.addSection('session', { last: true }));
 const privateSwitches = new PrivateSwitches(overlay, sendControl);
 const sharp = new SharpText({ video, overlay, send: sendControl, input });
-const sharing = new Sharing(overlay, sendControl);
+const sharing = new Sharing(overlay, sendControl, { onShare: guestControls });
 
 let ws = null;
 let pc = null;
@@ -173,7 +173,6 @@ async function onSignal(m) {
       input.scale = m.config?.hidpi ? window.devicePixelRatio || 1 : 1;
       session.configure(m.config);
       sharing.configure(m.config);
-      if (sharing.guest) guestControls();
       sessionControls.keep.hidden = !session.canKeep;
       keys.configure(m.config?.macros);
       // After a reconnect there is no peer; the CLI's new config asks for one.
@@ -375,17 +374,22 @@ function sessionSection(section) {
   return { keep, end };
 }
 
-// guestControls turns the session's buttons into a guest's: a guest
-// leaves, and the desktop stays with its owner.
-function guestControls() {
+// guestControls turns the page's controls into a guest's, for share: a
+// guest leaves, and the desktop stays with its owner, and what reaches the
+// desktop says it needs control while the guest has none.
+function guestControls(share) {
+  if (!share) return;
   sharp.withhold(GUEST_SHARP);
   sessionControls.end.textContent = 'Leave';
   sessionControls.end.title = 'Stop watching; the desktop stays with its owner';
+  const owner = share.owner || 'the owner';
+  files.withhold(share.control ? '' : `Uploads need control from ${owner}`);
+  keys.withhold(share.control ? '' : `Keys and macros reach the desktop once ${owner} gives you control`);
 }
 
 function end(reason, detail = '') {
   if (state === 'ended') return;
   dropPeer();
   setState('ended');
-  overlay.showNotice(reason, detail);
+  overlay.showNotice(reason, detail, sharing.owner);
 }
