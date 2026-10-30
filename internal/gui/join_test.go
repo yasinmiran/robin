@@ -3,6 +3,7 @@ package gui
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -227,4 +228,90 @@ func TestRunGuestOfNoSession(t *testing.T) {
 		t.Errorf("Run: %v", err)
 	}
 	t.Log(err)
+}
+
+// guestWith is guestOverPipes with the host's options changed by change
+// first, and the host returned too.
+// What the guest sends after its join comes on the channel returned.
+func guestWith(t *testing.T, ctx context.Context, ready protocol.Message, change func(*host)) (*host, *fakeHostAgent, <-chan protocol.Message, <-chan error) {
+	t.Helper()
+	h, _, _ := sshHost(t)
+	h.o.Join, h.o.Transport, h.o.NoBrowser, h.o.Listen = testCode, relay.Direct, true, "127.0.0.1:0"
+	h.o.Stdout = &lockedBuffer{}
+	change(h)
+	a, f := agentOverPipes(t)
+	rest := make(chan protocol.Message, 8)
+	go func() {
+		if m := <-f.calls; m.Type == protocol.TypeJoin {
+			f.conn.Send(ready)
+		}
+		for m := range f.calls {
+			rest <- m
+		}
+	}()
+	done := make(chan error, 1)
+	go func() { done <- h.guest(ctx, a) }()
+	return h, f, rest, done
+}
+
+// A page server that cannot listen ends the join, with a bye so the
+// session lets the guest go at once.
+func TestGuestWhosePageCannotListenSaysBye(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, f, rest, done := guestWith(t, ctx, guestReady(), func(h *host) { h.o.Listen = "127.0.0.1:not-a-port" })
+	select {
+	case m := <-rest:
+		if m.Type != protocol.TypeBye {
+			t.Fatalf("the guest sent %q", m.Type)
+		}
+		f.conn.Send(protocol.Message{Type: protocol.TypeEnded, Error: "you left the session"})
+	case <-time.After(10 * time.Second):
+		t.Fatal("no bye")
+	}
+	if err := waitDone(t, done); err == nil {
+		t.Error("joined without a page")
+	}
+}
+
+// Through the tunnel alone the guest's page asks no STUN server, and a
+// lost SSH connection ends the guest with the reason.
+func TestGuestOverTheTunnelEndsWithItsConnection(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h, _, _, done := guestWith(t, ctx, guestReady(), func(h *host) {
+		h.o.Transport = relay.Tunnel
+		h.o.STUN = []string{"stun:stun.example:3478"}
+	})
+	time.Sleep(500 * time.Millisecond)
+	h.m.Close()
+	if err := waitDone(t, done); err == nil || !strings.Contains(err.Error(), "SSH connection") {
+		t.Errorf("the guest after its connection went: %v", err)
+	}
+}
+
+func TestInviteOverADeadAgent(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	a, _ := agentOverPipes(t)
+	a.conn.Close()
+	if err := invite(ctx, a, []string{"alice"}, "box", io.Discard); err == nil {
+		t.Error("invited over a closed connection")
+	}
+	a, f := agentOverPipes(t)
+	f.outW.Close()
+	if err := invite(ctx, a, []string{"alice"}, "box", io.Discard); err == nil {
+		t.Error("an invite with no answer went through")
+	}
+}
+
+// A join whose code the agent never gets fails as the agent's.
+func TestGuestOverADeadAgent(t *testing.T) {
+	h, _, _ := sshHost(t)
+	h.o.Join = testCode
+	a, _ := agentOverPipes(t)
+	a.conn.Close()
+	if err := h.guest(context.Background(), a); err == nil {
+		t.Error("joined over a closed connection")
+	}
 }
