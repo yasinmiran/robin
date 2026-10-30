@@ -100,7 +100,8 @@ run_desktop() {
 	echo "==== $pass"
 	# Run by ID: another checkout may retag the image between build and run.
 	id=$(podman build -q -t "$image" -f "$here/$file" "$here")
-	name=robin-wltest-$pass-$$
+	# A container's name takes no +, which a layout's variant comes after.
+	name=robin-wltest-$(printf %s "$pass" | tr + -)-$$
 	profiles=
 	if [ -n "$cover" ]; then
 		profiles=$cover/$pass
