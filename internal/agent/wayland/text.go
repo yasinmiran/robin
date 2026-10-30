@@ -14,32 +14,49 @@ import (
 )
 
 const (
-	// pasteSettle is how long Type waits after Ctrl+V, so that input after
-	// it reaches the program after the pasted text does.
+	// pasteSettle is how long Type waits after the paste keys, so that
+	// input after them reaches the program after the pasted text does.
 	pasteSettle = 100 * time.Millisecond
+	// managerRead bounds the wait for a clipboard manager to read a new
+	// offer, as mutter's does at once, before the paste keys go, and
+	// managerQuiet is how long reads must stop for before they do: a read
+	// after the keys is then the focused program's.
+	managerRead  = 250 * time.Millisecond
+	managerQuiet = 50 * time.Millisecond
+	// pasteRead bounds the wait for the focused program to read the offer
+	// after Ctrl+Shift+V, before Ctrl+V goes instead.
+	pasteRead = 300 * time.Millisecond
 	// restoreAfter is how long the pasted text stays on the clipboard
 	// before the text it replaced goes back. A program reads the clipboard
-	// when Ctrl+V reaches it, and GNOME's own clipboard manager reads each
-	// new offer at once, so a restore cannot wait for "the" read.
+	// when the paste keys reach it, and GNOME's own clipboard manager reads
+	// each new offer at once, so a restore cannot wait for "the" read.
 	restoreAfter = time.Second
-	// keyV is the keysym of a lowercase v, what Ctrl+V pastes with.
-	keyV = 'v'
 )
 
-// Type types text. Text in US ASCII goes as keysyms, as key-downs of those
-// characters do; any other text is pasted whole. The compositor drops a
-// keysym its layout lacks, a Wayland client cannot add one, and the portal
-// does not say what the layout has, but every Latin layout has ASCII. A
-// paste offers the text as the clipboard and presses Ctrl+V; a second
-// later the clipboard gets back what the user had there, unless something
-// has been copied since, or empty text where the agent knows of nothing,
-// so the typed text does not stay there. Without the clipboard, everything goes as
-// keysyms and only what the layout has is typed.
+// Keysyms of the paste keys' modifiers.
+const (
+	control = 0xffe3 // Control_L
+	shift   = keysym.ShiftL
+)
+
+// Type types text. Where the compositor types any keysym, as KWin does,
+// every character goes as its keysym. Elsewhere the compositor drops a
+// keysym its layout lacks and a Wayland client cannot add one, so only
+// ASCII the layout has goes as keysyms, and any other text is pasted
+// whole.
+//
+// A paste offers the text as the clipboard and presses Ctrl+Shift+V, which
+// terminals paste with; if no program reads the offer, it presses Ctrl+V,
+// which everything else pastes with. A second later the clipboard gets
+// back what the user had there, unless something has been copied since,
+// or empty text where the agent knows of nothing, so the typed text does
+// not stay there. Without the clipboard, everything goes as keysyms and
+// only what the layout has is typed.
 func (d *Desktop) Type(ctx context.Context, text string) error {
 	if d.in.viewOnly {
 		return errViewOnly
 	}
-	if d.clip != nil && !ascii(text) {
+	if d.clip != nil && !d.typable(text) {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -58,9 +75,14 @@ func (d *Desktop) Type(ctx context.Context, text string) error {
 	return nil
 }
 
-func ascii(s string) bool {
-	for i := range len(s) {
-		if s[i] >= utf8.RuneSelf {
+// typable reports whether text types as keysyms here: any text where the
+// compositor types any keysym, and elsewhere ASCII the layout has.
+func (d *Desktop) typable(text string) bool {
+	if d.anyKeysym {
+		return true
+	}
+	for _, r := range text {
+		if r >= utf8.RuneSelf || d.in.lacks != nil && d.in.lacks(r) {
 			return false
 		}
 	}
@@ -78,12 +100,31 @@ func printable(s string) string {
 }
 
 func (d *Desktop) paste(ctx context.Context, text string) error {
+	if text == "" {
+		return nil
+	}
+	n := d.clip.reads()
 	if err := d.clip.offerPaste(text); err != nil {
 		return err
 	}
-	d.clip.armPutBack()
-	if err := d.in.ctrl(keyV); err != nil {
+	// From here the clipboard holds the text, so it goes back whatever
+	// happens, a cancelled ctx included.
+	defer d.clip.armPutBack()
+	n, err := d.clip.awaitQuiet(ctx, n, managerRead, managerQuiet)
+	if err != nil {
 		return err
+	}
+	if err := d.in.chord('v', control, shift); err != nil {
+		return err
+	}
+	read, err := d.clip.awaitRead(ctx, n, pasteRead)
+	if err != nil {
+		return err
+	}
+	if !read {
+		if err := d.in.chord('v', control); err != nil {
+			return err
+		}
 	}
 	t := time.NewTimer(pasteSettle)
 	defer t.Stop()
@@ -120,7 +161,8 @@ func (p *pasteRestore) forget() {
 // offerPaste offers text for a paste, keeping the user's clipboard from
 // before the first of a run of pastes. Before the first copy the agent
 // sees, that is whatever was there when the session began, which the
-// portal does not report, so its text is read once.
+// portal does not report, so it is read once, in each format the rich
+// clipboard knows: a read of one the clipboard lacks comes back empty.
 func (c *clipboard) offerPaste(text string) error {
 	p := &c.paste
 	p.mu.Lock()
@@ -134,10 +176,10 @@ func (c *clipboard) offerPaste(text string) error {
 		known := c.known
 		c.mu.Unlock()
 		if !known {
-			before, _ := c.read(textMimes[0], maxClipboard)
+			before := c.readAll(richMimes)
 			c.mu.Lock()
 			if !c.known {
-				c.held, c.known = protocol.Clip{Text: strings.ToValidUTF8(string(before), "\uFFFD")}, true
+				c.held, c.known = before, true
 			}
 			c.mu.Unlock()
 		}
@@ -201,16 +243,21 @@ func (in *input) tap(sym uint32) error {
 	return in.keysym(sym, false)
 }
 
-// ctrl taps sym with Control held.
-func (in *input) ctrl(sym uint32) error {
-	control, _ := keysym.Named("Control", "ControlLeft")
+// chord taps the key of r with mods, keysyms every layout has, held:
+// pressed in order and let go the other way round.
+func (in *input) chord(r rune, mods ...uint32) error {
 	in.mu.Lock()
 	defer in.mu.Unlock()
-	for _, k := range []struct {
-		sym  uint32
-		down bool
-	}{{control, true}, {sym, true}, {sym, false}, {control, false}} {
-		if err := in.keysym(k.sym, k.down); err != nil {
+	for _, m := range mods {
+		if err := in.keysym(m, true); err != nil {
+			return err
+		}
+	}
+	if err := in.char(r); err != nil {
+		return err
+	}
+	for i := len(mods) - 1; i >= 0; i-- {
+		if err := in.keysym(mods[i], false); err != nil {
 			return err
 		}
 	}

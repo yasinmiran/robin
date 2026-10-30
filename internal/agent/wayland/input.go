@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
+	"strings"
 	"sync"
 	"unicode/utf8"
 
@@ -49,6 +51,10 @@ type input struct {
 	// maxY are the stream's last pixel.
 	scaleX, scaleY float64
 	maxX, maxY     float64
+	// lacks reports a printable ASCII character the layout is known not to
+	// have, which the compositor would drop as a keysym; nil while every
+	// one types.
+	lacks func(rune) bool
 
 	mu      sync.Mutex
 	held    map[string]uint32 // keysym by KeyboardEvent.code
@@ -120,11 +126,7 @@ func (in *input) key(m protocol.Control) error {
 		if !m.Down || r < 0x20 || r == 0x7f {
 			return nil // typed on key-down; nothing is held
 		}
-		sym := keysym.Rune(r)
-		if err := in.keysym(sym, true); err != nil {
-			return err
-		}
-		return in.keysym(sym, false)
+		return in.char(r)
 	}
 	sym, ok := keysym.Named(m.Key, m.Code)
 	if !ok {
@@ -155,6 +157,47 @@ func (in *input) key(m protocol.Control) error {
 
 func (in *input) keysym(sym uint32, down bool) error {
 	return in.s.call("NotifyKeyboardKeysym", int32(sym), state(down))
+}
+
+// char taps the key that types r. That is its keysym, unless the layout
+// lacks r: then it is the key a US layout has r on, which types whatever
+// this layout has there, as a keyboard plugged into the host would, and
+// takes Ctrl+C and the like to programs, which match shortcuts by key on
+// layouts without Latin letters. in.mu must be held.
+func (in *input) char(r rune) error {
+	code, shifted, ok := usKey(r)
+	if in.lacks == nil || !ok || !in.lacks(r) {
+		sym := keysym.Rune(r)
+		if err := in.keysym(sym, true); err != nil {
+			return err
+		}
+		return in.keysym(sym, false)
+	}
+	shift := shifted && !in.holds(keysym.ShiftL, keysym.ShiftR)
+	if shift {
+		if err := in.keysym(keysym.ShiftL, true); err != nil {
+			return err
+		}
+	}
+	for _, down := range []bool{true, false} {
+		if err := in.s.call("NotifyKeyboardKeycode", int32(code), state(down)); err != nil {
+			return err
+		}
+	}
+	if shift {
+		return in.keysym(keysym.ShiftL, false)
+	}
+	return nil
+}
+
+// holds reports whether any of syms is held. in.mu must be held.
+func (in *input) holds(syms ...uint32) bool {
+	for _, s := range in.held {
+		if slices.Contains(syms, s) {
+			return true
+		}
+	}
+	return false
 }
 
 func (in *input) button(browser int, down bool) error {
@@ -247,4 +290,33 @@ func state(down bool) uint32 {
 		return 1
 	}
 	return 0
+}
+
+// usRows are the keys of a US layout that type printable ASCII, each row
+// from its first evdev code (<linux/input-event-codes.h>): the characters
+// without Shift, then with it.
+var usRows = []struct {
+	code          uint32
+	plain, shifts string
+}{
+	{41, "`", "~"},                       // KEY_GRAVE
+	{2, "1234567890-=", "!@#$%^&*()_+"},  // KEY_1 to KEY_EQUAL
+	{16, "qwertyuiop[]", "QWERTYUIOP{}"}, // KEY_Q to KEY_RIGHTBRACE
+	{30, "asdfghjkl;'", "ASDFGHJKL:\""},  // KEY_A to KEY_APOSTROPHE
+	{43, "\\", "|"},                      // KEY_BACKSLASH
+	{44, "zxcvbnm,./", "ZXCVBNM<>?"},     // KEY_Z to KEY_SLASH
+}
+
+// usKey returns the evdev code of the key a US layout types r on, and
+// whether that takes Shift.
+func usKey(r rune) (code uint32, shift, ok bool) {
+	for _, row := range usRows {
+		if i := strings.IndexRune(row.plain, r); i >= 0 {
+			return row.code + uint32(i), false, true
+		}
+		if i := strings.IndexRune(row.shifts, r); i >= 0 {
+			return row.code + uint32(i), true, true
+		}
+	}
+	return 0, false, false
 }

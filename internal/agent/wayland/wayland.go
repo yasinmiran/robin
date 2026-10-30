@@ -61,6 +61,12 @@ type Desktop struct {
 	clip   *clipboard
 	cursor chan protocol.Cursor
 	done   chan error
+	// anyKeysym says the compositor types a keysym its layout lacks, as
+	// KWin does, so text needs no paste.
+	anyKeysym bool
+	// kb follows the layout where the compositor types only what that
+	// layout has; nil elsewhere, and under a view-only grant.
+	kb *keyboard
 
 	closing   chan struct{}
 	closeOnce sync.Once
@@ -118,6 +124,10 @@ func Open(ctx context.Context, o Options) (_ *Desktop, err error) {
 	if err := d.in.warmUp(); err != nil {
 		return nil, fmt.Errorf("input: %w", err)
 	}
+	if d.anyKeysym = typesAnyKeysym(conn); !d.anyKeysym && !d.in.viewOnly {
+		d.kb = followKeyboard(p.sigs, o.Log)
+		d.in.lacks = d.kb.lacks
+	}
 	if d.sess.clipboard {
 		if d.clip, err = newClipboard(d.sess, o.Log); err != nil {
 			return nil, err
@@ -167,6 +177,15 @@ func grant(ctx context.Context, p *portal, o Options) (*portalSession, error) {
 		o.Notify(protocol.Notice{Kind: protocol.NoticeViewOnly})
 		return s, nil
 	}
+}
+
+// typesAnyKeysym reports whether the session's compositor is KWin, which
+// types a keysym its layout lacks where mutter drops it. Measured on KDE
+// Plasma 6.7, GNOME 46 and GNOME 49.
+func typesAnyKeysym(conn *dbus.Conn) bool {
+	var owned bool
+	err := conn.BusObject().Call("org.freedesktop.DBus.NameHasOwner", 0, "org.kde.KWin").Store(&owned)
+	return err == nil && owned
 }
 
 // watch reports the desktop gone when the portal ends the session, as the
@@ -277,6 +296,9 @@ func (d *Desktop) Close() error {
 				d.clip.log.Warn("put the clipboard back", "err", err)
 			}
 			d.clip.close()
+		}
+		if d.kb != nil {
+			d.kb.close()
 		}
 		if d.sess != nil {
 			d.sess.close()
