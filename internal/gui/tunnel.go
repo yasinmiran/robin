@@ -8,12 +8,14 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"slices"
 	"sync"
 	"time"
 
 	"github.com/yasinmiran/robin/internal/relay"
 	"github.com/yasinmiran/robin/internal/sshmux"
+	"github.com/yasinmiran/robin/internal/tcpowner"
 )
 
 // firstCheckWait is how long a connection to the tunnel has to send its
@@ -29,10 +31,12 @@ const firstCheckWait = 5 * time.Second
 const maxCheckBytes = 512
 
 // maxPending bounds the tunnel connections still to send their first
-// check, each holding a descriptor for up to firstCheckWait, which any user
-// of this machine can open. Past it the oldest is closed. The browser sends
-// its check a loopback round trip after it connects, so the oldest is never
-// the browser's in practice, and a spliced connection no longer counts.
+// check, each holding a descriptor for up to firstCheckWait. Past it the
+// oldest is closed. The browser sends its check a loopback round trip
+// after it connects, so the oldest is not the browser's unless someone
+// keeps opening connections faster than that, which only another user's
+// can do unchecked where the kernel cannot say whose they are. A spliced
+// connection no longer counts.
 const maxPending = 16
 
 // A listener out of file descriptors is tried again after acceptRetryFirst,
@@ -55,10 +59,13 @@ type dialer interface{ Dial() (net.Conn, error) }
 // is spliced only once its first message is a check the agent's ICE
 // credentials sign, which only the page learns: anything else would get an
 // SSH channel and a connection to the agent's listener for the asking.
+// Where the kernel says who opened a connection, one that is not this
+// user's is closed before it waits for that check.
 type tunnel struct {
 	ln         net.Listener
 	log        *slog.Logger
 	firstCheck time.Duration
+	uidOf      func(net.Conn) (uint32, error) // tcpowner.PeerUID
 
 	mu      sync.Mutex
 	fwd     dialer            // nil while there is none
@@ -70,7 +77,7 @@ type tunnel struct {
 // the others the listener plus the forward over m, where a forward that
 // fails is an error only when the tunnel is all the user allowed.
 func openTunnel(ctx context.Context, m *sshmux.Master, remote string, transport relay.Transport, log *slog.Logger) (*tunnel, error) {
-	t := &tunnel{log: log, firstCheck: firstCheckWait}
+	t := &tunnel{log: log, firstCheck: firstCheckWait, uidOf: tcpowner.PeerUID}
 	if remote == "" || transport == relay.Direct {
 		return t, nil
 	}
@@ -105,9 +112,30 @@ func (t *tunnel) serve() {
 			continue
 		}
 		retry = acceptRetryFirst
+		if t.stranger(c) {
+			c.Close()
+			continue
+		}
 		t.waitForCheck(c)
 		go t.splice(c)
 	}
+}
+
+// stranger reports whether c is another user's, or comes from a socket
+// that no process holds open any more, which the kernel says of every
+// connection where it can be asked: on Linux, outside a sandbox that
+// blocks netlink. Elsewhere, Android among them, nobody is, and the cap on
+// pending connections is all there is.
+func (t *tunnel) stranger(c net.Conn) bool {
+	uid, err := t.uidOf(c)
+	if errors.Is(err, tcpowner.ErrUnavailable) {
+		return false
+	}
+	if err != nil || uid != uint32(os.Getuid()) {
+		t.log.Debug("tunnel refused another user's connection", "from", c.RemoteAddr(), "uid", uid, "err", err)
+		return true
+	}
+	return false
 }
 
 // waitForCheck counts c among the connections still to send their check,

@@ -49,14 +49,13 @@ type Master struct {
 	ssh  string
 	args []string
 	dest string
-	dir  string // private directory for unix sockets; none for tcpForwards
+	dir  string // private directory for unix sockets; none for stdioForwards
 	ctl  string
 	mux  bool
-	// tcpForwards puts forwards without a master on loopback TCP ports,
-	// which freeAddr picks, rather than unix sockets in dir: Windows'
-	// OpenSSH forwards no unix sockets.
-	tcpForwards bool
-	freeAddr    func() (string, error)
+	// stdioForwards makes each connection through a forward without a
+	// master an ssh -W, rather than serve the forward on a unix socket in
+	// dir: Windows' OpenSSH forwards no unix sockets.
+	stdioForwards bool
 	// out receives the stderr of the master, or of each forward without one.
 	out io.Writer
 
@@ -66,7 +65,7 @@ type Master struct {
 	waitErr error
 
 	mu       sync.Mutex
-	forwards []*process // forwards of their own, stopped by Close
+	forwards []*process // ssh processes of forwards, stopped by Close
 	closed   bool       // Close has stopped the forwards
 	sockets  int        // unix sockets handed out for forwards
 
@@ -87,16 +86,15 @@ func Dial(ctx context.Context, dest string, opts Options) (*Master, error) {
 		return nil, fmt.Errorf("sshmux: invalid destination %q", dest)
 	}
 	m := &Master{
-		ssh:         cmp.Or(opts.SSHPath, "ssh"),
-		args:        opts.Args,
-		dest:        dest,
-		mux:         !opts.NoMux,
-		tcpForwards: opts.NoMux && runtime.GOOS == "windows",
-		freeAddr:    freeLoopbackAddr,
-		out:         cmp.Or[io.Writer](opts.Stderr, os.Stderr),
-		done:        make(chan struct{}),
+		ssh:           cmp.Or(opts.SSHPath, "ssh"),
+		args:          opts.Args,
+		dest:          dest,
+		mux:           !opts.NoMux,
+		stdioForwards: opts.NoMux && runtime.GOOS == "windows",
+		out:           cmp.Or[io.Writer](opts.Stderr, os.Stderr),
+		done:          make(chan struct{}),
 	}
-	if m.tcpForwards {
+	if m.stdioForwards {
 		return m, nil
 	}
 	dir, err := controlDir()

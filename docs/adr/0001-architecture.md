@@ -1319,19 +1319,27 @@ per command. A forward is an `ssh -N -L <local>:<remote>` that lives
 until `Close`, and the tunnel splices into it as it does into the master's
 socket. `<local>` is a unix socket in a 0700 directory, as over a master,
 so no other user of the client machine can reach it or take its place.
-Windows' OpenSSH forwards no unix sockets, so there it is a loopback port
-the CLI picks and releases for ssh, and ssh binds it only after logging
-in, seconds or, with a password typed, minutes later. Another user can take
-the port meanwhile, and it shows in ssh's command line. So the CLI does not
-take a connection that the port accepts as proof: it waits until the
-system's table of listeners (`GetExtendedTcpTable`) names ssh's process as
-the one on that port, and fails the forward when another process holds it.
-A port that accepts while the table shows nobody there fails it too, so a
-table read wrong ends in an error rather than a wait with no end.
-Nothing here runs Windows; the tests take that path on Linux, where
-`/proc/net/tcp` and the process's open sockets answer the same question.
-Once a forward's ssh has exited, its `Dial` refuses rather than connect to
-whoever listens there next. That ssh cannot clear the config's
+Windows' OpenSSH forwards no unix sockets, so there the forward listens
+nowhere: each `Dial` starts an `ssh -W <remote>` with
+`ClearAllForwardings=yes` and hands its stdin and stdout back as the
+connection, which closing stops. The tunnel dials only for a connection
+whose check passed, so every SSH channel to the agent's listener belongs to
+one the page signed. The first version listened on a loopback port the CLI
+picked for an `ssh -L`, and waited until the system's table of listeners
+(`GetExtendedTcpTable`) named ssh as the one on it, so another user who took
+the port first failed the forward. The second security audit found the
+other half: any user of the machine could connect to that port once ssh
+held it, and each connection became an SSH channel and a connection to the
+agent's listener without the tunnel's check, the opening the shared-client
+work below closed for the tunnel's own port. Its regression test looks up
+every TCP listener a forward's ssh holds, in `/proc/net/tcp` and the
+process's descriptors, before and during a connection, and found the
+`-L` one. The cost of `-W` is a login per tunnel connection rather than one
+a session: silent with a key or an agent, a prompt with a password, and the
+browser opens one at each ICE start. Nothing here runs Windows; the tests
+take that path on Linux with a real ssh and sshd.
+Once a forward's ssh `-L` has exited, its `Dial` refuses rather than
+connect to whatever listens there next. That ssh cannot clear the config's
 forwards: `ssh -G -o ClearAllForwardings=yes -L ...` shows the option drops
 the command line's `-L` along with them, so a `LocalForward` for the host
 comes up with the tunnel and, under `ExitOnForwardFailure`, takes it down if
@@ -2513,7 +2521,23 @@ loopback port. Two of the CLI's surfaces failed that reading.
   websocket. At most 16 connections wait for their check at once, and past
   that the oldest is closed, so silent ones cost the CLI no more than 16
   descriptors; the browser checks a loopback round trip after connecting,
-  so the oldest waiting is not the browser's. Only the latest answer's: after an ICE restart Pion's mux no
+  so the oldest waiting is not the browser's. The second security audit
+  showed that holds only while nobody tries: another user who opens silent
+  connections faster than that round trip cycles all 16 places, and the
+  browser's connection is closed before its check arrives, which under
+  `--transport tunnel` or with UDP blocked leaves the session without
+  media. On Linux the tunnel now asks the kernel who opened each
+  connection, with the exact `NETLINK_SOCK_DIAG` request the agent's
+  listener makes (`internal/tcpowner`, which both use), and closes one that
+  is not this user's, or that no process holds open any more, before it
+  counts. That also shuts out a check copied off the UDP path on the
+  network and replayed by someone with an account here. Where the kernel
+  cannot be asked (macOS, Windows, Android's app sandbox, any sandbox that
+  blocks netlink) the cap stays the only bound. The lookup runs on the
+  accept loop, one netlink round trip per connection. In the regression
+  test a stand-in for the lookup names a flood of 34147 connections in 3 s
+  as another user's; before the fix the browser's check never reached the
+  forward, and after it the check is spliced. Only the latest answer's: after an ICE restart Pion's mux no
   longer routes the old ufrag either. In the e2e `blocked` and `nomux`
   scenarios every TCP session ran through the check; in `restart`, the
   page was back on the tunnel 4151 ms after UDP was dropped, on a machine

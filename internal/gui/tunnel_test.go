@@ -3,12 +3,14 @@ package gui
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -18,6 +20,7 @@ import (
 
 	"github.com/yasinmiran/robin/internal/relay"
 	"github.com/yasinmiran/robin/internal/sshmux"
+	"github.com/yasinmiran/robin/internal/tcpowner"
 )
 
 // fakeForward is a dialer standing in for the SSH forward's local end: a
@@ -29,6 +32,16 @@ func (f fakeForward) Dial() (net.Conn, error) { return net.Dial("unix", f.sock) 
 // testTunnel serves a tunnel on loopback whose forward leads to a socket of
 // the test's; what reaches that socket comes out of accepted.
 func testTunnel(t *testing.T, ln net.Listener, firstCheck time.Duration) (*tunnel, <-chan net.Conn) {
+	t.Helper()
+	fwd, accepted := testForward(t)
+	tun := &tunnel{ln: ln, log: slog.New(slog.DiscardHandler), firstCheck: firstCheck, fwd: fwd, uidOf: tcpowner.PeerUID}
+	go tun.serve()
+	t.Cleanup(func() { ln.Close() })
+	return tun, accepted
+}
+
+// testForward is a forward whose connections come out of accepted.
+func testForward(t *testing.T) (fakeForward, <-chan net.Conn) {
 	t.Helper()
 	sock := filepath.Join(t.TempDir(), "fwd.sock")
 	u, err := net.Listen("unix", sock)
@@ -45,13 +58,8 @@ func testTunnel(t *testing.T, ln net.Listener, firstCheck time.Duration) (*tunne
 			accepted <- c
 		}
 	}()
-	tun := &tunnel{ln: ln, log: slog.New(slog.DiscardHandler), firstCheck: firstCheck, fwd: fakeForward{sock}}
-	go tun.serve()
-	t.Cleanup(func() {
-		ln.Close()
-		u.Close()
-	})
-	return tun, accepted
+	t.Cleanup(func() { u.Close() })
+	return fakeForward{sock}, accepted
 }
 
 func loopback(t *testing.T) net.Listener {
@@ -183,6 +191,119 @@ func TestTunnelRefusesStrangers(t *testing.T) {
 	spliced(t, accepted, again)
 }
 
+// TestTunnelAdmitsTheBrowserDuringAFlood: another user of this machine
+// who keeps opening silent connections to the tunnel's port would push
+// the browser's out of the connections waiting for their check, and so
+// keep the session off the tunnel. Where the kernel says who opened a
+// connection, another user's is closed before it counts.
+func TestTunnelAdmitsTheBrowserDuringAFlood(t *testing.T) {
+	ln := loopback(t)
+	fwd, accepted := testForward(t)
+	var mu sync.Mutex
+	mine := map[string]bool{} // dialling ends of this user's
+	tun := &tunnel{ln: ln, log: slog.New(slog.DiscardHandler), firstCheck: 5 * time.Second, fwd: fwd,
+		uidOf: func(c net.Conn) (uint32, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			if mine[c.RemoteAddr().String()] {
+				return uint32(os.Getuid()), nil
+			}
+			return uint32(os.Getuid()) + 1, nil
+		}}
+	go tun.serve()
+	t.Cleanup(func() { ln.Close() })
+	tun.answered(iceAnswer("agentufrag", "agentpasswordagentpasswo"))
+
+	stop := make(chan struct{})
+	flooded := make(chan int)
+	go func() {
+		var held []net.Conn
+		n := 0
+		defer func() {
+			for _, c := range held {
+				c.Close()
+			}
+			flooded <- n
+		}()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			c, err := net.Dial("tcp4", ln.Addr().String())
+			if err != nil {
+				continue
+			}
+			n++
+			if held = append(held, c); len(held) > 4*maxPending {
+				held[0].Close()
+				held = held[1:]
+			}
+		}
+	}()
+	defer func() {
+		close(stop)
+		t.Logf("%d connections from another user during the test", <-flooded)
+	}()
+
+	// The browser's connection comes from a port put on record first, so
+	// its owner is known before the tunnel accepts it.
+	probe := loopback(t)
+	from := probe.Addr().(*net.TCPAddr)
+	probe.Close()
+	mu.Lock()
+	mine[from.String()] = true
+	mu.Unlock()
+	time.Sleep(20 * time.Millisecond)
+	c, err := (&net.Dialer{LocalAddr: from}).Dial("tcp4", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	time.Sleep(50 * time.Millisecond)
+	check := framedCheck(t, "agentufrag:brws", "agentpasswordagentpasswo")
+	c.Write(check)
+	spliced(t, accepted, check)
+}
+
+// TestTunnelTellsUsersApart: a connection the kernel names as this
+// user's waits for its check, and one it names as another user's, or
+// cannot place although it was asked, is closed at once. Where it cannot
+// be asked at all, every connection waits for its check as before.
+func TestTunnelTellsUsersApart(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		uid    uint32
+		err    error
+		admits bool
+	}{
+		{"this user's", uint32(os.Getuid()), nil, true},
+		{"another user's", uint32(os.Getuid()) + 1, nil, false},
+		{"not found", 0, errors.New("the other end is not a socket of this host"), false},
+		{"root's, once its dialer closed it", 0, errors.New("the other end is no longer held open (state 7)"), false},
+		{"the kernel cannot be asked", 0, fmt.Errorf("%w: sock_diag: permission denied", tcpowner.ErrUnavailable), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fwd, accepted := testForward(t)
+			ln := loopback(t)
+			tun := &tunnel{ln: ln, log: slog.New(slog.DiscardHandler), firstCheck: 5 * time.Second, fwd: fwd,
+				uidOf: func(net.Conn) (uint32, error) { return tc.uid, tc.err }}
+			go tun.serve()
+			t.Cleanup(func() { ln.Close() })
+			tun.answered(iceAnswer("agentufrag", "agentpasswordagentpasswo"))
+			c := dialTunnel(t, tun, nil)
+			if !tc.admits {
+				refused(t, tc.name, c)
+				return
+			}
+			check := framedCheck(t, "agentufrag:brws", "agentpasswordagentpasswo")
+			c.Write(check)
+			spliced(t, accepted, check)
+		})
+	}
+}
+
 // flakyListener fails its first Accept the way a process out of file
 // descriptors does.
 type flakyListener struct {
@@ -250,7 +371,7 @@ func TestTunnelRefusesWithoutAWorkingForward(t *testing.T) {
 		{"forward socket gone", fakeForward{filepath.Join(t.TempDir(), "gone.sock")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			tun := &tunnel{ln: loopback(t), log: slog.New(slog.DiscardHandler), firstCheck: time.Second, fwd: tc.fwd}
+			tun := &tunnel{ln: loopback(t), log: slog.New(slog.DiscardHandler), firstCheck: time.Second, fwd: tc.fwd, uidOf: tcpowner.PeerUID}
 			go tun.serve()
 			defer tun.Close()
 			tun.answered(iceAnswer("agentufrag", "agentpasswordagentpasswo"))
