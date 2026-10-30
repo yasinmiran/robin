@@ -9,8 +9,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -28,7 +30,16 @@ const (
 	helperCloseEnv = "ROBIN_DISPLAY_TEST_DIE_IN_CLOSE"
 )
 
+// fakeXvfbEnv makes the test binary stand in for Xvfb: "<num> <name>..."
+// listens on each of the display's socket names given, "path" or
+// "abstract", and reports num on -displayfd's fd 3.
+const fakeXvfbEnv = "ROBIN_DISPLAY_TEST_FAKE_XVFB"
+
 func TestMain(m *testing.M) {
+	if spec := os.Getenv(fakeXvfbEnv); spec != "" {
+		fakeXvfb(spec)
+		return
+	}
 	if dir := os.Getenv(helperEnv); dir != "" {
 		d, err := Spawn(context.Background(), Options{RunDir: dir, MaxWidth: 640, MaxHeight: 480, Session: treeSession})
 		if err != nil {
@@ -321,6 +332,133 @@ func TestXvfbFailure(t *testing.T) {
 	}
 	if left, _ := os.ReadDir(dir); len(left) != 0 {
 		t.Errorf("RunDir not cleaned: %v", left)
+	}
+}
+
+// TestSpawnChecksBothSocketNames stands in an Xvfb that, like one built or
+// started without the abstract transport, may listen only on the socket
+// file. libxcb clients dial the abstract name first, so whoever holds it
+// would get every session client's cookie: Spawn has to start no session
+// unless Xvfb holds both names.
+func TestSpawnChecksBothSocketNames(t *testing.T) {
+	if err := syscall.Access("/tmp/.X11-unix", 2); err != nil {
+		t.Skipf("cannot create sockets in /tmp/.X11-unix: %v", err)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name     string
+		listens  string
+		stranger bool
+		want     string // in the error; empty means Spawn succeeds
+	}{
+		{"a stranger holds the abstract name", "path", true, "is served by pid"},
+		{"nobody holds the abstract name", "path", false, "does not listen on @/tmp/.X11-unix/X"},
+		{"Xvfb holds both", "path abstract", false, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			num, ln := listenAbstract(t)
+			t.Cleanup(func() { os.Remove("/tmp/.X11-unix/X" + num) })
+			received := make(chan []byte, 8)
+			if tc.stranger {
+				defer ln.Close()
+				go func() {
+					for {
+						c, err := ln.Accept()
+						if err != nil {
+							return
+						}
+						c.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+						b, _ := io.ReadAll(c)
+						c.Close()
+						received <- b
+					}
+				}()
+			} else {
+				ln.Close()
+			}
+			t.Setenv(fakeXvfbEnv, num+" "+tc.listens)
+			dir := t.TempDir()
+			started := filepath.Join(t.TempDir(), "started")
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			d, err := Spawn(ctx, Options{RunDir: dir, MaxWidth: 640, MaxHeight: 480, Session: "touch " + started + "; exec sleep 1000", Xvfb: self})
+
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("Spawn with Xvfb on both names: %v", err)
+				}
+				defer d.Close()
+				for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+					if _, err := os.Stat(started); err == nil {
+						return
+					}
+					if time.Now().After(deadline) {
+						t.Fatal("the session never started")
+					}
+				}
+			}
+			if err == nil {
+				d.Close()
+				t.Fatalf("Spawn succeeded, want an error containing %q", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "@/tmp/.X11-unix/X"+num) {
+				t.Errorf("Spawn = %v, want an error containing %q and naming the abstract socket", err, tc.want)
+			}
+			var stranger *notServerError
+			if tc.stranger && (!errors.As(err, &stranger) || stranger.pid != os.Getpid()) {
+				t.Errorf("Spawn = %v, want a refusal naming the stranger's pid %d", err, os.Getpid())
+			}
+			if left, _ := os.ReadDir(dir); len(left) != 0 {
+				t.Errorf("RunDir not cleaned: %v", left)
+			}
+			if _, err := os.Stat(started); err == nil {
+				t.Error("the session started")
+			}
+			for len(received) > 0 {
+				if b := <-received; len(b) > 0 {
+					t.Errorf("the stranger's socket received %d bytes", len(b))
+				}
+			}
+		})
+	}
+}
+
+// fakeXvfb listens on the socket names spec gives, reports the display
+// number on fd 3 and serves until SIGTERM, which removes the socket file.
+func fakeXvfb(spec string) {
+	fields := strings.Fields(spec)
+	sock := "/tmp/.X11-unix/X" + fields[0]
+	var lns []net.Listener
+	for _, name := range fields[1:] {
+		addr := sock
+		if name == "abstract" {
+			addr = "@" + sock
+		}
+		ln, err := net.Listen("unix", addr)
+		if err != nil {
+			os.Stderr.WriteString(err.Error() + "\n")
+			os.Exit(1)
+		}
+		lns = append(lns, ln)
+		go func() {
+			for {
+				c, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				c.Close()
+			}
+		}()
+	}
+	term := make(chan os.Signal, 1)
+	signal.Notify(term, syscall.SIGTERM)
+	os.NewFile(3, "displayfd").WriteString(fields[0] + "\n")
+	<-term
+	for _, ln := range lns {
+		ln.Close()
 	}
 }
 

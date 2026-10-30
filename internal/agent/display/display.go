@@ -124,6 +124,9 @@ func Spawn(ctx context.Context, o Options) (_ *Display, err error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := checkSockets(num, d.xvfb.cmd.Process.Pid); err != nil {
+		return nil, err
+	}
 	d.Name = ":" + num
 	if err := writeXauthority(d.XAuthority, cookie, num); err != nil {
 		return nil, err

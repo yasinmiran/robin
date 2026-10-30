@@ -629,7 +629,9 @@ open, which it asks the kernel, lets go within 5 s of any that has not started
 ICE, and completes ICE only with the session's credentials; the X display is
 protected by a fresh cookie in a 0600 file, which the agent hands only to the
 Xvfb it started, checked through the socket's peer credentials, whatever else
-listens at the display's socket names; the sound server of a desktop robin
+listens at the display's socket names, and no session starts there unless
+that Xvfb holds both names, the socket file and the abstract one every X
+client dials first; the sound server of a desktop robin
 starts listens only on a socket inside the run directory; the agent and its
 run directory are 0700. The probe counts only `X<digits>` in `/tmp/.X11-unix`,
 which any user can write, and prints nothing that would span lines, so no file
@@ -1128,6 +1130,10 @@ verified against a Linux build.
   the first pointer event. The agent spends both on input that does
   nothing, so you should not notice, but it is why mutter logs `No keycode
   found for keyval ffffff` when a session starts.
+- A spawned desktop needs an Xvfb that listens on the abstract socket as
+  well as the socket file, as default builds do. One built or started
+  without it (`-nolisten local`) fails the session with an error naming the
+  free socket, rather than leave that name to any local user.
 - An attached Wayland desktop keeps its own size and shows one monitor. A
   screen larger than `--max-size` is scaled down, and a scaled (HiDPI)
   screen streams at its logical size, so text is softer than on the host.

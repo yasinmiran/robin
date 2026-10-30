@@ -219,6 +219,21 @@ now does what a display manager does: it keeps any `LANG`, `LC_ALL` or
 `LC_CTYPE` it was given, else takes `LANG` from `/etc/locale.conf` or
 `/etc/default/locale`, else uses `C.UTF-8`.
 
+The session starts only once Xvfb's own pid answers, by `SO_PEERCRED`, on
+both of the display's socket names: `/tmp/.X11-unix/X<n>` and the abstract
+`@/tmp/.X11-unix/X<n>`. Xtrans skips a display number whose abstract name
+someone holds, but only when the server listens on that transport; one
+built with `listen_local=false` or started with `-nolisten local` binds the
+file alone, and libxcb, which every client in the session goes through,
+dials the abstract name first. Any local user could take it at any point of
+the session and receive each client's cookie, keystrokes and clipboard,
+relaying to the real server to stay unseen. The agent's own dial checks
+the server it reaches, but it tries the file first and never saw the
+abstract name. Such a host now gets an error naming the free socket instead
+of a session; before the check, the regression test's stand-in Xvfb that
+listens on the file alone got its session both beside a stranger's socket
+at the abstract name and with nothing there.
+
 ### X11 in pure Go
 
 Capture (MIT-SHM `GetImage`, DAMAGE to skip idle frames), input (XTest),
