@@ -68,7 +68,7 @@ Until this lands, [Using Robin](/using) lists what you can adjust today.
 
 ### Collaboration
 
-**Status: planned, after reconnectable sessions.** The owner of a session invites another account on the host, from the page or with `robin gui --share alice`, and the guest joins with `robin gui --join <code> alice@host`. The session admits a guest only when the kernel confirms the invited user and the invite's one-time code matches. Every guest gets the same encoded stream, and guests are view only until the owner grants control; clipboard, files and microphone follow control. The owner sees who is connected and can remove them, and a guest's page says whose desktop it is. This track gets a dedicated security review, with the cross-user cases as regression tests, before it merges.
+**Status: shipped.** The owner of a session invites another account on the host, from the page or with `robin gui --share alice`, and the guest joins with `robin gui --join <code> alice@host` over its own login. The session admits a guest only when the kernel confirms the invited account and the invitation's one-time code matches. Every guest is a peer of its own on the one encoded stream, view only until the owner grants control, which one guest holds at a time; clipboard, files and microphone follow control. The owner's page lists who is connected and removes them at once, and a guest's page says whose desktop it is. The cross-user cases run as regression tests in the container suite and in an end-to-end scenario with an owner's page and a guest's. See [Sharing a desktop](/sharing).
 
 ### Sharp text
 
