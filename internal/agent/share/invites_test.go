@@ -230,3 +230,20 @@ func TestLookupFallsBackToGetent(t *testing.T) {
 		t.Errorf("UserName(5005) = %q", got)
 	}
 }
+
+// Invites made with NewInvites alone keep the host's clock and look up
+// the host's accounts.
+func TestInvitesUseTheHostByDefault(t *testing.T) {
+	in := NewInvites("s1", 4242)
+	before := time.Now()
+	inv, err := in.Invite("root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inv.Expires.Before(before.Add(protocol.InviteTTL)) || inv.Expires.After(time.Now().Add(protocol.InviteTTL)) {
+		t.Errorf("expires %v, want %v from now", inv.Expires, protocol.InviteTTL)
+	}
+	if !in.Invited(0) {
+		t.Error("root's invitation is not open")
+	}
+}

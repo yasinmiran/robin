@@ -59,13 +59,29 @@ type invite struct {
 
 // NewInvites holds the invitations of session, owned by uid owner.
 func NewInvites(session string, owner int) *Invites {
-	return &Invites{session: session, owner: owner, lookup: LookupUser, now: time.Now}
+	return &Invites{session: session, owner: owner}
+}
+
+// clock returns the time now, as tests may set it.
+func (in *Invites) clock() time.Time {
+	if in.now == nil {
+		return time.Now()
+	}
+	return in.now()
+}
+
+// uidOf returns the uid of the account name, as tests may look it up.
+func (in *Invites) uidOf(name string) (int, error) {
+	if in.lookup == nil {
+		return LookupUser(name)
+	}
+	return in.lookup(name)
 }
 
 // Invite opens an invitation for the account named user, replacing any
 // that account already had, and returns it with its code.
 func (in *Invites) Invite(name string) (protocol.Invitation, error) {
-	uid, err := in.lookup(name)
+	uid, err := in.uidOf(name)
 	if err != nil {
 		return protocol.Invitation{}, err
 	}
@@ -83,7 +99,7 @@ func (in *Invites) Invite(name string) (protocol.Invitation, error) {
 	if len(in.open) >= MaxInvites {
 		return protocol.Invitation{}, fmt.Errorf("%d invitations are open already; let one be used or expire first", MaxInvites)
 	}
-	i := &invite{user: name, uid: uid, secret: secret, expires: in.now().Add(protocol.InviteTTL)}
+	i := &invite{user: name, uid: uid, secret: secret, expires: in.clock().Add(protocol.InviteTTL)}
 	in.open = append(in.open, i)
 	return in.view(i), nil
 }
@@ -146,7 +162,7 @@ func (in *Invites) Clear() {
 
 // prune drops the invitations past their expiry. in.mu must be held.
 func (in *Invites) prune() {
-	now := in.now()
+	now := in.clock()
 	in.open = slices.DeleteFunc(in.open, func(i *invite) bool { return !now.Before(i.expires) })
 }
 
@@ -174,7 +190,7 @@ var userName = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,31}$`)
 // getentTimeout bounds the lookup through the host's name service.
 const getentTimeout = 5 * time.Second
 
-// LookupUser is the uid of the account name. The agent is a static binary
+// LookupUser returns the uid of the account name. The agent is a static binary
 // that reads /etc/passwd itself, so an account it does not find there is
 // asked of the host's getent, which knows its directory services too.
 func LookupUser(name string) (int, error) {
@@ -190,8 +206,8 @@ func LookupUser(name string) (int, error) {
 	return 0, fmt.Errorf("no user %s on this host", name)
 }
 
-// UserName is the name of the account uid, or "uid <uid>" when the host
-// has none.
+// UserName returns the name of the account uid, or "uid <uid>" when the
+// host has none.
 func UserName(uid int) string {
 	if u, err := user.LookupId(strconv.Itoa(uid)); err == nil {
 		return u.Username
@@ -202,7 +218,7 @@ func UserName(uid int) string {
 	return "uid " + strconv.Itoa(uid)
 }
 
-// getent is the passwd entry of key, split into its fields.
+// getent returns the passwd entry of key, split into its fields.
 func getent(key string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), getentTimeout)
 	defer cancel()

@@ -27,13 +27,18 @@ const (
 
 // writeWait bounds one write to a guest: a guest that stops reading fails
 // its connection instead of holding up whoever writes to it.
-var writeWait = 10 * time.Second
+const writeWait = 10 * time.Second
 
-// boundedWriter writes to c within writeWait each time.
-type boundedWriter struct{ c net.Conn }
+// boundedWriter writes to c within wait each time.
+type boundedWriter struct {
+	c    net.Conn
+	wait time.Duration
+}
 
 func (w boundedWriter) Write(p []byte) (int, error) {
-	w.c.SetWriteDeadline(time.Now().Add(writeWait))
+	if err := w.c.SetWriteDeadline(time.Now().Add(w.wait)); err != nil {
+		return 0, err
+	}
 	return w.c.Write(p)
 }
 
@@ -76,21 +81,29 @@ type Guest struct {
 
 // Door takes guests on the session's abstract unix socket.
 type Door struct {
-	inv      *Invites
-	ln       net.Listener
-	log      *slog.Logger
-	joining  chan struct{} // a slot per connection presenting its code
-	refused  refusals
-	arrivals chan *Guest
-	closed   chan struct{}
-	close    sync.Once
-	wg       sync.WaitGroup
+	inv       *Invites
+	ln        net.Listener
+	log       *slog.Logger
+	writeWait time.Duration
+	joining   chan struct{} // a slot per connection presenting its code
+	refused   refusals
+	arrivals  chan *Guest
+	// ctx ends when the door closes.
+	ctx       context.Context
+	cancel    context.CancelFunc
+	closeOnce sync.Once
+	wg        sync.WaitGroup
 }
 
 // Open listens on protocol.ShareSocket of inv's session. Anyone on the
 // host may connect to an abstract socket; the door hangs up on a
 // connection whose uid holds no invitation before reading a byte of it.
 func Open(inv *Invites, log *slog.Logger) (*Door, error) {
+	return open(inv, log, writeWait)
+}
+
+// open is Open with each write to a guest bounded by wait.
+func open(inv *Invites, log *slog.Logger, wait time.Duration) (*Door, error) {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -98,12 +111,17 @@ func Open(inv *Invites, log *slog.Logger) (*Door, error) {
 	if err != nil {
 		return nil, fmt.Errorf("share: listen: %w", err)
 	}
-	d := &Door{inv: inv, ln: ln, log: log, joining: make(chan struct{}, maxJoining), arrivals: make(chan *Guest), closed: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	d := &Door{
+		inv: inv, ln: ln, log: log, writeWait: wait,
+		joining: make(chan struct{}, maxJoining), arrivals: make(chan *Guest),
+		ctx: ctx, cancel: cancel,
+	}
 	d.wg.Go(d.accept)
 	return d, nil
 }
 
-// Invites are the door's invitations.
+// Invites returns the door's invitations.
 func (d *Door) Invites() *Invites { return d.inv }
 
 func (d *Door) accept() {
@@ -147,8 +165,10 @@ func (d *Door) admit(c net.Conn) {
 // join reads the guest's Join and redeems its code, then waits for the
 // session to take it.
 func (d *Door) join(c net.Conn, uid int) {
-	conn := protocol.NewConn(c, boundedWriter{c}, protocol.DefaultPingInterval, protocol.DefaultIdleTimeout)
+	conn := protocol.NewConn(c, boundedWriter{c, d.writeWait}, protocol.DefaultPingInterval, protocol.DefaultIdleTimeout)
 	// protocol.Conn never closes its stream; the socket goes when it does.
+	// This outlives the door for an admitted guest, whose connection is
+	// the session's to close.
 	go func() {
 		<-conn.Done()
 		c.Close()
@@ -158,15 +178,8 @@ func (d *Door) join(c net.Conn, uid int) {
 		conn.Send(protocol.Message{Type: protocol.TypeError, Error: told.Error()})
 		conn.Close()
 	}
-	ctx, cancel := context.WithTimeoutCause(context.Background(), joinWait, errors.New("no join message within "+joinWait.String()))
+	ctx, cancel := context.WithTimeoutCause(d.ctx, joinWait, errors.New("no join message within "+joinWait.String()))
 	defer cancel()
-	go func() {
-		select {
-		case <-d.closed:
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
 	m, err := conn.Recv(ctx)
 	switch {
 	case err != nil:
@@ -192,7 +205,7 @@ func (d *Door) join(c net.Conn, uid int) {
 		d.log.Info("guest joined", "user", user, "uid", uid)
 	case <-time.After(handoffWait):
 		refuse(errNoGuests, errNoGuests)
-	case <-d.closed:
+	case <-d.ctx.Done():
 		refuse(errNoGuests, errNoGuests)
 	}
 }
@@ -211,9 +224,9 @@ func (d *Door) Next(ctx context.Context) (*Guest, error) {
 // admitted already is the session's to close.
 func (d *Door) Close() error {
 	var err error
-	d.close.Do(func() {
+	d.closeOnce.Do(func() {
 		d.inv.Clear()
-		close(d.closed)
+		d.cancel()
 		err = d.ln.Close()
 		d.wg.Wait()
 	})
@@ -242,22 +255,36 @@ func Dial(code protocol.JoinCode) (net.Conn, error) {
 
 // Relay carries in to c and c to out, byte for byte, until either side
 // ends or ctx does: a guest's agent between its SSH channel and the door.
+// It closes c and returns once nothing more goes to out. The goroutine
+// reading in runs until a read of in returns, since a read blocked on
+// stdin cannot be interrupted; robin-agent join exits right after.
 func Relay(ctx context.Context, c net.Conn, in io.Reader, out io.Writer) error {
-	done := make(chan error, 2)
+	toDoor, fromDoor := make(chan error, 1), make(chan error, 1)
 	go func() {
 		_, err := io.Copy(c, in)
-		done <- err
+		toDoor <- err
 	}()
 	go func() {
 		_, err := io.Copy(out, c)
-		done <- err
+		fromDoor <- err
 	}()
-	var err error
+	var first error
 	select {
-	case err = <-done:
+	case first = <-toDoor:
+	case first = <-fromDoor:
+		fromDoor = nil
 	case <-ctx.Done():
 	}
 	c.Close()
+	var second error
+	if fromDoor != nil {
+		second = <-fromDoor
+	}
+	return errors.Join(quiet(first), quiet(second))
+}
+
+// quiet drops what only says a side of the relay ended.
+func quiet(err error) error {
 	if errors.Is(err, net.ErrClosed) {
 		return nil
 	}

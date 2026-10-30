@@ -152,8 +152,8 @@ func ParseJoinCode(s string) (JoinCode, error) {
 	return c, nil
 }
 
-// ShareSocket is the abstract unix socket the session daemon of session
-// id takes guests on. An abstract socket has no file and no permissions,
+// ShareSocket returns the abstract unix socket the session daemon of
+// session id takes guests on. An abstract socket has no file and no permissions,
 // so anyone may connect; the daemon admits only an invited uid that
 // presents its code, and the guest checks the listener is the owner's.
 func ShareSocket(id string) string {

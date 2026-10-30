@@ -25,11 +25,17 @@ import (
 // one account "me" is this process's uid, and returns it with its log.
 func openDoor(t *testing.T, users map[string]int) (*Door, *agenttest.LockedBuffer) {
 	t.Helper()
+	return openDoorWriting(t, users, writeWait)
+}
+
+// openDoorWriting is openDoor with each write to a guest bounded by wait.
+func openDoorWriting(t *testing.T, users map[string]int, wait time.Duration) (*Door, *agenttest.LockedBuffer) {
+	t.Helper()
 	in, _ := testInvites(users)
-	in.now = time.Now
+	in.now = nil
 	in.session = fmt.Sprintf("t%d%d", os.Getpid(), time.Now().UnixNano())
 	var logged agenttest.LockedBuffer
-	d, err := Open(in, slog.New(slog.NewTextHandler(&logged, nil)))
+	d, err := open(in, slog.New(slog.NewTextHandler(&logged, nil)), wait)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,9 +354,7 @@ func waitFor(t *testing.T, ok func() bool) {
 // A guest that stops reading fails its connection within writeWait rather
 // than hold up whoever writes to it.
 func TestAGuestThatStopsReadingIsDropped(t *testing.T) {
-	defer func(w time.Duration) { writeWait = w }(writeWait)
-	writeWait = 200 * time.Millisecond
-	d, _ := openDoor(t, map[string]int{"me": os.Getuid()})
+	d, _ := openDoorWriting(t, map[string]int{"me": os.Getuid()}, 200*time.Millisecond)
 	inv, _ := d.Invites().Invite("me")
 	c := dialDoor(t, d)
 	c.Write(joinLine(t, inv.Code))
