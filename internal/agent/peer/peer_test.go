@@ -143,7 +143,7 @@ func TestPeerStreamsAndControls(t *testing.T) {
 			case <-stop:
 				return
 			case <-time.After(33 * time.Millisecond):
-				p.WriteFrame(au, 33*time.Millisecond)
+				p.track.Write(au, 33*time.Millisecond)
 			}
 		}
 	}()

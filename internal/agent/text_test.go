@@ -63,11 +63,11 @@ func TestTextKeepsInputInOrder(t *testing.T) {
 	desk := &fakeTypist{gate: make(chan struct{}), started: make(chan string, 4)}
 	s := testSession(desk)
 	enter := protocol.Control{T: protocol.ControlKey, Key: "Enter", Code: "Enter", Down: true}
-	s.control(protocol.Control{T: protocol.ControlText, Text: "日本"})
+	asOwner(s, protocol.Control{T: protocol.ControlText, Text: "日本"})
 	<-desk.started
-	s.control(enter)
-	s.control(protocol.Control{T: protocol.ControlClipboard, Text: "copied"})
-	s.control(protocol.Control{T: protocol.ControlResize, W: 1000, H: 700}) // not input: does not wait
+	asOwner(s, enter)
+	asOwner(s, protocol.Control{T: protocol.ControlClipboard, Text: "copied"})
+	asOwner(s, protocol.Control{T: protocol.ControlResize, W: 1000, H: 700}) // not input: does not wait
 	if got := desk.got(); len(got) != 0 {
 		t.Fatalf("input overtook the text being typed: %+v", got)
 	}
@@ -85,7 +85,7 @@ func TestTextKeepsInputInOrder(t *testing.T) {
 	}
 
 	// Caught up, input applies at once again, on the caller's goroutine.
-	s.control(enter)
+	asOwner(s, enter)
 	if got := desk.got(); len(got) != 3 {
 		t.Errorf("input after the lane caught up did not apply at once: %+v", got)
 	}
@@ -94,13 +94,13 @@ func TestTextKeepsInputInOrder(t *testing.T) {
 func TestTextRefused(t *testing.T) {
 	desk := &fakeTypist{}
 	s := testSession(desk)
-	s.control(protocol.Control{T: protocol.ControlText, Text: strings.Repeat("x", protocol.MaxTextBytes+1)})
-	s.control(protocol.Control{T: protocol.ControlText, Text: "bad \xff utf-8"})
+	asOwner(s, protocol.Control{T: protocol.ControlText, Text: strings.Repeat("x", protocol.MaxTextBytes+1)})
+	asOwner(s, protocol.Control{T: protocol.ControlText, Text: "bad \xff utf-8"})
 	waitIdle(t, &s.typing)
 	if got := desk.got(); len(got) != 0 {
 		t.Errorf("typed %+v", got)
 	}
-	s.control(protocol.Control{T: protocol.ControlText, Text: strings.Repeat("x", protocol.MaxTextBytes)})
+	asOwner(s, protocol.Control{T: protocol.ControlText, Text: strings.Repeat("x", protocol.MaxTextBytes)})
 	waitIdle(t, &s.typing)
 	if got := desk.got(); len(got) != 1 {
 		t.Errorf("text at the limit not typed: %d messages", len(got))
@@ -109,7 +109,7 @@ func TestTextRefused(t *testing.T) {
 	// A desktop that cannot type text takes none.
 	plain := &fakeDesktop{}
 	s = testSession(plain)
-	s.control(protocol.Control{T: protocol.ControlText, Text: "hi"})
+	asOwner(s, protocol.Control{T: protocol.ControlText, Text: "hi"})
 	if s.typing.idle != nil || len(plain.inputs) != 0 {
 		t.Error("text went to a desktop that cannot type it")
 	}
@@ -120,10 +120,10 @@ func TestTextRefused(t *testing.T) {
 func TestLaneDropsWhenFull(t *testing.T) {
 	desk := &fakeTypist{gate: make(chan struct{}), started: make(chan string, 4)}
 	s := testSession(desk)
-	s.control(protocol.Control{T: protocol.ControlText, Text: "a"})
+	asOwner(s, protocol.Control{T: protocol.ControlText, Text: "a"})
 	<-desk.started
 	for i := range maxLane + 10 {
-		s.control(protocol.Control{T: protocol.ControlKey, Key: "a", Code: "KeyA", Down: i%2 == 0})
+		asOwner(s, protocol.Control{T: protocol.ControlKey, Key: "a", Code: "KeyA", Down: i%2 == 0})
 	}
 	if s.typing.queue(func(context.Context) {}) {
 		t.Error("a full lane took more text")
@@ -143,9 +143,9 @@ func TestLaneDropsWhenFull(t *testing.T) {
 func TestLaneDiscard(t *testing.T) {
 	desk := &fakeTypist{gate: make(chan struct{}), started: make(chan string, 4)}
 	s := testSession(desk)
-	s.control(protocol.Control{T: protocol.ControlText, Text: "from the browser that left"})
+	asOwner(s, protocol.Control{T: protocol.ControlText, Text: "from the browser that left"})
 	<-desk.started
-	s.control(protocol.Control{T: protocol.ControlKey, Key: "Enter", Code: "Enter", Down: true})
+	asOwner(s, protocol.Control{T: protocol.ControlKey, Key: "Enter", Code: "Enter", Down: true})
 	done := make(chan struct{})
 	go func() {
 		s.typing.discard()
@@ -163,7 +163,7 @@ func TestLaneDiscard(t *testing.T) {
 
 	// The lane works again afterwards.
 	desk.gate = nil
-	s.control(protocol.Control{T: protocol.ControlText, Text: "next"})
+	asOwner(s, protocol.Control{T: protocol.ControlText, Text: "next"})
 	waitIdle(t, &s.typing)
 	if got := desk.got(); !slices.Equal(got, []protocol.Control{{T: protocol.ControlText, Text: "next"}}) {
 		t.Errorf("after discard the desktop got %+v", got)
@@ -175,16 +175,16 @@ func TestLaneDiscard(t *testing.T) {
 func TestLaneLetsGoWhenFull(t *testing.T) {
 	desk := &fakeTypist{gate: make(chan struct{}), started: make(chan string, 4)}
 	s := testSession(desk)
-	s.control(protocol.Control{T: protocol.ControlText, Text: "日本"})
+	asOwner(s, protocol.Control{T: protocol.ControlText, Text: "日本"})
 	<-desk.started
 	down := protocol.Control{T: protocol.ControlKey, Key: "a", Code: "KeyA", Down: true}
 	up := protocol.Control{T: protocol.ControlKey, Key: "a", Code: "KeyA"}
-	s.control(down)
+	asOwner(s, down)
 	for i := range maxLane {
-		s.control(protocol.Control{T: protocol.ControlMove, X: i, Y: i})
+		asOwner(s, protocol.Control{T: protocol.ControlMove, X: i, Y: i})
 	}
-	s.control(up)
-	s.control(protocol.Control{T: protocol.ControlRelease})
+	asOwner(s, up)
+	asOwner(s, protocol.Control{T: protocol.ControlRelease})
 	desk.gate <- struct{}{}
 	waitIdle(t, &s.typing)
 
@@ -216,7 +216,7 @@ func TestNothingAppliesFromABrowserThatLeft(t *testing.T) {
 	if _, err := s.currentPeer(); err != nil {
 		t.Fatal(err)
 	}
-	left := s.controlFrom(s.peers)
+	left := s.controlFrom(s.owner)
 	key := protocol.Control{T: protocol.ControlKey, Key: "a", Code: "KeyA", Down: true}
 	left(key)
 	s.closePeer()

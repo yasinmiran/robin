@@ -13,10 +13,6 @@ Nothing under What is next has shipped, and names shown there may change before 
 
 ## What is next
 
-### Collaboration
-
-The owner of a session invites another account on the host, from the page or with the CLI, and the guest joins with a one-time code. The session admits a guest only when the kernel confirms the invited user and the code matches. Every guest gets the same picture, and guests watch until the owner hands them control; the clipboard, files and the microphone follow control. The owner sees who is connected and can remove them, and a guest's page says whose desktop it is. It gets a security review of its own, with the cross-user cases as tests, before it ships.
-
 ### A window per monitor
 
 Today an attached desktop shows one monitor at a time, or all of them squeezed into one picture. Next, each remote monitor gets a browser window of its own, with its own picture and the bitrate shared by area, and input from each window lands on its monitor. X11 comes first, and Wayland follows if the portal's several streams can be tested.
@@ -46,5 +42,6 @@ Each of these has a page of its own:
 - [Congestion control](/how-it-works#congestion-control): sound ahead of the picture, the bitrate held through a still screen, and downloads under the picture's budget.
 - [Sharp text and actual size](/using#sharp-text-and-actual-size): lossless tiles over still parts of the screen, and a view that shows each desktop pixel whole.
 - [Keys and macros](/macros): the keys your browser keeps for itself, Type clipboard, and macros of your own.
+- [Sharing a desktop](/sharing): another account on the host invited with `robin gui --share` joins with `robin gui --join` and a one-time code, the kernel confirming the account, as a peer of its own on the one stream, view only until the owner grants control, which one guest holds at a time; clipboard, files and microphone follow control. The cross-user cases run as regression tests in the container suite and in an end-to-end scenario with an owner's page and a guest's.
 - [Security](/security): a review that bounded what each side can make the other hold, kept the page's token off command lines, turned other users of a shared client away from the tunnel, and made the host agent take a session's sockets and its daemon from your own account only.
 - [Verifying a release](/verifying-a-release): every binary a release ships is reproducible, so anyone with a clone can rebuild it and compare the bytes.

@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pion/webrtc/v4/pkg/media"
+
 	"github.com/yasinmiran/robin/internal/agent/desktop"
 	"github.com/yasinmiran/robin/internal/agent/h264"
 	"github.com/yasinmiran/robin/internal/agent/hwenc"
@@ -206,7 +208,7 @@ func (c clipRun) run(t *testing.T) *vqtest.Run {
 	if maxW == 0 {
 		maxW, maxH = c.clip.W, c.clip.H
 	}
-	s := newStream(desk, c.fps, maxW, maxH, tag.newEncoder, log)
+	s := mustStream(newStream(desk, c.fps, maxW, maxH, tag.newEncoder, log))
 	if c.tune != nil {
 		c.tune(s)
 	}
@@ -216,13 +218,19 @@ func (c clipRun) run(t *testing.T) *vqtest.Run {
 		maxBitrate = protocol.DefaultMaxKbps * 1000
 	}
 	cands := make(chan protocol.Candidate, 64)
+	sub := newSubscriber(min(startBitrate, maxBitrate), true)
+	sound, err := peer.NewAudioTrack()
+	if err != nil {
+		t.Fatal(err)
+	}
 	p, err := peer.New(peer.Config{
 		Net: net.Agent, MinBitrate: minBitrate, StartBitrate: min(startBitrate, maxBitrate), MaxBitrate: maxBitrate,
 		Unpaced: c.unpaced, Audio: c.sound, FeedWhileLimited: c.feedWhileLimited, SoundBehindVideo: c.soundBehindVideo, Log: log,
+		Video: s.video, AudioTrack: sound,
 	}, peer.Handlers{
 		Candidate: func(pc protocol.Candidate) { cands <- pc },
 		Keyframe:  s.requestKeyframe,
-		Bitrate:   s.setBitrate,
+		Bitrate:   sub.setBitrate,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -236,7 +244,8 @@ func (c clipRun) run(t *testing.T) *vqtest.Run {
 	if err := b.Connect(p, cands); err != nil {
 		t.Fatal(err)
 	}
-	s.setPeer(p)
+	sub.peer = p
+	s.add(sub)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
@@ -256,7 +265,7 @@ func (c clipRun) run(t *testing.T) *vqtest.Run {
 			case <-ctx.Done():
 				return
 			case now := <-tick.C:
-				p.WriteAudio(vqtest.SoundPayload(240, now), 20*time.Millisecond)
+				sound.WriteSample(media.Sample{Data: vqtest.SoundPayload(240, now), Duration: 20 * time.Millisecond})
 			}
 		}
 	}()

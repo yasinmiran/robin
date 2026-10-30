@@ -16,28 +16,55 @@ import (
 // written only from init, the maps need no lock.
 var (
 	controlHandlers = map[protocol.ControlType]controlHandler{}
-	bulkHandlers    = map[string]func(*session, protocol.Bulk) (peer.BulkSink, error){}
+	bulkHandlers    = map[string]bulkHandler{}
 )
 
-// controlHandler applies one kind of control message. Input applies in the
-// order it came with the text the browser types, so it waits behind any
-// being typed; the rest applies as it arrives.
+// bulkHandler decides on one kind of bulk transfer from the page of a
+// viewer: where its payload goes, or an error that refuses it.
+type bulkHandler func(*session, *viewer, protocol.Bulk) (peer.BulkSink, error)
+
+// controlHandler applies one kind of control message from the page of a
+// viewer. Input applies in the order it came with the
+// text the browser types, so it waits behind any being typed; the rest
+// applies as it arrives. A guest's message applies only while the guest
+// has control, and never one that only the owner's page sends.
 type controlHandler struct {
-	apply func(*session, protocol.Control)
+	apply func(*session, *viewer, protocol.Control)
 	input bool
+	owner bool
 }
 
 // handleControl registers h for control messages of type t, which apply as
 // they arrive. It panics on a nil h and on a type registered twice.
 func handleControl(t protocol.ControlType, h func(*session, protocol.Control)) {
+	addControl(t, controlHandler{apply: ignoreViewer(h)})
+}
+
+// handleControlFrom is handleControl for an h that needs to know whose
+// page sent the message, as one that answers it does.
+func handleControlFrom(t protocol.ControlType, h func(*session, *viewer, protocol.Control)) {
 	addControl(t, controlHandler{apply: h})
+}
+
+// handleOwner registers h for control messages of type t that only the
+// owner's page sends: what shapes the stream, the room or the sharing for
+// everyone.
+func handleOwner(t protocol.ControlType, h func(*session, protocol.Control)) {
+	addControl(t, controlHandler{apply: ignoreViewer(h), owner: true})
 }
 
 // handleInput registers h for control messages of type t that are input:
 // they wait behind text being typed rather than overtake it. It panics as
 // handleControl does.
 func handleInput(t protocol.ControlType, h func(*session, protocol.Control)) {
-	addControl(t, controlHandler{apply: h, input: true})
+	addControl(t, controlHandler{apply: ignoreViewer(h), input: true})
+}
+
+func ignoreViewer(h func(*session, protocol.Control)) func(*session, *viewer, protocol.Control) {
+	if h == nil {
+		return nil
+	}
+	return func(s *session, _ *viewer, m protocol.Control) { h(s, m) }
 }
 
 func addControl(t protocol.ControlType, h controlHandler) {
@@ -56,6 +83,16 @@ func addControl(t protocol.ControlType, h controlHandler) {
 // TestBulkKindsHaveLimits checks. It panics on a nil h and on a kind
 // registered twice.
 func handleBulk(kind string, h func(*session, protocol.Bulk) (peer.BulkSink, error)) {
+	var from bulkHandler
+	if h != nil {
+		from = func(s *session, _ *viewer, b protocol.Bulk) (peer.BulkSink, error) { return h(s, b) }
+	}
+	handleBulkFrom(kind, from)
+}
+
+// handleBulkFrom is handleBulk for an h that needs to know whose page sent
+// the transfer, as one that answers it does.
+func handleBulkFrom(kind string, h bulkHandler) {
 	if h == nil {
 		panic(fmt.Sprintf("agent: nil handler for bulk kind %q", kind))
 	}
@@ -71,33 +108,36 @@ func init() {
 	} {
 		handleInput(t, (*session).applyInput)
 	}
-	handleControl(protocol.ControlResize, (*session).applyResize)
-	handleControl(protocol.ControlMonitor, (*session).applyMonitor)
+	handleOwner(protocol.ControlResize, (*session).applyResize)
+	handleOwner(protocol.ControlMonitor, (*session).applyMonitor)
 }
 
-// control applies one message from the browser; types nobody handles are
-// ignored, as from a newer page. Input waits behind text being typed.
-func (s *session) control(m protocol.Control) {
+// controlAs applies one message from v's page; types nobody handles are ignored, as from a newer page, and so is what a
+// guest may not send. Input waits behind text being typed.
+func (s *session) controlAs(v *viewer, m protocol.Control) {
 	h, ok := controlHandlers[m.T]
 	if !ok {
 		return
 	}
-	if !h.input {
-		h.apply(s, m)
+	if !v.owner() && (h.owner || !v.control()) {
 		return
 	}
-	if !s.typing.run(m.T, func(context.Context) { h.apply(s, m) }) {
+	if !h.input {
+		h.apply(s, v, m)
+		return
+	}
+	if !s.typing.run(m.T, func(context.Context) { h.apply(s, v, m) }) {
 		s.log.Warn("input dropped: typing has fallen behind", "type", m.T)
 		// It may have been a key-up; the lane never drops a release.
-		s.control(protocol.Control{T: protocol.ControlRelease})
+		s.controlAs(v, protocol.Control{T: protocol.ControlRelease})
 	}
 }
 
-// bulk picks the handler for a transfer the browser opened.
-func (s *session) bulk(h protocol.Bulk) (peer.BulkSink, error) {
+// bulk picks the handler for a transfer v's page opened.
+func (s *session) bulk(v *viewer, h protocol.Bulk) (peer.BulkSink, error) {
 	accept := bulkHandlers[h.Kind]
 	if accept == nil {
 		return nil, fmt.Errorf("%w %q: this agent takes none", protocol.ErrBulkKind, h.Kind)
 	}
-	return accept(s, h)
+	return accept(s, v, h)
 }

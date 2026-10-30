@@ -44,6 +44,7 @@ export class SharpText {
   #open = false; // the control channel
   #answer = null; // the agent's protocol.Tiles to the latest request
   #clock = null; // whether the browser reports frames' RTP timestamps
+  #withheld = ''; // why this page may not ask for tiles at all
   #warned = false;
   #epoch = 0; // counts resets, so a batch decoded across one is dropped
   #bytes = 0;
@@ -154,13 +155,22 @@ export class SharpText {
     return Boolean(this.#answer?.on) && this.#asked;
   }
 
+  // withhold keeps the page from asking for tiles, saying why: a guest's
+  // page shares the owner's stream, whose tiles follow the owner's page.
+  withhold(reason) {
+    this.#withheld = reason;
+    this.#sync();
+    this.#render();
+  }
+
   get #unsupported() {
+    if (this.#withheld) return this.#withheld;
     if (this.#clock === false) return NO_FRAME_CLOCK;
     return this.#answer?.unsupported ?? '';
   }
 
   #sync() {
-    const want = this.#want && this.#clock === true && this.#open;
+    const want = this.#want && this.#clock === true && this.#open && !this.#withheld;
     if (want === this.#asked) return;
     this.#asked = want;
     this.#answer = null;

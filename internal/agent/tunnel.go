@@ -23,12 +23,15 @@ import (
 // outside the host, and it hangs up on any connection whose other end is
 // not a socket that a process of this user's, or root's, holds open: TCP
 // carries no credentials, but the kernel knows who made each socket.
-func listenTunnel(log *slog.Logger) (ice.TCPMux, string, error) {
+//
+// A guest's forward runs as the guest, so a uid that guest admits counts
+// too, for as long as a guest of that uid is connected.
+func listenTunnel(log *slog.Logger, guest func(uint32) bool) (ice.TCPMux, string, error) {
 	ln, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		return nil, "", fmt.Errorf("listen for ICE-TCP: %w", err)
 	}
-	return ice.NewTCPMuxDefault(tunnelMuxParams(newOwnConns(ln, log, connUID))), ln.Addr().String(), nil
+	return ice.NewTCPMuxDefault(tunnelMuxParams(newOwnConns(ln, log, connUID, guest))), ln.Addr().String(), nil
 }
 
 // muxWait bounds what a connection that passed the owner check holds in
@@ -61,6 +64,8 @@ type ownConns struct {
 	net.Listener
 	log   *slog.Logger
 	uidOf func(net.Conn) (uint32, error)
+	// guest admits the uid of a guest connected now; nil admits none.
+	guest func(uint32) bool
 
 	checkers chan struct{} // a slot per check under way
 	checked  chan net.Conn
@@ -69,9 +74,9 @@ type ownConns struct {
 	refused  atomic.Bool   // a refusal was logged at Warn; the rest go at Debug
 }
 
-func newOwnConns(ln net.Listener, log *slog.Logger, uidOf func(net.Conn) (uint32, error)) *ownConns {
+func newOwnConns(ln net.Listener, log *slog.Logger, uidOf func(net.Conn) (uint32, error), guest func(uint32) bool) *ownConns {
 	l := &ownConns{
-		Listener: ln, log: log, uidOf: uidOf,
+		Listener: ln, log: log, uidOf: uidOf, guest: guest,
 		checkers: make(chan struct{}, maxOwnerChecks), checked: make(chan net.Conn), done: make(chan struct{}),
 	}
 	go l.accept()
@@ -113,7 +118,7 @@ func (l *ownConns) check(c net.Conn) {
 	case err != nil:
 		c.Close()
 		l.refuse("ICE-TCP connection refused: cannot tell whose it is", "from", c.RemoteAddr(), "err", err)
-	case uid != uint32(os.Getuid()) && uid != 0:
+	case uid != uint32(os.Getuid()) && uid != 0 && (l.guest == nil || !l.guest(uid)):
 		c.Close()
 		l.refuse("ICE-TCP connection refused: another user's", "from", c.RemoteAddr(), "uid", uid)
 	default:

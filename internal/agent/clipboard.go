@@ -154,13 +154,17 @@ func (s *session) forwardClips(ctx context.Context, clips <-chan protocol.Clip) 
 	}
 }
 
-// sendClip sends c to the current page: as a control message when it is
-// plain text that fits one, else as a bulk transfer.
+// sendClip sends c to every page with control: as a control message when
+// it is plain text that fits one, else as a bulk transfer.
 func (s *session) sendClip(ctx context.Context, c protocol.Clip) {
-	p := s.currentOrNil()
-	if p == nil {
-		return
+	for _, v := range s.controlling() {
+		ctx, cancel := s.transfer(ctx, v)
+		s.sendClipTo(ctx, v.peer, c)
+		cancel()
 	}
+}
+
+func (s *session) sendClipTo(ctx context.Context, p *peer.Peer, c protocol.Clip) {
 	if c.HTML == "" && len(c.PNG) == 0 && len(c.Text) <= clipboardSize {
 		if err := p.SendControl(protocol.Control{T: protocol.ControlClipboard, Text: c.Text}); err != nil && !errors.Is(err, peer.ErrNoControl) {
 			s.log.Warn("send clipboard", "err", err)

@@ -83,6 +83,15 @@ A private session changes the attached desktop for as long as it lasts: the gamm
 
 The curtain is no lock: anyone at the machine can type and click while it is drawn, and whatever ends the session leaves the desktop unlocked in front of them ([Private sessions](/private-session) puts that first). On GNOME it also blacks out the indicator that says the screen is being shared, which leaves the black screen itself as the only sign. The curtain refuses a desktop with a screen it cannot darken rather than leave that screen lit, but a screen plugged in while it is drawn stays lit, with an error under the switch, and so does a program that refuses to move out of the room's speakers.
 
+### Guests
+
+A session takes guests on an abstract unix socket, which has no file and so no permissions: any account on the host can connect to it. Before it reads a byte, the session daemon asks the kernel (`SO_PEERCRED`) who connected and hangs up unless that account holds an open invitation. The account then has 5 seconds to present the invitation's code: 128 random bits, compared in constant time, spent on first use, expired after 10 minutes, and withdrawn after three wrong tries. The code never goes on a command line, where every account could read it; the guest's CLI sends it over its agent's input.
+
+- The guest's agent checks that the socket belongs to the uid the code names, so an account that takes the name once your daemon is gone cannot pose as your session, and the guest's CLI pins the agent's identity as yours does.
+- A guest's SSH forward runs as the guest, so the ICE-TCP listener also admits the account of a guest connected now, and only while it is.
+- Without control a guest's page does nothing to the desktop: its keys, clipboard, transfers and microphone are dropped, and its microphone takes no turn at the host's. Closing or reloading your page takes control from every guest. With control it does what yours does, short of what shapes the session. Either way it sees your screen and hears its sound.
+- At most 8 invitations are open at once and 8 guests join one session, each getting one new peer connection a second. A guest that stops reading what the session sends it is dropped within 10 seconds. Guests go when your CLI goes, and each account's first refusal goes to the session's log with the uid that knocked; later ones from that account log only at debug, so knocking cannot fill the log.
+
 ### Attaching to X11
 
 Before the agent sends an X cookie anywhere, it asks the kernel (`SO_PEERCRED`) who is listening on the display's socket, and goes no further unless it is you or root. Any local user can create a socket in `/tmp/.X11-unix` for a display nobody runs, or claim the abstract name of one whose server has no socket file, and whatever answered there would otherwise receive the cookie, the keystrokes and the clipboard.

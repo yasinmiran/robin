@@ -46,6 +46,13 @@ var (
 	errNoMacros = errors.New("this session keeps no macros")
 )
 
+// endedError is errEnded with the host's reason, which a guest's page
+// shows as it came.
+type endedError struct{ why string }
+
+func (e *endedError) Error() string        { return errEnded.Error() + ": " + e.why }
+func (e *endedError) Is(target error) bool { return target == errEnded }
+
 // bridge relays signaling between whichever page is connected and the agent.
 // A page that goes away (reload, closed tab) costs the agent its peer
 // connection but not its display. The page outlives the agent connection
@@ -247,7 +254,7 @@ func (b *bridge) fromAgent(ctx context.Context, agent signaling) error {
 		}
 		switch m.Type {
 		case protocol.TypeEnded:
-			return fmt.Errorf("%w: %s", errEnded, m.Error)
+			return &endedError{why: m.Error}
 		case protocol.TypeError:
 			b.log.Warn("agent reported", "err", m.Error)
 			last = m.Error

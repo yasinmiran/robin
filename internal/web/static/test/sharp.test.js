@@ -238,3 +238,15 @@ test('reset forgets the peer', () => {
   sharp.trace();
   assert.deepEqual(sharp.stopTrace(), { frames: [], manifests: [] });
 });
+
+test('a page that may not ask for tiles says why and asks nothing', () => {
+  sent.length = 0;
+  sharp.open();
+  sharp.withhold('Sharp text follows the owner of a shared desktop');
+  const b = button('sharp');
+  assert.equal(b.getAttribute('aria-disabled'), 'true');
+  assert.equal(note('sharp-note').textContent, 'Sharp text follows the owner of a shared desktop');
+  assert.ok(!sent.some((m) => m.t === 'tiles' && m.on), 'tiles were asked for');
+  b.click();
+  assert.ok(!sent.some((m) => m.t === 'tiles' && m.on), 'a click asked for tiles');
+});

@@ -23,10 +23,23 @@ import (
 // with no desktop or CLI: the transfers alone.
 func peerBrowser(t *testing.T, s *session) *fileBrowser {
 	t.Helper()
+	return pageBrowser(t, s, nil)
+}
+
+// pageBrowser is peerBrowser for the page of guest g, or the owner's for
+// a nil g.
+func pageBrowser(t *testing.T, s *session, g *guest) *fileBrowser {
+	t.Helper()
 	// The candidate relays end with the test, before the peers close.
 	quit := t.Context().Done()
 	cands := make(chan protocol.Candidate, 64)
-	p, err := peer.New(peer.Config{IncludeLoopback: true, MinBitrate: minBitrate, StartBitrate: startBitrate, MaxBitrate: startBitrate, Log: s.log},
+	v := newViewer(1, g)
+	v.sub = newSubscriber(startBitrate, g == nil)
+	cfg := peer.Config{IncludeLoopback: true, MinBitrate: minBitrate, StartBitrate: startBitrate, MaxBitrate: startBitrate, Log: s.log}
+	if s.stream != nil {
+		cfg.Video = s.stream.video
+	}
+	p, err := peer.New(cfg,
 		peer.Handlers{
 			Candidate: func(c protocol.Candidate) {
 				select {
@@ -34,14 +47,21 @@ func peerBrowser(t *testing.T, s *session) *fileBrowser {
 				case <-quit:
 				}
 			},
-			Control: s.control, Bulk: s.bulk, ControlOpen: s.resendOffers,
+			Control:     s.controlFrom(v),
+			Bulk:        func(h protocol.Bulk) (peer.BulkSink, error) { return s.bulkFrom(v, h) },
+			ControlOpen: func() { s.resendOffers(v) },
 		})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { p.Close() })
+	v.peer, v.sub.peer = p, p
 	s.mu.Lock()
-	s.peer = p
+	if g == nil {
+		s.owner = v
+	} else {
+		g.view = v
+	}
 	s.mu.Unlock()
 
 	m := &webrtc.MediaEngine{}
@@ -189,5 +209,65 @@ func TestOfferFetchedOverAPeer(t *testing.T) {
 	s.declineOffer(protocol.Control{T: protocol.ControlFileDecline, File: &protocol.File{ID: offered.ID}})
 	if r := waitSent(t, res); !errors.Is(r.err, files.ErrNotSaved) || !strings.Contains(r.out, "notes.txt: transfer failed, still on offer: the browser refused it: no room\n") {
 		t.Errorf("after a refused transfer: %v, %q", r.err, r.out)
+	}
+}
+
+// Taking control back from a guest ends the file the guest was fetching
+// at once, and the file stays on offer for a page with control.
+func TestRevokingAGuestEndsWhatItIsFetching(t *testing.T) {
+	s, runDir, _ := sharedSession(t, &fakeDesktop{})
+	s.shared.owner = "owner"
+	s.ready = &protocol.Ready{Display: ":9", Mode: protocol.ModeSpawn, Encoder: protocol.EncoderSoftware, TunnelAddr: "127.0.0.1:9"}
+	endGuestsAtCleanup(t, s)
+	g, _ := addGuest(t, s, "alice", 1001)
+	b := pageBrowser(t, s, g)
+	change := func(a protocol.GuestAction) {
+		s.inputMu.Lock()
+		defer s.inputMu.Unlock()
+		s.applyGuest(protocol.Control{Guest: &protocol.GuestChange{ID: g.id, Action: a}})
+	}
+	change(protocol.GuestGrant)
+
+	path := filepath.Join(t.TempDir(), "big.bin")
+	os.WriteFile(path, noise(4*protocol.BulkWindow), 0o600)
+	res := offerFiles(t, filepath.Join(runDir, files.SocketName), path)
+	offered := b.control(protocol.ControlFileOffer).File
+	b.stall.Store(true)
+	b.sendControl(protocol.Control{T: protocol.ControlFileFetch, File: &protocol.File{ID: offered.ID}})
+	select {
+	case h := <-b.started:
+		if h.ID != offered.ID {
+			t.Fatalf("the guest got %+v", h)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the fetch never started")
+	}
+
+	change(protocol.GuestRevoke)
+	select {
+	case <-b.cut:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the guest's download goes on after its control was taken")
+	}
+	if w := b.control(protocol.ControlFileWithdraw).File; w.ID != offered.ID {
+		t.Errorf("withdrew %+v", w)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		s.files.mu.Lock()
+		o := s.files.offers[offered.ID]
+		idle := o != nil && o.cancel == nil
+		s.files.mu.Unlock()
+		if idle {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the cut transfer never settled back to an offer")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	s.declineOffer(protocol.Control{T: protocol.ControlFileDecline, File: &protocol.File{ID: offered.ID}})
+	if r := waitSent(t, res); !strings.Contains(r.out, "still on offer: "+errControlTaken.Error()) {
+		t.Errorf("robin-agent send printed %q", r.out)
 	}
 }

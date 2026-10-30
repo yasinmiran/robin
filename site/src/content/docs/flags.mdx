@@ -7,6 +7,7 @@ order: 1
 
 ```text
 robin gui [flags] [user@]host [-- ssh-args...]
+robin gui --join code [flags] [user@]host [-- ssh-args...]
 robin ls [user@]host [-- ssh-args...]
 robin end [user@]host [id] [-- ssh-args...]
 robin version
@@ -86,6 +87,17 @@ Attached desktops: black out the host's screen while the page still shows it, fr
 </Flag>
 <Flag name="--silent" def="off">
 Attached desktops: keep the host's speakers quiet while the page still plays the sound, from the start or as the CLI resumes.
+</Flag>
+</Flags>
+
+## Sharing
+
+<Flags>
+<Flag name="--share" arg="USER" def="none">
+Invite this account on the host to join the session as a guest, who watches until you give them control in the page; repeat for more. See [Sharing a desktop](/sharing).
+</Flag>
+<Flag name="--join" arg="CODE" def="none">
+Join another account's session as a guest, with the code its owner was given, over your own login to the host.
 </Flag>
 </Flags>
 

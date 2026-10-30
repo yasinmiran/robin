@@ -5,11 +5,14 @@
 export class Session {
   #keep = 0;
   #leaving = null;
+  #guest = false;
 
   // configure takes the CLI's config. keep is how many seconds the host
-  // keeps the desktop without a CLI; 0 means it goes with the session.
+  // keeps the desktop without a CLI; 0 means it goes with the session. A
+  // config with a share is a guest's, whose leaving ends nothing on the host.
   configure(config) {
     this.#keep = config?.keep ?? 0;
+    this.#guest = Boolean(config?.share);
   }
 
   // canKeep says whether detaching leaves a desktop to come back to.
@@ -40,6 +43,7 @@ export class Session {
   // opened, else what the page asked for or was told, else a plain close.
   closeReason(opened) {
     if (!opened) return 'refused';
+    if (this.#guest && this.#leaving) return 'left';
     return this.#leaving ?? 'closed';
   }
 }

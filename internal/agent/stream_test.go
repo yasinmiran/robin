@@ -59,6 +59,15 @@ func (*stillDesktop) Capture(force bool) (*desktop.Frame, bool, error) {
 	return &desktop.Frame{Width: 64, Height: 64, Stride: 4 * 64, Pix: make([]byte, 4*64*64), Format: desktop.BGRX}, force, nil
 }
 
+// subscribe adds p to the stream as the one subscriber that takes tiles,
+// at the start bitrate, as the owner's page is.
+func (s *stream) subscribe(p *peer.Peer) *subscriber {
+	sub := newSubscriber(startBitrate, true)
+	sub.peer = p
+	s.add(sub)
+	return sub
+}
+
 // countingEncoder counts its encodes and returns a small access unit
 // for each.
 type countingEncoder struct{ n *atomic.Int64 }
@@ -85,16 +94,17 @@ func TestStreamRefreshesAStillScreen(t *testing.T) {
 			log := slog.New(slog.NewTextHandler(io.Discard, nil))
 			var encodes atomic.Int64
 			open := func(int, int, int, int) (Encoder, error) { return countingEncoder{&encodes}, nil }
-			s := newStream(&stillDesktop{}, 100, 64, 64, open, log)
+			s := mustStream(newStream(&stillDesktop{}, 100, 64, 64, open, log))
 			s.refresh = tc.refresh
 			p, err := peer.New(peer.Config{
 				MinBitrate: minBitrate, StartBitrate: startBitrate, MaxBitrate: protocol.DefaultMaxKbps * 1000, Log: log,
+				Video: s.video,
 			}, peer.Handlers{})
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer p.Close()
-			s.setPeer(p)
+			s.subscribe(p)
 			ctx, cancel := context.WithCancel(context.Background())
 			done := make(chan struct{})
 			go func() {

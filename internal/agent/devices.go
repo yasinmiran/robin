@@ -109,24 +109,25 @@ func startCamera(ctx context.Context, start protocol.Start, newCamera NewCameraF
 	return c, &protocol.Device{Available: true, Where: c.Where()}
 }
 
-// track hands a track the browser sends to the microphone or the camera,
-// to play on a goroutine of its own until the track ends.
-func (s *session) track(tr *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+// track hands a track v's page sends to the microphone or the camera, to
+// play on a goroutine of its own until the track ends. A guest's
+// microphone is heard only while the guest has control; a guest's page
+// sends no camera.
+func (s *session) track(v *viewer, tr *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 	var device string
 	var play func() error
 	switch {
 	case tr.Kind() == webrtc.RTPCodecTypeAudio && s.mic != nil:
 		device = "microphone"
 		play = func() error { return s.mic.Play(tr) }
-	case tr.Kind() == webrtc.RTPCodecTypeVideo && s.camera != nil:
+		if !v.owner() {
+			play = func() error { return s.playGuestMic(tr, v.control) }
+		}
+	case tr.Kind() == webrtc.RTPCodecTypeVideo && s.camera != nil && v.owner():
 		device = "camera"
-		p, ssrc := s.currentOrNil(), uint32(tr.SSRC())
+		p, ssrc := v.peer, uint32(tr.SSRC())
 		play = func() error {
-			return s.camera.Play(tr, func() {
-				if p != nil {
-					p.RequestKeyframe(ssrc)
-				}
-			})
+			return s.camera.Play(tr, func() { p.RequestKeyframe(ssrc) })
 		}
 	default:
 		s.log.Info("ignoring a track the session did not offer to take", "kind", tr.Kind().String())

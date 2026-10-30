@@ -721,3 +721,109 @@ body[data-dropping]::after {
     background: repeating-linear-gradient(90deg, var(--wait) 0 12px, transparent 12px 20px);
   }
 }
+
+/* Sharing (share.js). The owner's part: a name to invite, the command each
+   invited account joins with, a row per guest, laid on one grid so names,
+   states and actions line up as columns. A guest's part: the line that says
+   how to get control; the row's label says whose desktop it is. Text stays
+   in ink: --ok and --down mark state with a dot, as the device switches do,
+   since neither reads as text on the light veil over a dark desktop. */
+.share-invite { display: flex; align-items: center; gap: 8px; }
+.share-label {
+  flex: none;
+  width: 52px;
+  color: var(--ink-soft);
+  font-weight: 400;
+}
+.share-invite input {
+  flex: 0 1 22ch;
+  min-width: 0;
+  padding: 3px 6px;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px var(--ink-soft);
+  font: 400 13px/18px var(--ui);
+}
+.share-invite input:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.share-invite input[aria-invalid="true"] { box-shadow: inset 0 0 0 1px var(--down); }
+.share-error {
+  grid-column: 1 / -1;
+  max-width: 60ch;
+  margin: 4px 0 0;
+  color: var(--ink);
+  font-weight: 400;
+}
+.share-error::before,
+.share-guest[data-control="true"] .share-state::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: 1px;
+  background: var(--down);
+}
+.share-guest[data-control="true"] .share-state::before { background: var(--ok); }
+.share-lists {
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.share-invitations,
+.share-guests {
+  display: grid;
+  align-items: center;
+  gap: 4px 10px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.share-invitations { grid-template-columns: minmax(0, 20ch) auto auto; justify-content: start; }
+.share-guests { grid-template-columns: minmax(0, 20ch) 11ch auto auto; justify-content: start; }
+.share-invitation,
+.share-guest { display: contents; }
+.share-user {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The command spans the row under its invitation and is cut short to the
+   tab's width, which it does not set: width 0 keeps it out of the tab's
+   own sizing. Selecting it, or Copy, still takes it whole. */
+.share-command {
+  grid-column: 1 / -1;
+  width: 0;
+  min-width: 100%;
+  margin-bottom: 4px;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font: 400 11.5px/16px ui-monospace, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: all;
+}
+.share-until,
+.share-state,
+.share-status { color: var(--ink); font-weight: 400; white-space: nowrap; }
+.share-status { margin: 0; white-space: normal; }
+.share-guest button { justify-self: start; }
+.section .share-guest button[data-action="remove"] {
+  color: var(--ink-soft);
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--veil-edge);
+}
+.section .share-guest button[data-action="remove"]:hover { color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink-soft); }
+.section .share-guest button[data-confirm] { color: var(--on-accent); background: var(--down); box-shadow: none; }
+.section button[aria-disabled="true"] { opacity: 0.55; cursor: default; box-shadow: none; }
+/* A guest's page that only watches: the dot waits, as for a page that
+   cannot drive yet. */
+#hud[data-state="connected"][data-view-only] .dot { background: var(--wait); }
+/* Narrow, each guest's actions go under its name; a gap above the next
+   name keeps the rows apart. */
+@media (max-width: 480px) {
+  .share-guests { grid-template-columns: minmax(0, 1fr) auto; }
+  .share-guest + .share-guest > :nth-child(-n+2) { margin-top: 6px; }
+}

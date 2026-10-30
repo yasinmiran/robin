@@ -140,6 +140,27 @@ test('the built-in keys go out as chords, nothing held at the end', async () => 
   assert.deepEqual(t.sent, []);
 });
 
+test('withheld, nothing plays and the section says why, until control comes', async () => {
+  const t = setup();
+  const own = t.toggle.title;
+  t.keys.withhold('Keys and macros reach the desktop once robin gives you control');
+  assert.equal(t.toggle.title, 'Keys and macros: Keys and macros reach the desktop once robin gives you control');
+  assert.equal(t.note().textContent, 'Keys and macros reach the desktop once robin gives you control');
+  assert.equal(t.note().hidden, false);
+  t.click('Alt+Tab');
+  clipboard = async () => { throw new Error('read while withheld'); };
+  t.click('Type clipboard');
+  await t.settle();
+  assert.deepEqual(t.sent, [], 'nothing went to the desktop');
+  assert.equal(t.note().dataset.tone, 'error');
+  t.keys.withhold('');
+  assert.equal(t.note().hidden, true);
+  t.click('Alt+Tab');
+  await t.settle();
+  assert.deepEqual(t.sent, ['+Alt', '+Tab', '-Tab', '-Alt']);
+  assert.equal(t.toggle.title, own, 'the toggle gets its own title back');
+});
+
 test('Type clipboard leads the macros, types the local clipboard on the click, and says when it cannot', async () => {
   const t = setup();
   assert.deepEqual(t.macroRow(), ['Type clipboard'], 'with no macros from the CLI, Type clipboard alone');

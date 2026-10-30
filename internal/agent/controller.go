@@ -91,6 +91,7 @@ func (s *session) serve(ctx context.Context, cs Controllers, ready *protocol.Rea
 			return nil
 		}
 		s.closePeer()
+		s.ownerAway()
 		conn.Close()
 		if keep <= 0 {
 			return nil
@@ -110,6 +111,7 @@ func (s *session) serve(ctx context.Context, cs Controllers, ready *protocol.Rea
 		case err != nil:
 			return err
 		}
+		s.ownerBack()
 		state.Connected, state.Until = true, nil
 		cs.Changed(state)
 	}

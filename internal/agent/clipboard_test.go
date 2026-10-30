@@ -43,9 +43,9 @@ func (r *richDesktop) setSoFar() []protocol.Clip {
 func TestClipboardFromTheBrowserIsSetInOrder(t *testing.T) {
 	desk := &richDesktop{}
 	s := testSession(desk)
-	s.control(protocol.Control{T: protocol.ControlClipboard, Text: "first"})
-	s.control(protocol.Control{T: protocol.ControlClipboard, Text: strings.Repeat("x", clipboardSize+1)})
-	s.control(protocol.Control{T: protocol.ControlClipboard, Text: "second"})
+	asOwner(s, protocol.Control{T: protocol.ControlClipboard, Text: "first"})
+	asOwner(s, protocol.Control{T: protocol.ControlClipboard, Text: strings.Repeat("x", clipboardSize+1)})
+	asOwner(s, protocol.Control{T: protocol.ControlClipboard, Text: "second"})
 	got := desk.setSoFar()
 	if len(got) != 2 || got[0].Text != "first" || got[1].Text != "second" {
 		t.Errorf("set %+v, want first and then second", got)
@@ -59,7 +59,7 @@ func TestClipboardBulkFromTheBrowser(t *testing.T) {
 	want := protocol.Clip{Text: "a picture", PNG: []byte{0x89, 'P', 'N', 'G'}}
 	payload, _ := protocol.EncodeClip(want)
 	h := protocol.Bulk{T: protocol.BulkHeader, Kind: protocol.BulkClipboard, Size: int64(len(payload))}
-	sink, err := s.bulk(h)
+	sink, err := s.bulk(&viewer{}, h)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestClipboardBulkFromTheBrowser(t *testing.T) {
 		t.Errorf("set %+v, want %+v", got, want)
 	}
 
-	sink, _ = s.bulk(protocol.Bulk{T: protocol.BulkHeader, Kind: protocol.BulkClipboard, Size: 3})
+	sink, _ = s.bulk(&viewer{}, protocol.Bulk{T: protocol.BulkHeader, Kind: protocol.BulkClipboard, Size: 3})
 	sink.Write([]byte{9, 'x', 'y'})
 	if err := sink.Commit(); !errors.Is(err, protocol.ErrClip) {
 		t.Errorf("Commit of a malformed payload: %v, want ErrClip", err)
@@ -86,19 +86,19 @@ func TestClipboardBulkFromTheBrowser(t *testing.T) {
 	h = protocol.Bulk{T: protocol.BulkHeader, Kind: protocol.BulkClipboard, Size: 1}
 	var open []peer.BulkSink
 	for range maxClipsIn {
-		sink, err := s.bulk(h)
+		sink, err := s.bulk(&viewer{}, h)
 		if err != nil {
 			t.Fatal(err)
 		}
 		open = append(open, sink)
 	}
-	if _, err := s.bulk(h); err == nil {
+	if _, err := s.bulk(&viewer{}, h); err == nil {
 		t.Errorf("clipboard transfer %d at once was taken", maxClipsIn+1)
 	}
 	open[0].Abort(nil)
 	open[1].Commit()
 	for range maxClipsIn {
-		if _, err := s.bulk(h); err != nil {
+		if _, err := s.bulk(&viewer{}, h); err != nil {
 			t.Errorf("after both ended: %v", err)
 		}
 	}
@@ -122,11 +122,11 @@ func (r *richTypist) ClipboardContent() <-chan protocol.Clip { return nil }
 func TestClipboardBulkWaitsBehindText(t *testing.T) {
 	desk := &richTypist{fakeTypist{gate: make(chan struct{}), started: make(chan string, 1)}}
 	s := testSession(desk)
-	s.control(protocol.Control{T: protocol.ControlText, Text: "日本"})
+	asOwner(s, protocol.Control{T: protocol.ControlText, Text: "日本"})
 	<-desk.started
 
 	payload, _ := protocol.EncodeClip(protocol.Clip{Text: "pasted", PNG: []byte{0x89, 'P', 'N', 'G'}})
-	sink, err := s.bulk(protocol.Bulk{T: protocol.BulkHeader, Kind: protocol.BulkClipboard, Size: int64(len(payload))})
+	sink, err := s.bulk(&viewer{}, protocol.Bulk{T: protocol.BulkHeader, Kind: protocol.BulkClipboard, Size: int64(len(payload))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestClipboardBulkWaitsBehindText(t *testing.T) {
 		t.Fatal(err)
 	}
 	paste := protocol.Control{T: protocol.ControlKey, Key: "v", Code: "KeyV", Down: true}
-	s.control(paste)
+	asOwner(s, paste)
 	if got := desk.got(); len(got) != 0 {
 		t.Fatalf("the clipboard or the paste key overtook the text being typed: %+v", got)
 	}

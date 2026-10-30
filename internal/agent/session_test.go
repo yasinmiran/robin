@@ -371,10 +371,15 @@ func TestFit(t *testing.T) {
 }
 
 func TestCursorCacheForgetsTheOldest(t *testing.T) {
-	s := &session{cursors: map[uint32]protocol.Cursor{}, cursorsShown: map[uint32]bool{}}
+	guestPage := &viewer{cursorsShown: map[uint32]bool{}}
+	s := &session{
+		cursors: map[uint32]protocol.Cursor{}, owner: &viewer{cursorsShown: map[uint32]bool{}},
+		shared: &sharing{guests: []*guest{{view: guestPage}, {}}},
+	}
 	for id := uint32(1); id <= maxCursors; id++ {
 		s.keepCursor(protocol.Cursor{ID: id, PNG: []byte{1}})
-		s.cursorsShown[id] = true
+		s.owner.cursorsShown[id] = true
+		guestPage.cursorsShown[id] = true
 	}
 	// The desktop sends 1 again after forgetting it itself: it is the newest.
 	s.keepCursor(protocol.Cursor{ID: 1, PNG: []byte{2}})
@@ -383,13 +388,13 @@ func TestCursorCacheForgetsTheOldest(t *testing.T) {
 	if len(s.cursors) != maxCursors || len(s.cursorOrder) != maxCursors {
 		t.Fatalf("kept %d images, %d in order; want %d", len(s.cursors), len(s.cursorOrder), maxCursors)
 	}
-	if _, ok := s.cursors[2]; ok || s.cursorsShown[2] {
+	if _, ok := s.cursors[2]; ok || s.owner.cursorsShown[2] || guestPage.cursorsShown[2] {
 		t.Error("the oldest image, 2, is still kept")
 	}
 	if c, ok := s.cursors[1]; !ok || c.PNG[0] != 2 {
 		t.Errorf("image 1 = %+v, %v; want the one sent again", c, ok)
 	}
-	if !s.cursorsShown[1] {
+	if !s.owner.cursorsShown[1] || !guestPage.cursorsShown[1] {
 		t.Error("the page lost track of image 1, which it still has")
 	}
 }

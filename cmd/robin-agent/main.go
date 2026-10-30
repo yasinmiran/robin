@@ -8,9 +8,11 @@
 // stdout and the daemon's socket, logging to stderr. daemon owns the
 // desktop, in a process that outlives the SSH connection; it exits, tearing
 // down what it spawned, when the CLI says bye, the keep window runs out with
-// no CLI attached, or end tells it to. As robin-agent send, or through the
-// robin-send link a spawned session puts on its programs' PATH, it offers
-// files to the session's browser instead.
+// no CLI attached, or end tells it to. join is serve for a guest: run by
+// another account's CLI as that account, it relays to the guests' door of
+// the session it names. As robin-agent send, or through the robin-send
+// link a spawned session puts on its programs' PATH, it offers files to
+// the session's browser instead.
 package main
 
 import (
@@ -35,6 +37,7 @@ import (
 	"github.com/yasinmiran/robin/internal/agent/h264"
 	"github.com/yasinmiran/robin/internal/agent/hwenc"
 	"github.com/yasinmiran/robin/internal/agent/keeper"
+	"github.com/yasinmiran/robin/internal/agent/share"
 	"github.com/yasinmiran/robin/internal/agent/wayland"
 	"github.com/yasinmiran/robin/internal/agent/x11"
 	"github.com/yasinmiran/robin/internal/protocol"
@@ -42,7 +45,7 @@ import (
 
 var version = "dev"
 
-const usage = "usage: robin-agent serve [-v] [-keep d] [-resume id] [-detach setsid|systemd-run] | daemon ... | end id | send FILE... | keeper [-v] | version"
+const usage = "usage: robin-agent serve [-v] [-keep d] [-resume id] [-detach setsid|systemd-run] | join -session id -owner uid | daemon ... | end id | send FILE... | keeper [-v] | version"
 
 func main() {
 	if filepath.Base(os.Args[0]) == agent.SendCommand {
@@ -57,6 +60,8 @@ func main() {
 		fmt.Println("robin-agent", version)
 	case "serve":
 		os.Exit(serve(os.Args[2:]))
+	case "join":
+		os.Exit(join(os.Args[2:]))
 	case "daemon":
 		os.Exit(runDaemon(os.Args[2:]))
 	case "end":
@@ -133,6 +138,38 @@ func serve(args []string) int {
 	return 0
 }
 
+// join is a guest CLI's end on the host: a proxy to the guests' door of
+// the session the CLI names, which it checks its owner holds. The code
+// itself goes over stdin, in the CLI's Join, and never on a command line.
+func join(args []string) int {
+	fs := flag.NewFlagSet("join", flag.ContinueOnError)
+	session := fs.String("session", "", "the session to join")
+	owner := fs.Int("owner", -1, "the uid of the session's owner")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	code := protocol.JoinCode{Session: *session, Owner: *owner}
+	if err := code.CheckTarget(); err != nil {
+		fmt.Fprintln(os.Stderr, "robin-agent: join: bad -session or -owner")
+		return 2
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer stop()
+	signal.Ignore(syscall.SIGPIPE)
+	out := os.Stdout
+	os.Stdout = os.Stderr
+	c, err := share.Dial(code)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "robin-agent:", err)
+		return 1
+	}
+	if err := share.Relay(ctx, c, os.Stdin, out); err != nil {
+		fmt.Fprintln(os.Stderr, "robin-agent:", err)
+		return 1
+	}
+	return 0
+}
+
 // daemonEnv is what a daemon under systemd-run needs from this environment,
 // which its unit does not inherit: where tools, the home and the runtime
 // directory are, the locale, and where a coverage build writes.
@@ -195,6 +232,15 @@ func runDaemon(args []string) int {
 	defer ln.Close()
 	// Serve removes the directory once a session ran; before that it is ours.
 	defer os.RemoveAll(*dir)
+	// Guests come in by an abstract socket; a daemon that cannot have one
+	// still serves its owner, and shares nothing.
+	door, err := share.Open(share.NewInvites(*id, os.Getuid()), log)
+	if err != nil {
+		log.Warn("sharing unavailable", "err", err)
+		door = nil
+	} else {
+		defer door.Close()
+	}
 	keeperArgv := []string{exe, "keeper"} // exe names it; keeper.Client runs this same image
 	if *verbose {
 		keeperArgv = append(keeperArgv, "-v")
@@ -213,6 +259,7 @@ func runDaemon(args []string) int {
 		NewCamera: newCamera,
 		Keeper:    keeperArgv,
 		Silence:   silence,
+		Door:      door,
 		Log:       log,
 	})
 	if err != nil {

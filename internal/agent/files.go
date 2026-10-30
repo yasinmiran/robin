@@ -24,8 +24,8 @@ import (
 
 func init() {
 	protocol.RegisterBulkKind(protocol.BulkFile, protocol.MaxFile)
-	handleBulk(protocol.BulkFile, (*session).acceptUpload)
-	handleControl(protocol.ControlFileFetch, (*session).fetchOffer)
+	handleBulkFrom(protocol.BulkFile, (*session).acceptUpload)
+	handleControlFrom(protocol.ControlFileFetch, (*session).fetchOffer)
 	handleControl(protocol.ControlFileDecline, (*session).declineOffer)
 }
 
@@ -248,51 +248,70 @@ func (s *session) takeOffers(r *files.Request) {
 	}
 	<-r.Gone()
 	for _, o := range fs.withdraw(from) {
-		s.sendFileControl(protocol.ControlFileWithdraw, protocol.File{ID: o.info.ID})
+		for _, v := range s.controlling() {
+			s.sendFileControl(v, protocol.ControlFileWithdraw, protocol.File{ID: o.info.ID})
+		}
 	}
 }
 
-func (s *session) showOffer(f protocol.File) { s.sendFileControl(protocol.ControlFileOffer, f) }
-
-func (s *session) sendFileControl(t protocol.ControlType, f protocol.File) {
-	p := s.currentOrNil()
-	if p == nil {
-		return
+// showOffer shows every page with control a file on offer.
+func (s *session) showOffer(f protocol.File) {
+	for _, v := range s.controlling() {
+		s.sendFileControl(v, protocol.ControlFileOffer, f)
 	}
-	if err := p.SendControl(protocol.Control{T: t, File: &f}); err != nil && !errors.Is(err, peer.ErrNoControl) {
+}
+
+func (s *session) sendFileControl(v *viewer, t protocol.ControlType, f protocol.File) {
+	if err := v.peer.SendControl(protocol.Control{T: t, File: &f}); err != nil && !errors.Is(err, peer.ErrNoControl) {
 		s.log.Warn("send file message", "type", t, "err", err)
 	}
 }
 
-// resendOffers shows a page that has just connected what is on offer.
-func (s *session) resendOffers() {
+// openOffers are the files on offer, in the order they came.
+func (s *session) openOffers() []*offer {
 	if s.files == nil {
-		return
+		return nil
 	}
 	s.files.mu.Lock()
 	open := slices.Collect(maps.Values(s.files.offers))
 	s.files.mu.Unlock()
 	slices.SortFunc(open, func(a, b *offer) int { return cmp.Compare(a.seq, b.seq) })
-	for _, o := range open {
-		s.showOffer(o.info)
+	return open
+}
+
+// resendOffers shows v's page, which has just connected or been given
+// control, what is on offer.
+func (s *session) resendOffers(v *viewer) {
+	for _, o := range s.openOffers() {
+		s.sendFileControl(v, protocol.ControlFileOffer, o.info)
 	}
 }
 
-// fetchOffer sends an offered file the user asked for. A transfer that
-// fails leaves the file on offer, for the user to try again.
-func (s *session) fetchOffer(m protocol.Control) {
-	fs, p := s.files, s.currentOrNil()
-	if fs == nil || m.File == nil || p == nil {
+// withdrawOffers takes what is on offer off v's page, which lost control.
+func (s *session) withdrawOffers(v *viewer) {
+	for _, o := range s.openOffers() {
+		s.sendFileControl(v, protocol.ControlFileWithdraw, protocol.File{ID: o.info.ID})
+	}
+}
+
+// fetchOffer sends an offered file to the page of v that asked for it. A
+// transfer that fails leaves the file on offer, for the
+// user to try again.
+func (s *session) fetchOffer(v *viewer, m protocol.Control) {
+	fs, p := s.files, v.peer
+	if fs == nil || m.File == nil {
 		return
 	}
+	// Withdrawing the offer, as the end of the session does, cancels it,
+	// and so does v's page losing control.
+	ctx, cancel := s.transfer(context.Background(), v)
 	fs.mu.Lock()
 	o := fs.offers[m.File.ID]
 	if o == nil || o.cancel != nil {
 		fs.mu.Unlock()
+		cancel()
 		return
 	}
-	// Withdrawing the offer, as the end of the session does, cancels it.
-	ctx, cancel := context.WithCancel(context.Background())
 	o.cancel = cancel
 	fs.wg.Add(1)
 	fs.mu.Unlock()
@@ -300,6 +319,9 @@ func (s *session) fetchOffer(m protocol.Control) {
 		defer fs.wg.Done()
 		defer cancel()
 		err := sendFile(ctx, p, o)
+		if err != nil && ctx.Err() != nil {
+			err = context.Cause(ctx)
+		}
 		fs.mu.Lock()
 		current := fs.offers[o.info.ID] == o
 		if current {
@@ -357,7 +379,7 @@ func (s *session) declineOffer(m protocol.Control) {
 
 // acceptUpload takes a file the page sends into the download directory,
 // unless the host allowed viewing only.
-func (s *session) acceptUpload(h protocol.Bulk) (peer.BulkSink, error) {
+func (s *session) acceptUpload(from *viewer, h protocol.Bulk) (peer.BulkSink, error) {
 	switch v, ok := s.desk.(desktop.ViewOnly); {
 	case s.files == nil:
 		return nil, errors.New("this session takes no files")
@@ -369,15 +391,16 @@ func (s *session) acceptUpload(h protocol.Bulk) (peer.BulkSink, error) {
 		return nil, err
 	}
 	s.log.Info("upload started", "name", h.Name, "bytes", h.Size)
-	return &upload{Upload: u, s: s, id: h.ID}, nil
+	return &upload{Upload: u, s: s, id: h.ID, v: from}, nil
 }
 
-// upload tells the page the name a file was kept under, which differs
-// from the one it sent when that was taken.
+// upload tells the page that sent it the name a file was kept under,
+// which differs from the one it sent when that was taken.
 type upload struct {
 	*files.Upload
 	s  *session
 	id string
+	v  *viewer // the page that sent it
 }
 
 func (u *upload) Commit() error {
@@ -385,6 +408,8 @@ func (u *upload) Commit() error {
 		return err
 	}
 	u.s.log.Info("upload kept", "name", u.Saved(), "dir", u.s.files.inbox.Dir())
-	u.s.sendFileControl(protocol.ControlFileSaved, protocol.File{ID: u.id, Name: u.Saved()})
+	if err := u.v.peer.SendControl(protocol.Control{T: protocol.ControlFileSaved, File: &protocol.File{ID: u.id, Name: u.Saved()}}); err != nil && !errors.Is(err, peer.ErrNoControl) {
+		u.s.log.Warn("send file message", "type", protocol.ControlFileSaved, "err", err)
+	}
 	return nil
 }

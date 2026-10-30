@@ -12,16 +12,18 @@ import (
 // h264Clock is the RTP clock rate of H.264, in ticks a second.
 const h264Clock = 90000
 
-// videoTrack is the H.264 track together with the RTP clock its packetizer
+// VideoTrack is the H.264 track together with the RTP clock its packetizer
 // keeps, so the timestamp of the next frame is known before it is encoded:
-// the page's tile manifests are keyed by it.
+// the page's tile manifests are keyed by it. One track may be bound to any
+// number of peers: a frame written once is packetized once, on one clock,
+// and sent to each of them under its own SSRC.
 //
 // Pion's packetizer stamps a sample with its clock and then advances the
 // clock by the sample's duration, carrying the fraction of a tick over to
-// the next. It does so only once the track is bound; before that, written
-// samples go nowhere and the clock stands still. videoTrack does the same
-// sums under one lock with Bind, so the two never disagree.
-type videoTrack struct {
+// the next. It does so only once the track is first bound; before that,
+// written samples go nowhere and the clock stands still. VideoTrack does
+// the same sums under one lock with Bind, so the two never disagree.
+type VideoTrack struct {
 	*webrtc.TrackLocalStaticSample
 
 	mu        sync.Mutex
@@ -30,7 +32,8 @@ type videoTrack struct {
 	remainder float64
 }
 
-func newVideoTrack() (*videoTrack, error) {
+// NewVideoTrack makes a track for Config.Video.
+func NewVideoTrack() (*VideoTrack, error) {
 	base := rand.Uint32()
 	t, err := webrtc.NewTrackLocalStaticSample(
 		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: h264Clock, SDPFmtpLine: H264Fmtp},
@@ -39,12 +42,12 @@ func newVideoTrack() (*videoTrack, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &videoTrack{TrackLocalStaticSample: t, next: base}, nil
+	return &VideoTrack{TrackLocalStaticSample: t, next: base}, nil
 }
 
 // Bind binds the underlying track and starts the frame clock under the lock
-// write takes, so NextFrameRTP never sees one without the other.
-func (t *videoTrack) Bind(ctx webrtc.TrackLocalContext) (webrtc.RTPCodecParameters, error) {
+// write takes, so NextRTP never sees one without the other.
+func (t *VideoTrack) Bind(ctx webrtc.TrackLocalContext) (webrtc.RTPCodecParameters, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	codec, err := t.TrackLocalStaticSample.Bind(ctx)
@@ -54,7 +57,9 @@ func (t *videoTrack) Bind(ctx webrtc.TrackLocalContext) (webrtc.RTPCodecParamete
 	return codec, err
 }
 
-func (t *videoTrack) write(annexB []byte, d time.Duration) error {
+// Write sends one encoded access unit in Annex-B form to every peer the
+// track is bound to.
+func (t *VideoTrack) Write(annexB []byte, d time.Duration) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	err := t.TrackLocalStaticSample.WriteSample(media.Sample{Data: annexB, Duration: d})
@@ -67,15 +72,10 @@ func (t *videoTrack) write(annexB []byte, d time.Duration) error {
 	return err
 }
 
-// nextRTP returns the timestamp the next write will carry, and whether the
-// track is bound.
-func (t *videoTrack) nextRTP() (uint32, bool) {
+// NextRTP returns the timestamp the next Write will carry, and whether the
+// track was ever bound: before that no frame written reaches anyone.
+func (t *VideoTrack) NextRTP() (uint32, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.next, t.bound
 }
-
-// NextFrameRTP returns the RTP timestamp the next WriteFrame will carry. It
-// reports false while the browser has not been answered yet, when no frame
-// written reaches it.
-func (p *Peer) NextFrameRTP() (uint32, bool) { return p.track.nextRTP() }

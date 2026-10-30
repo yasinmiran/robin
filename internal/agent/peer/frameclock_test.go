@@ -12,10 +12,10 @@ import (
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
-// TestNextFrameRTPIsTheFramesTimestamp writes frames of uneven durations,
+// TestNextRTPIsTheFramesTimestamp writes frames of uneven durations,
 // fractions of a tick included, and checks that each one the browser gets
-// carries the timestamp NextFrameRTP named before it was written.
-func TestNextFrameRTPIsTheFramesTimestamp(t *testing.T) {
+// carries the timestamp NextRTP named before it was written.
+func TestNextRTPIsTheFramesTimestamp(t *testing.T) {
 	cands := make(chan protocol.Candidate, 32)
 	connected := make(chan struct{})
 	var once sync.Once
@@ -32,8 +32,8 @@ func TestNextFrameRTPIsTheFramesTimestamp(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer p.Close()
-	if _, ok := p.NextFrameRTP(); ok {
-		t.Fatal("NextFrameRTP is known before the browser was answered")
+	if _, ok := p.track.NextRTP(); ok {
+		t.Fatal("NextRTP is known before the browser was answered")
 	}
 	// Written before the track is bound, a frame goes nowhere and moves no
 	// clock.
@@ -42,18 +42,18 @@ func TestNextFrameRTPIsTheFramesTimestamp(t *testing.T) {
 		binary.BigEndian.PutUint16(au[5:], uint16(i))
 		return au
 	}
-	before, _ := p.NextFrameRTP()
-	if err := p.WriteFrame(frame(0), time.Second); err != nil {
+	before, _ := p.track.NextRTP()
+	if err := p.track.Write(frame(0), time.Second); err != nil {
 		t.Fatal(err)
 	}
-	if after, _ := p.NextFrameRTP(); after != before {
+	if after, _ := p.track.NextRTP(); after != before {
 		t.Fatalf("an unbound write moved the clock from %d to %d", before, after)
 	}
 
 	b := newBrowser(t)
 	connect(t, b, p, cands)
-	if _, ok := p.NextFrameRTP(); !ok {
-		t.Fatal("NextFrameRTP is unknown once the browser was answered")
+	if _, ok := p.track.NextRTP(); !ok {
+		t.Fatal("NextRTP is unknown once the browser was answered")
 	}
 	select {
 	case <-connected:
@@ -72,9 +72,9 @@ func TestNextFrameRTPIsTheFramesTimestamp(t *testing.T) {
 		pace := time.NewTicker(2 * time.Millisecond)
 		defer pace.Stop()
 		for i := range n {
-			ts, _ := p.NextFrameRTP()
+			ts, _ := p.track.NextRTP()
 			want[i].Store(ts)
-			if err := p.WriteFrame(frame(i), durations[i%len(durations)]); err != nil {
+			if err := p.track.Write(frame(i), durations[i%len(durations)]); err != nil {
 				t.Errorf("write frame %d: %v", i, err)
 				return
 			}
@@ -109,7 +109,7 @@ func TestNextFrameRTPIsTheFramesTimestamp(t *testing.T) {
 		}
 		i := int(binary.BigEndian.Uint16(pkt.Payload[1:]))
 		if i >= n || pkt.Timestamp != want[i].Load() {
-			t.Fatalf("frame %d carries RTP %d, NextFrameRTP said %d", i, pkt.Timestamp, want[min(i, n-1)].Load())
+			t.Fatalf("frame %d carries RTP %d, NextRTP said %d", i, pkt.Timestamp, want[min(i, n-1)].Load())
 		}
 		checked++
 	}

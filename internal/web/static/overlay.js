@@ -3,6 +3,7 @@
 // the pointer is a finger, which hovers nowhere, it stays out.
 
 import { touchFirst } from './device.js';
+import { leftNotice, sentence } from './sharestate.js';
 
 const TUCK_AFTER_MS = 2500;
 const REVEAL_ZONE_PX = 48;
@@ -50,6 +51,8 @@ export class Overlay {
   #hud = document.getElementById('hud');
   #label = document.getElementById('state-label');
   #transport = document.getElementById('transport');
+  #guests = document.getElementById('guests');
+  #role = ''; // what a guest's page says for Connected
   #picture = this.#hud.querySelector('.picture');
   #resolution = document.getElementById('resolution');
   #fps = document.getElementById('fps');
@@ -198,17 +201,38 @@ export class Overlay {
 
   setState(state) {
     this.#hud.dataset.state = state;
-    this.#label.textContent = STATE_LABELS[state];
+    this.#label.textContent = state === 'connected' && this.#role ? this.#role : STATE_LABELS[state];
     this.#reveal();
   }
 
-  showNotice(reason) {
-    const [title, body] = NOTICES[reason];
+  // setRole says, in Connected's place, what this page does on a desktop
+  // that is not its own, as a guest's watches or controls it; viewOnly
+  // shows the dot waiting, as for a page that cannot drive yet.
+  setRole(label, viewOnly) {
+    this.#role = label;
+    this.#hud.toggleAttribute('data-view-only', viewOnly);
+    if (this.#hud.dataset.state === 'connected') this.#label.textContent = label;
+  }
+
+  // setGuests says in the row who watches this desktop, or hides the
+  // stat for an empty text: the tab tucks, and the row is what stays read.
+  setGuests(text) {
+    this.#guests.hidden = !text || this.#hud.dataset.state === 'ended';
+    this.#guests.querySelector('.label').textContent = text;
+  }
+
+  // showNotice ends the tab with the notice for reason, after detail, a
+  // reason the CLI gave, when there is one. A guest's page that left, or
+  // was let go, names owner, whose desktop it was.
+  showNotice(reason, detail = '', owner = '') {
+    const left = reason === 'left';
+    const [title, said] = left ? leftNotice(detail, owner) : NOTICES[reason];
+    const body = !left && detail ? `${sentence(detail)} ${said}` : said;
     this.#label.textContent = title;
     this.#notice.textContent = body;
     this.#notice.hidden = false;
     this.#closeMonitorMenu(false);
-    for (const el of [this.#transport, this.#picture, this.#fullscreen, this.#sound, this.#keyboard, this.#keys, this.#monitors, this.#sections]) {
+    for (const el of [this.#transport, this.#guests, this.#picture, this.#fullscreen, this.#sound, this.#keyboard, this.#keys, this.#monitors, this.#sections]) {
       if (el) el.hidden = true;
     }
     this.#scrim.hidden = false;

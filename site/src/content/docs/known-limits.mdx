@@ -10,74 +10,73 @@ These are the current limits of the shipped tool, the same ones the README lists
 ## Sharp text and actual size
 
 - Sharp text works on X11 desktops only. Wayland's portal hands the agent its frames already at 4:2:0, so there the switch is greyed out with the reason under it.
-- Sharp text needs a browser that reports the RTP timestamp of the frame it shows. Chrome, Edge and Firefox do; in a browser that does not, the switch is greyed out with the reason under it. Safari is unchecked, since the tests cannot see its picture.
-- The whole picture can turn plain video for a round trip or two. When the message that says which tiles a frame changes is held up behind a lost packet, the frame can reach the screen first, and the page hides every tile until the message arrives.
-- A blinking caret, a clock or a progress bar stays plain video: a tile that changes again within 2 s of being sent waits twice as long the next time, up to 4.8 s.
-- Only actual size shows the tiles pixel for pixel; in the fit view they go through the browser's scaling as the video does. Actual size pans with the pointer at the window's edge, or with two fingers moved apart and along on a touch screen, and does not zoom.
+- Sharp text needs the browser to report the RTP timestamp of the frame it shows, which Chrome, Edge and Firefox do; in a browser that does not, the switch is greyed out with the reason under it. Safari is unchecked, since the tests cannot see its picture.
+- When the message that says which tiles a frame changes is held up behind a lost packet, the frame can reach the screen first. The page then hides every tile until the message arrives, so the whole picture is plain video for that long: a round trip or two.
+- A tile that changes again within 2 s of being sent waits twice as long the next time, up to 4.8 s, so a blinking caret, a clock or a progress bar stays plain video.
+- In the fit view the tiles go through the browser's scaling as the video does; only actual size shows them pixel for pixel. Actual size pans with the pointer at the window's edge, or with two fingers moved apart and along on a touch screen, and does not zoom.
 
 ## Kept sessions
 
 - A kept desktop survives its connection only where logind leaves user processes alone on logout (the default) or a user systemd manager can hold it (`KillUserProcesses=yes` with `systemd-run` and, for your last login, `loginctl enable-linger`). Elsewhere the CLI warns and the desktop ends with the connection. The e2e `systemd` scenario checks the systemd-run path with lingering on; without it, where the unit stops with the user's last login, only the warning is tested.
-- A second `robin gui` for a kept session that has a controller is refused as busy. A CLI that lost its network keeps the daemon's socket busy until the daemon's 20 s idle timeout notices, so a fresh `robin gui` started sooner has to retry.
+- While a kept session has a controller, a second `robin gui` for it is refused as busy. A CLI that lost its network keeps the daemon's socket busy until the daemon's 20 s idle timeout notices, so a fresh `robin gui` started sooner has to retry.
 - Ctrl+C while the CLI redials a session the host reports busy leaves the session running, since another `robin gui` may be using it. The host cannot tell that from this CLI's own lost connection, which keeps the session busy for up to 20 s, so Ctrl+C in those seconds leaves the desktop too; the CLI says so, and `robin end` ends it.
-- A reconnect starts the picture over: the browser builds a fresh peer connection each time, so the first second after a reconnect is a new keyframe, anything held down in the page is released, and a microphone or camera that was on is off until switched on again.
+- Reconnecting keeps the desktop, not the picture: the browser builds a fresh peer connection each time, so the first second after a reconnect is a new keyframe, anything held down in the page is released, and a microphone or camera that was on is off until switched on again.
 
 ## Attaching to X11
 
 - An attached X11 desktop shows one monitor at a time in one browser tab; there is no window per monitor. With `all`, every monitor arrives as one picture, gaps included, scaled to fit `--max-size`, so small text gets hard to read. Monitors come from RandR 1.5; an X server older than that shows the whole desktop.
-- Autorepeat is off for the whole display while you are attached to X11, keys held at the machine itself included, until the session ends.
+- Attached to X11, autorepeat is off for the whole display, keys held at the machine itself included, until the session ends.
 - Text pasted from the browser into an attached desktop outlives the session only if that desktop runs a clipboard manager.
-- Long input method text types slowly on X11: committed text with more than 16 characters the keymap lacks types at about 16 such characters every 50 ms, while the keycodes it borrows settle.
 
 ## Attaching to Wayland
 
 - `--attach auto` never picks an X display inside a Wayland session, because the X server you own there is Xwayland, whose screen holds none of the desktop. It takes the Wayland session itself when the probe finds its socket and session bus.
-- Attaching to Wayland needs someone at the host's screen to approve it the first time, and a compositor with the portal's remote desktop interface: GNOME and KDE Plasma have it, wlroots compositors such as Sway do not.
+- Attaching to Wayland needs someone at the host's screen to approve it the first time. It works through the portal's remote desktop interface, which GNOME and KDE Plasma have; wlroots compositors such as Sway do not.
 - On GNOME Wayland, a key only types its own character if the host's keyboard layout has it on a level mutter can reach: mutter drops any other keysym, and a keysym it finds first on a key's fourth level (Shift and AltGr) it presses with neither, so that key types its first level instead. There is no spare keycode to bind one to as on X11. The agent reads the layout from GNOME's input sources and xkeyboard-config. On a layout without Latin letters, such as Russian, a letter key goes as the key a US layout has it on, so it types what the host's layout has there, as a keyboard plugged into the host would, and shortcuts such as Ctrl+C work. Any other key the layout lacks types nothing: punctuation such a layout lacks, a letter while AltGr is held, German's `^` and `` ` ``, which it has only as dead keys, French's `$`, `<` and `>` and US international's `~`, `^` and `"`, which mutter finds on a fourth level first, a letter that a layout with some Latin letters lacks, and Cyrillic from a Russian keyboard on a Russian host, since the keysyms the browser names are not the ones the layout lists. Text from an input method or a soft keyboard goes as a paste when the layout lacks any of it, pressing Ctrl+Shift+V, which terminals paste with, then Ctrl+V if no program read the clipboard by then. A program that does something else on Ctrl+Shift+V does that first: LibreOffice opens Paste Special, for one. A second clipboard manager that reads each copy later than mutter's can make the agent take its read for the paste and skip Ctrl+V. A layout GNOME does not name as an xkb input source (an input method's own), and any compositor other than mutter and KWin, is taken to have all of ASCII.
 - GNOME drops the first key event of each remote session, and now and then the first pointer event. The agent spends both on input that does nothing, so you should not notice, but it is why mutter logs `No keycode found for keyval ffffff` when a session starts.
 - An attached Wayland desktop keeps its own size and shows one monitor. A screen larger than `--max-size` is scaled down, and a scaled (HiDPI) screen streams at its logical size, so text is softer than on the host.
-- The pointer on Wayland moves at the video's pace, a round trip behind your hand, since it is drawn into the video; the browser hides its own pointer over the picture.
+- On Wayland the pointer is drawn into the video, so it moves at the video's pace, a round trip behind your hand; the browser hides its own pointer over the picture.
 - Held keys on Wayland repeat at the host's own rate, and the browser's repeats are not sent. A held key during a network stall keeps repeating on the host until the key-up gets through.
-- Wayland is tested against GNOME 46, GNOME 49 and KDE Plasma 6.7 only. Other versions and distributions are untested.
+- The Wayland tests run against GNOME 46, GNOME 49 and KDE Plasma 6.7. Other versions and distributions are untested.
 - KDE Plasma shares its screen only while KWin composites with OpenGL. With KWin's QPainter fallback, used where it finds no GPU to render with, the portal refuses to start and the session ends with "Start failed".
 
 ## Private sessions
 
-- The curtain does not lock the host's screen. It hides it, but the keyboard and mouse there still reach your session, and when the session ends, for whatever reason, the screen comes back unlocked.
-- The curtain has never run on a real screen, only on Xvfb and against a stand-in for mutter, so GNOME on real hardware is unverified. Some hardware may draw the pointer on a plane its gamma does not cover, leaving the pointer visible on the black screen, and night light or a monitor plugged in shows for up to a second before the curtain darkens it again.
+- The curtain hides the host's screen but does not lock it: the keyboard and mouse there still reach your session, and when the session ends, for whatever reason, the screen comes back unlocked.
+- The curtain is tested on Xvfb and against a stand-in for mutter, never on a real screen. Some hardware may draw the pointer on a plane its gamma does not cover, leaving the pointer visible on the black screen; night light or a monitor plugged in shows for up to a second before the curtain darkens it again; and GNOME on real hardware is unverified.
 - No curtain on KDE Plasma or wlroots compositors, which give programs no way to set gamma.
 - A program that asks for its stream never to be moved (`PA_STREAM_DONT_MOVE`) plays in the room while it is silent; the switch names it.
-- A program that starts playing while the room is silent plays in the room until it is moved, 80 to 180 ms in the tests. None of the sound reached the room's output there, but a program that is loud from its first buffer may be heard for that long.
-- An output chosen for a program is forgotten when the program stops playing while the room is silent: PulseAudio, and WirePlumber 0.4, remember it as playing on the silent output. It plays on the default output next time, as before.
+- A program that starts playing while the room is silent plays in the room until it is moved. In the tests that took 80 to 180 ms and none of the sound reached the room's output, but a program that is loud from its first buffer may be heard for that long.
+- A program that stops playing while the room is silent is remembered by PulseAudio, and by WirePlumber 0.4, as playing on the silent output. It plays on the default output next time, as before, but an output chosen for it earlier is forgotten.
 
 ## Sound
 
 - Sound in a spawned session needs `pulseaudio` on the host. Current Fedora and Ubuntu desktops ship PipeWire without it, and their spawned sessions are silent.
 - The page starts muted, because browsers autoplay only silent video: one click on the speaker, again after each reload.
 - In-band FEC protects speech only. Opus sends speech in hybrid mode, whose SILK layer repeats the previous frame at low rate; music stays in CELT, which has no such redundancy, so a lost music packet is concealed by the browser instead.
-- Attached, the host's own speakers keep playing what you hear unless the room is silent (`--silent`). The sound is the monitor of whatever output was the default when the session started.
-- A keyframe can still delay sound by as much as the link buffers. Sound goes out ahead of the picture, but the link's own buffer is shared: on a 4 Mbit/s link that buffers 100 ms, a keyframe delays sound by up to that much.
+- Attached, the sound is the monitor of whatever output was the default when the session started, and the host's own speakers keep playing it unless the room is silent (`--silent`).
+- Sound goes out ahead of the picture, but the link's own buffer is shared: on a 4 Mbit/s link that buffers 100 ms, a keyframe still delays sound by up to that much.
 
 ## Microphone and camera
 
 - A PipeWire camera is invisible to programs that open `/dev/video*` themselves, which is most of those not sandboxed; they need v4l2loopback. A spawned desktop has no camera without v4l2loopback, which rootless containers cannot load, so that route is tested only as far as the probe and the pipeline it builds.
 - The microphone and camera are tested in Chrome only. Firefox and Safari should work the same way through the same page, but nothing checks them.
-- Attached to a plain PulseAudio, an agent killed outright leaves its microphone loaded until your next Robin session sweeps it, and a PulseAudio with no default source you chose, on a host with no microphone of its own, takes Robin microphone as its default while it is there.
-- The camera goes for under a second, on PipeWire 1.4, each time the last program reading it lets go: GStreamer's `pipewiresink` quits then and the agent starts it again, so a program that lists cameras in that moment misses it.
+- GStreamer's `pipewiresink` in PipeWire 1.4 quits when the last program reading the camera lets go. The agent starts it again; the camera is gone for under a second meanwhile, and a program that lists cameras in that moment misses it.
+- Attached to a plain PulseAudio, an agent killed outright leaves its microphone loaded until the next robin session of yours sweeps it, and a PulseAudio with no default source you chose, on a host with no microphone of its own, takes Robin microphone as its default while it is there.
 - The camera is always 1280x720 at 30 fps. The browser lowers its own resolution when the link or its CPU are short, and the host then sees a softer picture of the same size.
 
 ## Files and the clipboard
 
-- The clipboard carries plain text, HTML and PNG images only, 16 MiB in all at a time; anything else on it (RTF, JPEG, a file manager's file list) stays behind. An image bigger than that is left out and its text still goes. Copied on X11, `TEXT` alone is not read, since it may come as `COMPOUND_TEXT`.
-- A single PNG pasted into the page always becomes an image on the host's clipboard, even when it was a file named `something.png` copied in a file manager; any other pasted file is uploaded instead.
-- The browser takes what the host copies only while the page has focus; copied while you are in another window, it waits for the next copy.
-- Downloads are held under the video's congestion target: what the picture leaves of it, and a quarter of it while the picture fills it, for files and clipboard content from the host alike. On a 3 Mbit/s link a 2 MiB download takes about 7 s over a still screen and 30 s while the screen moves, and the picture keeps its rate. The target is held while the screen is still, so a download started before anything has moved goes at the starting 2 Mbit/s, and none goes faster than `--max-kbps`, even on a faster link. Uploads are not paced, since the page has no target to go by, only held to 512 KiB in flight each, which bounds one to about 40 Mbit/s over a 100 ms round trip. A newer copy on the host cancels the transfer of an older one still under way.
+- The clipboard carries plain text, HTML and PNG images, 16 MiB in all at a time; anything else on it (RTF, JPEG, a file manager's file list) stays behind. An image bigger than that is left out and its text still goes. Copied on X11, `TEXT` alone is not read, since it may come as `COMPOUND_TEXT`.
+- A single PNG pasted into the page becomes an image on the host's clipboard, even when it was a file named `something.png` copied in a file manager; any other pasted file is uploaded instead.
+- The browser puts what the host copies on its own clipboard only while the page has focus; copied while you are in another window, it waits for the next copy.
+- Files and clipboard content from the host go under the video's congestion target: what the picture leaves of it, and a quarter of it while the picture fills it. On a 3 Mbit/s link a 2 MiB download takes about 7 s over a still screen and 30 s while the screen moves, and the picture keeps its rate. The target is held while the screen is still, so a download started before anything has moved goes at the starting 2 Mbit/s, and none goes faster than `--max-kbps`, even on a faster link. Uploads are not paced, since the page has no target to go by, only held to 512 KiB in flight each, which bounds one to about 40 Mbit/s over a 100 ms round trip. A newer copy on the host cancels the transfer of an older one still under way.
 - A file is at most 4 GiB either way. The page holds a download in memory until the last byte is in, then hands it to the browser's downloads, so the browser has to have room for it; uploads stream from disk.
 - A file that grows after `robin-send` offered it, a log being written say, is refused when you click Save, as larger than the offer, and stays on offer as it was; offer it again to get what it holds now. One that shrank comes as it is.
 - The page does not bound the data channels a host opens and never sends a transfer's header on. Each costs the browser a channel and the page a listener or two, never a buffer.
 - An upload is not flushed to disk (no fsync) before it gets its name, so a power cut in the seconds after one can leave it short.
 - An agent killed with SIGKILL during an upload leaves the partial file in the download folder as `.robin-upload-<random>`, and so does a session that ends while the disk under an upload has stopped answering: the agent waits 5 s for it and exits. Every other end of a session removes it.
-- Uploads fail on a filesystem that has neither `RENAME_NOREPLACE` nor hard links. Where only the first is missing (some FUSE and network filesystems), they are named through a hard link instead.
+- On a filesystem without `RENAME_NOREPLACE` (some FUSE and network ones), uploads are named through a hard link instead, and where that is missing too they fail.
 - In an attached desktop `robin-send` is not on the `PATH`; run the agent itself, `~/.cache/robin/robin-agent-* send FILE` (or wherever the agent directory is, see [What the host needs](/install#what-the-host-needs)). With two sessions on the host it has to run inside the one it means.
 - Files in Safari are untested: the WebKit the tests drive cannot show the picture to click through, so the file and rich clipboard checks skip there. Firefox runs them, with the pasted image handed to the page directly, since Firefox keeps no script's `DataTransfer` in a synthetic paste event.
 
@@ -88,32 +87,40 @@ These are the current limits of the shipped tool, the same ones the README lists
 - A change to the macros waits up to 2 s for another session's change to the file, then gives up and says so; save again.
 - Type clipboard needs the browser to hand over the clipboard: Chrome asks once, and Firefox and Safari show a Paste button of their own at each click, which only Chrome's run of the tests covers. It types 16 KiB at most.
 
+## Sharing
+
+- A guest's camera is never taken: the camera stays the owner's. The host has one microphone, and the first page whose microphone sends holds it until that page's peer connection closes, so a guest with control is heard only while no other page's microphone has started. A guest holds it only while it has control: without control its microphone takes no turn, and losing control gives the turn up.
+- Sharp text follows the owner's page alone; a guest sees the video as it is. Every page gets the one stream, encoded at the bitrate the slowest page's link allows.
+- Guests go when the owner's CLI goes, even from a kept desktop, and a guest whose connection drops does not come back on its own: its code is spent, so it needs another invitation.
+- Every page with control types into one queue, so the owner's keys and a guest's interleave as they arrive; nothing stops two people typing at once.
+- The agent finds an account by name in `/etc/passwd`, then through the host's `getent`; an account neither knows cannot be invited. A guest whose login lands in another network namespace than the session (a container) cannot reach the guests' door, which is an abstract socket.
+- Sharing is tested between two accounts of one host in the e2e `share` scenario and in test-x; never across a directory service or with a guest on a client other than Chrome.
+
 ## Hardware encoding
 
-- Hardware encoding answers a keyframe request about 35 ms later than software and adds a few milliseconds to every frame, which is the price on the hosts and sizes where `auto` picks it.
-- The NVENC route is untested on real hardware; see [Hardware encoding](/hardware-encoding).
+- Hardware encoding answers a keyframe request about 35 ms later than software and adds a few milliseconds to every frame, which is the price on the hosts and sizes where `auto` picks it. The NVENC route is untested on real hardware; see [Hardware encoding](/hardware-encoding).
 - Hardware encoding stays at Constrained Baseline, which every browser decodes; High profile measured at most 5% smaller on an Intel iGPU.
 
 ## Browsers and clients
 
-- Safari's picture is checked by hand only: the WebKit the tests drive on Linux renders no remote WebRTC video (see [Browsers and clients](/browsers#safari)).
+- Safari's picture is checked by hand only: the WebKit the tests drive on Linux renders no remote WebRTC video (see [What the client needs](/install#what-the-client-needs)).
 - Firefox shows no picture until it has fetched its OpenH264 plugin, which needs a network connection the first time.
-- One browser per session; a second tab is refused until the first closes.
-- An input method's composition shows in the page, not in the remote program, which gets no preedit of its own; the text arrives when it is committed.
+- One browser per CLI; a second tab of the same page is refused until the first closes. A guest watches through a CLI and page of its own (see [Sharing a desktop](/sharing)).
+- Keys map by character, so text arrives right whatever the client layout. An input method's text arrives when it is committed: the composition shows in the page, not in the remote program, which gets no preedit of its own. On X11, committed text with more than 16 characters the keymap lacks types at about 16 such characters every 50 ms, while the keycodes it borrows settle.
 - Touch maps onto one pointer: one finger is the mouse, so panning a zoomed picture takes two fingers, and there is no momentum or double tap. A soft keyboard has no Ctrl, Alt, Esc or arrow keys to send.
-- The Android and Windows clients have not run on the real thing: Android only in Chrome's phone emulation, Windows in cross-builds, `go vet` and the `nomux` scenario's forced mode on Linux. In particular the check that ssh holds the forward's port on Windows has run only in its Linux form, against `/proc`, and keeping Ctrl+C away from each ssh (a process group of its own, where Linux ignores the signal) has not run on Windows at all.
-- The macOS client has run only on an Apple silicon Mac, in Chrome and in Safari, attached to an X11 desktop over Tailscale. Building the agents from a Mac is untried.
+- The Android client has been checked in Chrome's phone emulation only, and the Windows client in cross-builds, `go vet` and the `nomux` scenario's forced mode on Linux. Neither has run on the real thing; in particular the check that ssh holds the forward's port on Windows has run only in its Linux form, against `/proc`, and keeping Ctrl+C away from each ssh (a process group of its own, where Linux ignores the signal) has not run on Windows at all.
+- The macOS client has run on an Apple silicon Mac, in Chrome and in Safari, attached to an X11 desktop over Tailscale. Building the agents from a Mac is untried.
 - Without ControlMaster a dropped network is noticed only when the agent's connection goes quiet for its idle timeout, not at once, and every `LocalForward` in your ssh config for that host comes up with the tunnel's own ssh; one that fails takes the tunnel with it.
-- The launch link is readable by other users of a shared client, on the command line the browser opener gets. One who opens it before your browser does gets the page, and your browser shows Not Found; the CLI says the link was opened again. `--no-browser` leaves nothing to read.
-- A resumed session that was started without `--transport tunnel` still has the agent ask the STUN servers it started with, even when the resume names it; the page asks none.
+- On a client shared with other users, the launch link the browser opener gets is on a command line they can read. One who opens it before your browser does gets the page, and your browser shows Not Found; the CLI says the link was opened again. `--no-browser` leaves nothing to read.
+- With `--transport tunnel`, a resumed session that was started without it still has the agent ask the STUN servers it started with; the page asks none.
 
 ## Video and network
 
-- The status tab reads about 2 fps on an idle screen, which is not a stall. A still picture is sent again every half second, a few hundred bytes each, so the browser never times out waiting for one.
-- Motion after a still screen can overflow a link that narrowed meanwhile, for about a second. It starts at the bitrate the screen went still with, which the agent tries the link with again, and congestion control takes that long to come down (from 3 to 1 Mbit/s in the agent's measurements, in 1.1 s). Its first second can also show half the frames at a coarser quantiser: openh264's rate control, after some still spells, skips every other frame for that long at the same target. A session starts at 2 Mbit/s, and nothing tries the link beyond that until the screen moves, so its first motion on a fast link is softer than later motion.
+- The status tab reads about 2 fps on an idle screen. A still picture is sent again every half second, a few hundred bytes each, so the browser never times out waiting for one; that is not a stall.
+- Motion after a still screen starts at the bitrate the screen went still with, which the agent tries the link with again: if the link narrowed meanwhile, that motion overflows it for about a second before congestion control comes down (from 3 to 1 Mbit/s in the agent's measurements, in 1.1 s). Its first second can also show half the frames at a coarser quantiser: openh264's rate control, after some still spells, skips every other frame for that long at the same target. A session starts at 2 Mbit/s, and nothing tries the link beyond that until the screen moves, so its first motion on a fast link is softer than later motion.
 - Below about 4 Mbit/s a busy 1440p picture drops to a few frames a second, by design (text stays legible rather than the frame rate high), and congestion control can still overshoot the link during video, which costs a freeze of up to about a second before a keyframe repairs it.
-- A lossy link shows head-of-line stalls through the SSH tunnel that direct UDP would not, since video there is TCP inside TCP.
-- The session has no TCP path where the agent cannot ask the kernel, through `sock_diag`, who opened an ICE-TCP connection (a sandbox that blocks netlink, say): it then refuses every connection to its tunnel listener, as it does one from an IPv6 socket, which sshd never opens for the forward's IPv4 address. The SSH server has to make the forward's connection as you or as root, as OpenSSH's does.
+- Through the SSH tunnel video is TCP inside TCP, so a lossy link shows head-of-line stalls that direct UDP would not.
+- The agent asks the kernel, through `sock_diag`, who opened an ICE-TCP connection. Where it cannot ask (a sandbox that blocks netlink), it refuses every connection to its tunnel listener and the session has no TCP path; so it does for one from an IPv6 socket, which sshd never opens for the forward's IPv4 address. The SSH server has to make the forward's connection as you or as root, as OpenSSH's does.
 - The page can still send media on the agent's own video and sound lines, which the answer cannot turn down without its own sending; the agent reads and drops it, so it costs the link and nothing else.
 
 ## Coverage

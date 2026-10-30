@@ -43,6 +43,7 @@ robin gui --no-browser lab-node                     # print the URL instead of o
 robin gui --attach auto workstation                 # the desktop you are logged in to there
 robin gui --attach wayland workstation              # your GNOME or Plasma session on Wayland
 robin gui --attach auto --curtain --silent workstation  # and keep its own screen dark and speakers quiet
+robin gui --share alice build-box                   # and let alice, another account there, watch
 robin gui build-box                                 # again later: picks the desktop up where you left it
 robin ls build-box                                  # the sessions the host keeps
 robin end build-box                                 # end one without opening it
@@ -156,6 +157,8 @@ once, at the start, where each went on the host or why it could not.
 | `--keep` | `8h`, `0` with `--attach` | how long the host keeps the desktop after the connection drops or the page detaches; `0` ends it with the connection |
 | `--id` | the one kept session | which kept session to resume |
 | `--new` | | start a new desktop even when a kept one could be resumed |
+| `--share` | | invite this account on the host to join as a guest, who watches until you give them control; repeat for more (see [Sharing a desktop](#sharing-a-desktop)) |
+| `--join` | | join another account's session as a guest, with the code its owner was given, over your own login to the host |
 | `--audio` | `true` | stream the desktop's sound; `--audio=false` leaves it out |
 | `--mic` | off | offer your microphone to the host's programs; it stays off until you switch it on in the page |
 | `--camera` | off | offer your camera to the host's programs, through PipeWire or a v4l2loopback device; off until switched on |
@@ -463,6 +466,58 @@ keeper`, what would undo the change. When the agent ends normally it undoes
 everything itself and the keeper exits with nothing to do; when the agent is
 killed, the keeper gives the room back its screens and speakers.
 
+## Sharing a desktop
+
+```sh
+robin gui --share alice build-box                    # your desktop, which alice may join
+robin gui --join a1b2c3d4-1000-k3j4... alice@build-box  # alice, from her own computer
+```
+
+`--share alice` invites another account on the host to watch your session.
+Once the desktop is up the CLI prints the command that account runs, with a
+code that works once, for that account only, for 10 minutes; repeat
+`--share` for more accounts. The status tab has a Share part that does the
+same for a name typed there, lists the invitations still open with a Copy
+button beside each command, and lists every guest. The tab's top row says
+who watches and who has control, and the tab comes out whenever a guest
+joins, leaves or gets control. A new invitation for the
+same account replaces its old code, and three wrong codes from that account
+withdraw it.
+
+The guest runs `robin gui --join <code> alice@host` on their own computer,
+over their own SSH login: their CLI puts its own agent in their own home
+directory, and that agent knocks on your session's door on the host. Their
+page shows your desktop, pointer and sound, and its top row says whose
+desktop it is and whether they watch or control it. It is view only
+until you click Give control on the guest's row: then
+their keys, pointer and paste reach the desktop, the host's clipboard
+reaches them, they see the files `robin-send` offers and may upload, and
+with `--mic`, in a session that started with `--mic`, their microphone is
+heard on the host. One guest has control at a time: giving it to another
+takes it from the first. You keep yours throughout, and closing or
+reloading your page takes control from every guest. Take back control
+ends theirs at once: what they held down is let go, text still being
+typed is dropped, the files on offer leave their page, a transfer of
+theirs still under way is dropped, and so is a file or a copy on its way
+to them. Remove asks for a second click, then closes their peer connection and
+their page at once, and their CLI exits saying why. A guest leaves with
+Ctrl+C or the page's Leave button.
+
+Everyone watches one stream. Each frame is encoded once, at the bitrate the
+slowest page's link allows, and sent to every page, so a guest on a poor
+link makes the picture coarser for you too; a page that loses a picture
+asks for a keyframe, which every page gets. What shapes the session stays
+yours: a guest's window does not resize the desktop, and the monitor
+shown, the curtain and the silent room, sharp text, the camera, keeping and
+ending the desktop are yours alone.
+
+A guest never outlives your session. When your CLI goes, by Ctrl+C, a
+dropped connection or Disconnect, keep desktop, every guest is let go and
+every invitation withdrawn, and nobody joins until you are back; ending the
+session ends every guest's CLI with it. A guest whose connection drops does
+not come back on its own: the code it joined with is spent, so it needs
+another invitation.
+
 ## Hardware encoding
 
 ```sh
@@ -637,6 +692,8 @@ run directory are 0700. The probe counts only `X<digits>` in `/tmp/.X11-unix`,
 which any user can write, and prints nothing that would span lines, so no file
 name there can add to what it reports. `robin-agent end` and the sweep of old
 run directories take only a process of yours for a session's daemon.
+A session also takes guests, but only those you invite (see the guests'
+door below).
 The page can do on the host what a keyboard, a pointer and a clipboard can do
 in that session, give it the sound and picture of a microphone or camera you
 switched on (with `--mic` or `--camera`), flip the two switches of a private
@@ -646,6 +703,35 @@ desktop, which leaves the desktop for `--keep`), and move files, within
 these bounds.
 A view-only Wayland grant takes the keyboard, the pointer and uploads away,
 and leaves the clipboard and the files the host offers.
+
+The guests' door. A session daemon takes guests on an abstract unix
+socket, `@robin-share-<id>`, which has no file and so no permissions: any
+account on the host can connect to it. Before it reads a byte, the daemon
+asks the kernel who connected (`SO_PEERCRED`) and hangs up unless that uid
+holds an open invitation. The invited account then has 5 s to present the
+invitation's code, which the daemon compares in constant time, spends on
+first use and lets expire after 10 minutes; three wrong ones withdraw the
+invitation. A code is 128 random bits beside the session's id and your
+uid, and it never goes on a command line: the guest's CLI sends it over
+its agent's stdin. At most 8 invitations are open at once, 4 connections
+may be presenting a code at once, and a session takes 8 guests, each
+getting one new peer connection a second; a guest that stops reading
+what the session sends it is dropped within 10 s. The
+guest's agent checks that the socket belongs to the uid the code names, so
+an account that takes the name once your daemon is gone cannot pose as
+your session, and the guest's CLI pins the agent's DTLS fingerprint as
+yours does. A guest's ICE-TCP forward runs as the guest, so the tunnel
+listener also admits the uid of a guest connected now, and only while it
+is; the ICE password of that guest's own peer still decides what a
+connection reaches. Without control a guest's page can do nothing to the
+desktop: its input, clipboard, transfers and microphone are dropped. With
+control it can do what yours can, short of what shapes the session (the
+size, the monitor shown, the curtain and the silent room, sharp text, the
+camera, keeping or ending the desktop). Either way it sees everything on
+your screen and hears its sound. Who was invited, who joined and each
+account's first refusal, with its uid, go to the session's log; later
+refusals of the same account log only at debug, so knocking over and over
+cannot fill it.
 
 On your own computer the page can ask the CLI to write one file, your
 macros (see [Keys and macros](#keys-and-macros)), and nothing else. It
@@ -1117,6 +1203,28 @@ verified against a Linux build.
 
 ## Known limits
 
+- A guest's camera is never taken: the camera stays the owner's. The
+  host has one microphone, and the first page whose microphone sends holds
+  it until that page's peer connection closes, so a guest with control is
+  heard only while no other page's microphone has started. A guest holds
+  it only while it has control: without control its microphone takes no
+  turn, and losing control gives the turn up.
+- Sharp text follows the owner's page alone; a guest sees the video as it
+  is. Every page gets the one stream, encoded at the bitrate the slowest
+  page's link allows.
+- Guests go when the owner's CLI goes, even from a kept desktop, and a
+  guest whose connection drops does not come back on its own: its code is
+  spent, so it needs another invitation.
+- Every page with control types into one queue, so the owner's keys and a
+  guest's interleave as they arrive; nothing stops two people typing at
+  once.
+- The agent finds an account by name in `/etc/passwd`, then through the
+  host's `getent`; an account neither knows cannot be invited. A guest
+  whose login lands in another network namespace than the session (a
+  container) cannot reach the guests' door, which is an abstract socket.
+- Sharing is tested between two accounts of one host in the e2e `share`
+  scenario and in test-x; never across a directory service or with a guest
+  on a client other than Chrome.
 - `--attach auto` never picks an X display inside a Wayland session, because
   the X server you own there is Xwayland, whose screen holds none of the
   desktop. It takes the Wayland session itself when the probe finds its
@@ -1387,7 +1495,9 @@ verified against a Linux build.
 - The macOS client has run on an Apple silicon Mac, in Chrome and in
   Safari, attached to an X11 desktop over Tailscale. Building the agents
   from a Mac is untried.
-- One browser per session; a second tab is refused until the first closes.
+- One browser per CLI; a second tab of the same page is refused until the
+  first closes. A guest watches through a CLI and page of its own (see
+  [Sharing a desktop](#sharing-a-desktop)).
 - On a client shared with other users, the launch link the browser opener
   gets is on a command line they can read. One who opens it before your
   browser does gets the page, and your browser shows Not Found; the CLI

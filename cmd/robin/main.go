@@ -26,6 +26,7 @@ var version = "dev"
 const defaultSTUN = "stun:stun.l.google.com:19302"
 
 const usage = `usage: robin gui [flags] [user@]host [-- ssh-args...]
+       robin gui --join code [flags] [user@]host [-- ssh-args...]
        robin ls [user@]host [-- ssh-args...]
        robin end [user@]host [id] [-- ssh-args...]
        robin version
@@ -35,7 +36,8 @@ config and agent, copies a small agent to the host, starts a headless X
 session there and streams it over WebRTC. Media goes direct over UDP when it
 can and through the SSH connection when it cannot. A desktop it started
 stays on the host for --keep after the connection drops, and gui picks it
-up again; ls lists such sessions and end ends one.
+up again; ls lists such sessions and end ends one. --share lets another
+account on the host join as a guest, with gui --join and the code it prints.
 `
 
 func main() {
@@ -84,6 +86,12 @@ func runGUI(args []string) int {
 	keep := fs.String("keep", "", fmt.Sprintf("how long the host keeps a desktop after the connection drops or the page detaches, for robin gui to resume: a duration such as 8h, or 0 (default %s for a desktop robin started, 0 with --attach)", protocol.DefaultKeep))
 	resume := fs.String("id", "", "resume the kept session with this id (default: the one kept session, when there is one)")
 	fresh := fs.Bool("new", false, "start a new desktop even when a kept session could be resumed")
+	var share []string
+	fs.Func("share", "invite this account on the host to join the session as a guest, who watches until you give them control in the page; repeat for more", func(user string) error {
+		share = append(share, user)
+		return nil
+	})
+	join := fs.String("join", "", "join another account's session as a guest, with the code its owner was given; log in to the host as yourself")
 	listen := fs.String("listen", "127.0.0.1:0", "loopback address for the browser page")
 	noBrowser := fs.Bool("no-browser", false, "print the page URL on stdout instead of opening a browser")
 	sshPath := fs.String("ssh", "ssh", "ssh client to use")
@@ -135,6 +143,7 @@ func runGUI(args []string) int {
 		Encoder: *encoder, HiDPI: *hidpi, STUN: parseSTUN(*stun),
 		Curtain: *curtain, Silent: *silent,
 		Keep: keepFor, Resume: *resume, New: *fresh,
+		Share: share, Join: *join,
 		Listen: *listen, NoBrowser: *noBrowser, Verbose: *verbose,
 		Stdout: os.Stdout, Stderr: os.Stderr, Log: log,
 	})
