@@ -28,7 +28,7 @@ Before it sends any cookie, the agent asks the kernel who is listening on the so
 
 ## What the person at the machine sees
 
-The desktop stays shared. Whoever sits at the machine sees the pointer move as you move it, sees what you type and hears its sound, unless you draw the curtain and silence the room with `--curtain` and `--silent`, or the switches in the status tab (see [A private session](/private-session)). When you attach without them, the CLI says the room can see and hear you.
+The desktop stays shared. Whoever sits at the machine sees the pointer move as you move it, sees what you type and hears its sound, unless you draw the curtain and silence the room with `--curtain` and `--silent`, or the switches in the status tab (see [Private sessions](/private-session)). When you attach without them, the CLI says the room can see and hear you.
 
 It also keeps its own resolution, since the size of that desktop belongs to its user. Resizing your browser window scales the picture instead of resizing the screen. A desktop larger than `--max-size` (2560x1440 by default, 1920x1080 on hosts with four cores or fewer) is scaled down in the stream, and the pointer is mapped back onto the full-size screen, to the desktop pixel under the centre of each video pixel. Scaled text is soft, which is what [sharp text](/using#sharp-text-and-actual-size) is for: it draws still parts of the screen at the desktop's own size, and actual size shows them pixel for pixel.
 
@@ -56,7 +56,7 @@ There is no window per monitor: one browser tab shows one monitor. With `all`, e
 
 ## Left as found
 
-Ending the session closes the agent's X connection and nothing else. The curtain's gamma ramps and the silent room's output are given back (see [A private session](/private-session#when-the-session-ends)), and two more things the agent changes while it runs are put back:
+Ending the session closes the agent's X connection and nothing else. The curtain's gamma ramps and the silent room's output are given back (see [Private sessions](/private-session#when-the-session-ends)), and two more things the agent changes while it runs are put back:
 
 - **Autorepeat** goes off at your first key press, for the whole display, so a session that only watches changes nothing. Keys held at the machine itself do not repeat either until the session ends. Afterwards the global switch is restored and the keymap dump is byte-identical to before, including the spare keycodes the agent bound for characters missing from the keymap.
 - **The clipboard.** Text you pasted from the browser is handed to the desktop's clipboard manager at the end, through the freedesktop.org `SAVE_TARGETS` handshake. Without a clipboard manager it goes away, as it does whenever an X client that owns the selection exits.

@@ -33,7 +33,7 @@ These are the current limits of the shipped tool, the same list as the README's.
 - Attached to X11, autorepeat is off for the whole display, keys held at the machine itself included, until the session ends.
 - Text pasted from the browser into an attached desktop outlives the session only if that desktop runs a clipboard manager.
 
-## A private session
+## Private sessions
 
 - The curtain hides the host's screen but does not lock it: the keyboard and mouse there still reach your session, and when the session ends, for whatever reason, the screen comes back unlocked.
 - The curtain is tested on Xvfb and against a stand-in for mutter, never on a real screen. Some hardware may draw the pointer on a plane its gamma does not cover, leaving the pointer visible on the black screen; night light or a monitor plugged in shows for up to a second before the curtain darkens it again; and GNOME on real hardware is unverified.

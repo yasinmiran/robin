@@ -43,7 +43,7 @@ Press Ctrl+C in the terminal, or End session in the page, to end it. The agent k
 
 **Spawn** is the default. The agent starts its own Xvfb display and a session inside it, sized to your browser window, and throws all of it away at the end. The host needs `Xvfb` and something to run in it.
 
-**Attach** streams a desktop that is already running, usually the one you are logged in to at the machine. `--attach auto` finds it, `--attach :1` names an X display, and `--attach wayland` goes through the desktop's screen sharing portal, which asks the person at the screen first. Nothing new is started, and the desktop is left as it was found. `--curtain` and `--silent` keep its own screen dark and its speakers quiet while you work. See [Attaching to X11](/attach-x11), [Attaching to Wayland](/attach-wayland) and [A private session](/private-session).
+**Attach** streams a desktop that is already running, usually the one you are logged in to at the machine. `--attach auto` finds it, `--attach :1` names an X display, and `--attach wayland` goes through the desktop's screen sharing portal, which asks the person at the screen first. Nothing new is started, and the desktop is left as it was found. `--curtain` and `--silent` keep its own screen dark and its speakers quiet while you work. See [Attaching to X11](/attach-x11), [Attaching to Wayland](/attach-wayland) and [Private sessions](/private-session).
 
 ## What a session carries
 

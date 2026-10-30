@@ -67,7 +67,7 @@ Sound comes along as it does on X11, recorded from PipeWire's PulseAudio server 
 
 **Held keys repeat at the host's rate.** The browser's repeats are not sent, since Wayland clients repeat held keys themselves. A held key during a network stall keeps repeating on the host until the key-up gets through.
 
-**The curtain works on GNOME only.** On GNOME the curtain zeroes the screens' gamma through mutter; KDE Plasma gives programs no way to set gamma, so there the switch is missing and `--curtain` fails with the reason. The silent room works on both. See [A private session](/private-session).
+**The curtain works on GNOME only.** On GNOME the curtain zeroes the screens' gamma through mutter; KDE Plasma gives programs no way to set gamma, so there the switch is missing and `--curtain` fails with the reason. The silent room works on both. See [Private sessions](/private-session).
 
 **GNOME drops the first key event of each remote session**, and now and then the first pointer event. The agent spends both on input that does nothing, so you should not notice, but it is why mutter logs `No keycode found for keyval ffffff` when a session starts.
 
