@@ -2556,6 +2556,16 @@ has, a peer of its own for its page, and a rule for who drives.
   uid of a guest connected at that moment, and stops once the last guest
   of that uid is gone; which peer a connection reaches is still decided by
   that peer's ICE password, which only that guest's page and CLI hold.
+- A guest is another account, so what it can make the daemon hold is
+  bounded as a page's is, and more. The first version wrote to a guest's
+  connection without a deadline and wrote the guest's farewell under the
+  input lock, so a guest that stopped reading its socket, once the socket's
+  buffer was full, would have frozen the owner's keyboard on its removal
+  (`TestRemovingAGuestThatReadsNothingHoldsUpNobody` hangs on that code).
+  Every write to a guest now fails after 10 s, which ends its connection,
+  and the farewell goes on a goroutine of its own. A guest's CLI gets one
+  new peer a second, so hangups and offers in a loop cannot churn peer
+  connections, and at most 8 guests join a session.
 - Lifetime follows the owner. When the owner's controller goes, every
   guest is dropped and every invitation withdrawn, and the door refuses
   newcomers until a controller resumes, so nobody watches a desktop whose

@@ -707,7 +707,9 @@ first use and lets expire after 10 minutes; three wrong ones withdraw the
 invitation. A code is 128 random bits beside the session's id and your
 uid, and it never goes on a command line: the guest's CLI sends it over
 its agent's stdin. At most 8 invitations are open at once, 4 connections
-may be presenting a code at once, and a session takes 8 guests. The
+may be presenting a code at once, and a session takes 8 guests, each
+getting one new peer connection a second; a guest that stops reading
+what the session sends it is dropped within 10 s. The
 guest's agent checks that the socket belongs to the uid the code names, so
 an account that takes the name once your daemon is gone cannot pose as
 your session, and the guest's CLI pins the agent's DTLS fingerprint as
