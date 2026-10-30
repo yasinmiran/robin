@@ -33,6 +33,10 @@ const (
 	// idle before the clipboard gives up on it.
 	clipboardTimeout = 2 * time.Second
 	clipboardChunk   = 64 << 10
+	// inputTimeout bounds a portal call that input or a paste waits on,
+	// keys and the paste's offer, so that a portal that stops answering
+	// cannot hold the keyboard up for good.
+	inputTimeout = time.Second
 )
 
 // clipboard syncs the desktop's clipboard through the portal's Clipboard
@@ -135,7 +139,9 @@ func (c *clipboard) offer(content protocol.Clip) error {
 	c.mu.Lock()
 	c.content = content
 	c.mu.Unlock()
-	return c.s.p.obj.Call(ifaceClipboard+".SetSelection", 0, c.s.handle, vardict{
+	ctx, cancel := context.WithTimeout(context.Background(), inputTimeout)
+	defer cancel()
+	return c.s.p.obj.CallWithContext(ctx, ifaceClipboard+".SetSelection", 0, c.s.handle, vardict{
 		"mime_types": dbus.MakeVariant(mimes),
 	}).Err
 }

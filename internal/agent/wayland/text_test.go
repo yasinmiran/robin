@@ -44,12 +44,24 @@ type recorder struct {
 	// have gone.
 	fail      string
 	failAfter int
+	// hang makes calls of that method wait for their context to end.
+	hang string
 }
 
 // keyV is the evdev code of the V key.
 const keyV = 47
 
-func (r *recorder) CallWithContext(_ context.Context, method string, flags dbus.Flags, args ...any) *dbus.Call {
+func (r *recorder) CallWithContext(ctx context.Context, method string, flags dbus.Flags, args ...any) *dbus.Call {
+	r.mu.Lock()
+	hang := r.hang != "" && strings.HasSuffix(method, "."+r.hang)
+	if hang {
+		r.calls = append(r.calls, "hung "+r.hang)
+	}
+	r.mu.Unlock()
+	if hang {
+		<-ctx.Done()
+		return &dbus.Call{Err: ctx.Err()}
+	}
 	return r.Call(method, flags, args...)
 }
 
@@ -750,6 +762,30 @@ func TestKeysWhenThePortalRefuses(t *testing.T) {
 		if held := r.heldModifiers(); !slices.Equal(held, tc.left) {
 			t.Errorf("%s after %d: %v left down after %q, want %v", tc.fail, tc.failAfter, held, r.take(), tc.left)
 		}
+	}
+}
+
+// TestTypeWhenThePortalHangs: a portal that stops answering a key or the
+// paste's offer fails it after inputTimeout instead of holding the
+// keyboard up.
+func TestTypeWhenThePortalHangs(t *testing.T) {
+	for _, tc := range []struct{ hang, text string }{
+		{"NotifyKeyboardKeysym", "ok"},
+		{"SetSelection", "日本"},
+	} {
+		t.Run(tc.hang, func(t *testing.T) {
+			t.Parallel()
+			d, r := recorded(true, "kept")
+			r.hang = tc.hang
+			start := time.Now()
+			err := d.Type(t.Context(), tc.text)
+			if took := time.Since(start); !errors.Is(err, context.DeadlineExceeded) || took < inputTimeout || took > 3*inputTimeout {
+				t.Errorf("Type = %v after %v, want the deadline after %v", err, took, inputTimeout)
+			}
+			if got := r.take(); !slices.Equal(got, []string{"hung " + tc.hang}) {
+				t.Errorf("portal got %q", got)
+			}
+		})
 	}
 }
 

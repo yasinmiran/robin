@@ -340,10 +340,12 @@ func (s *portalSession) parseStart(out vardict) error {
 	return nil
 }
 
-// call invokes a RemoteDesktop method on the session; args follow the
-// session handle and an empty options dict.
+// call invokes a RemoteDesktop method on the session, within
+// inputTimeout; args follow the session handle and an empty options dict.
 func (s *portalSession) call(method string, args ...any) error {
-	return s.p.obj.Call(ifaceRemote+"."+method, 0, append([]any{s.handle, vardict{}}, args...)...).Err
+	ctx, cancel := context.WithTimeout(context.Background(), inputTimeout)
+	defer cancel()
+	return s.p.obj.CallWithContext(ctx, ifaceRemote+"."+method, 0, append([]any{s.handle, vardict{}}, args...)...).Err
 }
 
 // tokenPrefix starts every handle and session token the agent asks the
