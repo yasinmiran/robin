@@ -125,6 +125,7 @@ func TestGuestNote(t *testing.T) {
 // join with ready, and returns the agent and what the guest returns.
 func guestOverPipes(t *testing.T, ctx context.Context, ready protocol.Message) (*fakeHostAgent, *lockedBuffer, <-chan error) {
 	t.Helper()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	h, _, stderr := sshHost(t)
 	h.o.Join, h.o.Transport, h.o.NoBrowser, h.o.Listen = testCode, relay.Direct, true, "127.0.0.1:0"
 	h.o.Stdout = &lockedBuffer{}
@@ -235,6 +236,7 @@ func TestRunGuestOfNoSession(t *testing.T) {
 // What the guest sends after its join comes on the channel returned.
 func guestWith(t *testing.T, ctx context.Context, ready protocol.Message, change func(*host)) (*host, *fakeHostAgent, <-chan protocol.Message, <-chan error) {
 	t.Helper()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	h, _, _ := sshHost(t)
 	h.o.Join, h.o.Transport, h.o.NoBrowser, h.o.Listen = testCode, relay.Direct, true, "127.0.0.1:0"
 	h.o.Stdout = &lockedBuffer{}

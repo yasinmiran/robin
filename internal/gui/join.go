@@ -161,7 +161,9 @@ func (h *host) guest(ctx context.Context, ag *agentProc) error {
 	}
 	config := protocol.Config{ICEServers: iceServers(stun), HiDPI: o.HiDPI, Share: ready.Share}
 	config.Mic = o.Mic && ready.Mic != nil && ready.Mic.Available
-	b := newBridge(ag.conn, relay.New(relay.Policy{Transport: o.Transport, TunnelPort: t.Port()}), config, nil, log)
+	// The macros are the guest's own, kept by its CLI, and play as keys,
+	// which reach the desktop only while the guest has control.
+	b := newBridge(ag.conn, relay.New(relay.Policy{Transport: o.Transport, TunnelPort: t.Port()}), config, userMacros(o.Dest, o.Stderr), log)
 	b.answered = t.answered
 	go b.accept(ctx, srv)
 	defer b.close()
