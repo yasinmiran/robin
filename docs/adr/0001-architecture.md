@@ -2492,6 +2492,94 @@ whatever ignored SIGTERM running (the test's `trap '' TERM` grandchild
 outlived it); the watchdog now goes once terminate has reaped the groups,
 before its guard closes, so it never signals ids that may be reused.
 
+### Sharing: guests at a door of their own, peers on one stream
+
+A session had one page, through one controller. Sharing it with another
+account on the host needs a way in for that account that no other account
+has, a peer of its own for its page, and a rule for who drives.
+
+- The way in is an abstract unix socket per session daemon,
+  `@robin-share-<id>`. The controller's socket lives in the 0700 run
+  directory, where no other uid can reach it, and opening a path to it for
+  one guest would open it to every account. An abstract socket has no file
+  and no mode, so anyone can connect, and the gate is the same pair of
+  checks as everywhere else: the daemon reads the peer's uid from
+  `SO_PEERCRED` on the accepting goroutine and hangs up, without reading,
+  unless that uid holds an open invitation; only then does the connection
+  get 5 s to present its code. The name goes with the daemon, and there is
+  no file to sweep. The cost is the network namespace: an abstract name
+  is visible only inside one, so a guest whose login lands in a container
+  of its own cannot join (README, Known limits).
+- An invitation names an account, which the agent looks up in
+  `/etc/passwd` and then through the host's `getent`, since the static
+  agent has no name service of its own. Its code is the session id, the
+  owner's uid and 128 random bits; the bits are compared in constant time,
+  spent by the first join that presents them, and expire after 10 minutes,
+  and three wrong codes from the invited uid withdraw the invitation.
+  Inviting the same account again replaces its code. The code goes from
+  the guest's CLI to the door in the first message over the agent's stdin,
+  never on a command line, where `/proc` would show it to every account;
+  `robin-agent join` takes only the session id and the owner's uid, and
+  checks that whoever listens on the name is that uid, since another
+  account could take an abstract name once the daemon that held it is
+  gone and serve the guest a desktop of its choosing. The guest's CLI pins
+  the DTLS fingerprint of the agent it reached, as the owner's does.
+- Each page is a viewer with a peer of its own, and the stream has
+  subscribers rather than a peer. Frames are encoded once, at the lowest
+  target of any subscriber's congestion controller, and written once to a
+  single `TrackLocalStaticSample` bound to every peer: Pion packetizes a
+  sample once and writes the packets to each binding under that binding's
+  SSRC and payload type, so the RTP clock that sharp text's manifests are
+  keyed on stays one clock. A keyframe any page asks for goes to all. An
+  encoder per page would cost a core per guest at 1440p, and simulcast or
+  SVC would need encoders Robin does not have; the slowest link setting
+  everyone's bitrate is the price, and README says so. The sound track is
+  shared the same way. A later change that gives each page one track per
+  monitor makes each monitor a stream of its own with its own subscribers;
+  nothing here assumes one stream or one subscriber, only that one of a
+  stream's subscribers at a time takes tiles, the owner's page.
+- Control is the owner's always and one guest's at a time beside it:
+  granting it to a guest takes it from any other. Every control handler is
+  registered as input, as a plain control or as the owner's alone (resize,
+  monitor, curtain, silent room, tiles, invite, guest changes), and a
+  guest's message applies only while it has control and never when it is
+  the owner's. The check runs under the lock every control message applies
+  under, and so does the owner's change to a guest, so once a revoke
+  returns nothing the guest sent is applying, and what it held down is
+  released and the text it was typing dropped. A guest's transfer needs
+  control as it opens and again as it lands, a guest's microphone packets
+  are dropped while it has none, and a guest's page negotiates no camera.
+  The host's clipboard and the files `robin-send` offers go to every page
+  with control; a revoke takes the offers off the guest's page.
+- A guest's ICE-TCP comes through a forward that runs as the guest, which
+  the tunnel listener refused as another user's. It now also admits the
+  uid of a guest connected at that moment, and stops once the last guest
+  of that uid is gone; which peer a connection reaches is still decided by
+  that peer's ICE password, which only that guest's page and CLI hold.
+- Lifetime follows the owner. When the owner's controller goes, every
+  guest is dropped and every invitation withdrawn, and the door refuses
+  newcomers until a controller resumes, so nobody watches a desktop whose
+  owner cannot see who does. Bye, the keep window running out and
+  `robin end` end the guests with the session, before the peers close and
+  the daemon exits, and removing a guest closes its peer and its data
+  channels at once. A guest whose connection drops is not resumed: its
+  code is spent.
+- Measured on 2026-10-30. In the e2e `share` scenario the owner's
+  `--share alice` printed the join command, `robin gui --join` with that
+  code from robin's own login was refused before a byte was read (the
+  daemon logged `guest refused: no invitation uid=1000`) and alice's
+  invitation stayed open; alice's own join over her login came up, her
+  keys typed nothing in 3 s without control, typed into robin's xterm once
+  granted it, and nothing again once it was taken back. Removing her ended
+  her page 12 ms after the click and her CLI with exit 0, and nothing of
+  alice's ran on the host afterwards. In the unit test the removed guest's
+  control channel closed 1 ms after the removal. In test-x the real agent,
+  run as `robin-stranger`, was admitted with its code, hung up on unread
+  when uninvited, refused on a second use, refused as a guest of an owner
+  that did not hold the socket, and its proxy exited with `the owner
+  disconnected` when the owner's proxy was killed and with `the session
+  ended` after a bye.
+
 ## Verification parked
 
 Two checks were parked by decision on 2026-10-18. Both needed hardware the
