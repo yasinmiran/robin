@@ -1,6 +1,7 @@
 package peer
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ type sendingBrowser struct {
 	pc        *webrtc.PeerConnection
 	mic       *webrtc.TrackLocalStaticSample
 	camera    *webrtc.TrackLocalStaticRTP
+	micSender *webrtc.RTPSender
 	camSender *webrtc.RTPSender
 }
 
@@ -49,9 +51,11 @@ func newSendingBrowser(t *testing.T) *sendingBrowser {
 	if b.mic, err = webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2}, "mic", "page"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pc.AddTransceiverFromTrack(b.mic, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendrecv}); err != nil {
+	micLine, err := pc.AddTransceiverFromTrack(b.mic, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendrecv})
+	if err != nil {
 		t.Fatal(err)
 	}
+	b.micSender = micLine.Sender()
 	if b.camera, err = webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{
 		MimeType: webrtc.MimeTypeH264, ClockRate: 90000, SDPFmtpLine: H264Fmtp,
 	}, "camera", "page"); err != nil {
@@ -109,8 +113,10 @@ func mediaSections(sdp string) []string {
 
 // TestPeerTakesTheMicrophoneAndCamera: the agent answers the page's lines
 // so that the page may send on both, hands the tracks to Handlers.Track,
-// and gives the camera's sender what a receiver owes it: NACKs for a lost
-// packet, transport-wide feedback, and a PLI on request.
+// and gives the page what a receiver owes it: the camera's sender a NACK
+// for a lost packet and a PLI on request, and the transport its feedback.
+// That feedback names the SSRC of whichever packet the agent recorded
+// last, so it may reach the microphone's sender instead of the camera's.
 func TestPeerTakesTheMicrophoneAndCamera(t *testing.T) {
 	cands := make(chan protocol.Candidate, 32)
 	tracks := make(chan *webrtc.TrackRemote, 4)
@@ -151,6 +157,10 @@ func TestPeerTakesTheMicrophoneAndCamera(t *testing.T) {
 
 	stop := make(chan struct{})
 	defer close(stop)
+	// lose takes the camera's next packet once the test asks for it. A
+	// packet dropped before the camera reaches the agent is never missed,
+	// so it asks only after Handlers.Track has the camera.
+	lose := make(chan uint16)
 	go func() {
 		seq := uint16(1)
 		for i := 0; ; i++ {
@@ -160,8 +170,10 @@ func TestPeerTakesTheMicrophoneAndCamera(t *testing.T) {
 			case <-time.After(20 * time.Millisecond):
 			}
 			b.mic.WriteSample(media.Sample{Data: []byte{0xf8, 0xff, 0xfe}, Duration: 20 * time.Millisecond})
-			if seq == 40 {
+			select {
+			case lose <- seq:
 				seq++ // lost on the way
+			default:
 			}
 			b.camera.WriteRTP(&rtp.Packet{
 				Header:  rtp.Header{Version: 2, SequenceNumber: seq, Timestamp: uint32(i) * 3000, Marker: true},
@@ -187,23 +199,47 @@ func TestPeerTakesTheMicrophoneAndCamera(t *testing.T) {
 		t.Errorf("camera codec %s", c)
 	}
 
+	lost := <-lose
 	if err := p.RequestKeyframe(uint32(got[webrtc.RTPCodecTypeVideo].SSRC())); err != nil {
 		t.Fatal(err)
 	}
+	type heard struct {
+		camera bool
+		pkts   []rtcp.Packet
+	}
+	rtcpIn := make(chan heard)
+	for _, s := range []*webrtc.RTPSender{b.micSender, b.camSender} {
+		go func() {
+			for {
+				pkts, _, err := s.ReadRTCP()
+				if err != nil {
+					return
+				}
+				select {
+				case rtcpIn <- heard{s == b.camSender, pkts}:
+				case <-stop:
+					return
+				}
+			}
+		}()
+	}
 	var pli, nack, twcc bool
-	for deadline := time.Now().Add(10 * time.Second); !(pli && nack && twcc) && time.Now().Before(deadline); {
-		b.camSender.SetReadDeadline(time.Now().Add(time.Second))
-		pkts, _, err := b.camSender.ReadRTCP()
-		if err != nil {
-			continue
+	deadline := time.After(10 * time.Second)
+wait:
+	for !(pli && nack && twcc) {
+		var h heard
+		select {
+		case h = <-rtcpIn:
+		case <-deadline:
+			break wait
 		}
-		for _, pkt := range pkts {
+		for _, pkt := range h.pkts {
 			switch pkt := pkt.(type) {
 			case *rtcp.PictureLossIndication:
-				pli = true
+				pli = pli || h.camera
 			case *rtcp.TransportLayerNack:
 				for _, n := range pkt.Nacks {
-					nack = nack || n.PacketID == 40
+					nack = nack || h.camera && slices.Contains(n.PacketList(), lost)
 				}
 			case *rtcp.TransportLayerCC:
 				twcc = true
@@ -211,7 +247,7 @@ func TestPeerTakesTheMicrophoneAndCamera(t *testing.T) {
 		}
 	}
 	if !pli || !nack || !twcc {
-		t.Errorf("the camera's sender heard PLI %v, a NACK for packet 40 %v, transport-wide feedback %v; want all three", pli, nack, twcc)
+		t.Errorf("the camera's sender heard PLI %v and a NACK for packet %d %v, the page transport-wide feedback %v; want all three", pli, lost, nack, twcc)
 	}
 }
 
