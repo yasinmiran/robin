@@ -81,9 +81,7 @@ The microphone and camera reach every program that can record on the host as you
 
 A private session changes the attached desktop for as long as it lasts: the gamma of its screens and, with `--silent`, the user's own sound server, which gets an extra output and has the user's programs moved into it. PulseAudio and WirePlumber 0.4 remember those moves, and the undo moves each program back to clear them. A keeper process undoes both if the agent is killed, but not if the keeper is killed along with it; [Private sessions](/private-session#if-both-are-killed) says how to undo them by hand.
 
-<Callout type="warning" title="The curtain is no lock.">
-Anyone at the machine can type and click while it is drawn, and on GNOME it also blacks out the indicator that says the screen is being shared, which leaves the black screen itself as the only sign. Whatever ends the session, a dropped connection included, lifts the curtain and leaves the desktop unlocked in front of whoever is there. The curtain refuses a desktop with a screen it cannot darken rather than leave that screen lit, but a screen plugged in while it is drawn stays lit, with an error under the switch, and so does a program that refuses to move out of the room's speakers.
-</Callout>
+The curtain is no lock: anyone at the machine can type and click while it is drawn, and whatever ends the session leaves the desktop unlocked in front of them ([Private sessions](/private-session) puts that first). On GNOME it also blacks out the indicator that says the screen is being shared, which leaves the black screen itself as the only sign. The curtain refuses a desktop with a screen it cannot darken rather than leave that screen lit, but a screen plugged in while it is drawn stays lit, with an error under the switch, and so does a program that refuses to move out of the room's speakers.
 
 ### Attaching to X11
 

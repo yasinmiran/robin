@@ -42,5 +42,6 @@ Opus packets go out ahead of a queued keyframe, so the picture does not hold sou
 - One click on the speaker is needed per page load.
 - Spawned sessions need `pulseaudio` on the host.
 - Attached, the host's speakers keep playing what you hear unless the room is silent (`--silent`).
+- In-band FEC protects speech only; a lost music packet is concealed by the browser instead.
 
-The full list is on [Known limits](/known-limits#sound).
+[Known limits](/known-limits#sound) lists these with the rest.

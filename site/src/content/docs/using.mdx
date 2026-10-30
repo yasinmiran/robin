@@ -115,8 +115,6 @@ Only one browser holds a session at a time. A second tab is refused, with a note
 
 Keys are sent by character. The agent finds the key and shift level that produce each character on the remote keymap, and on X11 binds a spare keycode when the keymap lacks one, so text arrives right whatever your local layout. Named keys such as Enter, arrows, function keys and modifiers are held until you release them. On a Mac, Cmd is sent as Control.
 
-Input methods work too: the keyboard's focus rests in a hidden text box, so text an input method composes (CJK, or an accent built from a dead key) goes to the remote desktop once it is committed, and shows under the status tab while it is being composed.
-
-On a touch screen a tap clicks, a long press right clicks, one finger drags, two fingers scroll, and pinching zooms and pans the picture on the phone without resizing the desktop. The keyboard button in the status tab raises the soft keyboard.
+Input methods (CJK, or an accent built from a dead key) and touch screens work too; [Browsers and clients](/browsers#input-methods-and-touch) says how each maps onto the remote desktop.
 
 The clipboard carries plain text, HTML and PNG images both ways, up to 16 MiB at a time. Your paste shortcut in the page sends the local clipboard to the remote before the key itself, so the remote program pastes what you just copied. What the remote copies is written to your local clipboard while the page has focus. [Files and the clipboard](/files-and-clipboard) has the rest.

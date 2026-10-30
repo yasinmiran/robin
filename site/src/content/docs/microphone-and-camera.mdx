@@ -50,9 +50,9 @@ The microphone and camera are the ones the desktop started with. A resume that o
 
 ## Limits
 
+What the devices do only in part, here and on [Known limits](/known-limits#microphone-and-camera):
+
 - A PipeWire camera is invisible to programs that open `/dev/video*` themselves, which is most of those not sandboxed; they need v4l2loopback.
 - The microphone and camera are tested in Chrome only. Firefox and Safari should work the same way through the same page, but nothing checks them.
 - The camera is always 1280x720 at 30 fps. The browser lowers its own resolution when the link or its CPU are short, and the host then sees a softer picture of the same size.
 - Attached to a plain PulseAudio, an agent killed outright leaves its microphone loaded until your next Robin session sweeps it, and a PulseAudio with no default source you chose, on a host with no microphone of its own, takes Robin microphone as its default while it is there.
-
-The full list is on [Known limits](/known-limits).

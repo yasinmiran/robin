@@ -5,6 +5,8 @@ section: Use
 order: 8
 ---
 
+Drop files on the page to upload them to the host, offer files from the host with `robin-send` and save them with a click, and copy text, HTML and images either way through the clipboard.
+
 ## Uploading files
 
 Files go to the host when you drop them anywhere on the page or pick them with **Upload files** in the status tab. Files you paste are listed there too, and each goes only when you click its Upload, since the clipboard can still hold files you copied long ago.
@@ -15,7 +17,7 @@ A file whose name starts with a dot is refused, so no upload is hidden. Nothing 
 
 ## Getting a file from the host
 
-Getting a file from the host starts on the host:
+It starts on the host:
 
 ```sh
 robin-send report.pdf build/*.log                # in a terminal of the desktop Robin started
@@ -47,4 +49,4 @@ What the host sends goes under the video's congestion target, so a download neve
 - Anything else on the clipboard (RTF, JPEG, a file manager's file list) stays behind. An image bigger than 16 MiB is left out and its text still goes.
 - In an attached desktop `robin-send` is not on the `PATH`; run the agent itself, as above. With two sessions on the host it has to run inside the one it means.
 
-The full list is on [Known limits](/known-limits#files-and-the-clipboard).
+[Known limits](/known-limits#files-and-the-clipboard) has the rest, from what a power cut does to an upload to files in Safari.

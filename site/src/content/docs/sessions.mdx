@@ -52,8 +52,8 @@ When the keep window runs out, the daemon ends the session with the same teardow
 
 ## Limits
 
+Most of these are on [Known limits](/known-limits#kept-sessions) too, with what the host's logind decides:
+
 - While a kept session has a controller, a second `robin gui` for it is refused as busy. A CLI that lost its network keeps the daemon's socket busy until the daemon's 20 s idle timeout notices, so a fresh `robin gui` started sooner has to retry.
 - Ctrl+C while the CLI redials a session the host reports busy leaves the session running, since another `robin gui` may be using it. The host cannot tell that from this CLI's own lost connection, which keeps the session busy for up to 20 s, so Ctrl+C in those seconds leaves the desktop too; the CLI says so, and `robin end` ends it.
 - While a session is kept, its X server, its sound socket and its loopback ICE-TCP listener stay up in the 0700 run directory for the whole keep window, reachable by anything running as the same user on the host, as they are while a CLI is connected.
-
-The full list is on [Known limits](/known-limits).
