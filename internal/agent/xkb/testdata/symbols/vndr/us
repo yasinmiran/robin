@@ -1,0 +1,4 @@
+// A vendor's keys, in a directory of symbols as sun_vndr's are.
+xkb_symbols "extra" {
+    key <AB01> { [ z, Z ] };
+};

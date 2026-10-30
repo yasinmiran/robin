@@ -1,0 +1,16 @@
+// Layouts that go wrong in each way the reader reports.
+xkb_symbols "loop" {
+    include "broken(loop)"
+};
+
+xkb_symbols "missing" {
+    include "nosuchfile"
+};
+
+xkb_symbols "badname" {
+    include "../us"
+};
+
+xkb_symbols "novariant" {
+    include "us(nosuchvariant)"
+};

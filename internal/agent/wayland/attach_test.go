@@ -270,15 +270,7 @@ func TestAttachStreamsAndDrives(t *testing.T) {
 			t.Fatal("clipboard not granted")
 		}
 		// The probe owns the clipboard, which the pastes must leave as it was.
-		tap(t, d, "F3")
-		select {
-		case text := <-d.Clipboard():
-			if text != "from-session" {
-				t.Fatalf("desktop copied %q, want from-session", text)
-			}
-		case <-time.After(5 * time.Second):
-			t.Fatal("the probe's clipboard never reached the agent")
-		}
+		probeCopies(t, p, d, "F3", "from-session")
 
 		// ASCII types as keys.
 		mark := p.mark()
@@ -290,19 +282,103 @@ func TestAttachStreamsAndDrives(t *testing.T) {
 			t.Errorf("entered %q, want ok!", got)
 		}
 
-		// Anything else is pasted whole, and the clipboard put back after.
+		// Anything else is pasted whole, with Ctrl+V once Ctrl+Shift+V
+		// pasted nothing, and the clipboard put back after. KWin types it
+		// as keys.
 		mark = p.mark()
 		const text = "a日本b€ c"
 		start := time.Now()
 		if err := d.Type(t.Context(), text); err != nil {
 			t.Fatal(err)
 		}
+		if d.anyKeysym {
+			p.await(t, mark, func(e probeEvent) bool { return e.Ev == "key" && e.Text == "c" })
+			if got := p.typed(mark); got != text {
+				t.Errorf("typed %q, want %q", got, text)
+			}
+			return
+		}
 		pasted := p.await(t, mark, func(e probeEvent) bool { return e.Ev == "paste" || e.Ev == "paste-error" })
 		t.Logf("pasted %+v %v after Type began", pasted, time.Since(start))
 		if got := p.entered(mark); got != text {
 			t.Errorf("entered %q, want %q", got, text)
 		}
+		if n := p.count(mark, func(e probeEvent) bool { return e.Ev == "paste-key" }); n != 1 {
+			t.Errorf("%d pastes, want 1", n)
+		}
 		awaitClipboard(t, p, d, "from-session", start)
+	})
+
+	// A paste, which is how text the layout lacks goes on every desktop
+	// but KWin, puts back what the clipboard held.
+	t.Run("paste into a terminal", func(t *testing.T) {
+		if d.clip == nil {
+			t.Fatal("clipboard not granted")
+		}
+		probeCopies(t, p, d, "F3", "from-session")
+		mark := p.mark()
+		tap(t, d, "F6")
+		p.await(t, mark, func(e probeEvent) bool { return e.Ev == "mode" })
+		defer tap(t, d, "F6")
+		mark = p.mark()
+		start := time.Now()
+		if err := d.paste(t.Context(), "日本"); err != nil {
+			t.Fatal(err)
+		}
+		ev := p.await(t, mark, func(e probeEvent) bool { return e.Ev == "paste-key" })
+		if !ev.Shift {
+			t.Errorf("the terminal pasted on %+v, want Ctrl+Shift+V", ev)
+		}
+		p.await(t, mark, func(e probeEvent) bool { return e.Ev == "paste" || e.Ev == "paste-error" })
+		t.Logf("pasted %v after the paste began", time.Since(start))
+		// A Ctrl+V after the paste would reach the terminal's program as ^V.
+		time.Sleep(pasteRead)
+		if got := p.entered(mark); got != "日本" {
+			t.Errorf("entered %q, want 日本 alone", got)
+		}
+		awaitClipboard(t, p, d, "from-session", start)
+	})
+
+	t.Run("rich clipboard after a paste", func(t *testing.T) {
+		if d.clip == nil {
+			t.Fatal("clipboard not granted")
+		}
+		probeCopies(t, p, d, "F5", "rich-from-session")
+		mark := p.mark()
+		start := time.Now()
+		if err := d.paste(t.Context(), "日本"); err != nil {
+			t.Fatal(err)
+		}
+		p.await(t, mark, func(e probeEvent) bool { return e.Ev == "paste" || e.Ev == "paste-error" })
+		awaitClipboard(t, p, d, "rich-from-session", start)
+		awaitRich(t, p, d)
+	})
+
+	t.Run("empty clipboard after a paste", func(t *testing.T) {
+		if d.clip == nil {
+			t.Fatal("clipboard not granted")
+		}
+		// A copy in no format the agent reads leaves it nothing to put
+		// back, so the text goes and empty text takes its place.
+		tap(t, d, "F7")
+		for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+			d.clip.mu.Lock()
+			empty := d.clip.known && d.clip.held.Size() == 0
+			d.clip.mu.Unlock()
+			if empty {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("the agent never saw the probe's opaque copy")
+			}
+		}
+		mark := p.mark()
+		start := time.Now()
+		if err := d.paste(t.Context(), "日本"); err != nil {
+			t.Fatal(err)
+		}
+		p.await(t, mark, func(e probeEvent) bool { return e.Ev == "paste" || e.Ev == "paste-error" })
+		awaitClipboard(t, p, d, "", start)
 	})
 
 	t.Run("cursor", func(t *testing.T) {
@@ -318,42 +394,258 @@ func TestAttachStreamsAndDrives(t *testing.T) {
 
 	// The probe copies once more as the session ends. The next session's
 	// portal need not report a clipboard taken before it began, and a
-	// paste there still puts it back.
-	tap(t, d, "F3")
-	select {
-	case text := <-d.Clipboard():
-		if text != "from-session" {
-			t.Fatalf("desktop copied %q, want from-session", text)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("the probe's clipboard never reached the agent")
-	}
+	// paste there still puts all of it back, the image too.
+	probeCopies(t, p, d, "F5", "rich-from-session")
 	d.Close()
 	checkTornDown(t)
 
+	// The first paste of a session reads the clipboard from before it in
+	// text, HTML and PNG, and puts all of them back: the probe's rich copy,
+	// then one of text alone, whose owner has no HTML or PNG to give.
 	t.Run("text after a session", func(t *testing.T) {
-		d, _ := open(t, true)
-		defer func() {
+		for _, before := range []struct {
+			key, text string
+			rich      bool
+		}{{"F5", "rich-from-session", true}, {"F3", "from-session", false}} {
+			if !before.rich {
+				// The session before copies text alone as it ends.
+				d, _ := open(t, true)
+				probeCopies(t, p, d, before.key, before.text)
+				d.Close()
+				checkTornDown(t)
+			}
+			d, _ := open(t, true)
+			select {
+			case text := <-d.Clipboard():
+				t.Logf("the portal reported the clipboard from before the session: %q", text)
+			case <-time.After(time.Second):
+				t.Log("the portal did not report the clipboard from before the session")
+			}
+			mark := p.mark()
+			start := time.Now()
+			if err := d.paste(t.Context(), "日本"); err != nil {
+				t.Fatal(err)
+			}
+			took := time.Since(start)
+			p.await(t, mark, func(e probeEvent) bool { return e.Ev == "paste" || e.Ev == "paste-error" })
+			if got := p.entered(mark); got != "日本" {
+				t.Errorf("entered %q, want 日本", got)
+			}
+			// KWin never answers a read of a format the owner lacks, which
+			// costs that read its timeout; KWin types text as keys, though.
+			t.Logf("a paste after %s took %v", before.key, took)
+			if !d.anyKeysym && took > time.Second {
+				t.Errorf("a paste after %s took %v, reading what was there before", before.key, took)
+			}
+			awaitClipboard(t, p, d, before.text, start)
+			if before.rich {
+				awaitRich(t, p, d)
+			}
 			d.Close()
 			checkTornDown(t)
-		}()
-		select {
-		case text := <-d.Clipboard():
-			t.Logf("the portal reported the clipboard from before the session: %q", text)
-		case <-time.After(time.Second):
-			t.Log("the portal did not report the clipboard from before the session")
 		}
-		mark := p.mark()
-		start := time.Now()
-		if err := d.Type(t.Context(), "日本"); err != nil {
+	})
+}
+
+// TestAttachLayout runs in the session wltest.sh gives a keyboard without
+// Latin letters, Russian before US, as GNOME Shell applies an input source
+// to mutter: ASCII the layout lacks still reaches programs.
+func TestAttachLayout(t *testing.T) {
+	needSession(t)
+	if os.Getenv("ROBIN_WLTEST_LAYOUT") != "ru" {
+		t.Skip("needs the session wltest.sh starts with a Russian layout")
+	}
+	p := startProbe(t)
+	d, _ := open(t, true)
+	defer func() {
+		d.Close()
+		checkTornDown(t)
+	}()
+	if d.kb == nil || !d.kb.lacks('a') || d.kb.lacks('1') {
+		t.Fatal("the agent does not follow the Russian layout")
+	}
+
+	// A key the layout lacks goes by its US key, which types the layout's
+	// letter there, and takes Ctrl to programs as their shortcuts expect.
+	mark := p.mark()
+	for _, m := range []protocol.Control{
+		{T: protocol.ControlKey, Key: "a", Code: "KeyA", Down: true},
+		{T: protocol.ControlKey, Key: "a", Code: "KeyA"},
+		{T: protocol.ControlKey, Key: "1", Code: "Digit1", Down: true},
+		{T: protocol.ControlKey, Key: "1", Code: "Digit1"},
+		{T: protocol.ControlKey, Key: "Control", Code: "ControlLeft", Down: true},
+		{T: protocol.ControlKey, Key: "c", Code: "KeyC", Down: true},
+		{T: protocol.ControlKey, Key: "c", Code: "KeyC"},
+		{T: protocol.ControlKey, Key: "Control", Code: "ControlLeft"},
+		{T: protocol.ControlKey, Key: "Enter", Code: "Enter", Down: true},
+		{T: protocol.ControlKey, Key: "Enter", Code: "Enter"},
+	} {
+		send(t, d, m)
+	}
+	p.await(t, mark, func(e probeEvent) bool { return e.Ev == "key" && e.Keyval == "Return" })
+	if got := p.typed(mark); got != "ф1\r" {
+		t.Errorf("typed %q, want ф1 and Enter", got)
+	}
+	// 54 is the C key: evdev's 46 and X's 8.
+	if p.count(mark, func(e probeEvent) bool { return e.Ev == "key" && e.Ctrl && e.Keycode == 54 }) != 1 {
+		t.Error("Ctrl+C did not reach the probe as Ctrl and the C key")
+	}
+
+	// A Cyrillic key goes as its Unicode keysym, which is not the one the
+	// layout lists, and so types nothing: a known limit, measured here.
+	mark = p.mark()
+	for _, m := range []protocol.Control{
+		{T: protocol.ControlKey, Key: "ф", Code: "KeyA", Down: true},
+		{T: protocol.ControlKey, Key: "ф", Code: "KeyA"},
+		{T: protocol.ControlKey, Key: "Enter", Code: "Enter", Down: true},
+		{T: protocol.ControlKey, Key: "Enter", Code: "Enter"},
+	} {
+		send(t, d, m)
+	}
+	p.await(t, mark, func(e probeEvent) bool { return e.Ev == "key" && e.Keyval == "Return" })
+	t.Logf("a Cyrillic key typed %q", p.typed(mark))
+
+	// Text the layout has types as keys; the rest is pasted, with V by
+	// its key.
+	if d.clip == nil {
+		t.Fatal("clipboard not granted")
+	}
+	probeCopies(t, p, d, "F3", "from-session")
+	mark = p.mark()
+	if err := d.Type(t.Context(), "1."); err != nil {
+		t.Fatal(err)
+	}
+	p.await(t, mark, func(e probeEvent) bool { return e.Ev == "key" && e.Text == "." })
+	if got := p.entered(mark); got != "1." {
+		t.Errorf("entered %q, want 1. as keys", got)
+	}
+	mark = p.mark()
+	start := time.Now()
+	if err := d.Type(t.Context(), "ok"); err != nil {
+		t.Fatal(err)
+	}
+	p.await(t, mark, func(e probeEvent) bool { return e.Ev == "paste" || e.Ev == "paste-error" })
+	if got := p.entered(mark); got != "ok" {
+		t.Errorf("entered %q, want ok", got)
+	}
+	awaitClipboard(t, p, d, "from-session", start)
+}
+
+// TestAttachLayoutFourthLevel runs in the session wltest.sh gives US
+// international with dead keys, which has ~, ^ and " only on the fourth
+// level, Shift and AltGr, and ` and ' on the third, AltGr. mutter cannot
+// press the fourth level: it logs "Unhandled level" and presses the key
+// alone. So the agent never asks for one, as mutter's log shows.
+func TestAttachLayoutFourthLevel(t *testing.T) {
+	needSession(t)
+	if os.Getenv("ROBIN_WLTEST_LAYOUT") != "us+intl" {
+		t.Skip("needs the session wltest.sh starts with US international")
+	}
+	unhandled := func() int {
+		t.Helper()
+		b, err := os.ReadFile("/tmp/session-logs/compositor.log")
+		if err != nil {
 			t.Fatal(err)
 		}
-		p.await(t, mark, func(e probeEvent) bool { return e.Ev == "paste" || e.Ev == "paste-error" })
-		if got := p.entered(mark); got != "日本" {
-			t.Errorf("entered %q, want 日本", got)
+		return bytes.Count(b, []byte("Unhandled level"))
+	}
+	p := startProbe(t)
+	d, _ := open(t, true)
+	defer func() {
+		d.Close()
+		checkTornDown(t)
+	}()
+	if d.kb == nil || !d.kb.lacks('~') || !d.kb.lacks('^') || !d.kb.lacks('"') || d.kb.lacks('`') || d.kb.lacks('\'') || d.kb.lacks('a') {
+		t.Fatal("the agent does not follow the levels of US international")
+	}
+	before := unhandled()
+	isKey := func(keyval string) func(probeEvent) bool {
+		return func(e probeEvent) bool { return e.Ev == "key" && e.Keyval == keyval }
+	}
+
+	// A key of the fourth level goes not at all, and one of the third
+	// types itself with AltGr.
+	mark := p.mark()
+	for _, m := range []protocol.Control{
+		{T: protocol.ControlKey, Key: "~", Code: "Backquote", Down: true},
+		{T: protocol.ControlKey, Key: "~", Code: "Backquote"},
+		{T: protocol.ControlKey, Key: "`", Code: "Backquote", Down: true},
+		{T: protocol.ControlKey, Key: "`", Code: "Backquote"},
+		{T: protocol.ControlKey, Key: "Enter", Code: "Enter", Down: true},
+		{T: protocol.ControlKey, Key: "Enter", Code: "Enter"},
+	} {
+		send(t, d, m)
+	}
+	p.await(t, mark, isKey("Return"))
+	if p.count(mark, isKey("grave")) != 1 || p.count(mark, isKey("dead_grave")) != 0 || p.count(mark, isKey("asciitilde")) != 0 {
+		t.Errorf("keys ~ and ` reached the probe as %+v, want ` alone", p.since(mark))
+	}
+
+	// Text of the third level types as keys, and text with one of the
+	// fourth is pasted, with the clipboard put back after.
+	if d.clip == nil {
+		t.Fatal("clipboard not granted")
+	}
+	probeCopies(t, p, d, "F3", "from-session")
+	mark = p.mark()
+	if err := d.Type(t.Context(), "`'"); err != nil {
+		t.Fatal(err)
+	}
+	p.await(t, mark, isKey("apostrophe"))
+	if got := p.entered(mark); got != "`'" {
+		t.Errorf("entered %q, want `' as keys", got)
+	}
+	mark = p.mark()
+	start := time.Now()
+	if err := d.Type(t.Context(), `a~^"b`); err != nil {
+		t.Fatal(err)
+	}
+	p.await(t, mark, func(e probeEvent) bool { return e.Ev == "paste" || e.Ev == "paste-error" })
+	if got := p.entered(mark); got != `a~^"b` {
+		t.Errorf("entered %q, want the text pasted whole", got)
+	}
+	awaitClipboard(t, p, d, "from-session", start)
+	if n := unhandled() - before; n != 0 {
+		t.Errorf("mutter logged %d unhandled levels", n)
+	}
+}
+
+// TestAttachPutBackUnderReads has the probe read the clipboard every 5 ms
+// from 200 ms before each put-back is due to 200 ms after: GNOME 46's
+// xdg-desktop-portal once died when a read met the put-back's new offer.
+func TestAttachPutBackUnderReads(t *testing.T) {
+	needSession(t)
+	p := startProbe(t)
+	d, _ := open(t, true)
+	defer func() {
+		d.Close()
+		checkTornDown(t)
+	}()
+	if d.clip == nil {
+		t.Fatal("clipboard not granted")
+	}
+	probeCopies(t, p, d, "F3", "from-session")
+	var start time.Time
+	for i := range 5 {
+		start = time.Now()
+		if err := d.paste(t.Context(), "日本"); err != nil {
+			t.Fatalf("paste %d: %v", i, err)
 		}
-		awaitClipboard(t, p, d, "from-session", start)
-	})
+		due := start.Add(restoreAfter)
+		time.Sleep(time.Until(due.Add(-200 * time.Millisecond)))
+		mark := p.mark()
+		tap(t, d, "F8")
+		time.Sleep(time.Until(due.Add(200 * time.Millisecond)))
+		tap(t, d, "F8")
+		ev := p.await(t, mark, func(e probeEvent) bool { return e.Ev == "hammered" })
+		select {
+		case err := <-d.Done():
+			t.Fatalf("the desktop ended at put-back %d: %v", i, err)
+		default:
+		}
+		t.Logf("put-back %d: %d reads around it", i, ev.Reads)
+	}
+	awaitClipboard(t, p, d, "from-session", start)
 }
 
 func TestAttachEndsWhenTheStreamDies(t *testing.T) {
@@ -616,8 +908,8 @@ func tap(t *testing.T, d *Desktop, key string) {
 
 // awaitClipboard has the probe read the clipboard, with F2, until it reads
 // want, which a put-back brings restoreAfter after the paste that began at
-// pasted. It starts reading half a second after that: GNOME 46's portal
-// has crashed when a read met the put-back's new offer.
+// pasted. It starts reading half a second after that, once the put-back is
+// done; TestAttachPutBackUnderReads reads while it happens.
 func awaitClipboard(t *testing.T, p *probe, d *Desktop, want string, pasted time.Time) {
 	t.Helper()
 	time.Sleep(time.Until(pasted.Add(restoreAfter + 500*time.Millisecond)))
@@ -631,6 +923,48 @@ func awaitClipboard(t *testing.T, p *probe, d *Desktop, want string, pasted time
 		}
 	}
 	t.Fatalf("the clipboard holds %+v, want %q", ev, want)
+}
+
+// probeCopies has the probe copy with key, and waits until the agent has
+// seen that copy's text, want.
+func probeCopies(t *testing.T, p *probe, d *Desktop, key, want string) {
+	t.Helper()
+	for len(d.Clipboard()) > 0 {
+		<-d.Clipboard()
+	}
+	mark := p.mark()
+	tap(t, d, key)
+	select {
+	case text := <-d.Clipboard():
+		if text != want {
+			t.Fatalf("desktop copied %q, want %q", text, want)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("the probe's copy of %q never reached the agent; the probe saw %+v", want, p.since(mark))
+	}
+	for len(d.ClipboardContent()) > 0 {
+		<-d.ClipboardContent()
+	}
+}
+
+// awaitRich has the probe read the clipboard's formats, with F4, and checks
+// it holds the probe's rich copy, its HTML and image included.
+func awaitRich(t *testing.T, p *probe, d *Desktop) {
+	t.Helper()
+	mark := p.mark()
+	tap(t, d, "F4")
+	formats := p.await(t, mark, func(e probeEvent) bool { return e.Ev == "formats" })
+	for _, want := range []string{"text/plain;charset=utf-8", "text/html", "image/png"} {
+		if !slices.Contains(formats.Mimes, want) {
+			t.Errorf("the clipboard offers %v, lacking %s", formats.Mimes, want)
+		}
+	}
+	for mime, want := range map[string][]byte{"text/html": []byte("<b>rich</b> from-session"), "image/png": probePNG()} {
+		ev := p.await(t, mark, func(e probeEvent) bool { return (e.Ev == "read" || e.Ev == "read-error") && e.Mime == mime })
+		if sum := sha256.Sum256(want); ev.Ev != "read" || ev.SHA256 != hex.EncodeToString(sum[:]) {
+			t.Errorf("the clipboard holds %s as %+v, want %d bytes", mime, ev, len(want))
+		}
+	}
 }
 
 func frameChanges(d *Desktop, before []byte) bool {
@@ -660,6 +994,12 @@ type probeEvent struct {
 	Button int     `json:"button"`
 	Keyval string  `json:"keyval"`
 	Text   string  `json:"text"`
+	// Keycode is a key's hardware keycode; Ctrl says Control was held, and
+	// Shift that Shift was held for a paste.
+	Keycode int  `json:"keycode"`
+	Ctrl    bool `json:"ctrl"`
+	Shift   bool `json:"shift"`
+	Reads   int  `json:"reads"`
 	// Clipboard formats and reads.
 	Mimes  []string `json:"mimes"`
 	Mime   string   `json:"mime"`
@@ -742,6 +1082,13 @@ func (p *probe) count(mark int, match func(probeEvent) bool) int {
 		}
 	}
 	return n
+}
+
+// since returns the events from mark on.
+func (p *probe) since(mark int) []probeEvent {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]probeEvent(nil), p.events[mark:]...)
 }
 
 // typed returns the text of the key presses from mark on.

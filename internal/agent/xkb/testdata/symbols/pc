@@ -1,0 +1,6 @@
+// Cut down from xkeyboard-config's symbols/pc for the tests.
+default partial alphanumeric_keys modifier_keys
+xkb_symbols "pc105" {
+    key <SPCE> { [ space ] };
+    key <LSGT> { [ less, greater, bar, brokenbar ] };
+};

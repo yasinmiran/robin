@@ -4,8 +4,12 @@ equal monitor coordinates here.
 
 F2 prints the clipboard's text; F3 sets the clipboard to "from-session".
 F4 prints the clipboard's MIME types and reads its text/html and image/png;
-F5 sets the clipboard to RICH_TEXT, RICH_HTML and RICH_PNG at once.
-Ctrl+V prints the clipboard's text as pasted.
+F5 sets the clipboard to RICH_TEXT, RICH_HTML and RICH_PNG at once; F7 sets
+it to a type nothing reads. Ctrl+V prints the clipboard's text as pasted,
+unless F6 has made the window a terminal, which pastes with Ctrl+Shift+V
+and takes Ctrl+V as the character ^V, until F6 again. Any other key
+pressed with Ctrl held types nothing. F8 starts reading the clipboard every
+5 ms, and F8 again stops and prints how many reads there were.
 Each key press, and each SIGUSR1, moves the picture on by one frame, the way
 a terminal echoes what is typed. --animate repaints the whole window 60
 times a second, for frame rate tests.
@@ -29,6 +33,8 @@ RICH_HTML = "<b>rich</b> from-session"
 # Bigger than a pipe's buffer, so the portal has to stream it. The clipboard
 # does not look inside, so it need not decode.
 RICH_PNG = b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 1024
+# The hardware keycode of the V key, evdev's 47 plus X's 8.
+KEY_V = 55
 
 
 def log(**kw):
@@ -40,6 +46,9 @@ class Probe(Gtk.Application):
     def __init__(self):
         super().__init__(application_id="dev.robin.Probe")
         self.frame = 0
+        self.terminal = False
+        self.hammer = 0
+        self.hammered = 0
 
     def do_activate(self):
         win = Gtk.ApplicationWindow(application=self, title="probe")
@@ -93,11 +102,25 @@ class Probe(Gtk.Application):
 
     def on_key(self, ctrl, keyval, keycode, state):
         name = Gdk.keyval_name(keyval)
-        if name == "v" and state & Gdk.ModifierType.CONTROL_MASK:
-            log(ev="paste-key")
-            self.clipboard.read_text_async(None, self.on_paste)
+        held = state & Gdk.ModifierType.CONTROL_MASK
+        shifted = state & Gdk.ModifierType.SHIFT_MASK
+        # V by its keyval or, on a layout without Latin letters, by its
+        # key, as programs match their shortcuts.
+        if held and (name in ("v", "V") or keycode == KEY_V):
+            if bool(shifted) == self.terminal:
+                log(ev="paste-key", shift=bool(shifted))
+                self.clipboard.read_text_async(None, self.on_paste)
+            elif self.terminal:
+                # A terminal sends Ctrl+V on to its program as ^V.
+                log(ev="key", keyval=name, keycode=keycode, text="\x16")
+            else:
+                log(ev="key", keyval=name, keycode=keycode, ctrl=True, text="")
             return True
-        log(ev="key", keyval=name, text=chr(Gdk.keyval_to_unicode(keyval) or 0))
+        if held:
+            # A shortcut, which types nothing.
+            log(ev="key", keyval=name, keycode=keycode, ctrl=True, text="")
+            return True
+        log(ev="key", keyval=name, keycode=keycode, text=chr(Gdk.keyval_to_unicode(keyval) or 0))
         self.tick(self.area)
         if name == "F2":
             self.clipboard.read_text_async(None, self.on_text)
@@ -112,7 +135,34 @@ class Probe(Gtk.Application):
                      (RICH_TEXT.encode(), "text/plain;charset=utf-8")]
             self.clipboard.set_content(Gdk.ContentProvider.new_union(
                 [Gdk.ContentProvider.new_for_bytes(mime, GLib.Bytes.new(data)) for data, mime in parts]))
+        elif name == "F6":
+            self.terminal = not self.terminal
+            log(ev="mode", terminal=self.terminal)
+        elif name == "F8":
+            if self.hammer:
+                GLib.source_remove(self.hammer)
+                self.hammer = 0
+                log(ev="hammered", reads=self.hammered)
+            else:
+                self.hammered = 0
+                self.hammer = GLib.timeout_add(5, self.read_again)
+        elif name == "F7":
+            # Nothing the agent reads. Emptied instead, mutter's clipboard
+            # manager would put back what it kept of the copy before.
+            self.clipboard.set_content(Gdk.ContentProvider.new_for_bytes(
+                "application/x-robin-probe", GLib.Bytes.new(b"opaque")))
         return True
+
+    def read_again(self):
+        self.hammered += 1
+        self.clipboard.read_text_async(None, lambda cb, res: self.ignore(cb, res))
+        return True
+
+    def ignore(self, cb, res):
+        try:
+            cb.read_text_finish(res)
+        except GLib.Error:
+            pass
 
     def on_paste(self, cb, res):
         try:

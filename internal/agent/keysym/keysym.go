@@ -11,11 +11,11 @@ import (
 const (
 	ShiftL         = 0xffe1
 	ShiftR         = 0xffe2
+	ControlL       = 0xffe3
 	ISOLevel3Shift = 0xfe03
 )
 
 const (
-	controlL = 0xffe3
 	controlR = 0xffe4
 	altL     = 0xffe9
 	altR     = 0xffea
@@ -63,7 +63,7 @@ func Named(key, code string) (uint32, bool) {
 	case "Shift":
 		return side(ShiftL, ShiftR)
 	case "Control":
-		return side(controlL, controlR)
+		return side(ControlL, controlR)
 	case "Alt":
 		return side(altL, altR)
 	case "Meta", "OS":

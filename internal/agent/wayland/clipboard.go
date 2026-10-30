@@ -24,12 +24,19 @@ import (
 // first.
 var textMimes = []string{"text/plain;charset=utf-8", "text/plain", "UTF8_STRING", "STRING", "TEXT"}
 
+// richMimes are the types of each format the rich clipboard carries.
+var richMimes = []string{textMimes[0], protocol.MIMEHTML, protocol.MIMEPNG}
+
 const (
 	maxClipboard = protocol.MaxClip
 	// clipboardTimeout bounds how long a pipe to or from a program may sit
 	// idle before the clipboard gives up on it.
 	clipboardTimeout = 2 * time.Second
 	clipboardChunk   = 64 << 10
+	// inputTimeout bounds a portal call that input or a paste waits on,
+	// keys and the paste's offer, so that a portal that stops answering
+	// cannot hold the keyboard up for good.
+	inputTimeout = time.Second
 )
 
 // clipboard syncs the desktop's clipboard through the portal's Clipboard
@@ -52,6 +59,13 @@ type clipboard struct {
 	// typed text changes neither.
 	held  protocol.Clip
 	known bool
+	// served counts the requests to read what the agent offers; servedNow
+	// is closed and replaced at each one, waking whoever waits for a read.
+	served    uint64
+	servedNow chan struct{}
+	// waiting, where a test sets it, runs each time readsAfter is about
+	// to wait for a read, so the test can time a read inside that wait.
+	waiting func()
 	// paste puts back what pastes of typed text replaced.
 	paste pasteRestore
 }
@@ -128,7 +142,9 @@ func (c *clipboard) offer(content protocol.Clip) error {
 	c.mu.Lock()
 	c.content = content
 	c.mu.Unlock()
-	return c.s.p.obj.Call(ifaceClipboard+".SetSelection", 0, c.s.handle, vardict{
+	ctx, cancel := context.WithTimeout(context.Background(), inputTimeout)
+	defer cancel()
+	return c.s.p.obj.CallWithContext(ctx, ifaceClipboard+".SetSelection", 0, c.s.handle, vardict{
 		"mime_types": dbus.MakeVariant(mimes),
 	}).Err
 }
@@ -148,8 +164,79 @@ func (c *clipboard) serve(transfer <-chan *dbus.Signal) {
 		}
 		mime, _ := sig.Body[1].(string)
 		serial, _ := sig.Body[2].(uint32)
+		c.countRead()
 		ok := c.write(serial, mime) == nil
 		c.s.p.obj.Call(ifaceClipboard+".SelectionWriteDone", 0, c.s.handle, serial, ok)
+	}
+}
+
+// countRead counts one request to read what the agent offers, and wakes
+// whoever waits for one.
+func (c *clipboard) countRead() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.served++
+	if c.servedNow != nil {
+		close(c.servedNow)
+	}
+	c.servedNow = make(chan struct{})
+}
+
+// reads is how many requests to read the agent's offers there have been.
+func (c *clipboard) reads() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.served
+}
+
+// awaitRead waits up to d for a read after the first n, and reports
+// whether one came.
+func (c *clipboard) awaitRead(ctx context.Context, n uint64, d time.Duration) (bool, error) {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	_, read, err := c.readsAfter(ctx, n, t.C)
+	return read, err
+}
+
+// awaitQuiet waits up to first for a read after the first n and, once
+// reads come, until none has come for quiet. It returns the count then.
+func (c *clipboard) awaitQuiet(ctx context.Context, n uint64, first, quiet time.Duration) (uint64, error) {
+	t := time.NewTimer(first)
+	defer t.Stop()
+	for {
+		now, read, err := c.readsAfter(ctx, n, t.C)
+		if err != nil || !read {
+			return now, err
+		}
+		n = now
+		t.Reset(quiet)
+	}
+}
+
+// readsAfter waits for a read after the first n or for timeout, and
+// returns the count and whether it grew.
+func (c *clipboard) readsAfter(ctx context.Context, n uint64, timeout <-chan time.Time) (uint64, bool, error) {
+	for {
+		c.mu.Lock()
+		served := c.served
+		if c.servedNow == nil {
+			c.servedNow = make(chan struct{})
+		}
+		next := c.servedNow
+		c.mu.Unlock()
+		if served > n {
+			return served, true, nil
+		}
+		if c.waiting != nil {
+			c.waiting()
+		}
+		select {
+		case <-next:
+		case <-timeout:
+			return served, false, nil
+		case <-ctx.Done():
+			return served, false, ctx.Err()
+		}
 	}
 }
 

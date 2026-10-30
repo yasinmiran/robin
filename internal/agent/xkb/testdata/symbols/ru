@@ -1,0 +1,41 @@
+// Cut down from xkeyboard-config's symbols/ru for the tests.
+# The real files keep comments like these too.
+default partial alphanumeric_keys
+xkb_symbols "winkeys" {
+    include "ru(common)"
+    name[Group1]= "Russian";
+    key <AE03> { [ 3, numerosign ] };
+};
+
+hidden partial alphanumeric_keys
+xkb_symbols "common" {
+    name[Group1]= "Russian (common)";
+    key <AE01> { [ 1, exclam ] };
+    key <AE02> { [ 2, quotedbl ] };
+    key <AE03> { [ 3, numbersign ] };
+    key <AD01> { [ Cyrillic_shorti, Cyrillic_SHORTI ] };
+    key <AC01> { [ Cyrillic_ef, Cyrillic_EF ] };
+    key <AB04> { [ Cyrillic_em, Cyrillic_EM ] };
+    key <AB10> { [ period, comma ] };
+};
+
+// Latin keys overlaid on the Russian ones by augmenting: the Cyrillic
+// stay where they are.
+partial alphanumeric_keys
+xkb_symbols "under" {
+    include "ru(common)"
+    augment "latin"
+};
+
+// Latin keys that NoSymbol and any leave alone.
+partial alphanumeric_keys
+xkb_symbols "kept" {
+    include "latin"
+    key <AC01> { [ NoSymbol, any, Cyrillic_ef ] };
+};
+
+// The same, as one include whose | augments.
+partial alphanumeric_keys
+xkb_symbols "piped" {
+    include "ru(common)|latin"
+};

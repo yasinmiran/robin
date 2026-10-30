@@ -143,7 +143,7 @@ On X11 everything is pure Go through the X protocol, with no libX11 and no cgo o
 
 In the page, the keyboard's focus rests in a hidden text box, so text an input method composes (CJK, or an accent built from a dead key) goes to the desktop once it is committed, and shows under the status tab while it is being composed. Text from an input method, a soft keyboard, Type clipboard or a macro is typed in order, behind the keys before it.
 
-On Wayland the portal hands over a PipeWire connection that can see only the shared stream, and `gst-launch-1.0` reads it with that connection as its fd 3, converting to I420, scaling to fit and framing the output for the agent. Input goes back through the portal, with the compositor picking keycodes. The compositor drops a keysym its layout lacks, so text outside ASCII is pasted through the desktop's clipboard instead, and the clipboard gets back what it held about a second later.
+On Wayland the portal hands over a PipeWire connection that can see only the shared stream, and `gst-launch-1.0` reads it with that connection as its fd 3, converting to I420, scaling to fit and framing the output for the agent. Input goes back through the portal, with the compositor picking keycodes. KWin types any keysym. GNOME's mutter drops a keysym its layout lacks and presses one it finds only on a fourth level with neither Shift nor AltGr, so the agent reads the layout from GNOME's input sources and xkeyboard-config, and text with a character mutter cannot reach is pasted through the desktop's clipboard instead, with Ctrl+Shift+V and then Ctrl+V, and the clipboard gets back what it held about a second later.
 
 ## Where the code lives
 

@@ -95,7 +95,7 @@ The restore token that skips the dialog after the first approval is treated as a
 
 ## Typed text
 
-Text from an input method or a soft keyboard, from Type clipboard and from a macro's text steps types what keys could type: through spare keycodes on X11 and, on Wayland, as keysyms for ASCII and as a paste for the rest, so one character outside ASCII sends the whole text that way. That paste puts the text on the desktop's clipboard for about a second, where any program on the desktop can read it, before the clipboard gets back what it held: what was copied on the desktop or set from the page during the session, in each format the agent reads, or the text that was there before it; where the agent knows of nothing there, it gets empty text. A clipboard manager there reads the paste as it would any copy and keeps it in its history.
+Text from an input method or a soft keyboard, from Type clipboard and from a macro's text steps types what keys could type: through spare keycodes on X11, as keysyms on KDE Plasma, whose KWin types any keysym, and on GNOME as keysyms for ASCII the host's layout has and as a paste for the rest, so one character the layout lacks sends the whole text that way. That paste puts the text on the desktop's clipboard for about a second, where any program on the desktop can read it, and presses Ctrl+Shift+V, then Ctrl+V if nothing read it, before the clipboard gets back what it held: what was copied on the desktop or set from the page during the session, in each format the agent reads, or what was there before it, read as text, HTML and PNG; where the agent knows of nothing there, it gets empty text. A clipboard manager there reads the paste as it would any copy and keeps it in its history.
 
 ## Files and the clipboard
 

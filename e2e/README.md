@@ -256,20 +256,24 @@ picture on a frame. In order:
 7. **Clipboard**: `robin.sendClipboard()` text is what the probe window
    reads from the session's clipboard, and text it puts there shows up in
    `robin.lastRemoteClipboard`, both through the portal.
-8. **Sound**: noise played into the session's PipeWire raises Chrome's
+8. **Text**: what an input method commits, through Chrome's
+   `Input.insertText`, arrives whole: `robin ok!` as keys with no paste,
+   `日本語ü` as one paste, and a second and a half later the session's
+   clipboard holds what the probe window copied before.
+9. **Sound**: noise played into the session's PipeWire raises Chrome's
    `totalAudioEnergy` once the speaker is on.
-9. **Microphone** (the CLI runs with `--mic --camera` here too): the agent's
-   PipeWire source, `robin-mic-<pid>`, records silence through
-   pipewire-pulse until the switch goes on, then the page's tone.
-10. **Camera**: its node, `robin-camera-<pid>`, read with `pipewiresrc`,
-   shows black, then the page's red within a few levels once switched on,
-   then black again once off. Neither switch changes the page's local
-   description.
-11. **Teardown**: SIGINT ends the CLI with exit 0 within 10 s; then no agent,
-   `gst-launch-1.0`, portal session, mutter remote desktop or screencast
-   session, or microphone or camera node is left, mutter still runs, and
-   the restore token beside the agent is mode 600.
-12. **Restore**: a second CLI run reaches Ready with no consent notice, its
+10. **Microphone** (the CLI runs with `--mic --camera` here too): the agent's
+    PipeWire source, `robin-mic-<pid>`, records silence through
+    pipewire-pulse until the switch goes on, then the page's tone.
+11. **Camera**: its node, `robin-camera-<pid>`, read with `pipewiresrc`,
+    shows black, then the page's red within a few levels once switched on,
+    then black again once off. Neither switch changes the page's local
+    description.
+12. **Teardown**: SIGINT ends the CLI with exit 0 within 10 s; then no agent,
+    `gst-launch-1.0`, portal session, mutter remote desktop or screencast
+    session, or microphone or camera node is left, mutter still runs, and
+    the restore token beside the agent is mode 600.
+13. **Restore**: a second CLI run reaches Ready with no consent notice, its
     frames decode and change, and it leaves nothing behind either.
 
 The `firefox` and `webkit` scenarios run `tests/gui.spec.ts` against the
