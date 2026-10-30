@@ -2,7 +2,7 @@
 title: Attaching to Wayland
 description: Streaming a GNOME or KDE Plasma session through the screen sharing portal, the consent dialog, the restore token, and what differs from X11.
 section: Use
-order: 3
+order: 4
 ---
 
 ```sh
@@ -22,7 +22,7 @@ The first session brings up a dialog on the host's own screen, and someone sitti
 robin: approve the screen sharing request on workstation's screen, with remote interaction allowed (GNOME: switch on Allow Remote Interaction, then Share; KDE Plasma: Approve). Waiting up to 2m0s. Once approved, later sessions start without asking.
 ```
 
-- **GNOME**: switch on **Allow Remote Interaction** before pressing **Share**. Without it the session is view only, and the CLI tells you so: your keyboard and mouse do nothing there, and to take control you end the session, run it again and allow remote interaction in the dialog.
+- **GNOME**: switch on **Allow Remote Interaction** before pressing **Share**. Without it the session is view only, and the CLI tells you so: the page shows the screen and still trades the clipboard both ways and takes the files the host offers, but sends no keys, pointer or uploads. To take control you end the session, run it again and allow remote interaction in the dialog.
 - **KDE Plasma** asks once for both the picture and the input, and **Approve** grants them together. There is no view-only grant on KDE.
 
 The wait is two minutes. If you stop the CLI while the dialog is up, the agent withdraws the request, which closes the dialog too.
@@ -57,11 +57,17 @@ Sound comes along as it does on X11, recorded from PipeWire's PulseAudio server 
 
 **One monitor, at its own size.** An attached Wayland desktop shows the monitor picked in the sharing dialog, so `--monitor` does not apply. A screen larger than `--max-size` is scaled down, and a scaled (HiDPI) screen streams at its logical size, so text is softer than on the host.
 
+**No sharp text.** The portal hands the agent its frames already at 4:2:0, so the sharp text switch is greyed out with the reason under it.
+
 **The pointer is in the picture.** Cursor metadata cannot be passed through `gst-launch-1.0`, so the pointer is drawn into the video. It moves at the video's pace, a round trip behind your hand, and the browser hides its own pointer over the picture.
 
-**Characters only type if the host's layout has them.** Printable characters go to the compositor as keysyms and the compositor picks the keycode. A keysym missing from the active layout is dropped, and a Wayland client cannot add one to the compositor's keymap the way the X11 path binds a spare keycode. Paste such text through the clipboard instead.
+**Characters only type if the host's layout has them.** Printable characters go to the compositor as keysyms and the compositor picks the keycode. A keysym missing from the active layout is dropped, and a Wayland client cannot add one to the compositor's keymap the way the X11 path binds a spare keycode.
+
+**Text outside ASCII is pasted.** Text from an input method, a soft keyboard, Type clipboard or a macro goes in as keysyms when it is all ASCII. One character outside ASCII sends the whole text as a paste with Ctrl+V instead: the agent puts it on the desktop's clipboard for about a second, where any program on the desktop can read it and a clipboard manager may keep it, then gives the clipboard back what it held. So it lands wherever Ctrl+V pastes, which is not a terminal (they paste with Ctrl+Shift+V) and not a lock screen.
 
 **Held keys repeat at the host's rate.** The browser's repeats are not sent, since Wayland clients repeat held keys themselves. A held key during a network stall keeps repeating on the host until the key-up gets through.
+
+**The curtain works on GNOME only.** On GNOME the curtain zeroes the screens' gamma through mutter; KDE Plasma gives programs no way to set gamma, so there the switch is missing and `--curtain` fails with the reason. The silent room works on both. See [A private session](/private-session).
 
 **GNOME drops the first key event of each remote session**, and now and then the first pointer event. The agent spends both on input that does nothing, so you should not notice, but it is why mutter logs `No keycode found for keyval ffffff` when a session starts.
 

@@ -2,7 +2,7 @@
 title: Attaching to X11
 description: Streaming the X11 desktop you are already logged in to, how Robin finds it and its cookie, monitors, and how the desktop is left as it was found.
 section: Use
-order: 2
+order: 3
 ---
 
 ```sh
@@ -11,6 +11,8 @@ robin gui --attach :1 workstation     # a display you name
 ```
 
 With `--attach`, nothing new is started on the host. The agent opens one X connection to a display that is already running, usually the one you are logged in to at the machine, and the session ends when that connection does, from either side. The host needs nothing installed beyond the desktop itself.
+
+An attached desktop is not kept after a dropped connection by default, since nothing of yours would be lost: `--keep` defaults to 0 here. Name a `--keep` and it is kept like a spawned one (see [Kept sessions](/sessions)).
 
 ## Which display `auto` picks
 
@@ -26,9 +28,9 @@ Before it sends any cookie, the agent asks the kernel who is listening on the so
 
 ## What the person at the machine sees
 
-The desktop stays shared. Whoever sits at the machine sees the pointer move as you move it, and sees what you type.
+The desktop stays shared. Whoever sits at the machine sees the pointer move as you move it, sees what you type and hears its sound, unless you draw the curtain and silence the room with `--curtain` and `--silent`, or the switches in the status tab (see [A private session](/private-session)). When you attach without them, the CLI says the room can see and hear you.
 
-It also keeps its own resolution, since the size of that desktop belongs to its user. Resizing your browser window scales the picture instead of resizing the screen. A desktop larger than `--max-size` (1920x1080 by default) is scaled down in the stream, and the pointer is mapped back onto the full-size screen, to the desktop pixel under the centre of each video pixel.
+It also keeps its own resolution, since the size of that desktop belongs to its user. Resizing your browser window scales the picture instead of resizing the screen. A desktop larger than `--max-size` (2560x1440 by default, 1920x1080 on hosts with four cores or fewer) is scaled down in the stream, and the pointer is mapped back onto the full-size screen, to the desktop pixel under the centre of each video pixel. Scaled text is soft, which is what [sharp text](/using#sharp-text-and-actual-size) is for: it draws still parts of the screen at the desktop's own size, and actual size shows them pixel for pixel.
 
 The remote pointer's image becomes the page's own cursor, so it changes shape over a text field or a window edge the way it would at the machine.
 
@@ -54,7 +56,7 @@ There is no window per monitor: one browser tab shows one monitor. With `all`, e
 
 ## Left as found
 
-Ending the session closes the agent's X connection and nothing else. Two things the agent changes while it runs are put back:
+Ending the session closes the agent's X connection and nothing else. The curtain's gamma ramps and the silent room's output are given back (see [A private session](/private-session#when-the-session-ends)), and two more things the agent changes while it runs are put back:
 
 - **Autorepeat** goes off at your first key press, for the whole display, so a session that only watches changes nothing. Keys held at the machine itself do not repeat either until the session ends. Afterwards the global switch is restored and the keymap dump is byte-identical to before, including the spare keycodes the agent bound for characters missing from the keymap.
 - **The clipboard.** Text you pasted from the browser is handed to the desktop's clipboard manager at the end, through the freedesktop.org `SAVE_TARGETS` handshake. Without a clipboard manager it goes away, as it does whenever an X client that owns the selection exits.
