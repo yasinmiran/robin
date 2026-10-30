@@ -1,0 +1,44 @@
+---
+title: Verifying a release
+description: Every binary Robin ships is reproducible, so anyone with a clone can rebuild a release and compare its bytes, and how make repro keeps that true.
+section: Reference
+order: 4
+---
+
+Every binary the build ships is reproducible: the same commit, built from any checkout path on any Linux x86_64 machine with the pinned toolchain, gives the same bytes. A shipped `dist/robin-*` can therefore be checked by anyone with a clone, and so can the agent a CLI uploads, since its name on the host is the hash of its content.
+
+## Rebuild and compare
+
+```sh
+git clone https://github.com/yasinmiran/robin && cd robin
+git checkout v1.2.3
+make dist VERSION=v1.2.3
+sha256sum dist/*
+```
+
+Compare the sums with the published ones. `make dist` builds the CLI for every client platform, each with every agent embedded (see [Install and build](/install)), so matching sums vouch for the agents inside as well.
+
+## What makes the bytes match
+
+- **Pinned downloads.** The build downloads the pinned zig, openh264 and libopus by hash.
+- **One Go.** The Makefile exports the Go toolchain `go.mod` names as `GOTOOLCHAIN`, so `go` fetches and uses that release whatever is installed; a build by any other Go fails.
+- **The version string.** `make dist` takes a `VERSION`, or a commit at a release tag. The string is linked into every binary, so a clone that would describe the commit differently (a shallow one without the tag, say), or a tree with local changes, which `git describe` marks `-dirty`, cannot match.
+- **No builder settings.** The builder's Go environment is pinned too (`GOENV=off`, `GOFLAGS`, `GOEXPERIMENT`, `GOAMD64`, `GOARM64`), and the library builds drop `CFLAGS`, `LDFLAGS` and the rest of the environment's compiler flags, so what is saved with `go env -w` or exported in a shell does not reach a binary.
+
+## The check that keeps it true
+
+```sh
+make repro                       # builds everything twice and compares
+REPRO_TOOLCHAIN=1 make repro     # also rebuilds openh264 and libopus for the copy
+REPRO_SELFTEST=1 make repro      # proves the comparison notices a difference
+```
+
+`make repro` builds the agents, the CLI and `dist/` from the checkout, then again from a copy of the tree in a temp directory outside any repository, with its own home, temp directory, Go build cache and zig, and fails on the first byte that differs, with the `strings` of both for a start on finding the cause.
+
+`REPRO_TOOLCHAIN=1` also rebuilds openh264 and libopus for the copy, sharing only the downloads, which checks the C side from source and takes a few minutes longer; that is the mode a release is verified with. `REPRO_SELFTEST=1` builds the copy with another `VERSION` and passes only when the comparison notices, so the check is known not to be vacuous.
+
+`make test-agents`, which `make check` and `make repro` run, builds the agents and scans them for the checkout, the toolchain cache, the home directory, Go's own directories, a Go other than the pinned one and any build setting the Makefile does not set. `make test` runs the same test but skips it when no agents have been built, so it stays free of the toolchain.
+
+<Callout type="note" title="Building on macOS.">
+macOS as a build host is expected to produce the same bytes, since zig carries its own libc and the Go side is pure, but that has not yet been verified against a Linux build.
+</Callout>
