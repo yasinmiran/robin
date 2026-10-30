@@ -61,10 +61,13 @@ func TestCyrillicLayoutHasNoLatin(t *testing.T) {
 }
 
 func TestMerging(t *testing.T) {
-	// Augmenting fills only keys without symbols.
-	under := load(t, "ru+under")
-	if under.Latin() || !under.Has('w') || under.Has('q') || under.Has('a') || under.Has('v') {
-		t.Errorf("ru(under): missing %q", missing(under))
+	// Augmenting fills only keys without symbols, and so does a | in an
+	// include.
+	for _, id := range []string{"ru+under", "ru+piped"} {
+		under := load(t, id)
+		if under.Latin() || !under.Has('w') || under.Has('q') || under.Has('a') || under.Has('v') {
+			t.Errorf("%s: missing %q", id, missing(under))
+		}
 	}
 	// NoSymbol and any leave a level as it was.
 	if kept := load(t, "ru+kept"); !kept.Latin() || !kept.syms["Cyrillic_ef"] {
@@ -194,6 +197,7 @@ func TestParseErrors(t *testing.T) {
 		`xkb_symbols "a" { key <AC01> { [ a ]`:                          "no closing brace",
 		`xkb_symbols "a" { key <AC01> { [ S( ] }; };`:                   `no ")"`,
 		`xkb_symbols "a" { key <AC01> { t[G1 = "x" }; };`:               `want "]"`,
+		`xkb_symbols "a" { name[Group1 = "x"; };`:                       `want "]"`,
 		`xkb_symbols "a" { key <AC01> { actions[Group1] = [ S(x) }; };`: "no closing bracket",
 	} {
 		if _, err := parse(src); err == nil || !strings.Contains(err.Error(), want) {
@@ -223,8 +227,11 @@ func TestParseSource(t *testing.T) {
 }
 
 func TestSplitInclude(t *testing.T) {
-	got := splitInclude("pc+us(basic):2|inet(evdev)")
-	want := []includePart{{"pc", 1}, {"us(basic)", 2}, {"inet(evdev)", 1}}
+	got := splitInclude("pc+us(basic):2|inet(evdev)+ru:x|latin", modeAugment)
+	want := []includePart{
+		{"pc", 1, modeAugment}, {"us(basic)", 2, modeOverride}, {"inet(evdev)", 1, modeAugment},
+		{"latin", 1, modeAugment},
+	}
 	if !slices.Equal(got, want) {
 		t.Errorf("splitInclude = %v, want %v", got, want)
 	}

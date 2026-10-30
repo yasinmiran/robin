@@ -166,7 +166,11 @@ func (p *parser) body() ([]stmt, error) {
 			}
 			stmts = append(stmts, s)
 		case "name":
-			if s, ok := p.groupName(); ok {
+			s, ok, err := p.groupName()
+			if err != nil {
+				return nil, err
+			}
+			if ok {
 				stmts = append(stmts, s)
 			}
 		default:
@@ -178,12 +182,14 @@ func (p *parser) body() ([]stmt, error) {
 }
 
 // groupName reads `[Group1] = "Name";`; a name of another group is skipped.
-func (p *parser) groupName() (stmt, bool) {
+func (p *parser) groupName() (stmt, bool, error) {
 	var group string
 	if p.peek().text == "[" {
 		p.next()
 		group = p.next().text
-		p.next() // ]
+		if err := p.expect("]"); err != nil {
+			return stmt{}, false, err
+		}
 	}
 	if p.peek().text == "=" {
 		p.next()
@@ -191,9 +197,9 @@ func (p *parser) groupName() (stmt, bool) {
 	name := p.next()
 	p.skip()
 	if !name.quoted || !strings.EqualFold(group, "Group1") {
-		return stmt{}, false
+		return stmt{}, false, nil
 	}
-	return stmt{name: name.text}, true
+	return stmt{name: name.text}, true, nil
 }
 
 // key reads `<NAME> { ... };` for the first group's symbols.

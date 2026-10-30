@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -140,12 +141,12 @@ func (r *reader) apply(keys map[string][]string, file, variant string, m mode, d
 	for _, s := range sec.stmts {
 		switch {
 		case s.include != "":
-			for _, part := range splitInclude(s.include) {
+			for _, part := range splitInclude(s.include, s.mode) {
 				f, v := ParseSource(part.ref)
-				if part.group > 1 {
+				if part.group != 1 {
 					continue
 				}
-				mm := s.mode
+				mm := part.mode
 				if m == modeAugment {
 					mm = modeAugment
 				}
@@ -231,21 +232,39 @@ func (r *reader) load(file string) ([]section, error) {
 type includePart struct {
 	ref   string
 	group int
+	mode  mode
 }
 
 // splitInclude splits an include such as "pc+us(basic):2|inet(evdev)" into
-// its files, each with the group it is put in (1 unless named).
-func splitInclude(s string) []includePart {
+// its files, each with the group it is put in (1 unless named) and how it
+// merges: the first as the statement does, one after a + by overriding and
+// one after a | by augmenting. A part whose group is not a number is left
+// out.
+func splitInclude(s string, first mode) []includePart {
 	var parts []includePart
-	for _, p := range strings.FieldsFunc(s, func(r rune) bool { return r == '+' || r == '|' }) {
-		ref, g, _ := strings.Cut(p, ":")
-		group := 1
-		if g != "" {
-			fmt.Sscan(g, &group)
+	for m := first; ; {
+		end := strings.IndexAny(s, "+|")
+		part := s
+		if end >= 0 {
+			part = s[:end]
 		}
-		parts = append(parts, includePart{ref: ref, group: group})
+		ref, g, named := strings.Cut(part, ":")
+		group, err := 1, error(nil)
+		if named {
+			group, err = strconv.Atoi(g)
+		}
+		if ref != "" && err == nil {
+			parts = append(parts, includePart{ref: ref, group: group, mode: m})
+		}
+		if end < 0 {
+			return parts
+		}
+		m = modeOverride
+		if s[end] == '|' {
+			m = modeAugment
+		}
+		s = s[end+1:]
 	}
-	return parts
 }
 
 // asciiNames are the keysym names of the printable ASCII characters that
