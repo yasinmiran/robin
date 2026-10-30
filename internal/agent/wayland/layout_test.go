@@ -3,6 +3,7 @@
 package wayland
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -314,15 +315,25 @@ func TestFollowKeyboardWithoutABus(t *testing.T) {
 	}
 }
 
-func TestTypesAnyKeysym(t *testing.T) {
+func TestSessionCompositor(t *testing.T) {
 	conn := privateBus(t)
-	if typesAnyKeysym(conn) {
-		t.Error("a bus without KWin types any keysym")
+	if got := sessionCompositor(t.Context(), conn.BusObject()); got != compositorOther {
+		t.Errorf("a bus without a compositor's names: %v", got)
 	}
-	if reply, err := conn.RequestName("org.kde.KWin", dbus.NameFlagDoNotQueue); err != nil || reply != dbus.RequestNameReplyPrimaryOwner {
-		t.Fatalf("RequestName: %v, %v", reply, err)
+	for _, n := range []struct {
+		name string
+		want compositor
+	}{{"org.gnome.Mutter.RemoteDesktop", compositorMutter}, {"org.kde.KWin", compositorKWin}} {
+		if reply, err := conn.RequestName(n.name, dbus.NameFlagDoNotQueue); err != nil || reply != dbus.RequestNameReplyPrimaryOwner {
+			t.Fatalf("RequestName %s: %v, %v", n.name, reply, err)
+		}
+		if got := sessionCompositor(t.Context(), conn.BusObject()); got != n.want {
+			t.Errorf("with %s: %v, want %v", n.name, got, n.want)
+		}
 	}
-	if !typesAnyKeysym(conn) {
-		t.Error("KWin's bus does not type any keysym")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if got := sessionCompositor(ctx, conn.BusObject()); got != compositorOther {
+		t.Errorf("a bus that does not answer: %v", got)
 	}
 }

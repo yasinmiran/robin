@@ -64,7 +64,7 @@ type Desktop struct {
 	// anyKeysym says the compositor types a keysym its layout lacks, as
 	// KWin does, so text needs no paste.
 	anyKeysym bool
-	// kb follows the layout where the compositor types only what that
+	// kb follows the layout under mutter, which types only what that
 	// layout has; nil elsewhere, and under a view-only grant.
 	kb *keyboard
 
@@ -124,9 +124,14 @@ func Open(ctx context.Context, o Options) (_ *Desktop, err error) {
 	if err := d.in.warmUp(); err != nil {
 		return nil, fmt.Errorf("input: %w", err)
 	}
-	if d.anyKeysym = typesAnyKeysym(conn); !d.anyKeysym && !d.in.viewOnly {
-		d.kb = followKeyboard(p.sigs, o.Log)
-		d.in.kb = d.kb
+	switch sessionCompositor(ctx, conn.BusObject()) {
+	case compositorKWin:
+		d.anyKeysym = true
+	case compositorMutter:
+		if !d.in.viewOnly {
+			d.kb = followKeyboard(p.sigs, o.Log)
+			d.in.kb = d.kb
+		}
 	}
 	if d.sess.clipboard {
 		if d.clip, err = newClipboard(d.sess, o.Log); err != nil {
@@ -179,13 +184,39 @@ func grant(ctx context.Context, p *portal, o Options) (*portalSession, error) {
 	}
 }
 
-// typesAnyKeysym reports whether the session's compositor is KWin, which
-// types a keysym its layout lacks where mutter drops it. Measured on KDE
-// Plasma 6.7, GNOME 46 and GNOME 49.
-func typesAnyKeysym(conn *dbus.Conn) bool {
-	var owned bool
-	err := conn.BusObject().Call("org.freedesktop.DBus.NameHasOwner", 0, "org.kde.KWin").Store(&owned)
-	return err == nil && owned
+// compositor is the session's compositor, as far as typing tells them
+// apart.
+type compositor int
+
+const (
+	compositorOther compositor = iota
+	// compositorMutter types a keysym only if its layout has it, and
+	// takes the layout GNOME Shell applies from GNOME's input sources.
+	compositorMutter
+	// compositorKWin types any keysym, its layout's or not.
+	compositorKWin
+)
+
+// compositorNames are the bus names the compositors own, by which the
+// agent tells them apart. Measured on KDE Plasma 6.7, GNOME 46 and GNOME 49.
+var compositorNames = []struct {
+	name string
+	c    compositor
+}{
+	{"org.kde.KWin", compositorKWin},
+	{"org.gnome.Mutter.RemoteDesktop", compositorMutter},
+}
+
+// sessionCompositor names the compositor by the names it owns on bus, the
+// session bus's own object.
+func sessionCompositor(ctx context.Context, bus dbus.BusObject) compositor {
+	for _, n := range compositorNames {
+		var owned bool
+		if err := bus.CallWithContext(ctx, "org.freedesktop.DBus.NameHasOwner", 0, n.name).Store(&owned); err == nil && owned {
+			return n.c
+		}
+	}
+	return compositorOther
 }
 
 // watch reports the desktop gone when the portal ends the session, as the
