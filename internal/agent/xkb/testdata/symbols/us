@@ -1,0 +1,40 @@
+// Cut down from xkeyboard-config's symbols/us for the tests.
+default partial alphanumeric_keys modifier_keys
+xkb_symbols "basic" {
+    name[Group1]= "English (US)";
+    include "latin"
+};
+
+partial alphanumeric_keys
+xkb_symbols "intl" {
+    include "us(basic)"
+    name[Group1]= "English (US, intl., with dead keys)";
+    key <TLDE> { [ dead_grave, dead_tilde, grave, asciitilde ] };
+    key <AE06> { [ 6, dead_circumflex, onequarter, asciicircum ] };
+    key <AC11> { [ dead_acute, dead_diaeresis, apostrophe, quotedbl ] };
+};
+
+// Every way a key can be written, and keysyms given by their codes.
+partial
+xkb_symbols "forms" {
+    name[Group1] = "Forms";
+    name[Group2] = "Not this one";
+    key.type[Group1] = "FOUR_LEVEL";
+    virtual_modifiers NumLock;
+    modifier_map Mod1 { <LALT>, <META> };
+    key <AC01> { type[Group1] = "TWO_LEVEL", symbols[Group1] = [ U0061, U0041 ], actions[Group1] = [ SetMods(modifiers=Shift), NoAction() ] };
+    key <AC02> { [ 0x1000073, 0x53 ], [ Cyrillic_yeru, Cyrillic_YERU ] };
+    key <AC03> { symbols[Group2] = [ d, D ], [ Cyrillic_ve ] };
+    key <AC04> { [ { f, F }, uFFFF ] };
+    key <AC05> { vmods = NumLock, [ g, G ], "ignored" };
+    override key <AC06> { [ h, H ] };
+    replace key <AC07> { [ j, J ] };
+    augment key <AC06> { [ Cyrillic_er, Cyrillic_ER ] };
+    include "latin(basic):2"
+};
+
+// A layout whose include names a file in a directory of symbols.
+partial
+xkb_symbols "vendor" {
+    include "vndr/us(extra)"
+};

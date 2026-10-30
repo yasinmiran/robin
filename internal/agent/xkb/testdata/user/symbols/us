@@ -1,0 +1,6 @@
+// A layout of the user's own, which comes before the system's.
+default partial
+xkb_symbols "basic" {
+    name[Group1]= "Mine";
+    key <AC01> { [ a, A ] };
+};
