@@ -241,6 +241,24 @@ func TestKeyboardFollowsTheSource(t *testing.T) {
 	}
 }
 
+// TestKeyboardLatinless: only a layout known to type none of a to z is
+// latinless; a nil keyboard knows of no layout at all.
+func TestKeyboardLatinless(t *testing.T) {
+	var none *keyboard
+	if none.lacks('a') || none.latinless() {
+		t.Error("a nil keyboard knows of a layout")
+	}
+	source, serr := "ru", error(nil)
+	k := testKeyboard(t, &source, &serr)
+	for id, want := range map[string]bool{"ru": true, "us": false, "nosuchlayout": false} {
+		source = id
+		k.update(t.Context())
+		if got := k.latinless(); got != want {
+			t.Errorf("%s: latinless %v, want %v", id, got, want)
+		}
+	}
+}
+
 func TestTypable(t *testing.T) {
 	source, serr := "ru", error(nil)
 	k := testKeyboard(t, &source, &serr)
