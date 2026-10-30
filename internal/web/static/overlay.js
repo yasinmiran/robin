@@ -3,6 +3,7 @@
 // the pointer is a finger, which hovers nowhere, it stays out.
 
 import { touchFirst } from './device.js';
+import { shown } from './hosttext.js';
 
 const TUCK_AFTER_MS = 2500;
 const REVEAL_ZONE_PX = 48;
@@ -116,11 +117,11 @@ export class Overlay {
     }
     const all = boundsOf(list);
     const current = list.find((m) => m.name === ms.current);
-    this.#monitorButton.querySelector('.label').textContent = current ? current.name : 'All monitors';
+    this.#monitorButton.querySelector('.label').textContent = current ? shown(current.name) : 'All monitors';
     this.#monitorButton.title = current
-      ? `Showing ${current.name}, ${current.w} × ${current.h}. Choose another monitor`
+      ? `Showing ${shown(current.name)}, ${current.w} × ${current.h}. Choose another monitor`
       : `Showing all monitors, ${all.w} × ${all.h}. Choose one monitor`;
-    const items = list.map((m) => menuItem(m.name, m.name, `${m.w} × ${m.h}`, m.primary ? 'primary' : '', m.name === ms.current));
+    const items = list.map((m) => menuItem(m.name, shown(m.name), `${m.w} × ${m.h}`, m.primary ? 'primary' : '', m.name === ms.current));
     items.push(menuItem('all', 'All monitors', `${all.w} × ${all.h}`, '', !current));
     for (const item of items) {
       item.addEventListener('click', () => {

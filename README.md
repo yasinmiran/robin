@@ -716,7 +716,9 @@ copy and keeps it in its history.
 - **The clipboard**, as text, HTML or a PNG image, up to 16 MiB, held in
   memory, two transfers at a time each way.
 
-File names from the host appear in the page as text, never as markup. Words
+File names from the host appear in the page as text, never as markup, and
+the page shows the invisible marks that reorder text in them, and in monitor
+names, as escapes, as the CLI does, so a name cannot read as another. Words
 from the page that reach a terminal on the host, a refusal's reason printed by
 `robin-send`, have their control characters replaced first, and a file name it
 prints that holds any, or a mark that reorders text, is printed quoted with

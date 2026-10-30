@@ -1174,6 +1174,17 @@ went. The page lists at most 256 files on offer, the agent's own
 oldest still waiting for a click on Save goes, so a host that offered
 without end grows neither the list nor the redraw.
 
+**Names from the host.** File names, the names uploads were kept under,
+transfer errors and monitor names go in as text, never markup, but the
+browser still applies a bidi mark in them: `invoice<U+202E>fdp.exe` read as
+`invoiceexe.pdf` beside Save. An honest agent's `files.CheckName` refuses
+such a name, so only a hostile agent could send one, and the browser saves
+under the real name either way. `hosttext.js` now shows those characters
+as escapes, the set `runes.ReordersText` names and the CLI escapes (a Go
+test holds the two to one set), and a file's name sits in `dir=auto` so
+right-to-left letters in it cannot reorder the row around it. The download
+keeps the name as sent, for the browser to clean.
+
 ### Reproducible release binaries
 
 The CLI names the agent on the host after the SHA-256 of its content, and
