@@ -20,7 +20,7 @@ Whatever drives the page drives the remote desktop, so it is fenced in on every 
 - Every request must carry the listener's exact `Host`, and the websocket must come from the page's exact `Origin`.
 - One browser at a time. A second connection is refused until the first closes.
 
-Input from the page is limited to what a keyboard, a pointer and a clipboard can do in that session.
+The page can do on the host what a keyboard, a pointer and a clipboard can do in that session, give it the sound and picture of a microphone or camera you switched on (with `--mic` or `--camera`), flip the two switches of a private session on an attached desktop, say two words about the session itself (End session, which the CLI carries out as it does Ctrl+C, and Disconnect, keep desktop, which leaves the desktop for `--keep`), and move files, within the bounds under [Files and the clipboard](#files-and-the-clipboard). A view-only Wayland grant takes the keyboard, the pointer and uploads away, and leaves the clipboard and the files the host offers.
 
 On your own computer the page can ask the CLI to write one file, your [macros](/macros), and nothing else. It names no path; the CLI writes `macros.json` in your config directory. The page asks for one change at a time, to add, replace or delete one macro, and the CLI checks it against the file's rules before it writes: names of up to 64 bytes, 1 to 100 steps of a chord of up to 8 keys, up to 16 KiB of text or a pause of up to 60 s, and at most 100 macros and 256 KiB in all. It refuses every change while the file does not read, and writes the whole file anew through a rename, 0600 in a 0700 directory, under a lock on `macros.json.lock` from read to rename. On Linux and macOS it reads the file through one open that follows no link, and takes it only as a regular file of yours that group and others cannot write; the directory has to be yours, and no link, before it is made 0700. New macros are pinned to the host they were made for. A macro pinned to another host is out of the page's reach. Within that, whatever drives the page can read, play, replace or delete this host's macros and the unpinned ones, text included.
 
@@ -29,6 +29,7 @@ What a page can make the agent hold is bounded too, so even a compromised one ca
 - One control channel at a time; a second closes the first.
 - A file or clipboard channel must send its header within 10 seconds, and no more than 8 may wait for one at once.
 - Media only on the microphone and camera lines the session asked for. The answer turns down every other line the page adds, and what it sends on the agent's own video or sound line is read and dropped.
+- Bulk transfers of any kind the agent has not registered are refused.
 - At most 256 ICE candidates per ICE restart, and none at the host's loopback or a link-local address. The agent never asks the host's network to resolve a `.local` name and never connects out over TCP, and it refuses an offer whose sections disagree on their ICE credentials or whose credentials hold anything but the letters, digits, `+` and `/` RFC 8839 allows. So the most the page can aim at other addresses is ICE's own connectivity checks over UDP, carrying only those credentials.
 
 The page server closes a connection that sits idle for 30 seconds or sends no request within 2 seconds, and holds at most 32 at once. Past that it makes room for a new connection by closing the oldest one that is idle or has sent nothing, never the page's websocket, so another user of your machine can neither run the CLI out of file descriptors nor keep your browser waiting behind connections they hold.
@@ -37,12 +38,19 @@ The page server closes a connection that sits idle for 30 seconds or sends no re
 
 Other users of your machine can read your processes' command lines and connect to any loopback port, so nothing the CLI puts on a command line lets them in.
 
-- To open your browser, the CLI hands `open`, `xdg-open` or their kin a launch link, not the page URL. The link holds a second random secret and sends the browser on to the page with its token once; after that it is not found.
-- The ICE-TCP tunnel's loopback port passes a connection on into SSH only once its first message, within 5 seconds, is a connectivity check signed with the ICE password of the agent's latest answer, which only the page has seen. Anything else is closed before an SSH channel is opened for it, and at most 16 connections wait for that check at once: past that the oldest is closed, so silent connections cannot run the CLI out of file descriptors. The forward behind it goes only to a loopback address and port on the host, as the agent's listener has; any other target the agent names is refused, so the host cannot have `ssh` expand `${VAR}` in it from your environment.
+- The browser gets a launch link, not the page URL. The link holds a second random secret and sends the browser on to the page with its token once; after that it is not found.
+- To open your browser, the CLI hands `open`, `xdg-open`, `rundll32` on Windows or `termux-open-url` on Android that link. An opener that fails to start has the page URL printed on stderr instead.
+- The ICE-TCP tunnel's loopback port passes a connection on into SSH only once its first message, within 5 seconds, is a connectivity check signed with the ICE password of the agent's latest answer, which only the page has seen. Anything else is closed before an SSH channel is opened for it, and at most 16 connections wait for that check at once: past that the oldest is closed, so silent connections cannot run the CLI out of file descriptors.
+- Behind that port the SSH forward is a unix socket in a private directory, with ControlMaster or without, except on Windows, whose OpenSSH forwards no unix sockets. There it is a second loopback port, which ssh binds only once it has logged in, and the CLI uses it only once the system's table of listeners shows ssh holding it, so another user who takes the port first gets the tunnel refused, not connected to them.
+- The forward's target comes from the agent and is refused unless it is a loopback address and port, as the agent's listener has, so a host can neither slip other fields into ssh's `-L` nor have ssh expand `${VAR}` in it from your environment.
 
 <Callout type="warning" title="Shared client.">
 A browser the opener starts keeps the launch link on its command line for as long as it runs. Someone who reads it and opens it before your browser does gets the page: your browser shows Not Found and the CLI says on stderr that the link was opened again, so end the session with Ctrl+C. The CLI also says when a browser first opens the page, so a tab of yours still loading after that line means the same. On a shared client, `--no-browser` prints the page URL on stdout and leaves nothing to read.
 </Callout>
+
+## Verifiable builds
+
+Every binary a release ships is reproducible, and the agent's name on the host is the hash of its content, so anyone with a clone can check that what runs on the host and on your machine is what the source says. See [Verifying a release](/verifying-a-release).
 
 ## STUN tells a server where you are
 
@@ -57,7 +65,25 @@ The browser and the agent each ask the STUN server that `--stun` names, Google's
 - `robin-agent end` and the sweep of old run directories take only a process of yours for a session's daemon.
 - A spawned session's sound server listens only on a socket inside the run directory, with its own cookie.
 - The agent's directory and each session's run directory are 0700. The agent is uploaded, verified by SHA-256 on the host and renamed into place.
-- Everything the agent starts dies with it, through process groups, a parent-death signal and a display watchdog, and its run directory is removed.
+- Everything the agent starts dies with the session's daemon, through process groups, a parent-death signal and a display watchdog, and its run directory is removed.
+
+### Kept sessions
+
+A kept session is reached through a unix socket in its 0700 run directory, and the daemon accepts a connection only from a process of its own uid (`SO_PEERCRED`), one controller at a time. Resuming goes through the same SSH login as starting did, and the daemon keeps its DTLS certificate for its whole life, so the fingerprint the CLI pinned at the start still has to match after a reconnect: anything else answering in the session's place ends it. A fresh `robin gui` that resumes pins the fingerprint of the daemon it finds, trusting SSH and the uid check as the first run did.
+
+While a session is kept, its X server, its sound socket and its loopback ICE-TCP listener stay up in the 0700 run directory for the whole keep window, reachable by anything running as the same user on the host, as they are while a CLI is connected. Another account on the host is turned away at `ctl.sock` and `files.sock` by the run directory and, were it opened up, by the peer check, before a byte it sent is read; its `robin-agent end`, aimed at your session, leaves the session running.
+
+### Microphone and camera
+
+The microphone and camera reach every program that can record on the host as you: your sound server and PipeWire are yours alone, but a v4l2loopback device is readable by whoever its permissions admit, usually the `video` group, so on a shared host the camera's pictures go to them too. Nothing leaves the browser while a switch is off, and the agent never turns one on.
+
+### A private session
+
+A private session changes the attached desktop for as long as it lasts: the gamma of its screens and, with `--silent`, the user's own sound server, which gets an extra output and has the user's programs moved into it. PulseAudio and WirePlumber 0.4 remember those moves, and the undo moves each program back to clear them. A keeper process undoes both if the agent is killed, but not if the keeper is killed along with it; [A private session](/private-session#if-both-are-killed) says how to undo them by hand.
+
+<Callout type="warning" title="The curtain is no lock.">
+Anyone at the machine can type and click while it is drawn, and on GNOME it also blacks out the indicator that says the screen is being shared, which leaves the black screen itself as the only sign. Whatever ends the session, a dropped connection included, lifts the curtain and leaves the desktop unlocked in front of whoever is there. The curtain refuses a desktop with a screen it cannot darken rather than leave that screen lit, but a screen plugged in while it is drawn stays lit, with an error under the switch, and so does a program that refuses to move out of the room's speakers.
+</Callout>
 
 ### Attaching to X11
 
@@ -69,6 +95,18 @@ Robin attaches through xdg-desktop-portal, where the desktop asks the person at 
 
 The restore token that skips the dialog after the first approval is treated as a credential. It lives beside the agent as `wayland-restore-token`, mode 0600, written to a temporary file and renamed into place, under a name the agent's cleanup of old files never touches. A grant without both keyboard and pointer is never kept, so a view-only approval cannot silently make every later session view only.
 
+## Typed text
+
+Text from an input method or a soft keyboard, from Type clipboard and from a macro's text steps types what keys could type: through spare keycodes on X11 and, on Wayland, as keysyms for ASCII and as a paste for the rest, so one character outside ASCII sends the whole text that way. That paste puts the text on the desktop's clipboard for about a second, where any program on the desktop can read it, before the clipboard gets back what it held: what was copied on the desktop or set from the page during the session, in each format the agent reads, or the text that was there before it; where the agent knows of nothing there, it gets empty text. A clipboard manager there reads the paste as it would any copy and keeps it in its history.
+
+## Files and the clipboard
+
+- **Writing files**, into the download folder and nowhere else, and never into your home directory itself, even where xdg-user-dirs names it as the download folder. A name has to be a single path component of UTF-8, at most 255 bytes, not starting with a dot, so an upload can be neither hidden nor a startup file such as `.bash_login`, with no control characters and none of the invisible marks that reorder text. A file pasted into the page goes only once you click its Upload. The bytes go to a new file of a temporary name, opened so that it can be neither an existing file nor a symlink, and the file gets its name only after every byte arrived and the SHA-256 matched, through a rename that fails rather than replace anything. An upload bigger than the free space less 256 MiB is refused before a byte is written, four at most run at once, and one that is cancelled, fails, or is still running when the session ends is removed, unless the disk under it stopped answering (see [Known limits](/known-limits#files)).
+- **Reading files**, only those a program running as you on the host offered with `robin-send`, and only after a click on Save in the page, which takes one transfer for each click. `robin-send` opens each file itself and hands the session its descriptor over a socket in the 0700 run directory, which also checks that the caller's uid is yours, so the page never names a path on the host and the session reads nothing its sender could not. Offers end when `robin-send` exits, and at most 256 files are on offer at once, from every `robin-send` together; past that a request is refused whole.
+- **The clipboard**, as text, HTML or a PNG image, up to 16 MiB, held in memory, two transfers at a time each way.
+
+File names from the host appear in the page as text, never as markup. Words from the page that reach a terminal on the host, a refusal's reason printed by `robin-send`, have their control characters replaced first, and a file name it prints that holds any, or a mark that reorders text, is printed quoted with escapes, as `ls` does. A transfer runs at most 512 KiB ahead of what its receiver has taken, and the page fails one from the agent that runs past that, so a stalled transfer holds back neither the keyboard nor the page's memory.
+
 ## What the page takes from the host
 
 The page holds the host to bounds of its own, rather than trusting the agent to keep to them:
@@ -78,8 +116,10 @@ The page holds the host to bounds of its own, rather than trusting the agent to 
 - The host can withdraw only the files it offered, never your uploads.
 - The page keeps at most 128 pointer images of at most 256 KiB each, and puts nothing from the host into the pointer's CSS but base64 and whole-pixel hot spots.
 
+Sharp text brings pictures of the screen into the page a second way: tile transfers from the agent, taken only while the switch is on, at most 4 MiB each and four at once, open or still being decoded. Each atlas's PNG header must give the size its tiles take, at most 1024x1024, before the browser's own image decoder reads it, and a tile manifest or batch that strays outside its grid drops every tile instead of growing what the page keeps. Tiles are drawn on a canvas and nowhere else; the page sends nothing new because of them but the switch itself.
+
 ## Text from the host
 
-Host text that Robin prints (the agent's log and errors, the probe's findings, and the stderr of the `ssh` connection) leaves through two paths only, and both escape control characters, the invisible marks that reorder text and the Unicode line separators, so a hostile or broken host cannot use that text to retitle your terminal, rewrite what you see in it, or make a path or a command read as another. The CLI keeps at most 1 MiB of what a command on the host prints, so a host cannot fill its memory either. Password, 2FA and host key prompts are ssh's own: `ssh` writes them to the terminal itself, as it does without Robin.
+Host text that Robin prints (the agent's log and errors, the probe's findings, and the stderr of the `ssh` connection) leaves through two paths only, and both escape control characters, the invisible marks that reorder text and the Unicode line separators, so a hostile or broken host cannot use that text to retitle your terminal, rewrite what you see in it, or make a path or a command read as another. The CLI keeps at most 1 MiB of what a command on the host prints, and shows a log line with no end in 8 KiB pieces, so a host cannot fill its memory either. Password, 2FA and host key prompts are ssh's own: `ssh` writes them to the terminal itself, as it does without Robin.
 
 The agent's stdout carries signaling and nothing else. No child process inherits it, so a program started on the desktop cannot write into the control channel.
