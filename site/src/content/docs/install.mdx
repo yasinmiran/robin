@@ -1,6 +1,6 @@
 ---
 title: Install and build
-description: Building the robin CLI and its host agents with make, cross-building for other clients, the pinned toolchain, and what a host needs.
+description: Building the robin CLI and its host agents with make, cross-building for other clients, the pinned toolchain, and what a host and a client need.
 section: Start
 order: 3
 ---
@@ -17,16 +17,18 @@ The first run fetches a pinned zig toolchain and builds openh264 and libopus wit
 make dist
 ```
 
-`make dist` cross-builds the CLI for macOS and Linux on amd64 and arm64, each with every agent embedded:
+`make dist` cross-builds the CLI for macOS, Linux and Windows on amd64 and arm64, each with every agent embedded:
 
 | File | Runs on |
 |---|---|
 | `dist/robin-darwin-arm64` | macOS on Apple silicon |
 | `dist/robin-darwin-amd64` | macOS on Intel |
 | `dist/robin-linux-amd64` | Linux on x86_64 |
-| `dist/robin-linux-arm64` | Linux on arm64 |
+| `dist/robin-linux-arm64` | Linux on arm64, and Android in Termux |
+| `dist/robin-windows-amd64.exe` | Windows 10 or 11 on x86_64 |
+| `dist/robin-windows-arm64.exe` | Windows on arm64 |
 
-`robin version` prints the version the binary was built from, taken from `git describe`.
+A release is a tagged commit: on any other commit `make dist` stops and asks for a version, as in `make dist VERSION=v1.2.3-test`. `robin version` prints the version the binary was built from, taken from `git describe` or that `VERSION`. The build is reproducible, so anyone can rebuild a release and compare its bytes; see [Verifying a release](/verifying-a-release).
 
 ## Two binaries, two toolchains
 
@@ -69,9 +71,11 @@ sudo apt install xvfb openbox xterm
 
 On Enterprise Linux the window manager comes from EPEL, so the printed line starts with `dnf install epel-release`.
 
-No GPU or monitor is needed. The session renders in software, and a light window manager keeps that cheap. Software H.264 at 1080p30 costs one to two cores, which is why hosts with two cores or fewer get a default of 1280x720 at 20 fps.
+No GPU or monitor is needed. The session renders in software, and a light window manager keeps that cheap. Software H.264 at 1080p30 costs one to two cores, which is why hosts with four cores or fewer get a default size of 1920x1080, and hosts with two or fewer 1280x720 at 20 fps.
 
-**Sound in a spawned session** also needs `pulseaudio`. The agent runs a private one for the session; see [Sound](/sound).
+**A kept session** outlives the connection in a daemon of its own process session. Where logind kills user processes on logout (`KillUserProcesses=yes`, not the default), the daemon runs under `systemd-run --user` instead, and the CLI says so when that would still not outlive your last login (it does once `loginctl enable-linger` is on). See [Kept sessions](/sessions#on-the-host).
+
+**Sound in a spawned session** also needs `pulseaudio`. The agent runs a private one for the session; see [Sound](/sound). **A camera** for a spawned desktop needs a v4l2loopback device; see [Microphone and camera](/microphone-and-camera).
 
 **Attaching to a running desktop** needs none of the above, only the desktop. For a Wayland desktop, add GStreamer's tools and plugins:
 
@@ -87,4 +91,4 @@ The agent is copied to `~/.cache/robin`, or `$XDG_RUNTIME_DIR/robin`, or `/tmp/r
 
 ## What the client needs
 
-macOS or Linux, OpenSSH with ControlMaster support (so not the Windows build of OpenSSH), and a browser that decodes H.264 in WebRTC. Which browsers are proven to do what is on [Browsers and clients](/browsers).
+OpenSSH and a browser that decodes H.264 in WebRTC, on macOS, Linux, Windows 10 or 11 (with the OpenSSH client Windows ships), or Android in Termux with its `openssh` package. Which systems and browsers are proven to do what is on [Browsers and clients](/browsers).
