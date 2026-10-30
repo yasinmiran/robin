@@ -46,6 +46,23 @@ wait_for "$XDG_RUNTIME_DIR/pulse/native"
 # A desktop has speakers; this one plays into a null sink.
 pactl load-module module-null-sink sink_name=robin_speakers >/dev/null
 pactl set-default-sink robin_speakers
+# WLTEST_LAYOUT gives mutter a keyboard of that layout with US after it, as
+# GNOME Shell applies input sources: mutter's default plugin takes the
+# layout from localed as it starts, and GNOME's settings name the source.
+if [ -n "${WLTEST_LAYOUT:-}" ] && [ $compositor = mutter ]; then
+	python3 -I "$(dirname "$0")/localed.py" "$WLTEST_LAYOUT,us" >"$LOG/localed.log" 2>&1 &
+	i=0
+	until grep -q ready "$LOG/localed.log"; do
+		i=$((i + 1))
+		if [ $i -gt 100 ]; then
+			echo "session.sh: localed did not start" >&2
+			cat "$LOG/localed.log" >&2
+			exit 1
+		fi
+		sleep 0.1
+	done
+	gsettings set org.gnome.desktop.input-sources sources "[('xkb', '$WLTEST_LAYOUT'), ('xkb', 'us')]"
+fi
 case $compositor in
 mutter) mutter --headless --wayland --no-x11 --virtual-monitor "$SIZE" >"$LOG/compositor.log" 2>&1 & ;;
 kwin) kwin_wayland --virtual --width "${SIZE%x*}" --height "${SIZE#*x}" --no-lockscreen --socket wayland-0 \
