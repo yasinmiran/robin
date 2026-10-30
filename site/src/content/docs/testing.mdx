@@ -5,17 +5,17 @@ section: Design
 order: 2
 ---
 
-```sh
-make test          # unit and integration tests; the encoders against real openh264 and libopus on linux/amd64
-make test-js       # the page's pure modules under node --test (make test runs them too where node is installed)
-make test-x        # capture, input, display, sound server and agent session tests against Xvfb and pulseaudio, in podman
-make test-wayland  # Wayland attach against headless GNOME 46, GNOME 49 and KDE Plasma 6.7, in podman
-make e2e           # the whole thing: podman host, Playwright and Chrome client
-make test-agents   # builds the agents and scans them for anything of the builder
-make check         # test, test-agents, test-x, test-wayland and e2e
-make cover         # every suite again with coverage, merged, checked against coverage-baseline.txt
-make repro         # builds the agents, the CLI and dist twice, from two paths, and compares them
-```
+| Target | What it runs |
+|---|---|
+| `make test` | unit and integration tests; the encoders against real openh264 and libopus on linux/amd64 |
+| `make test-js` | the page's pure modules under `node --test` (`make test` runs them too where node is installed) |
+| `make test-x` | capture, input, display, sound server and agent session tests against Xvfb and pulseaudio, in podman |
+| `make test-wayland` | Wayland attach against headless GNOME 46, GNOME 49 and KDE Plasma 6.7, in podman |
+| `make e2e` | the whole thing: podman host, Playwright and Chrome client |
+| `make test-agents` | builds the agents and scans them for anything of the builder |
+| `make check` | test, test-agents, test-x, test-wayland and e2e |
+| `make cover` | every suite again with coverage, merged, checked against `coverage-baseline.txt` |
+| `make repro` | builds the agents, the CLI and dist twice, from two paths, and compares them |
 
 Containers are rootless podman. Docker is not supported. `make test` alone runs anywhere Go does and skips what needs podman.
 
@@ -25,7 +25,9 @@ Containers are rootless podman. Docker is not supported. `make test` alone runs 
 
 `internal/web` has a Chrome smoke test that runs only when `internal/web/testdata/browser/node_modules` exists; run `npm ci` in that directory to turn it on.
 
-**Congestion control** cannot be shaped in rootless containers, so it is tested here instead, by streaming over a shaped virtual link:
+### Congestion control
+
+A link cannot be shaped in rootless containers, so congestion control is tested here instead, by streaming over a shaped virtual link:
 
 ```sh
 go test ./internal/agent/peer -run Congestion
@@ -33,7 +35,9 @@ go test ./internal/agent/peer -run Congestion
 
 `TestCongestionControlHoldsThroughAStillScreen` holds a shaped link still for 20 s (`ROBIN_FEED_WHILE_LIMITED=1` feeds congestion control as Pion would, to see it fail), and `TestCongestionControlProbesOnTheWayOut` narrows the link while the screen is still and checks that the motion after it finds the narrower link.
 
-**Video quality.** `make test` also streams a 15 s clip of a 1080p screen of small text, still and moving, through the agent's stream loop, peer and openh264 to a stand-in for Chrome's video receiver (`internal/agent/vqtest`), and fails if the browser would have had to ask for a keyframe. It also scrolls, sits still for 20 s with sound playing and scrolls again over a tight link (`TestVideoQualityAfterStill`), and fails when the first second after the still shows under a third of the settled frame rate or went out at under half the settled target. The longer matrix runs by hand:
+### Video quality
+
+`make test` also streams a 15 s clip of a 1080p screen of small text, still and moving, through the agent's stream loop, peer and openh264 to a stand-in for Chrome's video receiver (`internal/agent/vqtest`), and fails if the browser would have had to ask for a keyframe. It also scrolls, sits still for 20 s with sound playing and scrolls again over a tight link (`TestVideoQualityAfterStill`), and fails when the first second after the still shows under a third of the settled frame rate or went out at under half the settled target. The longer matrix runs by hand:
 
 ```sh
 ROBIN_VQ=1 go test -tags openh264 -run TestVideoQualityMatrix ./internal/agent/
@@ -42,11 +46,17 @@ ROBIN_VQ=all go test -tags openh264 -run 'TestVideoQualityMatrix/^1440p$/tight/u
 
 `ROBIN_VQ=1`, in the toolchain `make test` sets up, runs the longer clip at 1080p and 1440p over three shaped links and prints, per stretch of the clip, what was sent, what was shown and how it scored against the screen. `ROBIN_VQ=all` adds the variants that put back each earlier policy, and the `vaapi` variant, which streams through the host's VA-API encoder where one works; `-run` picks cells by size, link and variant.
 
-**Bulk transfers** run between two Pion peers in one process, both ways, along with the ones that must fail: oversized, corrupt, truncated, refused and cancelled, including a cancel while the sender waits for credit, and a sink that stops taking chunks while control messages cross beside it, which must arrive at once (`go test ./internal/agent/peer -run Bulk`). Uploads have units of their own in `internal/agent/files`: every name and collision rule, a symlink in the way, a full disk, a disk that stops, cancel and the end of a session, and the offer socket's checks.
+### Bulk transfers
 
-**The page.** `go test ./internal/web` runs the page's DOM-free modules under `node --test`, and, with the browser smoke test's dependencies installed, sends bulk transfers both ways between Chrome and the agent's own peer. It also drives an input method in desktop Chrome and taps, a long press, a two-finger scroll, a pinch and the soft keyboard in Chrome as a phone, and checks what the page sends for each.
+Bulk transfers run between two Pion peers in one process, both ways, along with the ones that must fail: oversized, corrupt, truncated, refused and cancelled, including a cancel while the sender waits for credit, and a sink that stops taking chunks while control messages cross beside it, which must arrive at once (`go test ./internal/agent/peer -run Bulk`). Uploads have units of their own in `internal/agent/files`: every name and collision rule, a symlink in the way, a full disk, a disk that stops, cancel and the end of a session, and the offer socket's checks.
 
-**Hardware encoders** are tested against stand-in tools everywhere, and against the real GPU wherever `make test` runs on a host that has one along with a tool to drive it; a GPU with neither ffmpeg nor a GStreamer encoder plugin is skipped. Every route the host offers must produce a Baseline keyframe first, P slices after, a keyframe on request and the target bitrate on noise, and ffmpeg, where it is installed, must decode the result. Two environment variables change that:
+### The page
+
+`go test ./internal/web` runs the page's DOM-free modules under `node --test`, and, with the browser smoke test's dependencies installed, sends bulk transfers both ways between Chrome and the agent's own peer. It also drives an input method in desktop Chrome and taps, a long press, a two-finger scroll, a pinch and the soft keyboard in Chrome as a phone, and checks what the page sends for each.
+
+### Hardware encoders
+
+Hardware encoders are tested against stand-in tools everywhere, and against the real GPU wherever `make test` runs on a host that has one along with a tool to drive it; a GPU with neither ffmpeg nor a GStreamer encoder plugin is skipped. Every route the host offers must produce a Baseline keyframe first, P slices after, a keyframe on request and the target bitrate on noise, and ffmpeg, where it is installed, must decode the result. Two environment variables change that:
 
 - `ROBIN_HWENC_REQUIRE=vaapi` (or `nvenc`) makes a missing route fail the run instead of skipping it.
 - `ROBIN_HWENC_COMPARE=1`, with the `openh264` build tag, prints the software and hardware comparison quoted on [Hardware encoding](/hardware-encoding).
