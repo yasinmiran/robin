@@ -19,6 +19,7 @@ import (
 
 	"github.com/godbus/dbus/v5"
 
+	"github.com/yasinmiran/robin/internal/agent/keysym"
 	"github.com/yasinmiran/robin/internal/agent/xkb"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
@@ -118,9 +119,9 @@ func (r *recorder) Call(method string, _ dbus.Flags, args ...any) *dbus.Call {
 func (r *recorder) pressedV() {
 	chord := "ctrl+v"
 	switch {
-	case !r.held[control]:
+	case !r.held[keysym.ControlL]:
 		return
-	case r.held[shift]:
+	case r.held[keysym.ShiftL]:
 		chord = "ctrl+shift+v"
 	}
 	if chord == r.pastesOn {
@@ -133,9 +134,9 @@ func (r *recorder) pressedV() {
 // and by its name or number otherwise.
 func symName(sym int32) string {
 	switch {
-	case sym == control:
+	case sym == keysym.ControlL:
 		return "Control_L"
-	case sym == shift:
+	case sym == keysym.ShiftL:
 		return "Shift_L"
 	case 0x20 < sym && sym < 0x7f, 0xa0 < sym && sym <= 0xff, 0x1000000 < sym && unicode.IsPrint(rune(sym-0x1000000)):
 		return string(rune(sym & 0xffffff))

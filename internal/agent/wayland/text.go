@@ -33,12 +33,6 @@ const (
 	restoreAfter = time.Second
 )
 
-// Keysyms of the paste keys' modifiers.
-const (
-	control = 0xffe3 // Control_L
-	shift   = keysym.ShiftL
-)
-
 // Type types text. Where the compositor types any keysym, as KWin does,
 // every character goes as its keysym. Elsewhere the compositor drops a
 // keysym its layout lacks and a Wayland client cannot add one, so only
@@ -114,7 +108,7 @@ func (d *Desktop) paste(ctx context.Context, text string) error {
 	if err != nil {
 		return err
 	}
-	if err := d.in.chord('v', control, shift); err != nil {
+	if err := d.in.chord('v', keysym.ControlL, keysym.ShiftL); err != nil {
 		return err
 	}
 	read, err := d.clip.awaitRead(ctx, n, pasteRead)
@@ -122,7 +116,7 @@ func (d *Desktop) paste(ctx context.Context, text string) error {
 		return err
 	}
 	if !read {
-		if err := d.in.chord('v', control); err != nil {
+		if err := d.in.chord('v', keysym.ControlL); err != nil {
 			return err
 		}
 	}
