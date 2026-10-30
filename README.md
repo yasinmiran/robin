@@ -533,13 +533,16 @@ OpenSSH and a browser that decodes H.264 in WebRTC, on one of:
   (`ssh.exe` on `PATH`). It has no ControlMaster, so the CLI runs the probe,
   the upload, the agent and the tunnel as an ssh each, and each logs in on
   its own: with a key or `ssh-agent` that goes unnoticed, while a password or
-  2FA prompt comes three times a session, five when the agent is uploaded.
+  2FA prompt comes three times a session, five when the agent is uploaded,
+  and once more each time the browser connects to the tunnel again, as it
+  does after an ICE restart.
   Each ssh starts in a process group of its own, which Ctrl+C does not
   reach, so the keystroke ends the session over the agent's connection
   and asks for no further login; a redial after a dropped network logs in
   again, as at the start.
-  The tunnel's forward listens on a loopback TCP port, as Windows' OpenSSH
-  forwards no unix sockets. `make dist` builds
+  Windows' OpenSSH forwards no unix sockets, so the tunnel's forward
+  listens nowhere: each connection through it is an `ssh -W` of its own,
+  and that ssh is the tunnel's login. `make dist` builds
   `robin-windows-amd64.exe` and `robin-windows-arm64.exe`; the page opens in
   the default browser.
 - **Android**, in [Termux](https://termux.dev) with its `openssh` package:
@@ -815,10 +818,9 @@ before. At most 16 connections wait for that check at once, and past that
 the oldest is closed, so connections that say nothing cannot run the CLI out
 of file descriptors either. Behind that port the SSH forward is a unix socket in a private
 directory, with ControlMaster or without, except on Windows, whose OpenSSH
-forwards no unix sockets: there it is a second loopback port, which ssh
-binds only once it has logged in. The CLI uses it only once the system's
-table of listeners shows ssh holding it, so another user who takes the port
-first gets the tunnel refused, not connected to them. The forward's target
+forwards no unix sockets: there nothing listens behind the port, and each
+connection that passes the check gets an `ssh -W` of its own, so no other
+user can reach the forward or stand in for it. The forward's target
 comes from the agent and is refused unless it is a loopback address and port,
 as the agent's listener has, so a host can neither slip other fields into
 ssh's `-L` nor have ssh expand `${VAR}` in it from your environment.
@@ -1315,14 +1317,14 @@ verified against a Linux build.
 - The Android client has been checked in Chrome's phone emulation only, and
   the Windows client in cross-builds, `go vet` and the `nomux` scenario's
   forced mode on Linux. Neither has run on the real thing; in particular
-  the check that ssh holds the forward's port on Windows has run only in
-  its Linux form, against `/proc`, and keeping Ctrl+C away from each ssh
+  the tunnel's `ssh -W` per connection has run only on Linux, and keeping
+  Ctrl+C away from each ssh
   (a process group of its own, where Linux ignores the signal) has not
   run on Windows at all.
 - Without ControlMaster a dropped network is noticed only when the agent's
-  connection goes quiet for its idle timeout, not at once, and every
-  `LocalForward` in your ssh config for that host comes up with the
-  tunnel's own ssh; one that fails takes the tunnel with it.
+  connection goes quiet for its idle timeout, not at once, and, except on
+  Windows, every `LocalForward` in your ssh config for that host comes up
+  with the tunnel's own ssh; one that fails takes the tunnel with it.
 - The status tab reads about 2 fps on an idle screen. A still picture is
   sent again every half second, a few hundred bytes each, so the browser
   never times out waiting for one; that is not a stall.

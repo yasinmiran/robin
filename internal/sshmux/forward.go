@@ -7,8 +7,11 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"os"
 	"os/exec"
+	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -21,10 +24,15 @@ type Forward struct {
 	// proc is the forward's own ssh, without a master; once it has exited,
 	// whatever listens at addr is not the forward.
 	proc *process
+	// stdio, set in place of addr, opens each connection as an ssh -W.
+	stdio func() (net.Conn, error)
 }
 
 // Dial opens a connection through the forward.
 func (f *Forward) Dial() (net.Conn, error) {
+	if f.stdio != nil {
+		return f.stdio()
+	}
 	if f.proc != nil {
 		select {
 		case <-f.proc.exited:
@@ -39,11 +47,21 @@ func (f *Forward) Dial() (net.Conn, error) {
 // reachable from this machine until m.Close. It is a unix socket in the
 // master's private directory, served by the master or, without one, by an
 // ssh -N -L of its own. On Windows, whose OpenSSH forwards no unix sockets,
-// that ssh listens on a loopback TCP port instead, which any user of this
-// machine can connect to.
+// it listens nowhere: each Dial starts an ssh -W that logs in for that
+// connection alone, as a loopback port would let any user of this machine
+// through.
 func (m *Master) Forward(ctx context.Context, remote string) (*Forward, error) {
 	if err := checkTarget(remote); err != nil {
 		return nil, err
+	}
+	if m.stdioForwards {
+		m.mu.Lock()
+		closed := m.closed
+		m.mu.Unlock()
+		if closed {
+			return nil, errors.New("sshmux: forward after Close")
+		}
+		return &Forward{stdio: func() (net.Conn, error) { return m.dialStdio(remote) }}, nil
 	}
 	if !m.mux {
 		return m.forwardOwn(ctx, remote)
@@ -74,8 +92,8 @@ func checkTarget(remote string) error {
 // first so they win. ControlPath=none keeps a ControlMaster in that config
 // from making it a master that outlives the session. clearForwards drops
 // the forwards the config asks for, which every connection would otherwise
-// set up again; a forward's own ssh keeps them, because the option drops
-// the command line's -L as well.
+// set up again; a forward's own ssh -L keeps them, because the option
+// drops the command line's -L as well.
 func (m *Master) ownArgs(clearForwards bool) []string {
 	args := []string{
 		"-o", "ControlMaster=no",
@@ -96,50 +114,73 @@ func (m *Master) forwardArgs(local, remote string) []string {
 	return append(args, "-N", "-n", "-L", local+":"+remote, "--", m.dest)
 }
 
+func (m *Master) stdioArgs(remote string) []string {
+	return append(m.ownArgs(true), "-W", remote, "--", m.dest)
+}
+
 // forwardOwn starts an ssh that does nothing but forward to remote, and
 // returns once that ssh listens.
 func (m *Master) forwardOwn(ctx context.Context, remote string) (*Forward, error) {
-	network, local := "unix", ""
-	if m.tcpForwards {
-		addr, err := m.freeAddr()
-		if err != nil {
-			return nil, err
-		}
-		network, local = "tcp", addr
-	} else {
-		local = m.nextForwardPath()
-	}
-	p, err := m.startProcess(m.forwardArgs(local, remote))
+	sock := m.nextForwardPath()
+	p, err := m.startProcess(m.forwardArgs(sock, remote), nil, nil)
 	if err != nil {
 		return nil, err
 	}
-	m.mu.Lock()
-	closed := m.closed
-	if !closed {
-		m.forwards = append(m.forwards, p)
-	}
-	m.mu.Unlock()
-	if closed {
+	if !m.track(p) {
 		p.stop()
 		return nil, errors.New("sshmux: forward after Close")
 	}
-	if err := p.awaitListening(ctx, network, local); err != nil {
+	if err := p.awaitListening(ctx, sock); err != nil {
 		return nil, fmt.Errorf("sshmux: forward to %s: %w", remote, err)
 	}
-	return &Forward{network: network, addr: local, proc: p}, nil
+	return &Forward{network: "unix", addr: sock, proc: p}, nil
 }
 
-// freeLoopbackAddr returns a loopback TCP address nobody listens on: a port
-// the system just handed out, released for ssh to take. ssh binds it only
-// once it has logged in, and another user could take it meanwhile, which
-// awaitListening tells from ssh taking it.
-func freeLoopbackAddr() (string, error) {
-	l, err := net.Listen("tcp4", "127.0.0.1:0")
+// dialStdio connects to remote over the stdin and stdout of an ssh -W,
+// which closing the connection stops. It returns before ssh has logged in;
+// a login that fails ends the connection.
+func (m *Master) dialStdio(remote string) (net.Conn, error) {
+	sshIn, w, err := os.Pipe()
 	if err != nil {
-		return "", fmt.Errorf("sshmux: pick a forward port: %w", err)
+		return nil, err
 	}
-	defer l.Close()
-	return l.Addr().String(), nil
+	r, sshOut, err := os.Pipe()
+	if err != nil {
+		sshIn.Close()
+		w.Close()
+		return nil, err
+	}
+	p, err := m.startProcess(m.stdioArgs(remote), sshIn, sshOut)
+	sshIn.Close()
+	sshOut.Close()
+	if err != nil {
+		w.Close()
+		r.Close()
+		return nil, err
+	}
+	c := &stdioConn{r: r, w: w, proc: p, remote: remote, m: m}
+	if !m.track(p) {
+		c.Close()
+		return nil, errors.New("sshmux: forward after Close")
+	}
+	return c, nil
+}
+
+// track has Close stop p, and reports false, with p left to the caller,
+// once Close has run.
+func (m *Master) track(p *process) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.closed {
+		m.forwards = append(m.forwards, p)
+	}
+	return !m.closed
+}
+
+func (m *Master) untrack(p *process) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.forwards = slices.DeleteFunc(m.forwards, func(q *process) bool { return q == p })
 }
 
 // stopForwards stops the forwards of their own and refuses new ones.
@@ -153,6 +194,47 @@ func (m *Master) stopForwards() {
 	}
 }
 
+// stdioConn is a connection over the stdin and stdout of an ssh -W.
+type stdioConn struct {
+	r, w   *os.File // ssh's stdout and stdin
+	proc   *process
+	remote string
+	m      *Master
+	once   sync.Once
+}
+
+func (c *stdioConn) Read(b []byte) (int, error)  { return c.r.Read(b) }
+func (c *stdioConn) Write(b []byte) (int, error) { return c.w.Write(b) }
+
+// CloseWrite closes ssh's stdin, which ssh passes on as the end of what
+// the connection sends.
+func (c *stdioConn) CloseWrite() error { return c.w.Close() }
+
+func (c *stdioConn) Close() error {
+	c.once.Do(func() {
+		c.w.Close()
+		c.proc.stop()
+		c.r.Close()
+		c.m.untrack(c.proc)
+	})
+	return nil
+}
+
+func (c *stdioConn) LocalAddr() net.Addr  { return stdioAddr("ssh -W") }
+func (c *stdioConn) RemoteAddr() net.Addr { return stdioAddr(c.remote) }
+
+func (c *stdioConn) SetDeadline(t time.Time) error {
+	return errors.Join(c.r.SetReadDeadline(t), c.w.SetWriteDeadline(t))
+}
+func (c *stdioConn) SetReadDeadline(t time.Time) error  { return c.r.SetReadDeadline(t) }
+func (c *stdioConn) SetWriteDeadline(t time.Time) error { return c.w.SetWriteDeadline(t) }
+
+// stdioAddr names an end of a stdioConn.
+type stdioAddr string
+
+func (a stdioAddr) Network() string { return "ssh" }
+func (a stdioAddr) String() string  { return string(a) }
+
 // process is an ssh of its own that runs until it is stopped.
 type process struct {
 	cmd    *exec.Cmd
@@ -161,8 +243,16 @@ type process struct {
 	err    error // set before exited closes
 }
 
-func (m *Master) startProcess(args []string) (*process, error) {
+// startProcess starts an ssh with args, reading stdin and writing stdout,
+// or /dev/null for either one that is nil.
+func (m *Master) startProcess(args []string, stdin, stdout *os.File) (*process, error) {
 	p := &process{cmd: shielded(context.Background(), m.ssh, args...), exited: make(chan struct{})}
+	if stdin != nil {
+		p.cmd.Stdin = stdin
+	}
+	if stdout != nil {
+		p.cmd.Stdout = stdout
+	}
 	p.cmd.Stderr = io.MultiWriter(&p.stderr, m.out)
 	// A ProxyCommand child can hold stderr open after ssh exits.
 	p.cmd.WaitDelay = time.Second
@@ -176,41 +266,15 @@ func (m *Master) startProcess(args []string) (*process, error) {
 	return p, nil
 }
 
-// lookupListener is listenerOf, which the tests can stand in for.
-var lookupListener = listenerOf
-
-// awaitListening returns once ssh listens at addr, or fails when it exits
+// awaitListening returns once ssh listens at sock, or fails when it exits
 // or ctx ends first. A unix socket in the private directory can only be
 // ssh's, so a connection there tells, which reaches the remote end as one
-// that sends nothing. A loopback port can be anyone's, and a connection
-// would reach whoever took it first, so there the system's table of
-// listeners has to name ssh; another program listening fails the forward.
-func (p *process) awaitListening(ctx context.Context, network, addr string) error {
+// that sends nothing.
+func (p *process) awaitListening(ctx context.Context, sock string) error {
 	tick := time.NewTicker(25 * time.Millisecond)
 	defer tick.Stop()
 	for {
-		if network == "tcp" {
-			listening, ours, err := lookupListener(addr, p.cmd.Process.Pid)
-			// A port that accepts while the table shows nobody on it means
-			// the table cannot be read right here: fail rather than wait
-			// for a listener it will never show. Read again first, in case
-			// ssh began to listen in between.
-			if err == nil && !listening && accepts(ctx, network, addr) {
-				if listening, ours, err = lookupListener(addr, p.cmd.Process.Pid); err == nil && !listening {
-					err = fmt.Errorf("%s accepts connections, but the system's table of listeners shows none there", addr)
-				}
-			}
-			switch {
-			case err != nil:
-				p.stop()
-				return err
-			case listening && !ours:
-				p.stop()
-				return fmt.Errorf("another program listens on %s", addr)
-			case ours:
-				return nil
-			}
-		} else if accepts(ctx, network, addr) {
+		if accepts(ctx, "unix", sock) {
 			return nil
 		}
 		select {

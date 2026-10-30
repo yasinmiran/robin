@@ -1284,19 +1284,27 @@ per command. A forward is an `ssh -N -L <local>:<remote>` that lives
 until `Close`, and the tunnel splices into it as it does into the master's
 socket. `<local>` is a unix socket in a 0700 directory, as over a master,
 so no other user of the client machine can reach it or take its place.
-Windows' OpenSSH forwards no unix sockets, so there it is a loopback port
-the CLI picks and releases for ssh, and ssh binds it only after logging
-in, seconds or, with a password typed, minutes later. Another user can take
-the port meanwhile, and it shows in ssh's command line. So the CLI does not
-take a connection that the port accepts as proof: it waits until the
-system's table of listeners (`GetExtendedTcpTable`) names ssh's process as
-the one on that port, and fails the forward when another process holds it.
-A port that accepts while the table shows nobody there fails it too, so a
-table read wrong ends in an error rather than a wait with no end.
-Nothing here runs Windows; the tests take that path on Linux, where
-`/proc/net/tcp` and the process's open sockets answer the same question.
-Once a forward's ssh has exited, its `Dial` refuses rather than connect to
-whoever listens there next. That ssh cannot clear the config's
+Windows' OpenSSH forwards no unix sockets, so there the forward listens
+nowhere: each `Dial` starts an `ssh -W <remote>` with
+`ClearAllForwardings=yes` and hands its stdin and stdout back as the
+connection, which closing stops. The tunnel dials only for a connection
+whose check passed, so every SSH channel to the agent's listener belongs to
+one the page signed. The first version listened on a loopback port the CLI
+picked for an `ssh -L`, and waited until the system's table of listeners
+(`GetExtendedTcpTable`) named ssh as the one on it, so another user who took
+the port first failed the forward. The second security audit found the
+other half: any user of the machine could connect to that port once ssh
+held it, and each connection became an SSH channel and a connection to the
+agent's listener without the tunnel's check, the opening the shared-client
+work below closed for the tunnel's own port. Its regression test looks up
+every TCP listener a forward's ssh holds, in `/proc/net/tcp` and the
+process's descriptors, before and during a connection, and found the
+`-L` one. The cost of `-W` is a login per tunnel connection rather than one
+a session: silent with a key or an agent, a prompt with a password, and the
+browser opens one at each ICE start. Nothing here runs Windows; the tests
+take that path on Linux with a real ssh and sshd.
+Once a forward's ssh `-L` has exited, its `Dial` refuses rather than
+connect to whatever listens there next. That ssh cannot clear the config's
 forwards: `ssh -G -o ClearAllForwardings=yes -L ...` shows the option drops
 the command line's `-L` along with them, so a `LocalForward` for the host
 comes up with the tunnel and, under `ExitOnForwardFailure`, takes it down if
