@@ -26,7 +26,7 @@ make dist
 | `dist/robin-linux-amd64` | Linux on x86_64 |
 | `dist/robin-linux-arm64` | Linux on arm64, and Android in Termux |
 | `dist/robin-windows-amd64.exe` | Windows 10 or 11 on x86_64 |
-| `dist/robin-windows-arm64.exe` | Windows on arm64 |
+| `dist/robin-windows-arm64.exe` | Windows 10 or 11 on arm64 |
 
 A release is a tagged commit: on any other commit `make dist` stops and asks for a version, as in `make dist VERSION=v1.2.3-test`. `robin version` prints the version the binary was built from, taken from `git describe` or that `VERSION`. The build is reproducible, so anyone can rebuild a release and compare its bytes; see [Verifying a release](/verifying-a-release).
 
