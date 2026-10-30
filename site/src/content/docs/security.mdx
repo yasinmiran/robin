@@ -65,8 +65,8 @@ A session takes guests on an abstract unix socket, which has no file and so no p
 
 - The guest's agent checks that the socket belongs to the uid the code names, so an account that takes the name once your daemon is gone cannot pose as your session, and the guest's CLI pins the agent's identity as yours does.
 - A guest's SSH forward runs as the guest, so the ICE-TCP listener also admits the account of a guest connected now, and only while it is.
-- Without control a guest's page does nothing to the desktop: its keys, clipboard, transfers and microphone are dropped. With control it does what yours does, short of what shapes the session. Either way it sees your screen and hears its sound.
-- At most 8 invitations are open at once and 8 guests join one session, each getting one new peer connection a second. A guest that stops reading what the session sends it is dropped within 10 seconds. Guests go when your CLI goes, and every refusal goes to the session's log with the uid that knocked.
+- Without control a guest's page does nothing to the desktop: its keys, clipboard, transfers and microphone are dropped, and its microphone takes no turn at the host's. Closing or reloading your page takes control from every guest. With control it does what yours does, short of what shapes the session. Either way it sees your screen and hears its sound.
+- At most 8 invitations are open at once and 8 guests join one session, each getting one new peer connection a second. A guest that stops reading what the session sends it is dropped within 10 seconds. Guests go when your CLI goes, and each account's first refusal goes to the session's log with the uid that knocked; later ones from that account log only at debug, so knocking cannot fill the log.
 
 ### Attaching to X11
 

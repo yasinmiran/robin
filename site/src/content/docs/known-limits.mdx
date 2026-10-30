@@ -17,7 +17,7 @@ These are the current limits of the shipped tool. Some of them have planned work
 
 ## Sharing
 
-- A guest's camera is never taken; the camera stays the owner's. The host has one microphone, and the first page whose microphone sends holds it until that page's connection closes, so a guest with control is heard only while no other page's microphone has started.
+- A guest's camera is never taken; the camera stays the owner's. The host has one microphone, and the first page whose microphone sends holds it until that page's connection closes, so a guest with control is heard only while no other page's microphone has started. A guest holds it only while it has control.
 - Sharp text follows the owner's page alone; a guest sees the plain video. Every page gets one stream, at the bitrate the slowest page's link allows.
 - Guests go when the owner's CLI goes, even from a kept desktop, and a guest whose connection drops needs another invitation.
 - Every page with control types into one queue, so two people typing at once interleave.

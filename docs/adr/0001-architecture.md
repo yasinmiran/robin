@@ -2566,6 +2566,25 @@ has, a peer of its own for its page, and a rule for who drives.
   and the farewell goes on a goroutine of its own. A guest's CLI gets one
   new peer a second, so hangups and offers in a loop cannot churn peer
   connections, and at most 8 guests join a session.
+- Control lasts only while the owner can take it back, and gives the
+  guest nothing it keeps once taken. A review of the first version found
+  three holes, each now pinned by a test that fails on that code. The
+  owner's page closing or reloading let only that page go, so a guest
+  given control kept typing with no page left to revoke it
+  (`TestTheOwnersPageGoingTakesControlFromGuests`): letting the owner's
+  page go now revokes every guest under the input lock, and they keep
+  watching, since a reload hangs up too. The microphone takes one track
+  at a time, and a guest's track only dropped its packets while it had no
+  control, so a view-only guest whose page sent first held the turn and
+  the owner's microphone was never heard
+  (`TestAGuestWithoutControlHoldsNoMicrophone`, 5 s without a packet): a
+  guest's track now enters the microphone only on a packet that arrives
+  with control, and the first without it ends the turn. And the door logged
+  every refused knock at Warn, so any account on the host could grow the
+  owner's log without end: 500 knocks wrote 500 lines, 46000 bytes
+  (`TestKnocksFromAnUninvitedUIDLogBounded`). Each uid's first refusal now
+  logs at Warn and the rest at Debug, the tunnel listener's rule, for up
+  to 64 uids; 500 knocks write one line.
 - Lifetime follows the owner. When the owner's controller goes, every
   guest is dropped and every invitation withdrawn, and the door refuses
   newcomers until a controller resumes, so nobody watches a desktop whose

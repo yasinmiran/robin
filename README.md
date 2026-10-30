@@ -489,7 +489,8 @@ their keys, pointer and paste reach the desktop, the host's clipboard
 reaches them, they see the files `robin-send` offers and may upload, and
 with `--mic`, in a session that started with `--mic`, their microphone is
 heard on the host. One guest has control at a time: giving it to another
-takes it from the first. You keep yours throughout. Take back control
+takes it from the first. You keep yours throughout, and closing or
+reloading your page takes control from every guest. Take back control
 ends theirs at once: what they held down is let go, text still being
 typed is dropped, the files on offer leave their page, and a transfer of
 theirs still under way is dropped. Remove closes their peer connection and
@@ -721,8 +722,10 @@ desktop: its input, clipboard, transfers and microphone are dropped. With
 control it can do what yours can, short of what shapes the session (the
 size, the monitor shown, the curtain and the silent room, sharp text, the
 camera, keeping or ending the desktop). Either way it sees everything on
-your screen and hears its sound. Who was invited, who joined and every
-refusal, with its uid, go to the session's log.
+your screen and hears its sound. Who was invited, who joined and each
+account's first refusal, with its uid, go to the session's log; later
+refusals of the same account log only at debug, so knocking over and over
+cannot fill it.
 
 On your own computer the page can ask the CLI to write one file, your
 macros (see [Keys and macros](#keys-and-macros)), and nothing else. It
@@ -1191,7 +1194,9 @@ verified against a Linux build.
 - A guest's camera is never taken: the camera stays the owner's. The
   host has one microphone, and the first page whose microphone sends holds
   it until that page's peer connection closes, so a guest with control is
-  heard only while no other page's microphone has started.
+  heard only while no other page's microphone has started. A guest holds
+  it only while it has control: without control its microphone takes no
+  turn, and losing control gives the turn up.
 - Sharp text follows the owner's page alone; a guest sees the video as it
   is. Every page gets the one stream, encoded at the bitrate the slowest
   page's link allows.
