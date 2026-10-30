@@ -3,12 +3,15 @@ package peer
 import (
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pion/interceptor"
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
+	"github.com/pion/sdp/v3"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
 
@@ -115,21 +118,30 @@ func mediaSections(sdp string) []string {
 // so that the page may send on both, hands the tracks to Handlers.Track,
 // and gives the page what a receiver owes it: the camera's sender a NACK
 // for a lost packet and a PLI on request, and the transport its feedback.
-// That feedback names the SSRC of whichever packet the agent recorded
-// last, so it may reach the microphone's sender instead of the camera's.
 func TestPeerTakesTheMicrophoneAndCamera(t *testing.T) {
 	cands := make(chan protocol.Candidate, 32)
 	tracks := make(chan *webrtc.TrackRemote, 4)
+	var cameraSequenced atomic.Bool
 	p, err := New(Config{
 		MinBitrate: 100_000, StartBitrate: 1_000_000, MaxBitrate: 5_000_000, IncludeLoopback: true,
 		Audio: true, Mic: true, Camera: true,
 	}, Handlers{
 		Candidate: func(c protocol.Candidate) { cands <- c },
-		Track: func(tr *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+		Track: func(tr *webrtc.TrackRemote, r *webrtc.RTPReceiver) {
+			var transportCC uint8
+			for _, e := range r.GetParameters().HeaderExtensions {
+				if tr.Kind() == webrtc.RTPCodecTypeVideo && e.URI == sdp.TransportCCURI {
+					transportCC = uint8(e.ID)
+				}
+			}
 			go func() {
 				for {
-					if _, _, err := tr.ReadRTP(); err != nil {
+					pkt, _, err := tr.ReadRTP()
+					if err != nil {
 						return
+					}
+					if transportCC != 0 && pkt.GetExtension(transportCC) != nil {
+						cameraSequenced.Store(true)
 					}
 				}
 			}()
@@ -156,12 +168,18 @@ func TestPeerTakesTheMicrophoneAndCamera(t *testing.T) {
 	}
 
 	stop := make(chan struct{})
-	defer close(stop)
+	var wg sync.WaitGroup
+	// Closing the page's connection ends a goroutine blocked in ReadRTCP.
+	defer func() {
+		close(stop)
+		b.pc.Close()
+		wg.Wait()
+	}()
 	// lose takes the camera's next packet once the test asks for it. A
 	// packet dropped before the camera reaches the agent is never missed,
 	// so it asks only after Handlers.Track has the camera.
 	lose := make(chan uint16)
-	go func() {
+	wg.Go(func() {
 		seq := uint16(1)
 		for i := 0; ; i++ {
 			select {
@@ -181,7 +199,7 @@ func TestPeerTakesTheMicrophoneAndCamera(t *testing.T) {
 			})
 			seq++
 		}
-	}()
+	})
 
 	got := map[webrtc.RTPCodecType]*webrtc.TrackRemote{}
 	for len(got) < 2 {
@@ -208,8 +226,11 @@ func TestPeerTakesTheMicrophoneAndCamera(t *testing.T) {
 		pkts   []rtcp.Packet
 	}
 	rtcpIn := make(chan heard)
+	// Transport-wide feedback names the SSRC of whichever packet the agent
+	// recorded last, so it may reach the microphone's sender instead of the
+	// camera's.
 	for _, s := range []*webrtc.RTPSender{b.micSender, b.camSender} {
-		go func() {
+		wg.Go(func() {
 			for {
 				pkts, _, err := s.ReadRTCP()
 				if err != nil {
@@ -221,12 +242,12 @@ func TestPeerTakesTheMicrophoneAndCamera(t *testing.T) {
 					return
 				}
 			}
-		}()
+		})
 	}
 	var pli, nack, twcc bool
 	deadline := time.After(10 * time.Second)
 wait:
-	for !(pli && nack && twcc) {
+	for !(pli && nack && twcc && cameraSequenced.Load()) {
 		var h heard
 		select {
 		case h = <-rtcpIn:
@@ -234,20 +255,28 @@ wait:
 			break wait
 		}
 		for _, pkt := range h.pkts {
+			if _, ok := pkt.(*rtcp.TransportLayerCC); ok {
+				twcc = true
+				continue
+			}
+			if !h.camera {
+				continue
+			}
 			switch pkt := pkt.(type) {
 			case *rtcp.PictureLossIndication:
-				pli = pli || h.camera
+				pli = true
 			case *rtcp.TransportLayerNack:
 				for _, n := range pkt.Nacks {
-					nack = nack || h.camera && slices.Contains(n.PacketList(), lost)
+					nack = nack || slices.Contains(n.PacketList(), lost)
 				}
-			case *rtcp.TransportLayerCC:
-				twcc = true
 			}
 		}
 	}
 	if !pli || !nack || !twcc {
-		t.Errorf("the camera's sender heard PLI %v and a NACK for packet %d %v, the page transport-wide feedback %v; want all three", pli, lost, nack, twcc)
+		t.Errorf("the camera's sender heard PLI %v and a NACK for packet %d %v; the page heard transport-wide feedback %v; want all three", pli, lost, nack, twcc)
+	}
+	if !cameraSequenced.Load() {
+		t.Error("the camera's packets reached the agent without transport-wide sequence numbers")
 	}
 }
 
