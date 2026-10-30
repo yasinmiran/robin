@@ -15,7 +15,7 @@ const command = "robin gui alice@build-box";
 const steps = [
   {
     name: "Connect",
-    text: "opens one connection. The probe, the upload, the agent and the tunnel all ride it.",
+    text: "opens one connection, and the probe, the upload, the agent and the tunnel all ride it. Windows' OpenSSH has no ControlMaster, so there each opens its own.",
     code: "ssh -M",
   },
   {
@@ -46,15 +46,18 @@ const needs = [
     text: "macOS, Linux, Windows or Android in Termux, with OpenSSH and a browser that decodes H.264 in WebRTC.",
   },
   {
-    term: "Afterwards",
-    text: "A desktop Robin started waits on the host for a dropped connection to come back. When the session ends, the agent stops everything it started and removes its run directory. Only the agent binary stays, cached for the next session, plus the restore token if you approved a Wayland share.",
+    term: "If the connection drops",
+    text: "A desktop Robin started waits on the host for you to come back, 8 hours by default or as long as --keep says. An attached one ends with the connection unless you name a --keep.",
+  },
+  {
+    term: "When you end it",
+    text: "The agent stops everything it started and removes its run directory. Only the agent binary stays, cached for the next session, plus the restore token if you approved a Wayland share.",
   },
 ];
 
 const runs = [
-  ["a new desktop on build-box", "robin gui alice@build-box"],
-  ["the desktop you are logged in to there", "robin gui --attach auto workstation"],
-  ["again later: pick the desktop up where you left it", "robin gui alice@build-box"],
+  ["a new desktop on build-box, or the one you left", "robin gui alice@build-box"],
+  ["the desktop you are logged in to", "robin gui --attach auto workstation"],
   ["anything after -- goes to ssh", "robin gui build-box -- -p 2222 -i ~/.ssh/other_key"],
   ["print the URL instead of opening a browser", "robin gui --no-browser lab-node"],
 ];
@@ -158,7 +161,7 @@ alice@build-box:~$ <span class="xterm-cursor">_</span></pre>
     >
       <div>
         <h2 id="needs-heading" class="mb-2 text-2xl font-[650] tracking-[-0.012em]">What it needs</h2>
-        <p class="mb-8 text-muted-foreground">Nothing runs once the session ends.</p>
+        <p class="mb-8 text-muted-foreground">Nothing stays running once you end the session.</p>
         <dl class="needs">
           {
             needs.map((need) => (
