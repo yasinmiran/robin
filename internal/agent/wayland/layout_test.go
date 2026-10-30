@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -126,30 +128,56 @@ func TestGnomeSourceWithoutRecentOnesToRead(t *testing.T) {
 	}
 }
 
-// testLayouts writes a us and a ru layout, as far as the tests need them,
-// into a directory of xkb data, which it returns: the tests run in the
-// Wayland test containers too, where the source tree is not.
-func testLayouts(t *testing.T) string {
+// xkbData writes a directory of xkb data with symbols, by file name, over
+// an empty pc, and keycodes that number the keys in the order the symbols
+// first name them, and returns it: the tests run in the Wayland test
+// containers too, where the source tree is not.
+func xkbData(t *testing.T, symbols map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "symbols"), 0o755); err != nil {
+	for _, sub := range []string{"symbols", "keycodes"} {
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	keycodes := []string{`default xkb_keycodes "evdev" {`}
+	seen := map[string]bool{}
+	files := map[string]string{"pc": `default xkb_symbols "pc105" { };`}
+	for name, src := range symbols {
+		files[name] = src
+	}
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		for _, key := range regexp.MustCompile(`<[A-Z0-9]+>`).FindAllString(files[name], -1) {
+			if !seen[key] {
+				seen[key] = true
+				keycodes = append(keycodes, fmt.Sprintf("%s = %d;", key, 9+len(seen)))
+			}
+		}
+		if err := os.WriteFile(filepath.Join(dir, "symbols", name), []byte(files[name]), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	keycodes = append(keycodes, "};")
+	if err := os.WriteFile(filepath.Join(dir, "keycodes", "evdev"), []byte(strings.Join(keycodes, "\n")), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	return dir
+}
+
+// testLayouts writes a us and a ru layout, as far as the tests need them,
+// with xkbData.
+func testLayouts(t *testing.T) string {
+	t.Helper()
 	var latin strings.Builder
 	for i, r := range "abcdefghijklmnopqrstuvwxyz" {
 		fmt.Fprintf(&latin, "key <L%02d> { [ %c, %c ] };\n", i, r, unicode.ToUpper(r))
 	}
-	for name, symbols := range map[string]string{
+	return xkbData(t, map[string]string{
 		"us": `default xkb_symbols "basic" { name[Group1] = "English (US)"; ` + latin.String() +
 			`key <TLDE> { [ grave, asciitilde ] }; key <AE01> { [ 1, exclam ] }; };`,
 		"ru": `default xkb_symbols "basic" { name[Group1] = "Russian";
 key <AE01> { [ 1, exclam ] }; key <AC01> { [ Cyrillic_ef, Cyrillic_EF ] }; key <AB10> { [ period, comma ] }; };`,
-	} {
-		if err := os.WriteFile(filepath.Join(dir, "symbols", name), []byte(symbols), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return dir
+	})
 }
 
 // testKeyboard is a keyboard whose source is whatever *source holds, read

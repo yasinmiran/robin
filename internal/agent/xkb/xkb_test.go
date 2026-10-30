@@ -1,6 +1,7 @@
 package xkb
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -21,6 +22,14 @@ func missing(l Layout) string {
 	return b.String()
 }
 
+// level is the level l types sym on, or -1 for a keysym it lacks.
+func (l Layout) level(sym string) int {
+	if n, ok := l.levels[sym]; ok {
+		return n
+	}
+	return -1
+}
+
 func load(t *testing.T, id string) Layout {
 	t.Helper()
 	layout, variant := ParseSource(id)
@@ -39,9 +48,10 @@ func TestLatinLayoutTypesAllOfASCII(t *testing.T) {
 	if !l.Has('\n') || !l.Has('\t') || l.Has('é') || l.Has(0x7f) {
 		t.Error("us: Has gets the shared keys or a non-ASCII character wrong")
 	}
-	// Dead keys take the plain characters' place on the base levels, and
-	// level three brings them back.
-	if l := load(t, "us+intl"); l.Name != "English (US, intl., with dead keys)" || missing(l) != "" {
+	// Dead keys take the plain characters' place on the first two levels.
+	// AltGr brings some back on the third, and mutter types those, but
+	// not the ones on the fourth, Shift and AltGr.
+	if l := load(t, "us+intl"); l.Name != "English (US, intl., with dead keys)" || missing(l) != `"^~` {
 		t.Errorf("us+intl: %q missing %q", l.Name, missing(l))
 	}
 }
@@ -70,11 +80,11 @@ func TestMerging(t *testing.T) {
 		}
 	}
 	// NoSymbol and any leave a level as it was.
-	if kept := load(t, "ru+kept"); !kept.Latin() || !kept.syms["Cyrillic_ef"] {
-		t.Errorf("ru(kept): missing %q, Cyrillic_ef %v", missing(kept), kept.syms["Cyrillic_ef"])
+	if kept := load(t, "ru+kept"); !kept.Latin() || kept.level("Cyrillic_ef") != 2 {
+		t.Errorf("ru(kept): missing %q, Cyrillic_ef on %d", missing(kept), kept.level("Cyrillic_ef"))
 	}
 	// A level-three key over its include keeps its letters.
-	if l := load(t, "latin(type3)"); !l.Latin() || !l.syms["Greek_OMEGA"] {
+	if l := load(t, "latin(type3)"); !l.Latin() || l.level("Greek_OMEGA") != 3 || l.level("backslash") != 2 {
 		t.Errorf("latin(type3): missing %q", missing(l))
 	}
 }
@@ -97,8 +107,23 @@ func TestKeyForms(t *testing.T) {
 	if want := []string{"a", "f", "g", "h", "j", "s"}; !slices.Equal(got, want) {
 		t.Errorf("letters %v, want %v", got, want)
 	}
-	if !l.Has('A') || !l.Has('S') || l.syms["Cyrillic_er"] || !l.syms["Cyrillic_ve"] || !l.syms["uFFFF"] {
-		t.Errorf("forms keysyms: %v", l.syms)
+	if !l.Has('A') || !l.Has('S') || l.level("Cyrillic_er") >= 0 || l.level("Cyrillic_ve") != 0 || l.level("uFFFF") != 1 {
+		t.Errorf("forms keysyms: %v", l.levels)
+	}
+}
+
+// TestMutterPicks: a keysym comes from the key of the lowest code that has
+// it, on the lowest level there, as mutter looks it up, though that level
+// is one mutter does not type.
+func TestMutterPicks(t *testing.T) {
+	l := load(t, "us+order")
+	if l.Has('q') || !l.Has('w') || !l.Has('e') || l.level("e") != 2 || !l.Has('1') {
+		t.Errorf("us(order): missing %q, e on %d", missing(l), l.level("e"))
+	}
+	// A key that has no code is on no keyboard, and an alias has its
+	// key's code.
+	if l.level("Greek_alpha") >= 0 || l.level("Greek_beta") != 0 {
+		t.Errorf("us(order): Greek_alpha on %d, Greek_beta on %d", l.level("Greek_alpha"), l.level("Greek_beta"))
 	}
 }
 
@@ -139,10 +164,15 @@ func TestSystemLayouts(t *testing.T) {
 		latin   bool
 		missing string
 	}{
-		"us": {true, ""}, "us+dvorak": {true, ""}, "fr": {true, ""},
+		"us": {true, ""}, "us+dvorak": {true, ""},
 		// German's ^ and ` are dead keys, which type nothing alone.
 		"de": {true, "^`"},
-		"gr": {false, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"},
+		// French has $, < and > on the fourth level of keys with lower
+		// codes than the keys it has them on first.
+		"fr":      {true, "$<>"},
+		"us+intl": {true, `"^~`},
+		"ru":      {false, "#$&'<>@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^`abcdefghijklmnopqrstuvwxyz{}~"},
+		"gr":      {false, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"},
 	} {
 		layout, variant := ParseSource(id)
 		l, err := Load([]string{root}, layout, variant)
@@ -209,6 +239,59 @@ func TestParseErrors(t *testing.T) {
 	for _, src := range []string{``, `// nothing`, `xkb_symbols "a" { }; default partial`} {
 		if _, err := parse(src); err != nil {
 			t.Errorf("parse(%q): %v", src, err)
+		}
+	}
+}
+
+func TestParseKeycodes(t *testing.T) {
+	codes, err := parseKeycodes(`xkb_keycodes "a" { <A> = 1; };
+default xkb_keycodes "b" { minimum = 8; ; <AC01> = 38; <BAD> = x; alias <AL> = <AC01>; alias <GONE> = <NOPE>; alias <ODD> <AC01>; };`)
+	want := map[string]int{"<AC01>": 38, "<AL>": 38}
+	if err != nil || !maps.Equal(codes, want) {
+		t.Errorf("default section: %v, %v; want %v", codes, err, want)
+	}
+	if codes, err := parseKeycodes(`xkb_keycodes "a" { <A> = 1; }; xkb_keycodes "b" { <B> = 2; };`); err != nil || codes["<A>"] != 1 || len(codes) != 1 {
+		t.Errorf("no default: %v, %v; want the first section", codes, err)
+	}
+	for src, want := range map[string]string{
+		``:                         "no xkb_keycodes",
+		`xkb_symbols "a" { };`:     "no xkb_keycodes",
+		`xkb_keycodes "a" { <A> `:  "no closing brace",
+		`xkb_keycodes { };`:        "without a name",
+		`xkb_keycodes "a" ( };`:    `want "{"`,
+		`xkb_keycodes "a" { "x" ;`: "no closing brace",
+		`/* open`:                  "unterminated comment",
+	} {
+		if _, err := parseKeycodes(src); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("parseKeycodes(%q) = %v, want %q", src, err, want)
+		}
+	}
+}
+
+func TestLoadWithoutKeycodes(t *testing.T) {
+	dir := t.TempDir()
+	for _, tc := range []struct{ evdev, want string }{
+		{"", "no keycodes/evdev"},
+		{"xkb_keycodes", "keycodes/evdev: xkb_keycodes without a name"},
+		{"dir", "is a directory"},
+	} {
+		os.RemoveAll(filepath.Join(dir, "keycodes"))
+		if err := os.MkdirAll(filepath.Join(dir, "keycodes"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		var err error
+		switch tc.evdev {
+		case "":
+		case "dir":
+			err = os.Mkdir(filepath.Join(dir, "keycodes", "evdev"), 0o755)
+		default:
+			err = os.WriteFile(filepath.Join(dir, "keycodes", "evdev"), []byte(tc.evdev), 0o644)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load([]string{dir, "testdata/symbols-not-here"}, "us", ""); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("keycodes %q: Load = %v, want %q", tc.evdev, err, tc.want)
 		}
 	}
 }

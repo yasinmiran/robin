@@ -1,6 +1,7 @@
 package xkb
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -101,38 +102,122 @@ func parse(src string) ([]section, error) {
 	}
 	p := &parser{toks: toks}
 	var secs []section
-	for !p.done() {
-		var sec section
-		found := false
-		for !found && !p.done() {
-			switch t := p.next(); {
-			case t.quoted:
-			case t.text == "default":
-				sec.def = true
-			case t.text == "xkb_symbols":
-				found = true
-			}
-		}
-		if !found {
-			break
-		}
-		name := p.next()
-		if !name.quoted {
-			return nil, fmt.Errorf("xkb_symbols without a name")
-		}
-		sec.name = name.text
-		if err := p.expect("{"); err != nil {
-			return nil, err
+	for {
+		sec, ok, err := p.header("xkb_symbols")
+		if err != nil || !ok {
+			return secs, err
 		}
 		if sec.stmts, err = p.body(); err != nil {
 			return nil, fmt.Errorf("section %q: %w", sec.name, err)
 		}
-		if p.peek().text == ";" {
-			p.next()
-		}
+		p.endSection()
 		secs = append(secs, sec)
 	}
-	return secs, nil
+}
+
+// parseKeycodes reads the default xkb_keycodes section of a keycodes file,
+// or its first: the code of each key by its name or an alias of it.
+func parseKeycodes(src string) (map[string]int, error) {
+	toks, err := lex(src)
+	if err != nil {
+		return nil, err
+	}
+	p := &parser{toks: toks}
+	var first map[string]int
+	for {
+		sec, ok, err := p.header("xkb_keycodes")
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			if first == nil {
+				return nil, errors.New("no xkb_keycodes")
+			}
+			return first, nil
+		}
+		codes, err := p.keycodes()
+		if err != nil {
+			return nil, fmt.Errorf("section %q: %w", sec.name, err)
+		}
+		p.endSection()
+		if sec.def {
+			return codes, nil
+		}
+		if first == nil {
+			first = codes
+		}
+	}
+}
+
+// header reads up to and including the opening brace of the next section
+// of kind, and reports whether there was one.
+func (p *parser) header(kind string) (section, bool, error) {
+	var sec section
+	for {
+		if p.done() {
+			return sec, false, nil
+		}
+		t := p.next()
+		if t.quoted {
+			continue
+		}
+		if t.text == "default" {
+			sec.def = true
+		}
+		if t.text == kind {
+			break
+		}
+	}
+	name := p.next()
+	if !name.quoted {
+		return sec, false, fmt.Errorf("%s without a name", kind)
+	}
+	sec.name = name.text
+	return sec, true, p.expect("{")
+}
+
+// endSection passes the semicolon after a section's closing brace.
+func (p *parser) endSection() {
+	if p.peek().text == ";" {
+		p.next()
+	}
+}
+
+// keycodes reads `<NAME> = 38;` and `alias <A> = <B>;` up to the section's
+// closing brace, and gives each alias its key's code.
+func (p *parser) keycodes() (map[string]int, error) {
+	codes := map[string]int{}
+	aliases := map[string]string{}
+	for {
+		if p.done() {
+			return nil, errors.New("no closing brace")
+		}
+		t := p.next()
+		switch {
+		case t.text == ";":
+			continue
+		case t.text == "}" && !t.quoted:
+			for alias, key := range aliases {
+				if code, ok := codes[key]; ok {
+					codes[alias] = code
+				}
+			}
+			return codes, nil
+		case t.text == "alias":
+			alias := p.next()
+			if p.next().text == "=" {
+				aliases[alias.text] = p.next().text
+			}
+		case strings.HasPrefix(t.text, "<") && p.peek().text == "=":
+			p.next()
+			if code, err := strconv.Atoi(p.next().text); err == nil {
+				codes[t.text] = code
+			}
+		}
+		if err := p.skip(); err != nil {
+			return nil, err
+		}
+	}
 }
 
 // body reads the statements of a section up to its closing brace.
@@ -265,24 +350,32 @@ func (p *parser) key(m mode) (stmt, error) {
 	}
 }
 
-// list reads keysyms up to `]`, normalised; a level of several keysyms,
-// `{ a, b }`, contributes each.
-func (p *parser) list() ([]string, error) {
-	var syms []string
+// list reads the levels of a key up to `]`, each keysym normalised; a
+// level of several keysyms is written `{ a, b }`.
+func (p *parser) list() ([][]string, error) {
+	var levels [][]string
+	several := false
 	for {
 		t := p.next()
 		switch {
 		case p.i > len(p.toks):
 			return nil, fmt.Errorf("no closing bracket")
 		case t.text == "]" && !t.quoted:
-			return syms, nil
-		case t.text == "," || t.text == "{" || t.text == "}":
+			return levels, nil
+		case t.text == ",":
+		case t.text == "{":
+			levels = append(levels, nil)
+			several = true
+		case t.text == "}":
+			several = false
 		case t.text == "(":
 			if err := p.skipTo(")"); err != nil {
 				return nil, err
 			}
+		case several:
+			levels[len(levels)-1] = append(levels[len(levels)-1], normalize(t.text))
 		default:
-			syms = append(syms, normalize(t.text))
+			levels = append(levels, []string{normalize(t.text)})
 		}
 	}
 }

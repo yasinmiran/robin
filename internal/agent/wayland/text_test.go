@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -431,15 +430,10 @@ func TestTypeAnyKeysym(t *testing.T) {
 // letters, as Russian does, until source names its variant with them.
 func cyrillic(t *testing.T, source *string) *keyboard {
 	t.Helper()
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "symbols"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	symbols := `default xkb_symbols "basic" { name[Group1] = "Cyrillic"; key <AC01> { [ Cyrillic_ef, 1, exclam ] }; };
-xkb_symbols "latin" { name[Group1] = "Latin"; key <AC01> { [ o, k ] }; };`
-	if err := os.WriteFile(filepath.Join(dir, "symbols", "cy"), []byte(symbols), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	dir := xkbData(t, map[string]string{
+		"cy": `default xkb_symbols "basic" { name[Group1] = "Cyrillic"; key <AC01> { [ Cyrillic_ef, 1, exclam ] }; };
+xkb_symbols "latin" { name[Group1] = "Latin"; key <AC01> { [ o, k ] }; };`,
+	})
 	k := &keyboard{
 		source: func() (string, error) { return *source, nil },
 		load:   func(l, v string) (xkb.Layout, error) { return xkb.Load([]string{dir}, l, v) },

@@ -38,3 +38,15 @@ partial
 xkb_symbols "vendor" {
     include "vndr/us(extra)"
 };
+
+// Keysyms on more than one key: mutter takes each from the key of the
+// lowest code that has it.
+partial
+xkb_symbols "order" {
+    include "latin"
+    key <AE01> { [ 1, exclam, NoSymbol, q ] };
+    key <AE02> { [ 2, at, e ] };
+    key <AB10> { [ slash, question, NoSymbol, w ] };
+    key <FK99> { [ Greek_alpha ] };
+    key <AC12> { [ Greek_beta ] };
+};

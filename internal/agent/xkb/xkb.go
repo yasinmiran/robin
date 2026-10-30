@@ -1,13 +1,16 @@
-// Package xkb reads keyboard layouts from xkeyboard-config's symbols files,
-// as far as a compositor that types only what its layout has needs: which
-// printable ASCII characters the layout's keys carry, and its name.
+// Package xkb reads keyboard layouts from xkeyboard-config's symbols and
+// keycodes files, as far as mutter, which types a keysym only on a key of
+// its layout, needs: which printable ASCII characters it types, and the
+// layout's name.
 package xkb
 
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -16,23 +19,31 @@ import (
 // four or five levels.
 const maxDepth = 16
 
+// maxLevel is the highest level, counted from 0, that mutter types a
+// keysym on: it presses Shift for level 1 and AltGr for level 2, and for a
+// higher one it presses the key alone, which types level 0 instead.
+const maxLevel = 2
+
 // Layout is what a layout's first group types.
 type Layout struct {
 	// Name is the layout's own name for itself, such as "Russian".
 	Name string
-	syms map[string]bool // keysym names on any level of the keys
+	// levels holds the level mutter takes each keysym from: it looks a
+	// keysym up on the keys in the order of their codes, and on each key
+	// level by level, and takes the first it finds.
+	levels map[string]int
 }
 
-// Has reports whether the layout types r, a printable ASCII character, on
-// one of its keys. A space, a tab and a newline come from keys every
-// layout shares (pc), so it has those.
+// Has reports whether the layout types r, a printable ASCII character,
+// when mutter is asked for its keysym. A tab and a newline come from keys
+// every layout shares, so it has those, and a space.
 func (l Layout) Has(r rune) bool {
 	switch r {
 	case ' ', '\t', '\n':
 		return true
 	}
-	name := asciiName(r)
-	return name != "" && l.syms[name]
+	level, ok := l.levels[asciiName(r)]
+	return ok && level <= maxLevel
 }
 
 // Latin reports whether the layout types the letters a to z.
@@ -65,21 +76,55 @@ func Dirs() []string {
 }
 
 // Load reads layout, in variant or its default one when variant is "",
-// from the symbols directories of dirs.
+// over pc's keys, from the symbols directories of dirs, with the evdev
+// keycodes, which mutter's keymap has, from the first of them that has
+// those.
 func Load(dirs []string, layout, variant string) (Layout, error) {
-	r := &reader{dirs: dirs, files: map[string][]section{}}
-	keys := map[string][]string{}
+	codes, err := keycodes(dirs)
+	if err != nil {
+		return Layout{}, err
+	}
+	r := &reader{dirs: dirs, codes: codes, files: map[string][]section{}}
+	keys := map[int][][]string{}
+	// The keymap puts the layout over pc's keys, as xkeyboard-config's
+	// rules do for every PC model.
+	if _, err := r.apply(keys, "pc", "", modeOverride, 0); err != nil {
+		return Layout{}, err
+	}
 	name, err := r.apply(keys, layout, variant, modeOverride, 0)
 	if err != nil {
 		return Layout{}, err
 	}
-	l := Layout{Name: name, syms: map[string]bool{}}
-	for _, levels := range keys {
-		for _, s := range levels {
-			l.syms[s] = true
+	l := Layout{Name: name, levels: map[string]int{}}
+	for _, code := range slices.Sorted(maps.Keys(keys)) {
+		for level, syms := range keys[code] {
+			for _, s := range syms {
+				if _, seen := l.levels[s]; !seen {
+					l.levels[s] = level
+				}
+			}
 		}
 	}
 	return l, nil
+}
+
+// keycodes reads keycodes/evdev from the first of dirs that has it.
+func keycodes(dirs []string) (map[string]int, error) {
+	for _, d := range dirs {
+		b, err := os.ReadFile(filepath.Join(d, "keycodes", "evdev"))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		codes, err := parseKeycodes(string(b))
+		if err != nil {
+			return nil, fmt.Errorf("xkb: keycodes/evdev: %w", err)
+		}
+		return codes, nil
+	}
+	return nil, errors.New("xkb: no keycodes/evdev")
 }
 
 // ParseSource splits a layout as GNOME and setxkbmap name it, "layout" or
@@ -114,18 +159,20 @@ type stmt struct {
 	include string
 	mode    mode
 	key     string
-	levels  []string
+	levels  [][]string
 	name    string
 }
 
 type reader struct {
 	dirs  []string
+	codes map[string]int // by key name
 	files map[string][]section
 }
 
-// apply merges the keys of file(variant) into keys and returns the name the
-// section gives its group, if any.
-func (r *reader) apply(keys map[string][]string, file, variant string, m mode, depth int) (string, error) {
+// apply merges the keys of file(variant) into keys, by keycode, and returns
+// the name the section gives its group, if any. A key without a code is
+// not on the keyboard, and is left out.
+func (r *reader) apply(keys map[int][][]string, file, variant string, m mode, depth int) (string, error) {
 	if depth > maxDepth {
 		return "", fmt.Errorf("xkb: includes nest deeper than %d at %s(%s)", maxDepth, file, variant)
 	}
@@ -159,7 +206,9 @@ func (r *reader) apply(keys map[string][]string, file, variant string, m mode, d
 				}
 			}
 		case s.key != "":
-			keys[s.key] = merge(keys[s.key], s.levels, m == modeAugment || s.mode == modeAugment)
+			if code, ok := r.codes[s.key]; ok {
+				keys[code] = merge(keys[code], s.levels, m == modeAugment || s.mode == modeAugment)
+			}
 		case s.name != "":
 			name = s.name
 		}
@@ -170,8 +219,8 @@ func (r *reader) apply(keys map[string][]string, file, variant string, m mode, d
 // merge merges a key's new levels into its old ones level by level, as
 // XKB does: NoSymbol (or any) leaves a level as it was, and augmenting
 // fills only the levels that have nothing yet.
-func merge(old, levels []string, augment bool) []string {
-	out := append([]string(nil), old...)
+func merge(old, levels [][]string, augment bool) [][]string {
+	out := append([][]string(nil), old...)
 	for i, s := range levels {
 		if i >= len(out) {
 			out = append(out, s)
@@ -185,7 +234,9 @@ func merge(old, levels []string, augment bool) []string {
 	return out
 }
 
-func empty(sym string) bool { return sym == "NoSymbol" || sym == "any" }
+func empty(level []string) bool {
+	return len(level) == 0 || len(level) == 1 && (level[0] == "NoSymbol" || level[0] == "any")
+}
 
 func pick(secs []section, variant string) (section, bool) {
 	for _, s := range secs {
