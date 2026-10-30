@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  FAILED, FETCHING, KEPT, OFFERED, PENDING, QUEUED, RECEIVING, SAVED, SENDING, Transfers, formatSize, statusOf,
+  FAILED, FETCHING, KEPT, MAX_OFFERS, OFFERED, PENDING, QUEUED, RECEIVING, SAVED, SENDING, Transfers, formatSize, statusOf,
 } from '../transfers.js';
 
 test('formatSize writes binary units as the agent does', () => {
@@ -117,4 +117,22 @@ test('the host withdraws only what it offered', () => {
   list.fetch('d1');
   assert.equal(list.withdraw('d1'), true);
   assert.equal(list.get('d1'), undefined);
+});
+
+test('the host cannot keep more than MAX_OFFERS files on offer', () => {
+  const list = new Transfers();
+  list.upload('u', 'mine.txt', 1);
+  list.offer('o0', 'first', 1);
+  list.fetch('o0');
+  list.offer('o1', 'second', 1);
+  list.offer('o2', 'third', 1);
+  list.finished('o2');
+  for (let i = 3; i < MAX_OFFERS + 13; i++) list.offer(`o${i}`, 'f', 1);
+  const open = list.list().filter((t) => t.dir === 'down' && t.state !== SAVED);
+  assert.equal(open.length, MAX_OFFERS);
+  assert.equal(list.get('o0').state, FETCHING, 'the one being fetched stays');
+  assert.equal(list.get('o1'), undefined, 'the oldest still on offer went');
+  assert.equal(list.get('o2').state, SAVED, 'a saved one is not on offer');
+  assert.equal(list.get('u').state, QUEUED, 'uploads are the page\'s own');
+  assert.equal(list.get(`o${MAX_OFFERS + 12}`).state, OFFERED, 'the newest is listed');
 });

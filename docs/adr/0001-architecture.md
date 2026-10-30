@@ -1169,7 +1169,10 @@ that grows while on offer, a log say, has to be offered again. An offer
 whose size is not a whole number of bytes is not listed. The host may
 withdraw only what it offered: `file-withdraw` naming one of the page's
 uploads used to remove its row and its Cancel button while its bytes still
-went.
+went. The page lists at most 256 files on offer, the agent's own
+`maxSessionOffers`, since every change redraws every row: past that, the
+oldest still waiting for a click on Save goes, so a host that offered
+without end grows neither the list nor the redraw.
 
 ### Reproducible release binaries
 

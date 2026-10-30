@@ -730,7 +730,8 @@ transfers open to the page at once, a newer copy pushing out the oldest,
 and a download only for each click on Save; what arrives is kept as it
 comes, never reserved ahead for the size a header claims. A download may be no
 larger than the offer you clicked, and the host can withdraw only the files
-it offered, never your uploads. The page keeps at most 128 pointer images
+it offered, never your uploads. The page lists at most 256 files on offer,
+as the agent does, dropping the oldest not yet clicked. The page keeps at most 128 pointer images
 of at most 256 KiB each, and puts nothing from the host into the pointer's
 CSS but base64 and whole-pixel hot spots.
 
