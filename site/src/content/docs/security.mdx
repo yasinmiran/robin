@@ -61,6 +61,7 @@ The browser and the agent each ask the STUN server that `--stun` names, Google's
 
 - The agent's ICE-TCP listener binds loopback and only accepts ICE connections carrying the session's credentials. It is reached through the SSH forward, never from the network, and it hangs up at once on a connection unless a process of yours, or root's, still holds its other end open, which it asks the kernel. A connection that has not started ICE goes within 5 seconds.
 - A spawned X display is protected by a fresh cookie in a 0600 file, which the agent hands only to the Xvfb it started, checked through the socket's peer credentials.
+- A spawned display starts its session only when its Xvfb holds both socket names, `/tmp/.X11-unix/X<n>` and the abstract `@/tmp/.X11-unix/X<n>`. X clients dial the abstract name first, and one Xvfb left free any local user could take, to receive every client's cookie, keystrokes and clipboard.
 - The probe counts only `X<digits>` in `/tmp/.X11-unix`, which any user can write, and prints nothing that would span lines, so no file name there can add to what it reports.
 - At most 256 files are on offer from `robin-send` at once, each holding a descriptor open in the agent.
 - `robin-agent end` and the sweep of old run directories take only a process of yours for a session's daemon.

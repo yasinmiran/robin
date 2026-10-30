@@ -82,6 +82,30 @@ func dialServer(num string, xvfbPID int) (net.Conn, error) {
 	return nil, dialErr
 }
 
+// checkSockets makes sure the Xvfb with pid xvfbPID holds both socket names
+// of display num. libxcb dials the abstract name first, and a name Xvfb
+// left free, as one built or started without the abstract transport does,
+// any local user can take and so receive the cookie of every client in the
+// session.
+func checkSockets(num string, xvfbPID int) error {
+	sock := "/tmp/.X11-unix/X" + num
+	for _, addr := range []string{sock, "@" + sock} {
+		nc, err := net.Dial("unix", addr)
+		if err != nil {
+			return fmt.Errorf("display: Xvfb does not listen on %s, which any local user could take to receive the session's cookie: %w", addr, err)
+		}
+		cred, err := peercred.Of(nc)
+		nc.Close()
+		if err != nil {
+			return fmt.Errorf("display: %s: cannot tell who serves it: %w", addr, err)
+		}
+		if int(cred.Pid) != xvfbPID {
+			return &notServerError{addr: addr, pid: int(cred.Pid), xvfbPID: xvfbPID}
+		}
+	}
+	return nil
+}
+
 // notServerError means a process other than the spawned Xvfb listens at
 // one of its display's socket names.
 type notServerError struct {
