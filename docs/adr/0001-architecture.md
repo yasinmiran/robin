@@ -2537,7 +2537,23 @@ loopback port. Two of the CLI's surfaces failed that reading.
   accept loop, one netlink round trip per connection. In the regression
   test a stand-in for the lookup names a flood of 34147 connections in 3 s
   as another user's; before the fix the browser's check never reached the
-  forward, and after it the check is spliced. Only the latest answer's: after an ICE restart Pion's mux no
+  forward, and after it the check is spliced. The round 2 review found
+  two gaps. A kernel without the TCP `sock_diag` handler (built without
+  `inet_diag`, or with modules disabled) answers ENOENT for every socket,
+  the answer for one it does not have, so the tunnel closed the browser's
+  connection too: the gate failed closed on a client with no attacker. The
+  tunnel now dials its own listener once at the start and trusts the
+  lookup only if it calls that connection this user's, and otherwise
+  takes it as unavailable, the cap alone. And Windows, the client this
+  section's `ssh -W` change is for, had no lookup. `tcpowner.PeerIsSelf`
+  answers there from `GetExtendedTcpTable(TCP_TABLE_OWNER_PID_CONNECTIONS)`:
+  the pid holding the dialer's end, then that process's token user, set
+  beside this process's. A process the CLI cannot open is another user's,
+  or gone, and either way a stranger; only a table that cannot be read is
+  unavailable. That API compares accounts instead of uids, which Windows
+  does not have, and the self-probe covers a Windows lookup that answers
+  wrong, since nothing here runs Windows: the row parsing is tested on
+  Linux, the calls in cross-builds and `go vet`. Only the latest answer's: after an ICE restart Pion's mux no
   longer routes the old ufrag either. In the e2e `blocked` and `nomux`
   scenarios every TCP session ran through the check; in `restart`, the
   page was back on the tunnel 4151 ms after UDP was dropped, on a machine

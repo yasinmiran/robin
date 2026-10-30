@@ -916,9 +916,9 @@ it too. The CLI passes a connection on into SSH only once its first message,
 within 5 s, is a connectivity check signed with the ICE password of the
 agent's latest answer, which only the page has seen; anything else is closed
 without an SSH channel opened for it, and the DTLS fingerprint is pinned as
-before. On Linux the CLI also asks the kernel who opened each connection
-and closes one that is not yours at once, before it waits for anything, so
-another user cannot crowd your browser's connection out. At most 16
+before. On Linux and Windows the CLI also asks the system who opened each
+connection and closes one that is not yours at once, before it waits for
+anything, so another user cannot crowd your browser's connection out. At most 16
 connections wait for that check at once, and past that the oldest is
 closed, so connections that say nothing cannot run the CLI out of file
 descriptors either. Behind that port the SSH forward is a unix socket in a private
@@ -1501,13 +1501,17 @@ verified against a Linux build.
   TCP path; so it does for one from an IPv6 socket, which sshd never opens
   for the forward's IPv4 address. The SSH server has to make the forward's
   connection as you or as root, as OpenSSH's does.
-- The CLI asks the kernel the same of connections to its own tunnel port,
-  on Linux only. On macOS, Windows and Android, or where netlink is
-  blocked, another user of the client machine (on Android, any other app)
-  who keeps opening connections to that port faster than your browser
-  sends its check can keep the browser's from getting through, which
-  leaves the session on UDP alone, or with `--transport tunnel` without
-  media.
+- The CLI asks the system the same of connections to its own tunnel port
+  on Linux and Windows only, and only once the answer for a connection of
+  its own came back as yours: a kernel without the TCP `sock_diag` handler
+  answers that it knows no socket at all. On macOS and Android, where
+  netlink is blocked, or where that first answer is wrong, another user of
+  the client machine (on Android, any other app) who keeps opening
+  connections to that port faster than your browser sends its check can
+  keep the browser's from getting through, which leaves the session on UDP
+  alone, or with `--transport tunnel` without media. The Windows lookup
+  (`GetExtendedTcpTable`, then the account of the process it names) has
+  run in cross-builds and `go vet` only.
 - The page can still send media on the agent's own video and sound lines,
   which the answer cannot turn down without its own sending; the agent
   reads and drops it, so it costs the link and nothing else.

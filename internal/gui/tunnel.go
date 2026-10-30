@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"os"
 	"slices"
 	"sync"
 	"time"
@@ -65,7 +64,7 @@ type tunnel struct {
 	ln         net.Listener
 	log        *slog.Logger
 	firstCheck time.Duration
-	uidOf      func(net.Conn) (uint32, error) // tcpowner.PeerUID
+	selfOf     func(net.Conn) (bool, error) // tcpowner.PeerIsSelf
 
 	mu      sync.Mutex
 	fwd     dialer            // nil while there is none
@@ -77,7 +76,7 @@ type tunnel struct {
 // the others the listener plus the forward over m, where a forward that
 // fails is an error only when the tunnel is all the user allowed.
 func openTunnel(ctx context.Context, m *sshmux.Master, remote string, transport relay.Transport, log *slog.Logger) (*tunnel, error) {
-	t := &tunnel{log: log, firstCheck: firstCheckWait, uidOf: tcpowner.PeerUID}
+	t := &tunnel{log: log, firstCheck: firstCheckWait}
 	if remote == "" || transport == relay.Direct {
 		return t, nil
 	}
@@ -86,6 +85,7 @@ func openTunnel(ctx context.Context, m *sshmux.Master, remote string, transport 
 		return nil, err
 	}
 	t.ln = ln
+	t.selfOf = trustedLookup(ln, tcpowner.PeerIsSelf, log)
 	go t.serve()
 	if err := t.forward(ctx, m, remote); err != nil {
 		if transport == relay.Tunnel {
@@ -95,6 +95,53 @@ func openTunnel(ctx context.Context, m *sshmux.Master, remote string, transport 
 		log.Warn("SSH tunnel unavailable; direct UDP only", "err", err)
 	}
 	return t, nil
+}
+
+// trustedLookup is lookup, once it has said that a connection this process
+// makes to ln is this user's. A kernel that cannot place sockets at all,
+// such as one built without the TCP sock_diag handler that answers ENOENT
+// for every socket, would otherwise have the tunnel close the browser's
+// connection too; there the lookup is taken as unavailable, and the cap
+// on pending connections is all there is, as where it cannot be asked.
+// It must run before anything else accepts on ln.
+func trustedLookup(ln net.Listener, lookup func(net.Conn) (bool, error), log *slog.Logger) func(net.Conn) (bool, error) {
+	unavailable := func(net.Conn) (bool, error) { return false, tcpowner.ErrUnavailable }
+	self, err := probeLookup(ln, lookup)
+	if errors.Is(err, tcpowner.ErrUnavailable) {
+		return unavailable
+	}
+	if err != nil || !self {
+		log.Warn("tunnel cannot tell this user's connections from others'; the cap on waiting ones is all that guards it", "self", self, "err", err)
+		return unavailable
+	}
+	return lookup
+}
+
+// probeLookup dials ln and asks lookup about the connection it accepts
+// from that dial. Another one that comes first is closed.
+func probeLookup(ln net.Listener, lookup func(net.Conn) (bool, error)) (bool, error) {
+	if tl, ok := ln.(*net.TCPListener); ok {
+		tl.SetDeadline(time.Now().Add(firstCheckWait))
+		defer tl.SetDeadline(time.Time{})
+	}
+	mine, err := net.DialTimeout("tcp4", ln.Addr().String(), firstCheckWait)
+	if err != nil {
+		return false, err
+	}
+	defer mine.Close()
+	for range maxPending {
+		c, err := ln.Accept()
+		if err != nil {
+			return false, err
+		}
+		if c.RemoteAddr().String() != mine.LocalAddr().String() {
+			c.Close()
+			continue
+		}
+		defer c.Close()
+		return lookup(c)
+	}
+	return false, errors.New("the probe's own connection never came")
 }
 
 // serve splices the listener's connections until it is closed.
@@ -127,12 +174,12 @@ func (t *tunnel) serve() {
 // blocks netlink. Elsewhere, Android among them, nobody is, and the cap on
 // pending connections is all there is.
 func (t *tunnel) stranger(c net.Conn) bool {
-	uid, err := t.uidOf(c)
+	self, err := t.selfOf(c)
 	if errors.Is(err, tcpowner.ErrUnavailable) {
 		return false
 	}
-	if err != nil || uid != uint32(os.Getuid()) {
-		t.log.Debug("tunnel refused another user's connection", "from", c.RemoteAddr(), "uid", uid, "err", err)
+	if err != nil || !self {
+		t.log.Debug("tunnel refused another user's connection", "from", c.RemoteAddr(), "err", err)
 		return true
 	}
 	return false

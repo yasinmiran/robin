@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 
 	"golang.org/x/sys/unix"
 )
@@ -29,6 +30,16 @@ func PeerUID(c net.Conn) (uint32, error) {
 		return 0, fmt.Errorf("the other end is no longer held open (state %d)", s.state)
 	}
 	return s.uid, nil
+}
+
+// PeerIsSelf reports whether the other end of c, as PeerUID finds it, was
+// opened by this process's user.
+func PeerIsSelf(c net.Conn) (bool, error) {
+	uid, err := PeerUID(c)
+	if err != nil {
+		return false, err
+	}
+	return uid == uint32(os.Getuid()), nil
 }
 
 // tcpSocket is what the kernel reports of one TCP socket.

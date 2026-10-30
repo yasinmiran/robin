@@ -34,7 +34,7 @@ func (f fakeForward) Dial() (net.Conn, error) { return net.Dial("unix", f.sock) 
 func testTunnel(t *testing.T, ln net.Listener, firstCheck time.Duration) (*tunnel, <-chan net.Conn) {
 	t.Helper()
 	fwd, accepted := testForward(t)
-	tun := &tunnel{ln: ln, log: slog.New(slog.DiscardHandler), firstCheck: firstCheck, fwd: fwd, uidOf: tcpowner.PeerUID}
+	tun := &tunnel{ln: ln, log: slog.New(slog.DiscardHandler), firstCheck: firstCheck, fwd: fwd, selfOf: tcpowner.PeerIsSelf}
 	go tun.serve()
 	t.Cleanup(func() { ln.Close() })
 	return tun, accepted
@@ -202,13 +202,10 @@ func TestTunnelAdmitsTheBrowserDuringAFlood(t *testing.T) {
 	var mu sync.Mutex
 	mine := map[string]bool{} // dialling ends of this user's
 	tun := &tunnel{ln: ln, log: slog.New(slog.DiscardHandler), firstCheck: 5 * time.Second, fwd: fwd,
-		uidOf: func(c net.Conn) (uint32, error) {
+		selfOf: func(c net.Conn) (bool, error) {
 			mu.Lock()
 			defer mu.Unlock()
-			if mine[c.RemoteAddr().String()] {
-				return uint32(os.Getuid()), nil
-			}
-			return uint32(os.Getuid()) + 1, nil
+			return mine[c.RemoteAddr().String()], nil
 		}}
 	go tun.serve()
 	t.Cleanup(func() { ln.Close() })
@@ -274,21 +271,21 @@ func TestTunnelAdmitsTheBrowserDuringAFlood(t *testing.T) {
 func TestTunnelTellsUsersApart(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
-		uid    uint32
+		self   bool
 		err    error
 		admits bool
 	}{
-		{"this user's", uint32(os.Getuid()), nil, true},
-		{"another user's", uint32(os.Getuid()) + 1, nil, false},
-		{"not found", 0, errors.New("the other end is not a socket of this host"), false},
-		{"root's, once its dialer closed it", 0, errors.New("the other end is no longer held open (state 7)"), false},
-		{"the kernel cannot be asked", 0, fmt.Errorf("%w: sock_diag: permission denied", tcpowner.ErrUnavailable), true},
+		{"this user's", true, nil, true},
+		{"another user's", false, nil, false},
+		{"not found", false, errors.New("the other end is not a socket of this host"), false},
+		{"root's, once its dialer closed it", false, errors.New("the other end is no longer held open (state 7)"), false},
+		{"the kernel cannot be asked", false, fmt.Errorf("%w: sock_diag: permission denied", tcpowner.ErrUnavailable), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fwd, accepted := testForward(t)
 			ln := loopback(t)
 			tun := &tunnel{ln: ln, log: slog.New(slog.DiscardHandler), firstCheck: 5 * time.Second, fwd: fwd,
-				uidOf: func(net.Conn) (uint32, error) { return tc.uid, tc.err }}
+				selfOf: func(net.Conn) (bool, error) { return tc.self, tc.err }}
 			go tun.serve()
 			t.Cleanup(func() { ln.Close() })
 			tun.answered(iceAnswer("agentufrag", "agentpasswordagentpasswo"))
@@ -358,6 +355,56 @@ func TestTunnelBoundsPendingConnections(t *testing.T) {
 	spliced(t, accepted, check)
 }
 
+// TestTunnelTrustsALookupThatKnowsThisUser: a kernel without the TCP
+// sock_diag handler answers ENOENT for every socket, the same error as for
+// a socket it does not have, and the tunnel would close the browser's
+// connection as a stranger's. The lookup is asked first about a connection
+// the CLI makes itself; one that does not call it this user's is taken
+// as unavailable, so the browser waits for its check as it would where
+// the kernel cannot be asked at all.
+func TestTunnelTrustsALookupThatKnowsThisUser(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		self    bool
+		err     error
+		trusted bool
+	}{
+		{"this user's", true, nil, true},
+		{"no handler for TCP", false, errors.New("the other end is not a socket of this host"), false},
+		{"another user's", false, nil, false},
+		{"the kernel cannot be asked", false, fmt.Errorf("%w: sock_diag: permission denied", tcpowner.ErrUnavailable), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ln := loopback(t)
+			t.Cleanup(func() { ln.Close() })
+			var asked atomic.Int32
+			lookup := trustedLookup(ln, func(net.Conn) (bool, error) {
+				asked.Add(1)
+				return tc.self, tc.err
+			}, slog.New(slog.DiscardHandler))
+			if asked.Load() != 1 {
+				t.Fatalf("the lookup was asked %d times while it was tried, want once", asked.Load())
+			}
+			_, err := lookup(nil)
+			if unavailable := errors.Is(err, tcpowner.ErrUnavailable); unavailable == tc.trusted {
+				t.Fatalf("lookup after the probe: %v; trusted %v", err, tc.trusted)
+			}
+			fwd, accepted := testForward(t)
+			tun := &tunnel{ln: ln, log: slog.New(slog.DiscardHandler), firstCheck: 5 * time.Second, fwd: fwd, selfOf: lookup}
+			go tun.serve()
+			tun.answered(iceAnswer("agentufrag", "agentpasswordagentpasswo"))
+			c := dialTunnel(t, tun, nil)
+			if !tc.self && tc.trusted {
+				refused(t, tc.name, c)
+				return
+			}
+			check := framedCheck(t, "agentufrag:brws", "agentpasswordagentpasswo")
+			c.Write(check)
+			spliced(t, accepted, check)
+		})
+	}
+}
+
 // TestTunnelRefusesWithoutAWorkingForward: a check that passes is dropped
 // like any other while there is no forward to take it: none yet, after a
 // first forward that failed under Auto, whose listener the browser still
@@ -371,7 +418,7 @@ func TestTunnelRefusesWithoutAWorkingForward(t *testing.T) {
 		{"forward socket gone", fakeForward{filepath.Join(t.TempDir(), "gone.sock")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			tun := &tunnel{ln: loopback(t), log: slog.New(slog.DiscardHandler), firstCheck: time.Second, fwd: tc.fwd, uidOf: tcpowner.PeerUID}
+			tun := &tunnel{ln: loopback(t), log: slog.New(slog.DiscardHandler), firstCheck: time.Second, fwd: tc.fwd, selfOf: tcpowner.PeerIsSelf}
 			go tun.serve()
 			defer tun.Close()
 			tun.answered(iceAnswer("agentufrag", "agentpasswordagentpasswo"))
