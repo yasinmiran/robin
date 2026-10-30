@@ -431,7 +431,8 @@ func (s *session) grant(g *guest) {
 }
 
 // revoke takes control back from g at once: what it holds down is let go
-// and what it was typing dropped, and the files on offer leave its page.
+// and what it was typing dropped, the files on offer leave its page, and
+// what the session was sending it, a file or the clipboard, ends.
 func (s *session) revoke(g *guest) {
 	if !g.control.Swap(false) {
 		return
@@ -441,6 +442,7 @@ func (s *session) revoke(g *guest) {
 	s.desk.Input(protocol.Control{T: protocol.ControlRelease})
 	s.sendShare(g)
 	if v := s.viewOf(g); v != nil {
+		s.endTransfersTo(v, errControlTaken)
 		s.withdrawOffers(v)
 	}
 }
@@ -507,8 +509,8 @@ func (s *session) sendShare(g *guest) {
 	}
 }
 
-// errControlTaken ends a guest's turn at the microphone once its control
-// is taken.
+// errControlTaken ends a guest's turn at the microphone, and what the
+// session was sending its page, once its control is taken.
 var errControlTaken = errors.New("the guest's control was taken")
 
 // gated is a guest's microphone track as the microphone reads it while the

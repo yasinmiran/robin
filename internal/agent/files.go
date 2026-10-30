@@ -302,14 +302,16 @@ func (s *session) fetchOffer(v *viewer, m protocol.Control) {
 	if fs == nil || m.File == nil {
 		return
 	}
+	// Withdrawing the offer, as the end of the session does, cancels it,
+	// and so does v's page losing control.
+	ctx, cancel := s.transfer(context.Background(), v)
 	fs.mu.Lock()
 	o := fs.offers[m.File.ID]
 	if o == nil || o.cancel != nil {
 		fs.mu.Unlock()
+		cancel()
 		return
 	}
-	// Withdrawing the offer, as the end of the session does, cancels it.
-	ctx, cancel := context.WithCancel(context.Background())
 	o.cancel = cancel
 	fs.wg.Add(1)
 	fs.mu.Unlock()
@@ -317,6 +319,9 @@ func (s *session) fetchOffer(v *viewer, m protocol.Control) {
 		defer fs.wg.Done()
 		defer cancel()
 		err := sendFile(ctx, p, o)
+		if err != nil && ctx.Err() != nil {
+			err = context.Cause(ctx)
+		}
 		fs.mu.Lock()
 		current := fs.offers[o.info.ID] == o
 		if current {

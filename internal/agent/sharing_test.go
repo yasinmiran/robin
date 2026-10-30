@@ -769,3 +769,29 @@ func TestAGuestGetsOnePeerASecond(t *testing.T) {
 		t.Error("the guest has no page after its second offer")
 	}
 }
+
+// What the session sends a page ends once the page loses control, with
+// that for its cause, and what it sends the page afterwards does not.
+func TestATransferEndsWithItsPagesControl(t *testing.T) {
+	s := testSession(&fakeDesktop{})
+	v := newViewer(1, &guest{})
+	ctx, cancel := s.transfer(t.Context(), v)
+	defer cancel()
+	s.endTransfersTo(v, errControlTaken)
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("the transfer outlived the page's control")
+	}
+	if !errors.Is(context.Cause(ctx), errControlTaken) {
+		t.Errorf("ended for %v", context.Cause(ctx))
+	}
+	next, stop := s.transfer(t.Context(), v)
+	if next.Err() != nil {
+		t.Fatalf("a transfer after the revoke began ended: %v", next.Err())
+	}
+	stop()
+	if !errors.Is(context.Cause(next), context.Canceled) {
+		t.Errorf("a stopped transfer ended for %v", context.Cause(next))
+	}
+}

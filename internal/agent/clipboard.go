@@ -158,7 +158,9 @@ func (s *session) forwardClips(ctx context.Context, clips <-chan protocol.Clip) 
 // it is plain text that fits one, else as a bulk transfer.
 func (s *session) sendClip(ctx context.Context, c protocol.Clip) {
 	for _, v := range s.controlling() {
+		ctx, cancel := s.transfer(ctx, v)
 		s.sendClipTo(ctx, v.peer, c)
+		cancel()
 	}
 }
 

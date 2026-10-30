@@ -40,6 +40,12 @@ type fileBrowser struct {
 	// refused counts those it did.
 	refuse  atomic.Bool
 	refused atomic.Int32
+	// stall makes it grant no credit, so a transfer stops after a window;
+	// started hears of each transfer's header and cut of each transfer
+	// whose channel closed before it ended.
+	stall   atomic.Bool
+	started chan protocol.Bulk
+	cut     chan struct{}
 }
 
 // received is one transfer the agent sent, already answered done.
@@ -58,7 +64,10 @@ func newFileBrowser(t *testing.T, h *harness) *fileBrowser {
 // transfers the agent opens, once the control channel is open.
 func wrapBrowser(t *testing.T, pc *webrtc.PeerConnection, dc *webrtc.DataChannel) *fileBrowser {
 	t.Helper()
-	b := &fileBrowser{t: t, pc: pc, dc: dc, controls: make(chan protocol.Control, 64), bulks: make(chan received, 8)}
+	b := &fileBrowser{
+		t: t, pc: pc, dc: dc, controls: make(chan protocol.Control, 64), bulks: make(chan received, 8),
+		started: make(chan protocol.Bulk, 8), cut: make(chan struct{}, 8),
+	}
 	dc.OnMessage(func(m webrtc.DataChannelMessage) {
 		var c protocol.Control
 		if json.Unmarshal(m.Data, &c) == nil && c.T != protocol.ControlHeartbeat && c.T != protocol.ControlCursor {
@@ -84,11 +93,20 @@ func (b *fileBrowser) take(ch *webrtc.DataChannel) {
 	var r received
 	sum := sha256.New()
 	var grant protocol.BulkGrant
+	var ended atomic.Bool
+	ch.OnClose(func() {
+		if !ended.Load() {
+			select {
+			case b.cut <- struct{}{}:
+			default:
+			}
+		}
+	})
 	ch.OnMessage(func(m webrtc.DataChannelMessage) {
 		if !m.IsString {
 			r.data = append(r.data, m.Data...)
 			sum.Write(m.Data)
-			if credit, ok := grant.Take(len(m.Data)); ok {
+			if credit, ok := grant.Take(len(m.Data)); ok && !b.stall.Load() {
 				c, _ := json.Marshal(credit)
 				ch.SendText(string(c))
 			}
@@ -98,7 +116,12 @@ func (b *fileBrowser) take(ch *webrtc.DataChannel) {
 		switch f.T {
 		case protocol.BulkHeader:
 			r.header = f
+			select {
+			case b.started <- f:
+			default:
+			}
 		case protocol.BulkEnd:
+			ended.Store(true)
 			verdict := protocol.Bulk{T: protocol.BulkDone}
 			if f.SHA256 != hex.EncodeToString(sum.Sum(nil)) {
 				verdict = protocol.Bulk{T: protocol.BulkError, Error: "hash"}

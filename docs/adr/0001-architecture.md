@@ -2584,7 +2584,14 @@ has, a peer of its own for its page, and a rule for who drives.
   owner's log without end: 500 knocks wrote 500 lines, 46000 bytes
   (`TestKnocksFromAnUninvitedUIDLogBounded`). Each uid's first refusal now
   logs at Warn and the rest at Debug, the tunnel listener's rule, for up
-  to 64 uids; 500 knocks write one line.
+  to 64 uids; 500 knocks write one line. A fourth gap had no test: a
+  revoke took the offers off the guest's page but let a download already
+  under way finish, which also spent the owner's offer. Each page now has
+  a context that what the session sends it, a file or a copy of the
+  clipboard, derives from, and a revoke ends it; in
+  `TestRevokingAGuestEndsWhatItIsFetching` the guest's stalled download
+  of a 2 MB file closes within milliseconds of the revoke (5 s without
+  the change), and the file stays on offer.
 - Lifetime follows the owner. When the owner's controller goes, every
   guest is dropped and every invitation withdrawn, and the door refuses
   newcomers until a controller resumes, so nobody watches a desktop whose

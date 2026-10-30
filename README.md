@@ -492,8 +492,9 @@ heard on the host. One guest has control at a time: giving it to another
 takes it from the first. You keep yours throughout, and closing or
 reloading your page takes control from every guest. Take back control
 ends theirs at once: what they held down is let go, text still being
-typed is dropped, the files on offer leave their page, and a transfer of
-theirs still under way is dropped. Remove closes their peer connection and
+typed is dropped, the files on offer leave their page, a transfer of
+theirs still under way is dropped, and so is a file or a copy on its way
+to them. Remove closes their peer connection and
 their page at once, and their CLI exits saying why. A guest leaves with
 Ctrl+C or the page's Leave button.
 

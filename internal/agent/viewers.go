@@ -3,6 +3,7 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -23,6 +24,41 @@ type viewer struct {
 	// cursorsShown are the pointer images this page has; session.mu
 	// guards it.
 	cursorsShown map[uint32]bool
+	// transfers ends what the session is sending this page once the page
+	// loses control or goes; session.mu guards both fields.
+	transfers    context.Context
+	endTransfers context.CancelCauseFunc
+}
+
+// newViewer is the gen-th page the session made, guest g's or the owner's
+// for a nil g, as yet without a peer.
+func newViewer(gen uint64, g *guest) *viewer {
+	v := &viewer{gen: gen, guest: g, cursorsShown: map[uint32]bool{}}
+	v.transfers, v.endTransfers = context.WithCancelCause(context.Background())
+	return v
+}
+
+// transfer derives from ctx the context of something the session sends
+// v's page: it also ends once the page loses control or goes.
+func (s *session) transfer(ctx context.Context, v *viewer) (context.Context, context.CancelFunc) {
+	s.mu.Lock()
+	page := v.transfers
+	s.mu.Unlock()
+	ctx, cancel := context.WithCancelCause(ctx)
+	stop := context.AfterFunc(page, func() { cancel(context.Cause(page)) })
+	return ctx, func() {
+		stop()
+		cancel(context.Canceled)
+	}
+}
+
+// endTransfersTo ends what the session is sending v's page, for why, and
+// starts afresh for what it sends the page later.
+func (s *session) endTransfersTo(v *viewer, why error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v.endTransfers(why)
+	v.transfers, v.endTransfers = context.WithCancelCause(context.Background())
 }
 
 // owner reports whether v is the owner's page.
@@ -37,7 +73,7 @@ func (v *viewer) control() bool { return v.owner() || v.guest.control.Load() }
 // owner's. s.mu must be held.
 func (s *session) openViewer(g *guest) (*viewer, error) {
 	s.gens++
-	v := &viewer{gen: s.gens, guest: g, cursorsShown: map[uint32]bool{}}
+	v := newViewer(s.gens, g)
 	signal := s.conn.Send
 	if g != nil {
 		signal = g.conn.Send
@@ -123,6 +159,7 @@ func (s *session) live(v *viewer) bool {
 // The caller has unlinked v, under s.mu, and holds s.inputMu.
 func (s *session) closeViewer(v *viewer) {
 	s.stream.remove(v.sub)
+	s.endTransfersTo(v, context.Canceled)
 	if v.control() {
 		// Whatever the departing page held down must not stay pressed, nor
 		// what it typed last go on typing.
