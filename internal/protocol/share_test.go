@@ -35,6 +35,23 @@ func TestParseJoinCodeRefusesWhatItDidNotWrite(t *testing.T) {
 	}
 }
 
+// A target names a session and an owner robin-agent join may dial, before
+// any secret is known.
+func TestJoinCodeCheckTarget(t *testing.T) {
+	if err := (JoinCode{Session: "a1b2c3d4", Owner: 0}).CheckTarget(); err != nil {
+		t.Errorf("a good target: %v", err)
+	}
+	for _, c := range []JoinCode{
+		{Owner: 1000}, {Session: "a1b2", Owner: -1}, {Session: "A1B2", Owner: 1000},
+		{Session: "a1/b2", Owner: 1000}, {Session: "a1-b2", Owner: 1000},
+		{Session: strings.Repeat("a", 129), Owner: 1000},
+	} {
+		if err := c.CheckTarget(); !errors.Is(err, ErrJoinCode) {
+			t.Errorf("%+v: %v, want ErrJoinCode", c, err)
+		}
+	}
+}
+
 func TestShareSocketIsAbstract(t *testing.T) {
 	if got := ShareSocket("a1b2c3d4"); got != "@robin-share-a1b2c3d4" {
 		t.Errorf("ShareSocket = %q", got)

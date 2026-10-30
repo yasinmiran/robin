@@ -26,7 +26,6 @@ const maxGuests = 8
 
 // Why a guest's session ended, as its CLI and page are told.
 const (
-	whyLeft     = "you left the session"
 	whyRemoved  = "the owner removed you from the session"
 	whyAway     = "the owner disconnected"
 	whyEnded    = "the session ended"
@@ -186,7 +185,7 @@ func (s *session) serveGuest(ctx context.Context, g *guest) {
 		case protocol.TypeHangup:
 			s.closeGuestView(g)
 		case protocol.TypeBye:
-			why = whyLeft
+			why = protocol.WhyGuestLeft
 			return
 		default:
 			s.log.Warn("ignoring guest message", "guest", g.id, "type", m.Type)

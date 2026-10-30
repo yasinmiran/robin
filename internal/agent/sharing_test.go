@@ -320,7 +320,7 @@ func TestAGuestLeavingOrGoingIsLetGo(t *testing.T) {
 		t.Fatal("the tunnel does not admit the guest")
 	}
 	cli.conn.Send(protocol.Message{Type: protocol.TypeBye})
-	if m := cli.next(t, protocol.TypeEnded); m.Error != whyLeft {
+	if m := cli.next(t, protocol.TypeEnded); m.Error != protocol.WhyGuestLeft {
 		t.Errorf("a guest that left heard %q", m.Error)
 	}
 	cli.closed(t)

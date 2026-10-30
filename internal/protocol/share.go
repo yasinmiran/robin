@@ -80,18 +80,25 @@ type Guests struct {
 	Error       string       `json:"error,omitempty"`
 }
 
+// GuestAction is what a GuestChange does to the guest.
+type GuestAction string
+
 // Actions of a GuestChange.
 const (
-	GuestGrant  = "grant"  // give the guest control, taking it from any other
-	GuestRevoke = "revoke" // take control back
-	GuestRemove = "remove" // close the guest's peer connection and let it go
+	GuestGrant  GuestAction = "grant"  // give the guest control, taking it from any other
+	GuestRevoke GuestAction = "revoke" // take control back
+	GuestRemove GuestAction = "remove" // close the guest's peer connection and let it go
 )
 
 // GuestChange is the owner page's change to one guest.
 type GuestChange struct {
-	ID     string `json:"id"`
-	Action string `json:"action"`
+	ID     string      `json:"id"`
+	Action GuestAction `json:"action"`
 }
+
+// WhyGuestLeft is why a guest's session ended when the guest left it, as
+// both its agent and its CLI tell its page.
+const WhyGuestLeft = "you left the session"
 
 // JoinCode is what an invitation's code names: the session, its owner's
 // uid, which the guest checks the session's socket against, and the secret.
@@ -112,23 +119,37 @@ func (c JoinCode) String() string {
 // ErrJoinCode is what ParseJoinCode returns for anything it did not make.
 var ErrJoinCode = errors.New("not a join code: robin gui --join takes the code the owner was given, such as a1b2c3d4-1000-...")
 
+// maxJoinCode bounds a code as the user passes it.
+const maxJoinCode = 128
+
+// CheckTarget reports whether c's session and owner could name a socket
+// and a uid: a session id of codeAlphabet alone and a uid that is not
+// negative. It says nothing of the secret.
+func (c JoinCode) CheckTarget() error {
+	if !inAlphabet(c.Session) || c.Owner < 0 || len(c.Session) > maxJoinCode {
+		return ErrJoinCode
+	}
+	return nil
+}
+
+func inAlphabet(s string) bool { return s != "" && strings.Trim(s, codeAlphabet) == "" }
+
 // ParseJoinCode reads a code that JoinCode.String wrote. It refuses
 // anything else, so what it returns can name a socket and a uid.
 func ParseJoinCode(s string) (JoinCode, error) {
 	parts := strings.Split(s, "-")
-	if len(parts) != 3 || len(s) > 128 {
+	if len(parts) != 3 || len(s) > maxJoinCode || !inAlphabet(parts[2]) {
 		return JoinCode{}, ErrJoinCode
-	}
-	for _, p := range []string{parts[0], parts[2]} {
-		if p == "" || strings.Trim(p, codeAlphabet) != "" {
-			return JoinCode{}, ErrJoinCode
-		}
 	}
 	uid, err := strconv.Atoi(parts[1])
-	if err != nil || uid < 0 || strconv.Itoa(uid) != parts[1] {
+	if err != nil || strconv.Itoa(uid) != parts[1] {
 		return JoinCode{}, ErrJoinCode
 	}
-	return JoinCode{Session: parts[0], Owner: uid, Secret: parts[2]}, nil
+	c := JoinCode{Session: parts[0], Owner: uid, Secret: parts[2]}
+	if err := c.CheckTarget(); err != nil {
+		return JoinCode{}, err
+	}
+	return c, nil
 }
 
 // ShareSocket is the abstract unix socket the session daemon of session

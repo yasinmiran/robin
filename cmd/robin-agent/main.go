@@ -148,8 +148,8 @@ func join(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	code, err := protocol.ParseJoinCode(protocol.JoinCode{Session: *session, Owner: *owner, Secret: "x"}.String())
-	if err != nil {
+	code := protocol.JoinCode{Session: *session, Owner: *owner}
+	if err := code.CheckTarget(); err != nil {
 		fmt.Fprintln(os.Stderr, "robin-agent: join: bad -session or -owner")
 		return 2
 	}
