@@ -113,7 +113,8 @@ onControl('cursor', (c) => {
 });
 onControl('monitors', (c) => {
   monitors = c.monitors ?? null;
-  overlay.setMonitors(monitors, showMonitor);
+  // The monitor shown is the owner's to pick; a guest's page offers no switcher.
+  if (!sharing.guest) overlay.setMonitors(monitors, showMonitor);
 });
 
 input.attach();
