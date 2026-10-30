@@ -12,7 +12,7 @@ robin ls build-box           # the sessions the host keeps
 robin end build-box          # end one without opening it
 ```
 
-A desktop Robin started stays on the host when the connection drops, for `--keep` (8 hours by default), and the CLI keeps redialing meanwhile: the page says Reconnecting, then comes back to the same windows. Close the laptop, change networks, lose the VPN, and the session is where you left it.
+A desktop Robin started stays on the host when the connection drops, for `--keep` (8 hours by default), and the CLI keeps redialing meanwhile: the page says Reconnecting, then comes back to the same windows. Close the laptop, or change networks and lose the VPN with it, and the session is still where you left it.
 
 ## Leaving and coming back
 
@@ -24,15 +24,15 @@ The CLI itself may die, or you may choose to leave. The page's status tab has a 
 
 Ctrl+C in the CLI, the page's End session button and an error that stops the CLI once the desktop is up all end the session, desktop included, even when the CLI has to reconnect to say so. The page reports the end only once the host confirmed it, and says so when it could not.
 
-An attached desktop is not kept by default: nothing of yours would be lost, so `--keep` defaults to 0 there and the session ends with the connection. Name a `--keep` and it is kept like any other.
+An attached desktop is not kept by default: it goes on running at the host whatever happens to the session, so `--keep` defaults to 0 there and the session ends with the connection. Name a `--keep` and it is kept like any other.
 
-<Callout type="note" title="Reconnecting keeps the desktop, not the picture.">
+<Callout type="note" title="A reconnect starts the picture over.">
 The browser builds a fresh peer connection each time, so the first second after a reconnect is a new keyframe, anything held down in the page is released, and a microphone or camera that was on is off until switched on again.
 </Callout>
 
 ## A resume is the same session
 
-The agent on the host kept its identity, so the fingerprint the CLI pinned still holds. A CLI that carries a different agent than the one running refuses to resume, before it uploads anything, and says to run `robin end`, since the daemon runs code this CLI does not carry. Started beside it with `--new`, the upload leaves the kept session's agent in place, so `robin-send` in that desktop keeps working.
+The agent on the host kept its identity, so the fingerprint the CLI pinned still holds. A CLI that carries a different agent than the one running refuses to resume, before it uploads anything, and says to run `robin end`, since the daemon runs code this CLI does not carry. A `robin gui --new` beside it, from a CLI that carries another agent, uploads that agent without removing the kept session's, so `robin-send` in that desktop keeps working.
 
 A new `robin gui` that resumes a desktop gets what its own command line names, or is told why not:
 
