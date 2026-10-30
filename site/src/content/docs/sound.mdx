@@ -1,8 +1,8 @@
 ---
 title: Sound
-description: Where a session's sound comes from, how it is encoded and sent, why the page starts muted, and the limits.
+description: Where a session's sound comes from, how it is encoded and sent, why the page starts muted, keeping the host's speakers quiet, and the limits.
 section: Use
-order: 4
+order: 6
 ---
 
 The desktop's sound comes along by default as a stereo Opus track beside the video. `--audio=false` leaves it out. When the host cannot provide sound, the session runs without it and the CLI says why, as `robin: no sound from <host>: <reason>`.
@@ -21,7 +21,7 @@ Hosts with only PipeWire get sound when attached but not in a spawned session. C
 
 ## Attached to a running desktop
 
-The agent records the desktop's own sound server, PulseAudio or PipeWire alike, since PipeWire speaks the same protocol through `pipewire-pulse`. It records the monitor of whatever output was the default when the session started, and the host's own speakers keep playing it.
+The agent records the desktop's own sound server, PulseAudio or PipeWire alike, since PipeWire speaks the same protocol through `pipewire-pulse`. It records the monitor of whatever output was the default when the session started, and the host's own speakers keep playing it unless the room is silent: `--silent`, or the switch in the status tab, moves every program's sound into an output of its own that only the session hears. See [Private sessions](/private-session#the-silent-room).
 
 ## How it is captured and sent
 
@@ -31,9 +31,17 @@ Opus runs at 96 kbit/s and complexity 10, with in-band forward error correction 
 
 Measured in the X test container, the whole audio path, agent and pulseaudio together, costs about 1.5% of a core while silent and 4.5% while playing speech-like noise at 90 kbit/s.
 
+Opus packets go out ahead of a queued keyframe, so the picture does not hold sound back, but the link's own buffer is shared: on a 4 Mbit/s link that buffers 100 ms, a keyframe still delays sound by up to that much.
+
+## The other way
+
+`--mic` sends your microphone the other way, as Opus decoded on the host into a source called Robin microphone. See [Microphone and camera](/microphone-and-camera).
+
 ## Limits
 
-- Sound goes one way. There is no microphone yet; a microphone and camera are on the [Roadmap](/roadmap).
 - One click on the speaker is needed per page load.
 - Spawned sessions need `pulseaudio` on the host.
-- Attached, the host's speakers keep playing what you hear.
+- Attached, the host's speakers keep playing what you hear unless the room is silent (`--silent`).
+- In-band FEC protects speech only; a lost music packet is concealed by the browser instead.
+
+[Known limits](/known-limits#sound) lists these with the rest.

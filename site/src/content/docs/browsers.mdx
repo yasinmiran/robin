@@ -1,24 +1,24 @@
 ---
 title: Browsers and clients
-description: Which client systems and browsers Robin runs on, what the tests prove for each, and what is checked by hand only.
-section: Use
-order: 6
+description: Which client systems and browsers Robin runs on, input methods and touch, what the tests prove for each, and what is checked by hand only.
+section: Start
+order: 4
 ---
 
-The client is the machine you run `robin` on. It needs macOS or Linux, OpenSSH with ControlMaster support, and a browser that decodes H.264 in WebRTC. The Windows build of OpenSSH has no ControlMaster, so native Windows is not a client today.
+The client is the machine you run `robin` on. It needs OpenSSH and a browser that decodes H.264 in WebRTC, on macOS, Linux, Windows 10 or 11, or Android in Termux. The CLI runs beside the browser, because the page is served on loopback only.
 
 ## Browsers
 
 | Browser | State | What the end-to-end tests prove |
 |---|---|---|
-| Chrome | supported | every scenario: picture, input, latency, sound, clipboard, resize, both transports, failover, attach and Wayland |
+| Chrome | supported | every scenario: picture, input, latency, sound, microphone and camera, clipboard, files, resize, transports, failover, kept sessions, attach, Wayland and touch |
 | Edge | same engine as Chrome | not driven by the tests |
 | Firefox | supported, with Cisco's OpenH264 plugin | every check of the direct scenario, latency and sound included |
 | Safari | picture and input checked by hand | stood in for by Playwright's WebKit on Linux; see below |
 
 ### Chrome
 
-Chrome is the browser every scenario runs in, including UDP blocked from the start, UDP dropped mid-session, attaching to a two-monitor X11 desktop and attaching to GNOME on Wayland. Video packets carry the playout-delay header extension set to zero, so Chrome shows each frame as soon as it is complete, which is what keeps typing after a still screen within the tests' 400 ms bound. In full screen, Chrome's keyboard lock lets shortcuts such as Ctrl+W and Alt+Tab reach the remote desktop.
+Chrome is the browser every scenario runs in, including UDP blocked from the start, UDP dropped mid-session, SSH cut mid-session, attaching to a two-monitor X11 desktop, attaching to GNOME on Wayland, and Chrome as a touch screen. Video packets carry the playout-delay header extension set to zero, so Chrome shows each frame as soon as it is complete, which is what keeps typing after a still screen within the tests' 400 ms bound. In full screen, Chrome's keyboard lock lets shortcuts such as Ctrl+W and Alt+Tab reach the remote desktop.
 
 ### Firefox
 
@@ -28,17 +28,31 @@ Firefox passes every check of the direct scenario given Cisco's OpenH264 plugin.
 
 Safari on macOS shows the picture and takes keyboard and pointer input, checked by hand from an Apple silicon Mac on 2026-10-24.
 
-In the automated tests, Safari is stood in for by Playwright's WebKit build on Linux, which shares Safari's WebRTC stack. It negotiates Constrained Baseline H.264, decodes it, plays the sound, carries keyboard, clipboard and resize, and tears down cleanly. That build renders no remote WebRTC video at all; even a VP8 loopback between two peer connections in a blank page stays black. So the e2e suite still cannot check Safari's picture, and a change to the page's video or input path needs that hand check again.
+In the automated tests, Safari is stood in for by Playwright's WebKit build on Linux, which shares Safari's WebRTC stack. It negotiates Constrained Baseline H.264, decodes it, plays the sound, carries keyboard, clipboard and resize, and tears down cleanly. That build renders no remote WebRTC video at all; even a VP8 loopback between two peer connections in a blank page stays black. So the e2e suite still cannot check Safari's picture, and a change to the page's video or input path needs that hand check again. For the same reason the file and rich clipboard checks skip there, so files in Safari are untested.
+
+## Input methods and touch
+
+Input methods work in any of these browsers. The keyboard's focus rests in a hidden text box, so text an input method composes (CJK, or an accent built from a dead key) goes to the remote desktop once it is committed, and shows under the status tab while it is being composed. The remote program gets no preedit of its own.
+
+The page takes touch: a tap clicks, a long press right clicks, one finger drags, two fingers scroll, and pinching zooms and pans the picture on the phone without resizing the desktop. The keyboard button in the status tab raises the soft keyboard. One finger is the mouse, so panning a zoomed picture takes two fingers, and there is no momentum or double tap. A soft keyboard has no Ctrl, Alt, Esc or arrow keys to send; the [keys section](/macros) has some of them.
 
 ## Client systems
 
-**Linux** is where every test runs, with the CLI in the e2e client container.
+**Linux** is where every test runs, with the CLI in the e2e client container. One ControlMaster connection carries the whole session, and `/bin/sh` starts that master with Ctrl+C ignored, so the keystroke ends the session through Robin rather than by cutting the connection. With `--ssh-mux=false` every ssh starts that way.
 
 **macOS** has run for real: `dist/robin-darwin-arm64 gui --attach auto` from an Apple silicon Mac reached a Linux workstation over Tailscale on direct UDP, attached to its X11 desktop, with picture, input and sound in Chrome. The same session with `--no-browser`, opened in Safari, showed the picture and took typing. Only building the agents on a Mac, rather than using a `make dist` binary, is untried.
 
 On a Mac, Cmd is sent to the remote as Control, and keys pressed while Cmd is held are released when Cmd goes up, since macOS swallows their key-ups.
 
-**Windows**, **Android** and **iOS** are not clients today. Windows and Android are planned; iOS has no way to run the CLI. See the [Roadmap](/roadmap).
+**Windows 10 or 11** works with the OpenSSH client Windows ships (`ssh.exe` on `PATH`). It has no ControlMaster, so the CLI runs the probe, the upload, the agent and the tunnel as an ssh each, and each logs in on its own: with a key or `ssh-agent` that goes unnoticed, while a password or 2FA prompt comes three times a session, five when the agent is uploaded. Each ssh starts in a process group of its own, which Ctrl+C does not reach, so the keystroke ends the session over the agent's connection and asks for no further login; a redial after a dropped network logs in again, as at the start. The tunnel's forward listens on a loopback TCP port, as Windows' OpenSSH forwards no unix sockets. `make dist` builds `robin-windows-amd64.exe` and `robin-windows-arm64.exe`, and the page opens in the default browser.
+
+**Android** works in [Termux](https://termux.dev) with its `openssh` package: `dist/robin-linux-arm64` runs there as it is, and the page opens in Android's browser through `termux-open-url` (from `termux-tools`).
+
+<Callout type="warning" title="Windows and Android are checked in stand-ins.">
+The Android client has been checked in Chrome's phone emulation only, and the Windows client in cross-builds, `go vet` and the `nomux` scenario's forced mode on Linux. Neither has run on the real thing. Without ControlMaster, a dropped network is noticed only when the agent's connection goes quiet for its idle timeout, and every `LocalForward` in your ssh config for that host comes up with the tunnel's own ssh; one that fails takes the tunnel with it.
+</Callout>
+
+**iOS and iPadOS** cannot be clients. The CLI has to run beside the browser, because the page is served on loopback only, and nothing on iOS lets a user run a program that drives `ssh` and listens on loopback for the browser.
 
 ## One browser per session
 

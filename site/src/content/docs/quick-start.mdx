@@ -5,7 +5,7 @@ section: Start
 order: 2
 ---
 
-This page starts from a built CLI. If you do not have one yet, run `make` in a checkout (see [Install and build](/install)); it leaves the CLI at `bin/robin`, and `make dist` leaves one per client platform in `dist/`.
+This page starts from a built CLI. If you do not have one yet, run `make` in a checkout (see [Install and build](/install)); it leaves the CLI at `bin/robin`, and `make dist`, on a release tag or with a `VERSION`, leaves one per client platform in `dist/`.
 
 ## 1. Open a desktop
 
@@ -50,9 +50,24 @@ The page starts muted, because browsers only autoplay silent video. Click the sp
 
 The full screen button also asks the browser for keyboard lock where the browser supports it, so shortcuts such as Ctrl+W and Alt+Tab go to the remote desktop instead of closing your tab or switching your local windows.
 
-## 4. End it
+## 4. Leave it, or end it
 
-Press Ctrl+C in the terminal. The CLI tells the agent goodbye, the agent stops the display, the desktop and everything else it started, and its run directory on the host is removed. The page shows "Session ended".
+Press Ctrl+C in the terminal, or End session in the status tab. The CLI tells the agent goodbye, the agent stops the display, the desktop and everything else it started, and its run directory on the host is removed. The page shows "Session ended".
+
+To leave the desktop running instead, click **Disconnect, keep desktop** in the status tab. The CLI exits and the host keeps a desktop Robin started for 8 hours (`--keep` sets how long); an attached one is kept only when you name a `--keep`. Run the same command again to pick it up where you left it:
+
+```sh
+# resumes the kept desktop
+bin/robin gui alice@build-box
+
+# what the host keeps, and until when
+bin/robin ls alice@build-box
+
+# end it without opening it
+bin/robin end alice@build-box
+```
+
+A dropped network keeps the desktop too: the page says Reconnecting, and the CLI redials until it is back. See [Kept sessions](/sessions).
 
 Closing the browser tab does not end the session; reload it, or reopen the same link (from your browser's history, or the one printed with `--no-browser`), and you are back where you were. Only one browser can hold a session at a time, so a second tab is refused until the first one closes.
 

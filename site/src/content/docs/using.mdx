@@ -1,16 +1,18 @@
 ---
 title: Using Robin
-description: The gui command, spawning versus attaching, sizes and HiDPI, monitors, transports, encoders, sound and the page.
+description: The gui command, spawning versus attaching, sizes and HiDPI, sharp text, monitors, transports, encoders, sound and the page.
 section: Use
 order: 1
 ---
 
 ```text
 robin gui [flags] [user@]host [-- ssh-args...]
+robin ls [user@]host [-- ssh-args...]
+robin end [user@]host [id] [-- ssh-args...]
 robin version
 ```
 
-`robin gui` is the whole interface. Flags go before the destination, and everything after `--` is handed to `ssh` as it is:
+`robin gui` opens a desktop; `robin ls` and `robin end` list and end the ones the host keeps for you (see [Kept sessions](/sessions)). Flags go before the destination, and everything after `--` is handed to `ssh` as it is:
 
 ```sh
 robin gui alice@build-box
@@ -19,15 +21,19 @@ robin gui --max-size 2560x1440 --fps 60 workstation
 robin gui --no-browser lab-node
 robin gui --attach auto workstation
 robin gui --attach wayland workstation
+robin gui --attach auto --curtain --silent workstation
+
+# again later: picks the desktop up where you left it
+robin gui build-box
 ```
 
 [Flags](/flags) lists every flag with its default.
 
 ## SSH
 
-Robin runs your own `ssh` binary (`--ssh` picks another one) and opens a single ControlMaster connection with `ssh -M`. The probe, the agent upload, the agent itself and the media tunnel all ride that one connection, so you authenticate once. `~/.ssh/config` with `Match` and `Include`, `ProxyJump`, `ProxyCommand`, the SSH agent, FIDO keys, certificates, Kerberos and interactive prompts for passwords, 2FA or an unknown host key all work the way they do for `ssh` on its own.
+Robin runs your own `ssh` binary (`--ssh` picks another one) and opens a single ControlMaster connection with `ssh -M`. The probe, the agent upload, the agent itself and the media tunnel all ride that one connection, so you authenticate once. Windows' OpenSSH has no ControlMaster, so there (and with `--ssh-mux=false` anywhere) each of them opens a connection of its own and logs in on its own: a password or 2FA prompt comes three times a session, five when the agent is uploaded; see [Browsers and clients](/browsers#client-systems). `~/.ssh/config` with `Match` and `Include`, `ProxyJump`, `ProxyCommand`, the SSH agent, FIDO keys, certificates, Kerberos and interactive prompts for passwords, 2FA or an unknown host key all work the way they do for `ssh` on its own.
 
-If that SSH connection drops, the session ends; sessions that survive a drop are on the [Roadmap](/roadmap).
+If that SSH connection drops, a desktop Robin started stays on the host for `--keep`, 8 hours by default, and the CLI redials until it is back; the page says Reconnecting meanwhile. A later `robin gui` resumes it too. See [Kept sessions](/sessions).
 
 ## Spawning a desktop
 
@@ -41,27 +47,27 @@ The session gets a sensible locale even when SSH brought none. The agent keeps a
 
 ## Attaching to a running desktop
 
-`--attach` streams a desktop that already exists instead of starting one. `auto` picks your active session, Wayland or X11; `:1` names an X display; `wayland` goes through the desktop's screen sharing portal. An attached desktop is shared with whoever sits at the machine, and it keeps its own resolution, so the browser scales the picture rather than resizing the remote screen. The details differ enough to have their own pages: [Attaching to X11](/attach-x11) and [Attaching to Wayland](/attach-wayland).
+`--attach` streams a desktop that already exists instead of starting one. `auto` picks your active session, Wayland or X11; `:1` names an X display; `wayland` goes through the desktop's screen sharing portal. An attached desktop is shared with whoever sits at the machine, unless you draw the curtain (see [Private sessions](/private-session)), and it keeps its own resolution, so the browser scales the picture rather than resizing the remote screen. The details differ enough to have their own pages: [Attaching to X11](/attach-x11) and [Attaching to Wayland](/attach-wayland).
 
 ## Size, frame rate and HiDPI
 
-`--max-size` is the largest remote resolution, 1920x1080 by default and 1280x720 on hosts with two cores or fewer. A spawned display follows your window up to it. An attached desktop larger than it, a 4K monitor say, is scaled down to fit, and the pointer is mapped back onto the full-size screen. The downscale averages the exact source area under each output pixel, since plain sampling drops strokes of text.
+`--max-size` is the largest remote resolution: 2560x1440 by default, 1920x1080 on hosts with four cores or fewer and 1280x720 on hosts with two or fewer. A spawned display follows your window up to it. An attached desktop larger than it, a 4K monitor say, is scaled down to fit, and the pointer is mapped back onto the full-size screen. The downscale averages the exact source area under each output pixel, since plain sampling drops strokes of text.
 
-`--fps` caps the frame rate: 30 by default, 20 on small hosts. Below the cap, frames go out only when the screen changes, so the status tab reads 0 fps on an idle screen, which is not a stall.
+`--fps` caps the frame rate: 30 by default, 20 on small hosts. Below the cap, frames go out when the screen changes, and a still picture is sent again every half second, a few hundred bytes each, so the status tab reads about 2 fps on an idle screen, which is not a stall.
 
 `--hidpi` sizes a spawned display in your browser's device pixels instead of CSS pixels. On a Retina screen that gives sharp text at about four times the pixels to encode. Raise `--max-size` with it if you want the display fully native.
 
-<Callout type="note" title="When the picture looks soft or blocky.">
-Two things are worth checking today. An attached monitor larger than `--max-size` is scaled down, and the default is 1920x1080, so a 2560x1440 monitor arrives shrunk; `--max-size 2560x1440` sends it at its own size, at the cost of more pixels to encode. On a Retina or other HiDPI client screen, a spawned desktop renders in device pixels with `--hidpi` and a raised `--max-size`. Text that stays soft once the screen is still is what [sharp text](#sharp-text-and-actual-size) is for. Blockiness while the screen is changing, when the link's estimate dips, is a known weak spot with planned work: see [crisp video in motion](/roadmap#crisp-video-in-motion) on the Roadmap.
+<Callout type="note" title="When the picture looks soft.">
+Scaled text is soft: a 2560x1440 monitor squeezed into 1920x1080 and stretched back by the browser loses its small text, which is why 2560x1440 is the default where the host has the cores for it. On a host with four cores or fewer, `--max-size 2560x1440` sends such a monitor at its own size, at the cost of more CPU to encode. On a Retina or other HiDPI client screen, a spawned desktop renders in device pixels with `--hidpi` and a raised `--max-size`. Text that stays soft once the screen is still is what [sharp text](#sharp-text-and-actual-size) is for. While the screen moves on a narrow link, the encoder skips frames rather than turn text to blocks; [How it works](/how-it-works#video-in-motion) says why.
 </Callout>
 
 ## Sharp text and actual size
 
 H.264 as browsers decode it keeps colour at a quarter of the picture's resolution, which smears coloured text and softens the rest, and a picture the browser scales by a fraction blurs it again. The status tab has a switch for each.
 
-**Sharp text**, on by default, sends the parts of the screen that have been still for 300 ms again without loss: 64x64 tiles, compressed to PNG on the host within a quarter of one core and drawn on a layer over the video, at the desktop's own resolution even where the video is scaled down to `--max-size`. A tile goes the moment its part of the screen changes, before the frame that changes it shows, so what moves is plain video and text you stop at sharpens about half a second later. A screen full of small text costs about 700 KB once at 2560x1440, and nothing more while it stays still. A tile that keeps changing soon after it was sent, as one with a blinking caret does, soon stays video rather than flicker. Sharp text needs an X11 desktop and a browser that says which frame it shows (Chrome, Edge and Firefox do); otherwise the switch is greyed out with the reason under it.
+**Sharp text**, on by default, sends the parts of the screen that have been still for 300 ms again without loss: 64x64 tiles, compressed to PNG on the host within a quarter of one core and drawn on a layer over the video, at the desktop's own resolution even where the video is scaled down to `--max-size`. A tile goes the moment its part of the screen changes, before the frame that changes it shows, so what moves is plain video and text you stop at sharpens about half a second later. A screen full of small text costs about 700 KB once at 2560x1440, and nothing more while it stays still. A tile that keeps changing soon after it was sent, as one with a blinking caret does, waits longer each time and soon stays video rather than flicker. Sharp text needs an X11 desktop and a browser that says which frame it shows (the RTP timestamp in `requestVideoFrameCallback`, which Chrome, Edge and Firefox give); otherwise the switch is greyed out with the reason under it.
 
-**Actual size** shows each desktop pixel as a whole number of your screen's pixels instead of fitting the picture to the window: one, or two on a screen of twice the density, so text never goes through a fractional scale. A desktop larger than the window pans, and the status tab says how: hold the pointer near an edge of the window, or on a touch screen drag with two fingers.
+**Actual size** shows each desktop pixel as a whole number of your screen's pixels instead of fitting the picture to the window: one, or two on a screen of twice the density, so text never goes through a fractional scale. A desktop larger than the window pans, and the status tab says how: hold the pointer near an edge of the window, or on a touch screen drag with two fingers. Pointer and touch input land where the picture shows them either way.
 
 ## Monitors
 
@@ -83,7 +89,7 @@ An attached X11 desktop with several monitors shows one of them at a time, start
 
 `--encoder auto`, the default, encodes on the host's GPU where the probe shows that it pays and in software everywhere else; `software`, `vaapi` and `nvenc` insist on one, and a GPU encoder you name fails the session if it cannot run. See [Hardware encoding](/hardware-encoding).
 
-Sound comes along by default from the spawned session's private sound server or from the attached desktop's own. `--audio=false` leaves it out. See [Sound](/sound).
+Sound comes along by default from the spawned session's private sound server or from the attached desktop's own. `--audio=false` leaves it out. See [Sound](/sound). `--mic` and `--camera` offer your own microphone and camera to the host's programs; see [Microphone and camera](/microphone-and-camera).
 
 ## The page
 
@@ -94,7 +100,12 @@ The page runs on `127.0.0.1` on a random port (`--listen` sets the address; anyt
 - the picture's resolution, frame rate and bitrate
 - a monitor menu, on attached X11 desktops with more than one monitor
 - the speaker toggle, once an audio track arrives, and the full screen button
+- switches for sharp text and actual size, and on an attached desktop for the curtain and the silent room
+- a switch for the microphone and for the camera, when the session offers them, with a red dot while each is sent
+- Upload files, the files you pasted waiting for their Upload, and the files the host offers you to Save: see [Files and the clipboard](/files-and-clipboard)
 - the keys button, which opens the keys the browser keeps for itself, Type clipboard and your own macros: see [Keys and macros](/macros)
+- on a touch screen, the keyboard button, which raises the soft keyboard
+- **Disconnect, keep desktop** and **End session**: see [Kept sessions](/sessions)
 
 The tab tucks itself away while things are healthy and comes back when the pointer nears the top of the window.
 
@@ -104,6 +115,8 @@ Only one browser holds a session at a time. A second tab is refused, with a note
 
 ### Keyboard, pointer and clipboard
 
-Keys are sent by character. The agent finds the key and shift level that produce each character on the remote keymap, and on X11 binds a spare keycode when the keymap lacks one, so text arrives right whatever your local layout. Named keys such as Enter, arrows, function keys and modifiers are held until you release them. On a Mac, Cmd is sent as Control. IME composition, as used for CJK input, is not forwarded.
+Keys are sent by character. The agent finds the key and shift level that produce each character on the remote keymap, and on X11 binds a spare keycode when the keymap lacks one, so text arrives right whatever your local layout. Named keys such as Enter, arrows, function keys and modifiers are held until you release them. On a Mac, Cmd is sent as Control.
 
-The clipboard carries plain text, up to 255 KiB in each direction. Your paste shortcut in the page sends the local clipboard to the remote before the key itself, so the remote program pastes what you just copied. Text copied on the remote is written to your local clipboard when the page has focus and permission.
+Input methods (CJK, or an accent built from a dead key) and touch screens work too; [Browsers and clients](/browsers#input-methods-and-touch) says how each maps onto the remote desktop.
+
+The clipboard carries plain text, HTML and PNG images both ways, up to 16 MiB at a time. Your paste shortcut in the page sends the local clipboard to the remote before the key itself, so the remote program pastes what you just copied. What the remote copies is written to your local clipboard while the page has focus. [Files and the clipboard](/files-and-clipboard) has the rest.

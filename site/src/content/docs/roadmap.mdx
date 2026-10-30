@@ -1,81 +1,50 @@
 ---
 title: Roadmap
-description: The planned work, nine features and a track for crisp video in motion, in the order it can land. Nothing on this page has shipped.
+description: What Robin does now that it did not at first, and what comes next, collaboration, a window per monitor and wider test coverage.
 section: Project
 order: 2
 ---
 
-<Callout type="warning" title="Planned work.">
-Everything on this page is **planned** unless its status says shipped, and flag and command names shown here are the plan's working names, which may change before they ship. For what Robin does now, see [Using Robin](/using) and [Known limits](/known-limits).
+Robin started as one command that put a remote desktop in a browser for as long as an SSH connection lasted. Most of what a day of working on a remote desktop needs has landed since, each part with its tests: unit tests for new code and container tests for anything that needs X, Wayland, PulseAudio or PipeWire, plus an end-to-end scenario wherever the change shows in the page.
+
+<Callout type="note" title="Next means not built yet.">
+Nothing under What is next has shipped, and names shown there may change before it does. For what Robin does now, see [Shipped](#shipped) below, [Using Robin](/using) and [Known limits](/known-limits).
 </Callout>
 
-The plan covers nine features, the gaps against Horizon judged worth closing (see [Robin and Horizon](/robin-and-horizon)), plus a track for picture quality while the screen changes. They land in waves, because several of them touch the same code, and every track ships with its tests: unit tests for new code, container tests for anything that needs X, Wayland, PulseAudio or PipeWire, and an end-to-end scenario for anything you see in the page.
-
-## Wave 0: foundation
-
-**Status: planned.** Groundwork the features build on. A bulk transfer channel, one WebRTC data channel per transfer with a SHA-256 checked at the end and flow control on both sides, for files, rich clipboard and sharp text tiles. Coverage tooling that merges unit, container and end-to-end coverage, so no package drops below its current number. A new protocol version for the message types the features add.
-
-## Wave 1
-
-These six tracks can run in parallel once the foundation is in.
-
-### Reconnectable sessions
-
-**Status: planned.** Today a dropped SSH connection ends the session. With this, the desktop outlives the connection: when SSH or the agent drops, the CLI keeps the page open, tells it that it is reconnecting, redials with backoff and resumes the same desktop. The agent splits into a session daemon that owns the desktop, sound and peers, and a proxy that each connection talks through. A spawned desktop is kept for a while after a drop, 8 hours by default in the plan and set with `--keep`, while an attached one is not kept at all.
-
-Planned commands: `robin ls <host>` to list kept sessions, `robin end <host> [id]` to end one, and `robin gui <host>` resuming the kept spawned session by default, with `--new` to start another. The page gets a "Disconnect, keep desktop" control.
-
-### Microphone and camera
-
-**Status: planned.** Microphone and camera toggles in the page, off by default and allowed only when the session was started with `--mic` or `--camera`. On the host the microphone appears as a source named "Robin microphone" that programs can pick: on the private sound server of a spawned session, or as a PipeWire source on an attached desktop that disappears with the session. The camera is decoded on the host and offered as a PipeWire video source, or through a v4l2loopback device where the host has a writable one.
-
-### Files and rich clipboard
-
-**Status: planned.**
-
-- **Upload**: drop files on the page, or pick them from the status tab, and they land in the host's download directory (`XDG_DOWNLOAD_DIR`, or `~/Downloads`). Names are cleaned, existing files are never overwritten, and a partial file is removed if the transfer is cancelled.
-- **Download**: `robin-agent send FILE...` on the host, with a `robin-send` shortcut in a spawned session, offers files to the page. The page saves only on a click, so the host cannot push downloads at you.
-- **Clipboard**: plain text, HTML and PNG images in both directions, up to 16 MiB, on X11 and through the portal on Wayland. Files pasted into the page become uploads.
-
-### Private session
-
-**Status: planned.** `--curtain` and `--silent` for attached desktops, with toggles in the page. The curtain blanks the machine's own screens while the stream carries on; on X11 by zeroing the gamma ramps, on GNOME under Wayland if the running version offers a way, and on KDE the agent will say it cannot. The curtain hides the screen but does not lock the room's keyboard. The silent room moves every playback stream to a sink the agent records from, so the room's speakers stay quiet without changing the configured default. A separate keeper process holds the restore steps, so a killed agent still gives the room its screens and speakers back.
-
-### Clients
-
-**Status: planned.**
-
-- **IME**: composed input, such as CJK, sent as committed text.
-- **Touch**: tap, long press for right click, two-finger scroll, pinch to zoom and pan locally, and a button that raises the soft keyboard.
-- **Windows**: a mode for OpenSSH builds without ControlMaster, one `ssh` per command, so the Windows build of OpenSSH works, plus Windows binaries from `make dist`.
-- **Android**: the linux/arm64 CLI under Termux.
-
-iOS stays unsupported, since there is no way to run the CLI there.
-
-### Crisp video in motion
-
-**Status: planned.** Sharp text (below) fixes a still screen; this track is about the picture while it changes and right after it does. On the first real session, from a Mac over Tailscale to a 2560x1440 monitor, the picture was pixelated at times and the browser asked for a keyframe about every 3 s. The plan:
-
-- **Measure first.** A harness runs the real encoders over recorded screen content (text, scrolling, window drags, video) on a shaped virtual link and reports PSNR and SSIM per frame, keyframe count and bitrate, so every change below is judged by numbers.
-- **Find why the browser keeps asking for keyframes** and fix the cause, looking at NACK history against the path's round trip, the jitter buffer, frame skips and the 300 ms keyframe gap.
-- **Keyframes that do not wreck the picture**: keep a keyframe's size bounded against the target so it does not spike the queue, let quality recover within a few frames, and look at long-term reference recovery and intra refresh as ways to repair loss without a full keyframe.
-- **Rate control for a desktop.** The encoder's QP ceiling is 51 today, so a dip in the bandwidth estimate turns text to blocks. The goal is the ceiling and frame-skip balance that keeps text legible at the cost of frame rate, the right trade for a desktop.
-- **Defaults, decided from the numbers**: whether `--max-size` should follow the monitor's native size up to 2560x1440 when the host can afford it, whether the bitrate ceiling should rise, and whether the hardware path should use High profile with CABAC where the GPU offers it.
-
-Until this lands, [Using Robin](/using) lists what you can adjust today.
-
-## Wave 2
+## What is next
 
 ### Collaboration
 
-**Status: planned, after reconnectable sessions.** The owner of a session invites another account on the host, from the page or with `robin gui --share alice`, and the guest joins with `robin gui --join <code> alice@host`. The session admits a guest only when the kernel confirms the invited user and the invite's one-time code matches. Every guest gets the same encoded stream, and guests are view only until the owner grants control; clipboard, files and microphone follow control. The owner sees who is connected and can remove them, and a guest's page says whose desktop it is. This track gets a dedicated security review, with the cross-user cases as regression tests, before it merges.
+The owner of a session invites another account on the host, from the page or with the CLI, and the guest joins with a one-time code. The session admits a guest only when the kernel confirms the invited user and the code matches. Every guest gets the same picture, and guests watch until the owner hands them control; the clipboard, files and the microphone follow control. The owner sees who is connected and can remove them, and a guest's page says whose desktop it is. It gets a security review of its own, with the cross-user cases as tests, before it ships.
 
-### Sharp text
+### A window per monitor
 
-**Status: shipped.** When a region of the screen has been still for 300 ms, the agent sends it again losslessly, as PNG tiles drawn on a layer over the video, and every frame's manifest names the tiles it changes, so the page clears them before the frame shows and hides every tile while a manifest is late. With it came an actual-size view, each desktop pixel a whole number of device pixels, panned at the window's edge. Both are switches in the page; sharp text is on by default. The end-to-end test compares the page's pixels with the host's once the screen is still and finds them equal, which the video alone is not. See [Using Robin](/using#sharp-text-and-actual-size).
+Today an attached desktop shows one monitor at a time, or all of them squeezed into one picture. Next, each remote monitor gets a browser window of its own, with its own picture and the bitrate shared by area, and input from each window lands on its monitor. X11 comes first, and Wayland follows if the portal's several streams can be tested.
 
-## Wave 3
+### Coverage
 
-### Window per monitor
+Some of what ships has been checked only in part, and closing those gaps is work of its own:
 
-**Status: planned.** One video track per monitor, each with its own capture and encoder and the bitrate split by area, and one browser window per remote monitor, placed with Chrome's Window Management API and by hand elsewhere. Input from each window maps to its monitor. X11 first, and Wayland through the portal's multiple sources if it can be tested. It runs on its own, after sharp text, because both rewrite the same stream and capture code.
+- NVENC on real NVIDIA hardware, which so far runs only against stand-in tools.
+- The Windows and Android clients on the real thing, which so far run in cross-builds, Chrome's phone emulation and the Linux form of the Windows mode.
+- The curtain on real screens, GNOME included, which so far runs on Xvfb and against a stand-in for mutter.
+- The microphone and camera in Firefox and Safari, and Safari's picture in the automated tests rather than by hand.
+- Building the agents on a Mac, and checking that a Mac build gives the same bytes as a Linux one.
+
+What does not change: Robin stays a tool for machines you can already reach over SSH, and iOS stays out, since there is no way to run the CLI there. See [Robin and Horizon](/robin-and-horizon).
+
+## Shipped
+
+Each of these has a page of its own:
+
+- [Kept sessions](/sessions): a desktop Robin started outlives a dropped connection, and a later `robin gui` picks it up.
+- [Microphone and camera](/microphone-and-camera): the devices of the machine you sit at, offered to the host's programs.
+- [Files and the clipboard](/files-and-clipboard): uploads by a drop, downloads offered with `robin-send`, and text, HTML and images up to 16 MiB either way.
+- [Private sessions](/private-session): the host's own screen dark and its speakers quiet while you work on an attached desktop.
+- [Browsers and clients](/browsers): Windows and Android clients, input methods and touch.
+- [Video in motion](/how-it-works#video-in-motion): a refresh twice a second instead of keyframe requests, keyframes spread over 200 ms, and 2560x1440 by default where the host has the cores.
+- [Congestion control](/how-it-works#congestion-control): sound ahead of the picture, the bitrate held through a still screen, and downloads under the picture's budget.
+- [Sharp text and actual size](/using#sharp-text-and-actual-size): lossless tiles over still parts of the screen, and a view that shows each desktop pixel whole.
+- [Keys and macros](/macros): the keys your browser keeps for itself, Type clipboard, and macros of your own.
+- [Security](/security): a review that bounded what each side can make the other hold, kept the page's token off command lines, turned other users of a shared client away from the tunnel, and made the host agent take a session's sockets and its daemon from your own account only.
+- [Verifying a release](/verifying-a-release): every binary a release ships is reproducible, so anyone with a clone can rebuild it and compare the bytes.

@@ -17,7 +17,7 @@ Anyone who already has a shell on a Linux machine and wants its screen. That cov
 
 Your `~/.ssh/config`, your agent, `ProxyJump`, `ProxyCommand`, certificates, and password or 2FA prompts all behave exactly as they do for plain `ssh`, because Robin drives plain `ssh`. If you can type `ssh build-box` and get a prompt, `robin gui build-box` has everything it needs on the network side.
 
-The client side is macOS or Linux with OpenSSH and a browser that decodes H.264 in WebRTC. Native Windows is not supported yet, since Robin multiplexes everything over one OpenSSH ControlMaster connection and the Windows build of OpenSSH has no ControlMaster.
+The client side is macOS, Linux, Windows 10 or 11, or Android in Termux, with OpenSSH and a browser that decodes H.264 in WebRTC. See [Browsers and clients](/browsers).
 
 ## The name
 
@@ -33,16 +33,22 @@ robin gui alice@build-box
 
 The agent for the host's architecture is uploaded over SFTP the first time, verified by SHA-256 and reused on later runs. It starts Xvfb on a free display number with the lightest desktop it finds, Xfce if it is there and otherwise a window manager such as openbox with an xterm beside it.
 
-Your browser opens a page on `127.0.0.1`. A small status tab hangs from the top edge, showing the connection state, the transport in use (Direct UDP or SSH tunnel), the picture's size, frame rate and bitrate, plus a speaker button and a full screen button; it tucks itself away while the session is healthy and comes back when the pointer nears the top. Resize the window and a spawned desktop follows it, up to `--max-size`. Reloading the tab is fine, since the remote session lives as long as the CLI does.
+Your browser opens a page on `127.0.0.1`. A small status tab hangs from the top edge, showing the connection state, the transport in use (Direct UDP or SSH tunnel), the picture's size, frame rate and bitrate, plus a speaker button, a full screen button and the switches and files of the session; it tucks itself away while the session is healthy and comes back when the pointer nears the top. Resize the window and a spawned desktop follows it, up to `--max-size`. Reloading the tab is fine.
 
-Press Ctrl+C in the terminal to end it. The agent kills everything it started on the host and removes its run directory, keeping only its own binary for next time, and the page says the session ended.
+The desktop outlives the connection. If the network drops, the page says Reconnecting and the CLI redials until it is back on the same windows; if you leave with **Disconnect, keep desktop**, or the CLI dies, a later `robin gui alice@build-box` picks it up where you left it. See [Kept sessions](/sessions).
+
+Press Ctrl+C in the terminal, or End session in the page, to end it. The agent kills everything it started on the host and removes its run directory, keeping only its own binary for next time, and the page says the session ended.
 
 ## Two ways to get a desktop
 
 **Spawn** is the default. The agent starts its own Xvfb display and a session inside it, sized to your browser window, and throws all of it away at the end. The host needs `Xvfb` and something to run in it.
 
-**Attach** streams a desktop that is already running, usually the one you are logged in to at the machine. `--attach auto` finds it, `--attach :1` names an X display, and `--attach wayland` goes through the desktop's screen sharing portal, which asks the person at the screen first. Nothing new is started, and the desktop is left as it was found. See [Attaching to X11](/attach-x11) and [Attaching to Wayland](/attach-wayland).
+**Attach** streams a desktop that is already running, usually the one you are logged in to at the machine. `--attach auto` finds it, `--attach :1` names an X display, and `--attach wayland` goes through the desktop's screen sharing portal, which asks the person at the screen first. Nothing new is started, and the desktop is left as it was found. `--curtain` and `--silent` keep its own screen dark and its speakers quiet while you work. See [Attaching to X11](/attach-x11), [Attaching to Wayland](/attach-wayland) and [Private sessions](/private-session).
+
+## What a session carries
+
+Besides the picture, the keyboard and the pointer, a session carries the desktop's sound, your [microphone and camera](/microphone-and-camera) when you offer them, [files and a clipboard](/files-and-clipboard) of text, HTML and images both ways, and [keys and macros](/macros) for what your browser keeps for itself.
 
 <Callout type="note" title="What these pages cover.">
-These pages describe what Robin does today. Work that is planned but not built, such as sessions that survive a dropped connection, file transfer or a microphone, is described on the [Roadmap](/roadmap); other pages only point to it.
+These pages describe what Robin does today. What comes next is on the [Roadmap](/roadmap), and what Robin does only partly is on [Known limits](/known-limits).
 </Callout>

@@ -1,11 +1,11 @@
 ---
 title: How it works
-description: The SSH control plane, the WebRTC data plane, what happens between running robin gui and seeing a desktop, transports and failover, and congestion control.
+description: The SSH control plane, the WebRTC data plane, what happens between running robin gui and seeing a desktop, kept sessions, transports and failover, congestion control and video in motion.
 section: Design
 order: 1
 ---
 
-Robin splits the work in two. SSH is the control plane: authentication, probing the host, deploying the agent and carrying signaling. WebRTC is the data plane: video and sound out to the browser, keyboard, pointer, clipboard and resize back. Both ends are Go, the CLI and the host agent built from one module, with Pion providing WebRTC, ICE (ICE-TCP included), DTLS, SCTP data channels and congestion control.
+Robin splits the work in two. SSH is the control plane: authentication, probing the host, deploying the agent and carrying signaling. WebRTC is the data plane: video and sound out to the browser, keyboard, pointer, clipboard, resize, microphone and camera back, and files both ways. Both ends are Go, the CLI and the host agent built from one module, with Pion providing WebRTC, ICE (ICE-TCP included), DTLS, SCTP data channels and congestion control.
 
 <figure>
 <svg viewBox="0 0 760 470" role="img" aria-labelledby="robin-arch-title robin-arch-desc" xmlns="http://www.w3.org/2000/svg">
@@ -81,14 +81,22 @@ Robin splits the work in two. SSH is the control plane: authentication, probing 
 
 ## From `robin gui` to a desktop
 
-1. **One connection.** `ssh -M` opens a ControlMaster connection, and everything after it rides that connection through its control socket: the probe, the upload, the agent's exec channel and the port forward. Your SSH setup applies exactly as it would to `ssh` on its own. A Go SSH library would have had to reimplement all of that and would still miss cases; the cost is that the client needs OpenSSH with ControlMaster.
+1. **One connection.** `ssh -M` opens a ControlMaster connection, and everything after it rides that connection through its control socket: the probe, the upload, the agent's exec channel and the port forward. Your SSH setup applies exactly as it would to `ssh` on its own. A Go SSH library would have had to reimplement all of that and would still miss cases. Without ControlMaster, on Windows or with `--ssh-mux=false`, each step below opens an `ssh` of its own instead.
 2. **Probe.** A POSIX shell script, sent over `sh -s`, reports the distribution, architecture and core count, live sessions, the GPU and encoding tools, which spawn-mode tools exist, and a directory where the agent can run. The CLI refuses a host that is not Linux, stops with an install line if a spawned desktop would lack something, checks a named `--encoder` against what the host has, and resolves `--attach auto` to a concrete target.
 3. **Deploy.** The agent for that architecture is uploaded over SFTP, verified by SHA-256 on the host and renamed into place. If the right agent is already there, by hash, the upload is skipped.
-4. **Start.** The agent starts on an exec channel. Its stdin and stdout carry signaling as JSON lines, and nothing else may write to that stdout. Both sides send a heartbeat, so a dead connection tears the session down instead of leaving a display running. The CLI sends the session parameters, with lower defaults on small hosts and `--encoder auto` already resolved into a concrete choice.
+4. **Start.** The agent starts on an exec channel. Its stdin and stdout carry signaling as JSON lines, and nothing else may write to that stdout. Both sides send a heartbeat, so a dead connection is noticed within seconds. The exec channel only runs a proxy: the session itself lives in a daemon the proxy started, reached through a unix socket in the session's run directory, so the daemon outlives the channel and a later proxy picks it up (see [Kept sessions](#kept-sessions)). The CLI sends the session parameters, with lower defaults on smaller hosts and `--encoder auto` already resolved into a concrete choice.
 5. **Desktop.** The agent starts Xvfb and a session, or attaches to an X display already running, and captures it with MIT-SHM and DAMAGE. A Wayland desktop is reached through xdg-desktop-portal instead, its frames read from PipeWire by `gst-launch-1.0`. Before the desktop comes up, the agent opens a small encoder, so a host whose encoder fails reports it to the CLI instead of streaming a black screen. Then it answers Ready, with the display, size, encoder and whether sound is on.
-6. **Page and media.** The CLI opens the SSH forward to the agent's ICE-TCP listener, serves the page on loopback and opens your browser. The browser creates the WebRTC offer and is the ICE-controlling side; the agent answers. The CLI relays offer, answer and candidates between them, adding one candidate of its own that leads into the SSH forward. Frames are encoded with openh264, or on the GPU through the host's ffmpeg or GStreamer, and sound goes out as Opus. Keyboard, pointer, clipboard and resize come back over a data channel and go in through XTest and RandR, or the portal on Wayland.
+6. **Page and media.** The CLI opens the SSH forward to the agent's ICE-TCP listener, serves the page on loopback, hands it the macros it keeps for you, and opens your browser. The browser creates the WebRTC offer and is the ICE-controlling side; the agent answers. The CLI relays offer, answer and candidates between them, adding one candidate of its own that leads into the SSH forward. Frames are encoded with openh264, or on the GPU through the host's ffmpeg or GStreamer, and sound goes out as Opus. Keyboard, pointer, clipboard and resize come back over a data channel and go in through XTest and RandR, or the portal on Wayland. The browser's microphone comes back as Opus and its camera as H.264, decoded on the host into a sound source and a camera device. Files, images and anything else too big for that channel travel in a transfer layer of their own, a data channel each and a SHA-256 checked at the far end.
 
-When you press Ctrl+C, the CLI says goodbye on the agent's channel and closes it. The agent tears down everything it started and removes its run directory. The display, the session, the sound server and any encoder tool are held by process groups, a parent-death signal and a watchdog on the display, so they go with the agent even when it is killed outright, which the tests check.
+When you press Ctrl+C, the CLI says goodbye on the agent's channel and closes it. The daemon tears down everything it started and removes its run directory. The display, the session, the sound server and any encoder tool are held by process groups, a parent-death signal and a watchdog on the display, so they go with the daemon even when it is killed outright, which the tests check.
+
+## Kept sessions
+
+The daemon is started with `setsid`, its standard streams on `/dev/null`, so sshd closing the channel does not reach it. Where logind kills a login's processes on logout (`KillUserProcesses=yes`), the probe says so and the CLI has the daemon started with `systemd-run --user` instead, a unit outside the login's scope.
+
+Without a controller, the daemon closes the peer connection and keeps the desktop, the sound server, the ICE-TCP listener and its DTLS certificate for `--keep`. The CLI redials meanwhile, backing off from 1 s to 15 s. The page says Reconnecting, drops its peer connection and builds a fresh one once the next agent connection is up, the same path a reload takes. Since the certificate outlived the connection, the fingerprint the CLI pinned still holds, and anything else answering in the session's place ends it. When the keep window runs out, the daemon ends with the same teardown as Ctrl+C.
+
+The daemon's socket lives in the 0700 run directory, and the daemon checks the peer's uid (`SO_PEERCRED`) against its own, one controller at a time. In the `resume` end-to-end scenario, killing the host's sshd processes put the page back on the same display and xterm 263 ms after the cut. [Kept sessions](/sessions) has the commands.
 
 ## Transports and fallback
 
@@ -110,19 +118,32 @@ The browser sends transport-wide congestion control feedback, and Pion's GCC tur
 - **A bounded NACK responder.** The default resends anything in a 1024-packet buffer as often as it is asked. After a startup overshoot, lost packets were resent, lost again and NACKed again until retransmissions filled the link, and the loss estimator reported 93% loss with nothing being lost. The agent answers NACKs only for packets younger than a second, at most twice each, within a quarter of the target bitrate.
 - **The target held through a still screen.** A still screen sends a refresh twice a second and sound, and GCC took that trickle for the link's measure: its target rose 8% a second to the ceiling, which the first scroll then overflowed, or fell to a fraction of the link. The agent tells such spells apart as libwebrtc does and keeps their feedback from GCC, so motion starts at the target the screen went still with, and its own frames try the link again.
 - **Sound first.** Opus packets go out ahead of a queued keyframe, and the pacer numbers packets again as they leave, since the browser's feedback counts a packet that arrives behind a higher number as lost.
-- **Bulk under the target.** Files and clipboard content from the host take what the picture leaves of the target, and a quarter of it while the picture fills it, since GCC cannot see them. Every transfer also has a credit window of 512 KiB, so one that stalls never fills the connection the keyboard shares.
+- **Bulk under the target.** Files and clipboard content from the host take what the picture leaves of the target, and a quarter of it while the picture fills it, since GCC cannot see them. Every transfer also has a credit window: it runs at most 512 KiB ahead of what its receiver has taken, so one that stalls never fills the connection the keyboard shares, and the page fails one from the agent that runs past it.
 
 With these, a start that overshoots fourfold and a link that drops mid-session both settle within about 10% of the link rate, the first motion after a minute of a still screen shows as the motion before it did, and a download beside a moving picture leaves the picture its rate.
 
+## Video in motion
+
+Each change to the picture while it moves was judged by one harness, built before anything changed. It plays a recorded 2560x1440 screen of small text through the agent's real stream loop, peer and encoder, over shaped links, to a stand-in for Chrome's video receiver, and scores every picture it would show against its own source. What it led to:
+
+- **A refresh instead of keyframe requests.** Chrome asks for a keyframe after 3 s without a frame, and a still screen sent none, so it asked every 3 s and got a fresh picture of the same thing each time. The stream now encodes the unchanged picture again every 500 ms, which sharpens a still screen further and costs about 30 kbit/s once settled. That refresh is also why the status tab reads about 2 fps on an idle screen.
+- **Keyframes spread out.** A keyframe of 150 KB at 1080p, sent in one burst, overflowed a small bottleneck buffer and lost the rest of itself together. The pacer spreads it over about 200 ms. The NACK history holds 4096 packets, and when the browser asks for a packet the agent no longer has, the agent sends a keyframe at once, at most once a second, rather than wait for the browser to ask seconds later.
+- **Frames skipped before text turns to blocks.** The encoder's quantiser stops at 40 instead of 51, so when the target dips, rate control skips frames instead of smearing text. Over a 4 Mbit/s link that kept scrolling text legible at 26 fps, where the old ceiling showed it as blocks.
+- **A larger default size.** A 2560x1440 monitor scaled to 1920x1080 and back up by the browser scored 26 dB against the screen whatever the link; sent at its own size the same clip scored 41 to 48 dB for about the same bitrate. So `--max-size` defaults to 2560x1440 on hosts with more than four cores.
+
+The bitrate ceiling stays at 10 Mbit/s and the hardware path at Constrained Baseline: the numbers showed neither a higher ceiling nor High profile worth its cost. `TestVideoQualityMatrix` (see [Testing](/testing#make-test)) is the measure any change to video is judged by.
+
 ## Zero playout delay
 
-Every video packet carries the playout-delay header extension with a minimum and maximum of zero, so Chrome shows a frame as soon as it is complete instead of holding it for its jitter estimate. A still screen sends nothing until Chrome, after 3 s without a frame, asks for a keyframe, and Chrome's jitter estimate used to grow on that trickle of large frames until it held new frames back for most of a second. Before the change, four keystrokes 250 ms apart after a pause produced one frame on screen, 414 ms after the first key. With the extension each keystroke reached the screen within 11 to 34 ms over direct UDP, 9 to 33 ms through the SSH tunnel, 7 to 31 ms after failing over to it, and 6 to 36 ms attached. Browsers that do not offer the extension, Firefox among them, keep their own playout timing.
+Every video packet carries the playout-delay header extension with a minimum and maximum of zero, so Chrome shows a frame as soon as it is complete instead of holding it for its jitter estimate. Before the 500 ms refresh, a still screen sent nothing until Chrome, after 3 s without a frame, asked for a keyframe, and Chrome's jitter estimate grew on that trickle of large frames until it held new frames back for most of a second. Before the change, four keystrokes 250 ms apart after a pause produced one frame on screen, 414 ms after the first key. With the extension each keystroke reached the screen within 11 to 34 ms over direct UDP, 9 to 33 ms through the SSH tunnel, 7 to 31 ms after failing over to it, and 6 to 36 ms attached. Browsers that do not offer the extension, Firefox among them, keep their own playout timing.
 
 ## Capture and input
 
 On X11 everything is pure Go through the X protocol, with no libX11 and no cgo outside the encoders: MIT-SHM for capture, DAMAGE to skip idle frames, XTest for input, RandR for resizing and selections with XFIXES for the clipboard. Keys arrive as characters and are typed as keysyms; the agent finds the keycode and shift level that produce each one, adjusts Shift and AltGr around the press, and binds a spare keycode when the keymap lacks the character.
 
-On Wayland the portal hands over a PipeWire connection that can see only the shared stream, and `gst-launch-1.0` reads it with that connection as its fd 3, converting to I420, scaling to fit and framing the output for the agent. Input goes back through the portal, with the compositor picking keycodes.
+In the page, the keyboard's focus rests in a hidden text box, so text an input method composes (CJK, or an accent built from a dead key) goes to the desktop once it is committed, and shows under the status tab while it is being composed. Text from an input method, a soft keyboard, Type clipboard or a macro is typed in order, behind the keys before it.
+
+On Wayland the portal hands over a PipeWire connection that can see only the shared stream, and `gst-launch-1.0` reads it with that connection as its fd 3, converting to I420, scaling to fit and framing the output for the agent. Input goes back through the portal, with the compositor picking keycodes. The compositor drops a keysym its layout lacks, so text outside ASCII is pasted through the desktop's clipboard instead, and the clipboard gets back what it held about a second later.
 
 ## Where the code lives
 
@@ -136,10 +157,15 @@ On Wayland the portal hands over a PipeWire connection that can see only the sha
 | `internal/relay` | candidate filtering, the tunnel candidate, DTLS pinning |
 | `internal/protocol` | every message on stdio, the websocket and the data channel |
 | `internal/agent` | the session and the desktop interface it drives |
+| `internal/agent/daemon` | keeps the session alive between CLI connections: the socket, the proxy, the spawn |
 | `internal/agent/display`, `x11` | spawning or attaching to X11 |
 | `internal/agent/wayland` | attaching through the portal and a `gst-launch-1.0` child |
 | `internal/agent/peer` | the Pion side |
 | `internal/agent/yuv`, `h264`, `hwenc` | colour conversion and scaling, openh264, the GPU encoders through host tools |
-| `internal/agent/audio`, `opus` | sound capture and Opus encoding |
+| `internal/agent/audio`, `opus` | sound capture and Opus encoding, and the microphone's way back |
+| `internal/agent/camera` | the browser's camera on PipeWire or v4l2loopback |
+| `internal/agent/gstsink` | `gst-launch-1.0` children fed raw media on stdin |
+| `internal/agent/files` | uploads and the `robin-send` socket |
+| `internal/agent/keeper`, `gamma` | the curtain's gamma ramps, and the keeper that undoes a private session if the agent dies |
 
 Every decision here, and the measurement that settled it, is recorded in the architecture decision record, `docs/adr/0001-architecture.md`, in the repository.

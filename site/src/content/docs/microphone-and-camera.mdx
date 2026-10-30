@@ -1,0 +1,58 @@
+---
+title: Microphone and camera
+description: Offering the microphone and camera of the machine you sit at to programs on the host, where they appear, and what the host needs.
+section: Use
+order: 7
+---
+
+```sh
+robin gui --mic --camera build-box
+```
+
+`--mic` and `--camera` let the host's programs, a video call in the remote desktop say, use the microphone and camera of the machine you sit at, as Robin microphone and Robin camera. Both start off. The status tab gets a switch for each the host could take; switching one on asks the browser for the device, the first time with the browser's own permission prompt, and a red dot shows while it is sent. Switching off stops the device, so the browser's own camera light goes out too. The CLI says once, at the start, where each went on the host or why it could not.
+
+## Where they appear on the host
+
+| Desktop | Microphone | Camera |
+|---|---|---|
+| spawned | the default source of the session's private pulseaudio, "Robin microphone" | a v4l2loopback device, when you have one |
+| attached, PipeWire | a PipeWire source, "Robin microphone", that goes when the session ends | a PipeWire camera, "Robin camera", or a v4l2loopback device when you have one |
+| attached, PulseAudio | a source, "Robin microphone", on your PulseAudio, unloaded when the session ends | a v4l2loopback device |
+
+Attached, the microphone is one more source to pick in a program's settings; Robin does not make it your default.
+
+## What the host needs
+
+The microphone needs what sound needs (`pulseaudio` for a spawned desktop, see [Sound](/sound)), and on PipeWire also `gst-launch-1.0` with GStreamer's PipeWire plugin, as [Wayland attach](/attach-wayland#what-the-host-needs) does.
+
+A PipeWire camera is seen by programs that use PipeWire for cameras, such as GNOME Snapshot, OBS and browsers set to use the camera portal. Others open `/dev/video*` and need v4l2loopback, which is also the only way to give a spawned desktop a camera:
+
+```sh
+sudo apt install v4l2loopback-dkms
+sudo modprobe v4l2loopback card_label="Robin camera" exclusive_caps=1
+```
+
+The probe finds the loopback devices you can write, and the camera takes the one labelled Robin, else the first, in preference to PipeWire.
+
+## The picture and the sound
+
+The camera is 1280x720 whatever your camera sends: a picture of another shape is centred on black. While it is off, or the browser sends nothing, it shows black, so the last picture never stays on the host's screen.
+
+The browser's microphone comes back as Opus, decoded with libopus into a source on the desktop's sound server or PipeWire, and its camera as H.264, decoded with openh264 into a PipeWire node or a v4l2loopback device.
+
+## Who can read them
+
+The microphone and camera reach every program that can record on the host as you. Your sound server and PipeWire are yours alone, but a v4l2loopback device is readable by whoever its permissions admit, usually the `video` group, so on a shared host the camera's pictures go to them too. Nothing leaves the browser while a switch is off, and the agent never turns one on.
+
+## On a kept session
+
+The microphone and camera are the ones the desktop started with. A resume that offers one it lacks is refused, with how to get it, and a resume without `--mic` or `--camera` offers neither to the page. After a reconnect, a device that was on is off until you switch it on again. See [Kept sessions](/sessions#a-resume-is-the-same-session).
+
+## Limits
+
+What the devices do only in part, here and on [Known limits](/known-limits#microphone-and-camera):
+
+- A PipeWire camera is invisible to programs that open `/dev/video*` themselves, which is most of those not sandboxed; they need v4l2loopback.
+- The microphone and camera are tested in Chrome only. Firefox and Safari should work the same way through the same page, but nothing checks them.
+- The camera is always 1280x720 at 30 fps. The browser lowers its own resolution when the link or its CPU are short, and the host then sees a softer picture of the same size.
+- Attached to a plain PulseAudio, an agent killed outright leaves its microphone loaded until your next Robin session sweeps it, and a PulseAudio with no default source you chose, on a host with no microphone of its own, takes Robin microphone as its default while it is there.
