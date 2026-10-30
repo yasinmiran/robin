@@ -162,7 +162,7 @@ func (p *pasteRestore) forget() {
 // before the first of a run of pastes. Before the first copy the agent
 // sees, that is whatever was there when the session began, which the
 // portal does not report, so it is read once, in each format the rich
-// clipboard knows: a read of one the clipboard lacks comes back empty.
+// clipboard knows; a format the clipboard lacks reads as nothing.
 func (c *clipboard) offerPaste(text string) error {
 	p := &c.paste
 	p.mu.Lock()
