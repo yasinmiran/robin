@@ -68,13 +68,17 @@ async function typeOnGuest(file: string, word: string, waitMs: number): Promise<
 }
 
 // clickGuestAction clicks the owner's button for the guest's action on the
-// owner's page, as the user would, wherever the status tab is.
+// owner's page, as the user would, wherever the status tab is. Remove
+// takes a second click to confirm.
 const clickGuestAction = (action: string) =>
   ownerPage.evaluate((a) => {
-    const b = document.querySelector<HTMLButtonElement>(`.share-guest button[data-action="${a}"]`);
-    if (!b) throw new Error(`no ${a} button`);
-    b.click();
+    const find = () => document.querySelector<HTMLButtonElement>(`.share-guest button[data-action="${a}"]`);
+    if (!find()) throw new Error(`no ${a} button`);
+    find()!.click();
+    if (a === 'remove') find()!.click();
   }, action);
+
+const text = (p: Page, selector: string) => p.$eval(selector, (el) => el.textContent);
 
 // guestProcesses lists what alice runs on the host besides this check.
 async function guestProcesses(): Promise<string> {
@@ -129,9 +133,11 @@ test("the guest joins over its own login and watches the owner's stream", async 
   const s = await share(guestPage);
   expect(s.share).toEqual({ owner: 'robin' });
   expect(await guestPage.$eval('.share-status', (el) => el.textContent)).toBe('View only until robin gives you control');
+  expect(await text(guestPage, '#state-label'), "the guest's row says whose desktop it watches").toBe('Watching robin’s desktop');
   await expect
     .poll(async () => (await share(ownerPage)).guests?.list?.map((g: any) => `${g.user} ${Boolean(g.control)}`), { message: 'the owner page lists the guest' })
     .toEqual([`${GUEST} false`]);
+  expect(await text(ownerPage, '#guests .label'), "the owner's row says who watches").toBe(`${GUEST} watching`);
   expect((await share(ownerPage)).guests.invitations, 'the spent invitation is gone').toEqual([]);
   expect(await guestProcesses(), "alice's agent runs as alice").toMatch(/robin-agent-\S+ join -session \S+ -owner 1000/);
   // Both pages keep decoding.
@@ -156,6 +162,18 @@ test('given control, the guest types; taken back, it stops at once', async () =>
   await clickGuestAction('revoke');
   await expect.poll(async () => Boolean((await share(guestPage)).share.control), { message: 'the guest page lost control' }).toBe(false);
   expect(await typeOnGuest('/tmp/robin-e2e-share-1', 'revoked', 3_000)).toBe(false);
+});
+
+test("reloading the owner's page takes control from the guest, who keeps watching", async () => {
+  await clickGuestAction('grant');
+  await expect.poll(async () => Boolean((await share(guestPage)).share.control), { message: 'the guest page has control' }).toBe(true);
+  await ownerPage.reload();
+  await expect.poll(async () => Boolean((await share(guestPage)).share.control), { message: 'the guest lost control with the page' }).toBe(false);
+  await connected(ownerPage, 'the reloaded owner page');
+  await expect
+    .poll(async () => (await share(ownerPage)).guests?.list?.map((g: any) => `${g.user} ${Boolean(g.control)}`), { message: 'the reloaded page lists the guest' })
+    .toEqual([`${GUEST} false`]);
+  expect(await robinOf(guestPage)).toBe('connected');
 });
 
 test('the owner page invites by name, and says why it cannot', async () => {

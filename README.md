@@ -476,15 +476,18 @@ Once the desktop is up the CLI prints the command that account runs, with a
 code that works once, for that account only, for 10 minutes; repeat
 `--share` for more accounts. The status tab has a Share part that does the
 same for a name typed there, lists the invitations still open with a Copy
-button beside each command, and lists every guest. A new invitation for the
+button beside each command, and lists every guest. The tab's top row says
+who watches and who has control, and the tab comes out whenever a guest
+joins, leaves or gets control. A new invitation for the
 same account replaces its old code, and three wrong codes from that account
 withdraw it.
 
 The guest runs `robin gui --join <code> alice@host` on their own computer,
 over their own SSH login: their CLI puts its own agent in their own home
 directory, and that agent knocks on your session's door on the host. Their
-page shows your desktop, pointer and sound, and says whose desktop it is.
-It is view only until you click Give control on the guest's row: then
+page shows your desktop, pointer and sound, and its top row says whose
+desktop it is and whether they watch or control it. It is view only
+until you click Give control on the guest's row: then
 their keys, pointer and paste reach the desktop, the host's clipboard
 reaches them, they see the files `robin-send` offers and may upload, and
 with `--mic`, in a session that started with `--mic`, their microphone is
@@ -494,7 +497,7 @@ reloading your page takes control from every guest. Take back control
 ends theirs at once: what they held down is let go, text still being
 typed is dropped, the files on offer leave their page, a transfer of
 theirs still under way is dropped, and so is a file or a copy on its way
-to them. Remove closes their peer connection and
+to them. Remove asks for a second click, then closes their peer connection and
 their page at once, and their CLI exits saying why. A guest leaves with
 Ctrl+C or the page's Leave button.
 

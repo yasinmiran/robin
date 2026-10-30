@@ -17,11 +17,11 @@ Once the desktop is up, the CLI prints the command alice runs:
 robin: alice may join once, until 3:04PM, with: robin gui --join a1b2c3d4-1000-k3j4m5n6p7q2r3s4t5u6v7w2x3 alice@build-box
 ```
 
-The status tab has a Share part that does the same for a name you type there. It lists every invitation still open, with a Copy button beside its command, and every guest who joined.
+The status tab has a Share part that does the same for a name you type there. It lists every invitation still open, with a Copy button beside its command, and every guest who joined. The tab's top row says who watches and who has control, and the tab comes out whenever a guest joins, leaves or gets control.
 
 ## Joining
 
-Alice runs that command on her own computer, over her own SSH login to the host. Her CLI puts its own agent in her own home directory, and that agent knocks on your session's door. Her page shows your desktop, your pointer and its sound, and says whose desktop it is.
+Alice runs that command on her own computer, over her own SSH login to the host. Her CLI puts its own agent in her own home directory, and that agent knocks on your session's door. Her page shows your desktop, your pointer and its sound, and its top row says whose desktop it is and whether she watches or controls it. Until she has control, Upload files and the keys section say they need it.
 
 A code works once, for the account it names and for 10 minutes. Inviting the same account again replaces its code, and three wrong codes from that account withdraw it.
 
@@ -29,7 +29,7 @@ A code works once, for the account it names and for 10 minutes. Inviting the sam
 
 A guest watches until you click Give control on their row. Then their keys, pointer and paste reach the desktop, the host's clipboard reaches them, they see the files `robin-send` offers and may upload, and with `--mic`, in a session that started with `--mic`, their microphone is heard on the host. You keep control throughout, and one guest has it at a time: giving it to another takes it from the first. Closing or reloading your page takes control from every guest; they keep watching.
 
-Take back control ends theirs at once. What they held down is let go, text still being typed is dropped, the files on offer leave their page, a transfer of theirs still under way is dropped, and so is a file or a copy on its way to them. Remove closes their connection and their page at once, and their CLI exits saying why. A guest leaves with Ctrl+C or the page's Leave button.
+Take back control ends theirs at once. What they held down is let go, text still being typed is dropped, the files on offer leave their page, a transfer of theirs still under way is dropped, and so is a file or a copy on its way to them. Remove asks for a second click, then closes their connection and their page at once, and their CLI exits saying why. A guest leaves with Ctrl+C or the page's Leave button.
 
 <Callout type="note" title="What stays yours.">
 A guest's window does not resize the desktop. The monitor shown, the curtain and the silent room, sharp text, the camera, and keeping or ending the desktop are yours alone.
