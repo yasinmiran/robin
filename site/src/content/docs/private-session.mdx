@@ -11,11 +11,11 @@ robin gui --attach auto --curtain --silent workstation
 
 An attached desktop shows everything you do to whoever sits in front of it, and plays its sound through their speakers. `--curtain` blacks out the screen at the host and `--silent` keeps its speakers quiet, while the page still shows the picture and plays the sound.
 
-Both are off unless you ask, and the status tab has a switch for each that works mid-session. When you attach without them, the CLI says the room can see and hear you and names the two flags. A switch clicked while the page reconnects waits, busy, and goes to the host once the page is back. `robin gui --id <id> --curtain` turns the curtain on as it resumes a desktop kept with `--keep`, and fails with the reason, the desktop still kept, when it cannot. A desktop Robin starts has nobody in front of it, so there the flags are refused.
-
 <Callout type="warning" title="The curtain is no lock.">
 The keyboard and mouse at the host keep working, so someone there can still type into your session, only blind. Whatever ends the session, a dropped connection included, lifts the curtain and leaves the desktop unlocked in front of whoever is there: Robin does not lock it for you.
 </Callout>
+
+Both flags are off unless you ask, and the status tab has a switch for each that works mid-session. When you attach without them, the CLI says the room can see and hear you and names the two flags. A desktop Robin starts has nobody in front of it, so there the flags are refused.
 
 ## The curtain
 
@@ -32,6 +32,10 @@ The silent room gives the desktop's sound server one more output, listed as Robi
 Under PipeWire the new output belongs to a `pw-record` process (PipeWire's tools, `pipewire-bin` on Debian and Ubuntu, `pipewire-utils` on Fedora) when the host has it, and goes away with that process; otherwise it is a PulseAudio `module-null-sink`, which works through `pipewire-pulse` too. Switching it off or ending the session moves each program back to the output it was on.
 
 A program that asks its sound server never to move its stream goes on playing at the host, and the switch names it until it stops. Sound already in another session's silent output stays there.
+
+## Mid-session and on resume
+
+A switch clicked while the page reconnects waits, busy, and goes to the host once the page is back. On a desktop kept with `--keep`, `robin gui --curtain workstation` turns the curtain on as it resumes, `--silent` quiets the room the same way, and `--id` picks the desktop only when the host keeps several. When one cannot go on, the CLI says why and the desktop stays kept as it was.
 
 ## When the session ends
 
