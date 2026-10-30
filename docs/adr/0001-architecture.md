@@ -2592,6 +2592,20 @@ has, a peer of its own for its page, and a rule for who drives.
   `TestRevokingAGuestEndsWhatItIsFetching` the guest's stalled download
   of a 2 MB file closes within milliseconds of the revoke (5 s without
   the change), and the file stays on offer.
+- Who watches is the owner's to see at a glance, not to look for. The
+  first page drew the guests inside the status tab only, which tucks
+  itself away after 2.5 s, and joining or getting control did not bring
+  it out, so a guest could sit on the desktop with nothing on the owner's
+  screen saying so. The tab's top row, which shows through the tuck's
+  sliver and is what the eye reads first, now names who watches and who
+  has control, and the tab comes out whenever either changes; a guest's
+  row says `Watching robin’s desktop` or `Controlling robin’s desktop`
+  where it said Connected, with the dot waiting while it only watches.
+  Remove, which a guest cannot undo, asks for a second click, as deleting
+  a macro does. In the e2e `share` scenario the owner's row read
+  `alice watching` once she joined and her row `Watching robin’s desktop`;
+  reloading the owner's page while she had control took it from her
+  within the 200 ms the step took, and she kept watching.
 - Lifetime follows the owner. When the owner's controller goes, every
   guest is dropped and every invitation withdrawn, and the door refuses
   newcomers until a controller resumes, so nobody watches a desktop whose
