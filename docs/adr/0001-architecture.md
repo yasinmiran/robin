@@ -2151,9 +2151,9 @@ own choosing and keeps the same sums the packetizer does: a sample is
 stamped with the clock, and the clock then moves on by the sample's
 duration in 90 kHz ticks, the fraction carried to the next. It moves only
 once the track is bound, so the sums run under one lock with `Bind`.
-`TestNextFrameRTPIsTheFramesTimestamp` writes frames of uneven durations,
+`TestNextRTPIsTheFramesTimestamp` writes frames of uneven durations,
 fractions of a tick included, to a Pion receiver and checks every one
-against `NextFrameRTP`. The manifest goes out before the frame is converted
+against `VideoTrack.NextRTP`. The manifest goes out before the frame is converted
 and encoded, a head start on its packets. A frame that then never goes out,
 because the encoder skipped it or failed, still spends its timestamp: the
 stream writes an empty sample of its duration, which moves the clock and

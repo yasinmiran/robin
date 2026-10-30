@@ -346,7 +346,7 @@ func newShapedLink(t *testing.T, cfg Config, linkBps int, h Handlers) *shapedLin
 			}
 			au := make([]byte, size)
 			copy(au, []byte{0, 0, 0, 1, 0x65})
-			l.p.WriteFrame(au, time.Second/fps)
+			l.p.track.Write(au, time.Second/fps)
 		}
 	}()
 

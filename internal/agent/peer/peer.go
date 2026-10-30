@@ -23,7 +23,6 @@ import (
 	"github.com/pion/stun/v4"
 	"github.com/pion/transport/v5"
 	"github.com/pion/webrtc/v4"
-	"github.com/pion/webrtc/v4/pkg/media"
 
 	"github.com/yasinmiran/robin/internal/protocol"
 )
@@ -61,12 +60,13 @@ type Config struct {
 	// session so the fingerprint the CLI pinned survives a page reload. Nil
 	// generates a fresh one.
 	Certificate *webrtc.Certificate
-	// Audio adds an Opus track for WriteAudio.
+	// Audio sends AudioTrack (or a track of its own) to the browser.
 	Audio bool
-	// Video and AudioTrack are the tracks this peer sends, when the session
-	// shares them among its peers so each frame and packet is written once.
-	// Nil makes the peer a track of its own; AudioTrack counts only with
-	// Audio.
+	// Video and AudioTrack are the tracks this peer sends. The session
+	// shares them among its peers, so each frame and packet is written
+	// once, to every peer bound to the track. Nil gives this peer a track
+	// of its own, which nothing outside the package can write: tests of
+	// this package use that. AudioTrack counts only with Audio.
 	Video      *VideoTrack
 	AudioTrack *webrtc.TrackLocalStaticSample
 	// Mic and Camera take the browser's microphone (Opus) and camera
@@ -395,23 +395,9 @@ func (p *Peer) AddCandidate(c protocol.Candidate) error {
 	})
 }
 
-// WriteFrame sends one encoded access unit in Annex-B form, on the peer's
-// video track: to every peer that shares it.
-func (p *Peer) WriteFrame(annexB []byte, d time.Duration) error {
-	return p.track.Write(annexB, d)
-}
-
 // NewAudioTrack makes an Opus track for Config.AudioTrack.
 func NewAudioTrack() (*webrtc.TrackLocalStaticSample, error) {
 	return webrtc.NewTrackLocalStaticSample(opusCapability, "audio", "robin")
-}
-
-// WriteAudio sends one Opus packet. It is a no-op without Config.Audio.
-func (p *Peer) WriteAudio(opus []byte, d time.Duration) error {
-	if p.audio == nil {
-		return nil
-	}
-	return p.audio.WriteSample(media.Sample{Data: opus, Duration: d})
 }
 
 // SendControl sends a message to the browser over the control channel, or

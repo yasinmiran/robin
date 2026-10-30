@@ -46,7 +46,7 @@ func NewVideoTrack() (*VideoTrack, error) {
 }
 
 // Bind binds the underlying track and starts the frame clock under the lock
-// write takes, so NextFrameRTP never sees one without the other.
+// write takes, so NextRTP never sees one without the other.
 func (t *VideoTrack) Bind(ctx webrtc.TrackLocalContext) (webrtc.RTPCodecParameters, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -79,8 +79,3 @@ func (t *VideoTrack) NextRTP() (uint32, bool) {
 	defer t.mu.Unlock()
 	return t.next, t.bound
 }
-
-// NextFrameRTP returns the RTP timestamp the next WriteFrame will carry. It
-// reports false while the browser has not been answered yet, when no frame
-// written reaches it.
-func (p *Peer) NextFrameRTP() (uint32, bool) { return p.track.NextRTP() }

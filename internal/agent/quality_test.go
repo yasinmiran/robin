@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pion/webrtc/v4/pkg/media"
+
 	"github.com/yasinmiran/robin/internal/agent/desktop"
 	"github.com/yasinmiran/robin/internal/agent/h264"
 	"github.com/yasinmiran/robin/internal/agent/hwenc"
@@ -217,10 +219,14 @@ func (c clipRun) run(t *testing.T) *vqtest.Run {
 	}
 	cands := make(chan protocol.Candidate, 64)
 	sub := newSubscriber(min(startBitrate, maxBitrate), true)
+	sound, err := peer.NewAudioTrack()
+	if err != nil {
+		t.Fatal(err)
+	}
 	p, err := peer.New(peer.Config{
 		Net: net.Agent, MinBitrate: minBitrate, StartBitrate: min(startBitrate, maxBitrate), MaxBitrate: maxBitrate,
 		Unpaced: c.unpaced, Audio: c.sound, FeedWhileLimited: c.feedWhileLimited, SoundBehindVideo: c.soundBehindVideo, Log: log,
-		Video: s.video,
+		Video: s.video, AudioTrack: sound,
 	}, peer.Handlers{
 		Candidate: func(pc protocol.Candidate) { cands <- pc },
 		Keyframe:  s.requestKeyframe,
@@ -259,7 +265,7 @@ func (c clipRun) run(t *testing.T) *vqtest.Run {
 			case <-ctx.Done():
 				return
 			case now := <-tick.C:
-				p.WriteAudio(vqtest.SoundPayload(240, now), 20*time.Millisecond)
+				sound.WriteSample(media.Sample{Data: vqtest.SoundPayload(240, now), Duration: 20 * time.Millisecond})
 			}
 		}
 	}()
