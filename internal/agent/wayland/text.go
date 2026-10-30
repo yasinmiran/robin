@@ -238,22 +238,16 @@ func (in *input) tap(sym uint32) error {
 }
 
 // chord taps the key of r with mods, keysyms every layout has, held:
-// pressed in order and let go the other way round.
-func (in *input) chord(r rune, mods ...uint32) error {
+// pressed in order and let go the other way round, even when a press
+// after them fails.
+func (in *input) chord(r rune, mods ...uint32) (err error) {
 	in.mu.Lock()
 	defer in.mu.Unlock()
 	for _, m := range mods {
 		if err := in.keysym(m, true); err != nil {
 			return err
 		}
+		defer in.release(m, &err)
 	}
-	if err := in.char(r); err != nil {
-		return err
-	}
-	for i := len(mods) - 1; i >= 0; i-- {
-		if err := in.keysym(mods[i], false); err != nil {
-			return err
-		}
-	}
-	return nil
+	return in.char(r)
 }

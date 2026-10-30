@@ -167,7 +167,7 @@ func (in *input) keysym(sym uint32, down bool) error {
 // or would type another character, and so would a key of a layout that
 // has Latin letters, or a key AltGr held in the browser takes to the
 // layout's third level. in.mu must be held.
-func (in *input) char(r rune) error {
+func (in *input) char(r rune) (err error) {
 	if !in.kb.lacks(r) {
 		sym := keysym.Rune(r)
 		if err := in.keysym(sym, true); err != nil {
@@ -179,21 +179,26 @@ func (in *input) char(r rune) error {
 	if !ok || !in.kb.latinless() || in.holds(keysym.ISOLevel3Shift) {
 		return nil
 	}
-	shift := shifted && !in.holds(keysym.ShiftL, keysym.ShiftR)
-	if shift {
+	if shifted && !in.holds(keysym.ShiftL, keysym.ShiftR) {
 		if err := in.keysym(keysym.ShiftL, true); err != nil {
 			return err
 		}
+		defer in.release(keysym.ShiftL, &err)
 	}
 	for _, down := range []bool{true, false} {
 		if err := in.s.call("NotifyKeyboardKeycode", int32(code), state(down)); err != nil {
 			return err
 		}
 	}
-	if shift {
-		return in.keysym(keysym.ShiftL, false)
-	}
 	return nil
+}
+
+// release lets go of sym, a modifier pressed before, whatever went wrong
+// since, and keeps the first error in *err. in.mu must be held.
+func (in *input) release(sym uint32, err *error) {
+	if e := in.keysym(sym, false); *err == nil {
+		*err = e
+	}
 }
 
 // holds reports whether any of syms is held. in.mu must be held.
