@@ -910,8 +910,9 @@ checks that the first session asks and the second restores without asking,
 that frames arrive and change, pointer, keys and held-key repeat, text
 typed as keysyms or pasted, into a window and into a terminal, with the
 clipboard put back after, rich or holding nothing the agent reads, and
-read every 5 ms while it is, keys and text on a Russian layout (GNOME
-only, each booted once more with it), the clipboard both ways in each of its MIME types (text, `text/html` and an
+read every 5 ms while it is, keys and text on a Russian layout and on US
+international, whose fourth level mutter cannot type (GNOME only, each
+booted once more with each), the clipboard both ways in each of its MIME types (text, `text/html` and an
 `image/png` bigger than a pipe holds), view-only grants (GNOME only; KDE has none), and that
 no `gst-launch-1.0` or portal session outlives the agent, whether it closes
 or is killed. A tone played into each session's PipeWire must come out of
@@ -1123,22 +1124,29 @@ verified against a Linux build.
   first time. It works through the portal's remote desktop interface, which
   GNOME and KDE Plasma have; wlroots compositors such as Sway do not.
 - On GNOME Wayland, a key only types its own character if the host's
-  keyboard layout has it: mutter drops any other keysym, and there is no
-  spare keycode to bind one to as on X11. The agent reads the layout from
-  GNOME's input sources. An ASCII key the layout lacks, such as a Latin
-  letter on a Russian layout, goes as the key a US layout has it on, so it
-  types what the host's layout has there, as a keyboard plugged into the
-  host would, and shortcuts such as Ctrl+C work; any other character the
-  layout lacks types nothing, Cyrillic from a Russian keyboard on a Russian
-  host included, since the keysyms the browser names are not the ones the
-  layout lists. Text from an input method or a soft keyboard goes as a
-  paste when the layout lacks any of it, pressing Ctrl+Shift+V, which
-  terminals paste with, then Ctrl+V if no program read the clipboard by
-  then. A program that does something else on Ctrl+Shift+V does that
-  first: LibreOffice opens Paste Special, for one. A second clipboard
-  manager that reads each copy later than mutter's can make the agent take
-  its read for the paste and skip Ctrl+V. A layout GNOME does not name as
-  an xkb input source (an input method's own) is taken to have all of
+  keyboard layout has it on a level mutter can reach: mutter drops any
+  other keysym, and a keysym it finds first on a key's fourth level (Shift
+  and AltGr) it presses with neither, so that key types its first level
+  instead. There is no spare keycode to bind one to as on X11. The agent
+  reads the layout from GNOME's input sources and xkeyboard-config. On a
+  layout without Latin letters, such as Russian, a letter key goes as the
+  key a US layout has it on, so it types what the host's layout has there,
+  as a keyboard plugged into the host would, and shortcuts such as Ctrl+C
+  work. Any other key the layout lacks types nothing: punctuation such a
+  layout lacks, a letter while AltGr is held, German's `^` and `` ` ``,
+  which it has only as dead keys, French's `$`, `<` and `>` and US
+  international's `~`, `^` and `"`, which mutter finds on a fourth level
+  first, a letter that a layout with some Latin letters lacks, and Cyrillic
+  from a Russian keyboard on a Russian host, since the keysyms the browser
+  names are not the ones the layout lists. Text from an input method or a
+  soft keyboard goes as a paste when the layout lacks any of it, pressing
+  Ctrl+Shift+V, which terminals paste with, then Ctrl+V if no program read
+  the clipboard by then. A program that does something else on
+  Ctrl+Shift+V does that first: LibreOffice opens Paste Special, for one.
+  A second clipboard manager that reads each copy later than mutter's can
+  make the agent take its read for the paste and skip Ctrl+V. A layout
+  GNOME does not name as an xkb input source (an input method's own), and
+  any compositor other than mutter and KWin, is taken to have all of
   ASCII.
 - GNOME drops the first key event of each remote session, and now and then
   the first pointer event. The agent spends both on input that does

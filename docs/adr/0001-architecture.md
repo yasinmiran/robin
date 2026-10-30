@@ -596,8 +596,10 @@ Printable characters go in as keysyms through `NotifyKeyboardKeysym`, and
 mutter finds the keycode and presses Shift or AltGr as the level needs. A
 keysym missing from the active layout is dropped: a Wayland client cannot
 change the compositor's keymap, so the spare-keycode trick the X11 path uses
-has no equivalent. An ASCII character GNOME's layout lacks goes by its US
-key instead (see Wayland keyboard layouts below). GNOME drops the first key event of a remote desktop
+has no equivalent, and one mutter finds first on a fourth level types
+another character (see Wayland keyboard layouts below). A letter that
+GNOME's layout lacks, on a layout without Latin letters, goes by its US
+key instead. GNOME drops the first key event of a remote desktop
 session and, about one session in five, leaves the first pointer event
 unseen by clients, so the agent opens with a `VoidSymbol` tap, which no
 layout has, and a zero relative motion.
@@ -1364,8 +1366,13 @@ pasted whole: offered as the clipboard, then Ctrl+Shift+V, then Ctrl+V if
 no program read the offer within 300 ms, then 100 ms for the program to
 read it before the next input. KWin types any keysym, its layout's or not:
 "a日本b€ c" arrives whole as keys on KDE Plasma 6.7, so there text never
-touches the clipboard. The agent tells the two apart by
-`org.kde.KWin` on the session bus.
+touches the clipboard. The agent tells the two apart by the names they
+own on the session bus, `org.kde.KWin` and
+`org.gnome.Mutter.RemoteDesktop`, asked within `Open`'s context. Only under
+mutter does it follow GNOME's layout: a portal host with GNOME's schemas
+installed for some other reason would otherwise have a layout it does
+not run taken for its own, so any other compositor has all of ASCII taken
+to type, as before the agent read layouts at all.
 
 Ctrl+V does not paste in a terminal, which takes it as the character ^V
 and, in readline, quotes the next one, a bracketed paste's escape
@@ -1421,9 +1428,9 @@ pasted text in its history, a known limit.
 
 ### Wayland keyboard layouts: GNOME's input sources, read through xkeyboard-config
 
-On a layout without Latin letters mutter dropped every ASCII keysym, Ctrl+V
-included, so neither keys nor pastes reached anything. mutter looks a
-keysym up only in the layout group in use, and nothing on the portal or
+On a layout without Latin letters mutter dropped every ASCII keysym,
+Ctrl+V included, so neither keys nor pastes reached anything. mutter looks
+a keysym up only in the layout group in use, and nothing on the portal or
 the session bus says which layout that is or what it has. GNOME Shell
 applies the input source the user picked, the most recent of
 `org.gnome.desktop.input-sources` `mru-sources` that is still in
@@ -1431,29 +1438,89 @@ applies the input source the user picked, the most recent of
 bus. The agent reads both keys with `gsettings` when the session starts
 and again on each announcement, and reads that layout's symbols the way
 libxkbcommon finds them: the user's `~/.config/xkb` and `~/.xkb`, then
-`/etc/xkb`, then the system's. `internal/agent/xkb` follows includes, merge
-modes and the first group's levels, which is all that says which ASCII a
+`/etc/xkb`, then the system's. `internal/agent/xkb` follows includes,
+merge modes (a `|` between an include's files augments) and the first
+group's levels, which with the keycode order below says which ASCII a
 layout types; every one of the 1131 layouts of xkeyboard-config 2.33
 (Ubuntu 22.04) reads without error, and German turns out to lack `^` and
 `` ` ``, which it has only as dead keys. An input method's source, or one
 the agent cannot read, counts as having all of ASCII, as before.
 
-Text the layout lacks is pasted, as above. A key the layout lacks goes by
-the key a US layout has its character on, through
-`NotifyKeyboardKeycode`, with Shift where the US layout needs it and the
-browser holds none: it types what the host's layout has on that key, as a
-keyboard plugged into the host would, and a shortcut such as Ctrl+C reaches
-programs, which match shortcuts by key on such layouts. The paste's V goes
-the same way. Typing the Latin letter instead would take a layout switch
-on the host, which the portal cannot ask for. The Wayland tests boot each
-GNOME desktop once more with Russian before US, which a stand-in for
-localed hands to mutter's default plugin as GNOME Shell would apply it, and
-`TestAttachLayout` checks there that a, 1 and Enter type ф1 and a newline,
-that Ctrl+C arrives as Ctrl and the C key, that "1." types as keys and that
-"ok" is pasted. Characters outside ASCII are not looked up: a key the
-browser names by a Cyrillic letter goes as its Unicode keysym, which is not
-the legacy keysym the Russian layout lists, and types nothing (measured on
-GNOME 46 and 49), a known limit.
+The follower reads `gsettings` under a context of its own, which closing
+the desktop cancels before it waits for the follower to return, so a read
+under way is killed rather than left to outlive the session by its 2 s
+bound.
+
+### Wayland keyboard layouts: the key and level mutter picks
+
+Which keys a layout has is not all mutter needs. Its
+`pick_keycode_for_keyval_in_current_group` walks the keys of the layout in
+use in keycode order, and each key's levels in order, and takes the first
+match; `apply_level_modifiers` then presses Shift for the second level and
+AltGr for the third, and for any higher one logs "Unhandled level" and
+presses the key alone (the same code in GNOME 46 and 49). A keysym found
+first on a fourth level, Shift and AltGr, so types that key's first level.
+US international has `~`, `^` and `"` only there, under dead keys, and
+French has `$`, `<` and `>` on the fourth level of keys with lower codes
+(4, Z, X) than the keys it has them on plainly. Asked for `~` in a us+intl
+session, mutter logged "Unhandled level: 3" for the press and the release
+on GNOME 46 and 49 alike; by that code `~` types a dead grave, `^` a 6,
+`"` a dead acute, and French's three `'`, `z` and `x`. So
+`internal/agent/xkb` reads `keycodes/evdev` and puts the layout over
+`pc`'s keys, as xkeyboard-config's rules build a PC keymap, finds each
+keysym the way mutter does, and has a layout type a character only where
+that lands on one of the first three levels. Counting by the lowest level
+a keysym is on instead would still have counted French's three. Of the
+1131 layouts, 335 have printable ASCII that the lookup finds first above
+the third level. `TestAttachLayoutFourthLevel` boots each GNOME desktop
+with us+intl and checks there that the keys `~` and `` ` `` type only `` `
+`` (with AltGr), that "`'" types as keys, that text with `~`, `^` and `"`
+is pasted whole, and that mutter logs no unhandled level meanwhile.
+
+### Wayland keys the layout lacks: a US key only for a letter
+
+Text the layout lacks is pasted, as above. A key is typed at once and
+cannot wait for a paste, so a key the layout lacks goes by the key a US
+layout has its character on, through `NotifyKeyboardKeycode`, but only
+when it is an ASCII letter on a layout that types none of a to z, with
+Shift where the US layout needs it and the browser holds none: it types
+what the host's layout has on that key, as a keyboard plugged into the
+host would, and a shortcut such as Ctrl+C reaches programs, which match
+shortcuts by key on such layouts. The paste's V goes the same way. Typing
+the Latin letter instead would take a layout switch on the host, which
+the portal cannot ask for. The first version sent any ASCII the layout
+lacked by its US key, and that typed something else wherever the layout
+has Latin letters: German's `^` went as Shift and 6 and typed `&`, and
+its `` ` `` as the grave key, German's dead circumflex, which composed the
+next key typed; Russian's `$` came out as `;` and its `#` as `№`. 28
+layouts have some of a to z but not all, and their US key of a missing
+letter types another letter. AltGr held in the browser would take the
+host's key to its third level. All of those are dropped, as the keysym
+would have been or would have typed wrong, which `TestKeysTheLayoutLacks`
+and `TestKeysALatinLayoutLacks` check with a Cyrillic layout, a German
+one with `^` and `` ` `` as dead keys and one without q. The Wayland
+tests boot each GNOME desktop once more with Russian before US, which a
+stand-in for localed hands to mutter's default plugin as GNOME Shell would
+apply it, and `TestAttachLayout` checks there that a, 1 and Enter type ф1
+and a newline, that Ctrl+C arrives as Ctrl and the C key, that "1." types
+as keys and that "ok" is pasted. Characters outside ASCII are not looked
+up: a key the browser names by a Cyrillic letter goes as its Unicode
+keysym, which is not the legacy keysym the Russian layout lists, and
+types nothing (measured on GNOME 46 and 49), a known limit.
+
+### Wayland input calls: bounded, and modifiers let go
+
+Keys and pointer events go to the portal while the input lock is held,
+and the paste's `SetSelection` while the paste's lock is, so a portal
+that stopped answering would hold every later key, key releases
+included, with no bound. Each such call now fails after `inputTimeout`,
+1 s, where a portal answers within milliseconds, as clipboard reads were
+already bounded at 2 s. A US key's Shift and a paste chord's Ctrl and
+Shift are let go of even when a press after them fails: one refused call
+used to leave Ctrl down on the host, and every later key then arrived as
+a shortcut. The refusal tests check that each modifier pressed ends up
+let go of, unless its own release was what the portal refused, and a
+stand-in portal that never answers fails `Type` after the bound.
 
 ### The page types through a hidden text box
 
