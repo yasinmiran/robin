@@ -2495,7 +2495,13 @@ section's in every offer started a new count each time while Pion kept
 every candidate (768 over three offers in the regression test); an offer
 whose sections disagree is refused now, as is one whose credentials go
 outside RFC 8839's ice-char, since every check carries the browser's
-ufrag. Candidates at the host's loopback, a link-local address or no
+ufrag. A bulk sender took any credit the page granted, and Pion's SCTP
+queues whatever a channel sends with no limit, so a page that granted
+2^40 bytes and stopped reading left a whole download queued in the agent
+(15,665,147 of the regression test's 16 MiB). The sender now counts what
+it sent and takes a grant only up to a window past that: no receiver can
+have taken more, so an honest page is never held back. Candidates at the
+host's loopback, a link-local address or no
 unicast address are counted and dropped: the browser is never there, and
 services on loopback trust what comes from it (the test's UDP listener on
 127.0.0.1 got the agent's checks before). Pion's remote IP filter would

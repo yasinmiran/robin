@@ -725,7 +725,10 @@ prints that holds any, or a mark that reorders text, is printed quoted with
 escapes, as `ls` does. Bulk transfers of any kind the agent has not registered
 are refused. A transfer runs at most 512 KiB ahead of what its receiver has
 taken, and the page fails one from the agent that runs past that, so a
-stalled transfer holds back neither the keyboard nor the page's memory.
+stalled transfer holds back neither the keyboard nor the page's memory. The
+agent takes no credit past 512 KiB beyond what it has sent, so a page that
+grants more and stops reading cannot leave a download queued in the host's
+memory either.
 
 The page holds the host to bounds of its own. A host may have two clipboard
 transfers open to the page at once, a newer copy pushing out the oldest,

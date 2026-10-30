@@ -94,8 +94,10 @@ type bulkSender struct {
 	closed  chan struct{}
 	verdict chan protocol.Bulk
 	// credit is how many payload bytes the receiver lets the sender have
-	// sent; more ticks when it grows.
+	// sent; more ticks when it grows. sent counts the bytes handed to the
+	// channel, a chunk before it goes.
 	credit atomic.Int64
+	sent   atomic.Int64
 	more   chan struct{}
 }
 
@@ -114,8 +116,11 @@ func newBulkSender(dc *webrtc.DataChannel) *bulkSender {
 	dc.OnMessage(func(m webrtc.DataChannelMessage) {
 		v, err := protocol.ParseBulk(m.Data)
 		if m.IsString && err == nil && v.T == protocol.BulkCredit {
-			if v.Credit > s.credit.Load() {
-				s.credit.Store(v.Credit)
+			// A receiver cannot have taken more than was sent, so a grant
+			// past a window beyond that would let it stop reading and
+			// leave the rest of the transfer queued in this process.
+			if c := min(v.Credit, s.sent.Load()+protocol.BulkWindow); c > s.credit.Load() {
+				s.credit.Store(c)
 				select {
 				case s.more <- struct{}{}:
 				default:
@@ -148,7 +153,6 @@ func (s *bulkSender) send(ctx context.Context, h protocol.Bulk, r io.Reader) err
 	// One byte past the declared size is enough to tell r holds too much.
 	src := io.LimitReader(r, h.Size+1)
 	buf := make([]byte, protocol.BulkChunkSize)
-	var sent int64
 	for {
 		size := protocol.BulkChunkSize
 		if s.pace != nil {
@@ -161,7 +165,7 @@ func (s *bulkSender) send(ctx context.Context, h protocol.Bulk, r io.Reader) err
 			}
 			// The credit bounds what waits in the channel's queue too,
 			// so cancelling drops at most a window.
-			for sent+int64(n) > s.credit.Load() {
+			for s.sent.Load()+int64(n) > s.credit.Load() {
 				if err := s.wait(ctx, s.more); err != nil {
 					return err
 				}
@@ -174,10 +178,10 @@ func (s *bulkSender) send(ctx context.Context, h protocol.Bulk, r io.Reader) err
 			if err := s.check(ctx); err != nil {
 				return err
 			}
+			s.sent.Add(int64(n))
 			if err := dc.Send(buf[:n]); err != nil {
 				return s.sendErr(ctx, err)
 			}
-			sent += int64(n)
 		}
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 			break
