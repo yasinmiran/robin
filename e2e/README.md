@@ -9,14 +9,15 @@ resize and teardown all worked over a real network. The `wayland` scenario
 swaps the host for a headless GNOME Wayland session, reached the same way,
 the `firefox` and `webkit` scenarios swap Chrome for Playwright's own
 Firefox and WebKit, `nomux` runs the CLI without a ControlMaster as on
-Windows, `touch` makes Chrome a touch screen, and `systemd` boots systemd
-in the host so a kept session has to live as a unit of the user's manager.
+Windows, `touch` makes Chrome a touch screen, `systemd` boots systemd
+in the host so a kept session has to live as a unit of the user's manager,
+and `share` has a second account on the host join the session as a guest.
 
 ## Running
 
 ```sh
 # build bin/robin-linux-amd64 first (the repo Makefile does)
-e2e/run.sh                # direct, blocked, restart, resume, rejoin, attach, wayland, webkit, firefox, nomux, touch, systemd
+e2e/run.sh                # direct, blocked, restart, resume, rejoin, attach, wayland, webkit, firefox, nomux, touch, systemd, share
 e2e/run.sh direct         # one scenario
 e2e/run.sh selftest       # the harness itself, no CLI needed
 ROBIN_BIN=/path/to/robin e2e/run.sh restart
@@ -68,6 +69,7 @@ cannot leak into the next one. The tests run in order against one session.
 | `webkit` | open | the direct scenario in Playwright's WebKit (Safari's WebRTC stack): H.264 negotiates and decodes, keyboard, clipboard, resize, sound, UDP and teardown work; see below for what it cannot show |
 | `nomux` | UDP dropped (except loopback) before the CLI starts | the `blocked` checks with `--ssh-mux=false`, the way the CLI runs on Windows: no ControlMaster runs on the client, the agent and the tunnel's `ssh -N -L <private dir>/fwd1.sock:...` are ssh processes of their own, and ICE-TCP through that forward carries the session, and Ctrl+C reaches the CLI alone: its stderr announces no reconnect and no `ending the kept session`, the end command a fresh login would carry |
 | `touch` | open | Chrome as a touch screen (`isMobile`, `hasTouch`), fingers sent through the DevTools protocol; see below |
+| `share` | open | robin's spawned desktop shared with `alice`, the host image's second account (uid 1001, logging in with the same client key): `robin gui --share alice` prints the join command, the same code from robin's own login is refused unread and leaves the invitation open, alice's `robin gui --join` over her own login shows the desktop in a second browser context, view only; her keys type nothing until the owner's page gives her control, type into robin's xterm once it does, and nothing once it is taken back; the owner's page invites by name and says why it cannot; Remove ends her page within 3 s and her CLI with exit 0, nothing of alice's is left on the host, and the owner's Ctrl+C leaves no agent or run dir |
 | `systemd` | open, systemd host image | systemd is PID 1, logind kills what a login started when it ends (`KillUserProcesses=yes`) and `robin` lingers, so the probe has the CLI start the kept session's daemon with `systemd-run --user`; see below |
 
 The X11 scenarios of `tests/gui.spec.ts` also check, in this order:
@@ -326,6 +328,8 @@ Open a trace with `npx playwright show-trace <zip>` from `e2e/` (after
 
 - `host.Containerfile`, `host/`: the host image. User `robin` (uid 1000) logs in
   with a key generated per run; `robin` may `sudo` only `iptables` and `ip6tables`.
+  `alice` (uid 1001), the `share` scenario's guest, logs in with the same key
+  as `alice@robinhost` and may do nothing else.
   `robin-rundir` finds the agent's run dir (`~/.cache/robin/run/*`,
   `$XDG_RUNTIME_DIR/robin`, `/tmp/robin-1000`), `robin-x` runs a command
   on the agent's display and sound server (the `robin` user's own desktop when the agent
@@ -354,7 +358,8 @@ Open a trace with `npx playwright show-trace <zip>` from `e2e/` (after
   root so the root-owned key mounts stay readable.
 - `tests/gui.spec.ts`: the X11 scenarios. `tests/touch.spec.ts`: the touch
   screen. `tests/wayland.spec.ts`: the Wayland one. `tests/systemd.spec.ts`:
-  the systemd one. `tests/selftest.spec.ts`: the harness.
+  the systemd one. `tests/share.spec.ts`: the owner's and the guest's pages
+  of the share one. `tests/selftest.spec.ts`: the harness.
 - `tests/helpers/`: the CLI runner, the frame sampler, page-to-display
   coordinate mapping, page coverage, and host checks. Host checks use their own ssh
   connections (`ControlPath=none`), never the CLI's master.
