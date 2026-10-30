@@ -46,11 +46,14 @@ wait_for "$XDG_RUNTIME_DIR/pulse/native"
 # A desktop has speakers; this one plays into a null sink.
 pactl load-module module-null-sink sink_name=robin_speakers >/dev/null
 pactl set-default-sink robin_speakers
-# WLTEST_LAYOUT gives mutter a keyboard of that layout with US after it, as
-# GNOME Shell applies input sources: mutter's default plugin takes the
-# layout from localed as it starts, and GNOME's settings name the source.
+# WLTEST_LAYOUT, a layout or layout+variant, gives mutter a keyboard of
+# that layout with US after it, as GNOME Shell applies input sources:
+# mutter's default plugin takes the layout from localed as it starts, and
+# GNOME's settings name the source.
 if [ -n "${WLTEST_LAYOUT:-}" ] && [ $compositor = mutter ]; then
-	python3 -I "$(dirname "$0")/localed.py" "$WLTEST_LAYOUT,us" >"$LOG/localed.log" 2>&1 &
+	variant=
+	case $WLTEST_LAYOUT in *+*) variant=${WLTEST_LAYOUT#*+} ;; esac
+	python3 -I "$(dirname "$0")/localed.py" "${WLTEST_LAYOUT%%+*},us" "${variant:+$variant,}" >"$LOG/localed.log" 2>&1 &
 	i=0
 	until grep -q ready "$LOG/localed.log"; do
 		i=$((i + 1))

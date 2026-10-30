@@ -1,7 +1,7 @@
 """A stand-in for systemd-localed on the system bus, which has none in the
-container: it says the system's keyboard layout is LAYOUT, which mutter's
-default plugin, the compositor of a session without GNOME Shell, applies
-as it starts. Usage: localed.py LAYOUT
+container: it says the system's keyboard layout is LAYOUT, in VARIANT,
+which mutter's default plugin, the compositor of a session without GNOME
+Shell, applies as it starts. Usage: localed.py LAYOUT [VARIANT]
 """
 import sys
 
@@ -18,7 +18,7 @@ XML = """<node><interface name="org.freedesktop.locale1">
 PROPS = {
     "X11Layout": GLib.Variant("s", sys.argv[1]),
     "X11Model": GLib.Variant("s", ""),
-    "X11Variant": GLib.Variant("s", ""),
+    "X11Variant": GLib.Variant("s", sys.argv[2] if len(sys.argv) > 2 else ""),
     "X11Options": GLib.Variant("s", ""),
     "Locale": GLib.Variant("as", ["LANG=C.UTF-8"]),
 }

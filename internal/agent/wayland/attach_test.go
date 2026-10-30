@@ -26,6 +26,7 @@ import (
 	"github.com/godbus/dbus/v5/introspect"
 
 	"github.com/yasinmiran/robin/internal/agent/desktop"
+	"github.com/yasinmiran/robin/internal/agent/keysym"
 	"github.com/yasinmiran/robin/internal/agent/wayland/wltest"
 	"github.com/yasinmiran/robin/internal/agent/xdg"
 	"github.com/yasinmiran/robin/internal/protocol"
@@ -452,7 +453,7 @@ func TestAttachStreamsAndDrives(t *testing.T) {
 // to mutter: ASCII the layout lacks still reaches programs.
 func TestAttachLayout(t *testing.T) {
 	needSession(t)
-	if os.Getenv("ROBIN_WLTEST_LAYOUT") == "" {
+	if os.Getenv("ROBIN_WLTEST_LAYOUT") != "ru" {
 		t.Skip("needs the session wltest.sh starts with a Russian layout")
 	}
 	p := startProbe(t)
@@ -529,6 +530,76 @@ func TestAttachLayout(t *testing.T) {
 		t.Errorf("entered %q, want ok", got)
 	}
 	awaitClipboard(t, p, d, "from-session", start)
+}
+
+// TestAttachLayoutFourthLevel runs in the session wltest.sh gives US
+// international with dead keys, which has ~, ^ and " only on the fourth
+// level, Shift and AltGr, and ` and ' on the third, AltGr.
+func TestAttachLayoutFourthLevel(t *testing.T) {
+	needSession(t)
+	if os.Getenv("ROBIN_WLTEST_LAYOUT") != "us+intl" {
+		t.Skip("needs the session wltest.sh starts with US international")
+	}
+	p := startProbe(t)
+	d, _ := open(t, true)
+	defer func() {
+		d.Close()
+		checkTornDown(t)
+	}()
+	if d.kb == nil || !d.kb.lacks('~') || !d.kb.lacks('^') || !d.kb.lacks('"') || d.kb.lacks('`') || d.kb.lacks('\'') || d.kb.lacks('a') {
+		t.Fatal("the agent does not follow the levels of US international")
+	}
+	isKey := func(keyval string) func(probeEvent) bool {
+		return func(e probeEvent) bool { return e.Ev == "key" && e.Keyval == keyval }
+	}
+
+	// mutter presses a key it finds a keysym on at the fourth level with
+	// no modifier: ~'s keysym types the dead grave of its key's first.
+	mark := p.mark()
+	if err := d.in.tap(keysym.Rune('~')); err != nil {
+		t.Fatal(err)
+	}
+	p.await(t, mark, isKey("dead_grave"))
+	if p.count(mark, isKey("asciitilde")) != 0 {
+		t.Error("~ went as its keysym and typed itself")
+	}
+
+	// So a key of the fourth level goes not at all, and one of the third
+	// types itself with AltGr.
+	mark = p.mark()
+	for _, m := range []protocol.Control{
+		{T: protocol.ControlKey, Key: "~", Code: "Backquote", Down: true},
+		{T: protocol.ControlKey, Key: "~", Code: "Backquote"},
+		{T: protocol.ControlKey, Key: "`", Code: "Backquote", Down: true},
+		{T: protocol.ControlKey, Key: "`", Code: "Backquote"},
+		{T: protocol.ControlKey, Key: "Enter", Code: "Enter", Down: true},
+		{T: protocol.ControlKey, Key: "Enter", Code: "Enter"},
+	} {
+		send(t, d, m)
+	}
+	p.await(t, mark, isKey("Return"))
+	if p.count(mark, isKey("grave")) != 1 || p.count(mark, isKey("dead_grave")) != 0 || p.count(mark, isKey("asciitilde")) != 0 {
+		t.Errorf("keys ~ and ` reached the probe as %+v, want ` alone", p.since(mark))
+	}
+
+	// Text of the third level types as keys, and text with one of the
+	// fourth is pasted.
+	mark = p.mark()
+	if err := d.Type(t.Context(), "`'"); err != nil {
+		t.Fatal(err)
+	}
+	p.await(t, mark, isKey("apostrophe"))
+	if got := p.entered(mark); got != "`'" {
+		t.Errorf("entered %q, want `' as keys", got)
+	}
+	mark = p.mark()
+	if err := d.Type(t.Context(), `a~^"b`); err != nil {
+		t.Fatal(err)
+	}
+	p.await(t, mark, func(e probeEvent) bool { return e.Ev == "paste" || e.Ev == "paste-error" })
+	if got := p.entered(mark); got != `a~^"b` {
+		t.Errorf("entered %q, want the text pasted whole", got)
+	}
 }
 
 // TestAttachPutBackUnderReads has the probe read the clipboard every 5 ms
@@ -1002,6 +1073,13 @@ func (p *probe) count(mark int, match func(probeEvent) bool) int {
 		}
 	}
 	return n
+}
+
+// since returns the events from mark on.
+func (p *probe) since(mark int) []probeEvent {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]probeEvent(nil), p.events[mark:]...)
 }
 
 // typed returns the text of the key presses from mark on.

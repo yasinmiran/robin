@@ -14,8 +14,8 @@
 #   kde      kwin_wayland 6.7 and xdg-desktop-portal-kde on Fedora 43 (kde.Containerfile);
 #            KWin screencasts only with OpenGL, so this one borrows the host's
 #            render node and is skipped, saying so, where there is none to open
-# Each GNOME desktop then boots once more with a Russian keyboard layout, for
-# TestAttachLayout alone.
+# Each GNOME desktop then boots twice more, with a Russian keyboard layout
+# and with US international, for the TestAttachLayout tests alone.
 # WLTEST_GOFLAGS (default -race) goes to go test -c.
 # WLTEST_COVER, a directory, builds the binaries with coverage of the whole
 # module and has each write its profile there, as <desktop>/<binary>.out.
@@ -60,14 +60,14 @@ chmod -R a+rX "$out"
 
 # run_desktop builds a desktop's image, boots its session and runs every
 # test binary against it. With $layout set, the session's keyboard has that
-# layout, and only TestAttachLayout runs.
+# layout, and only the TestAttachLayout tests run.
 run_desktop() {
 	desktop=$1
 	shift
 	pass=$desktop tests="wayland.test|agent.test -test.run=Wayland|audio.test -test.run=PipeWire|camera.test -test.run=PipeWire" only=
 	if [ -n "${layout:-}" ]; then
 		# After the extra arguments, so that theirs cannot widen it.
-		pass=$desktop-$layout tests=wayland.test only=-test.run=^TestAttachLayout$
+		pass=$desktop-$layout tests=wayland.test only=-test.run=^TestAttachLayout
 	fi
 	case $desktop in
 	gnome46) file=Containerfile image=localhost/robin-wltest ;;
@@ -154,11 +154,12 @@ for desktop in $desktops; do
 	fi
 	case $desktop in
 	gnome*)
-		layout=ru
-		if ! run_desktop "$desktop" "$@"; then
-			status=1
-			failed="$failed $desktop-ru"
-		fi
+		for layout in ru us+intl; do
+			if ! run_desktop "$desktop" "$@"; then
+				status=1
+				failed="$failed $desktop-$layout"
+			fi
+		done
 		;;
 	esac
 done
