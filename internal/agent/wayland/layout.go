@@ -36,7 +36,7 @@ const (
 type keyboard struct {
 	// source returns the input source in use, such as "ru" or "us+intl",
 	// or "" when GNOME names none or one that is not an xkb layout.
-	source func() (string, error)
+	source func(context.Context) (string, error)
 	// load reads a layout's symbols.
 	load func(layout, variant string) (xkb.Layout, error)
 	log  *slog.Logger
@@ -45,7 +45,9 @@ type keyboard struct {
 	id     string
 	layout xkb.Layout
 	known  bool
-	stop   func()
+	// stop ends following dconf: it cuts short a read under way and
+	// returns once the follower has.
+	stop func()
 }
 
 // followKeyboard reads the layout in use and follows its changes through
@@ -58,23 +60,33 @@ func followKeyboard(sigs *signals, log *slog.Logger) *keyboard {
 		},
 		log: log,
 	}
-	k.update()
-	notes, stop, err := sigs.watch(dconfPath, dconfWriter, "Notify")
+	ctx, cancel := context.WithCancel(context.Background())
+	k.update(ctx)
+	notes, unwatch, err := sigs.watch(dconfPath, dconfWriter, "Notify")
 	if err != nil {
+		cancel()
 		log.Debug("keyboard layout changes cannot be followed", "err", err)
 		return k
 	}
-	k.stop = stop
-	go k.follow(notes)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		k.follow(ctx, notes)
+	}()
+	k.stop = func() {
+		cancel()
+		unwatch()
+		<-done
+	}
 	return k
 }
 
 // follow rereads the layout after each change dconf announces to the
-// input sources.
-func (k *keyboard) follow(notes <-chan *dbus.Signal) {
+// input sources, until notes closes.
+func (k *keyboard) follow(ctx context.Context, notes <-chan *dbus.Signal) {
 	for sig := range notes {
 		if touchesInputSources(sig) {
-			k.update()
+			k.update(ctx)
 		}
 	}
 }
@@ -102,9 +114,9 @@ func touchesInputSources(sig *dbus.Signal) bool {
 // update reads the layout in use. One that cannot be read is not known,
 // and then the keyboard takes it to have every ASCII character, as it did
 // before it knew.
-func (k *keyboard) update() {
+func (k *keyboard) update(ctx context.Context) {
 	var layout xkb.Layout
-	id, err := k.source()
+	id, err := k.source(ctx)
 	if err == nil && id != "" {
 		layout, err = k.load(xkb.ParseSource(id))
 	}
@@ -160,12 +172,12 @@ func (k *keyboard) close() {
 
 // gnomeSource returns the input source GNOME Shell applies: the most
 // recently used of the configured ones, or the first.
-func gnomeSource() (string, error) {
-	sources, err := gsettings(inputSources, "sources")
+func gnomeSource(ctx context.Context) (string, error) {
+	sources, err := gsettings(ctx, inputSources, "sources")
 	if err != nil {
 		return "", err
 	}
-	mru, err := gsettings(inputSources, "mru-sources")
+	mru, err := gsettings(ctx, inputSources, "mru-sources")
 	if err != nil {
 		return "", err
 	}
@@ -205,9 +217,10 @@ func parseSources(s string) [][2]string {
 	return out
 }
 
-// gsettings reads a key of schema, as gsettings prints it.
-func gsettings(schema, key string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), gsettingsTimeout)
+// gsettings reads a key of schema, as gsettings prints it, killing the
+// child if ctx ends first.
+func gsettings(ctx context.Context, schema, key string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, gsettingsTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "gsettings", "get", schema, key)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}

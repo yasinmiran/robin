@@ -464,11 +464,11 @@ func cyrillic(t *testing.T, source *string) *keyboard {
 xkb_symbols "latin" { name[Group1] = "Latin"; key <AC01> { [ o, k ] }; };`,
 	})
 	k := &keyboard{
-		source: func() (string, error) { return *source, nil },
+		source: func(context.Context) (string, error) { return *source, nil },
 		load:   func(l, v string) (xkb.Layout, error) { return xkb.Load([]string{dir}, l, v) },
 		log:    slog.New(slog.DiscardHandler),
 	}
-	k.update()
+	k.update(t.Context())
 	return k
 }
 
@@ -499,7 +499,7 @@ func TestTypeFollowsTheLayout(t *testing.T) {
 	}
 
 	source = "cy+latin"
-	d.kb.update()
+	d.kb.update(t.Context())
 	if err := d.Type(t.Context(), "ok"); err != nil {
 		t.Fatal(err)
 	}
@@ -594,11 +594,11 @@ func TestKeysALatinLayoutLacks(t *testing.T) {
 		dir := xkbData(t, map[string]string{"x": `default xkb_symbols "basic" { ` + latin.String() + tc.symbols + ` };`})
 		d, r := recorded(false, "")
 		d.in.kb = &keyboard{
-			source: func() (string, error) { return "x", nil },
+			source: func(context.Context) (string, error) { return "x", nil },
 			load:   func(l, v string) (xkb.Layout, error) { return xkb.Load([]string{dir}, l, v) },
 			log:    slog.New(slog.DiscardHandler),
 		}
-		d.in.kb.update()
+		d.in.kb.update(t.Context())
 		press, _ := keyPresser(t, d)
 		for _, k := range tc.keys {
 			press(k[0], k[1])

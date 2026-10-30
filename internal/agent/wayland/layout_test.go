@@ -12,7 +12,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 	"unicode"
@@ -74,12 +76,14 @@ func TestTouchesInputSources(t *testing.T) {
 // fakeGsettings puts a gsettings first on PATH that prints the input
 // sources from the file sources and the most recent ones from the file mru
 // in dir, which a test may rewrite, or fails as gsettings does without the
-// schema.
+// schema. While dir holds a file hang, it writes its pid to the file
+// started and sleeps instead.
 func fakeGsettings(t *testing.T, sources, mru string) (dir string) {
 	t.Helper()
 	dir = t.TempDir()
 	script := "#!/bin/sh\n" +
 		"[ \"$1 $2\" = \"get " + inputSources + "\" ] || { echo \"No such schema\" >&2; exit 1; }\n" +
+		"[ -e " + dir + "/hang ] && { echo $$ >" + dir + "/started.new; mv " + dir + "/started.new " + dir + "/started; exec sleep 30; }\n" +
 		"case $3 in sources) cat " + dir + "/sources ;; mru-sources) cat " + dir + "/mru ;; *) exit 1 ;; esac\n"
 	if err := os.WriteFile(filepath.Join(dir, "gsettings"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -100,21 +104,21 @@ func setSources(t *testing.T, dir, sources, mru string) {
 
 func TestGnomeSource(t *testing.T) {
 	fakeGsettings(t, "[('xkb', 'us'), ('xkb', 'ru')]", "[('xkb', 'ru'), ('xkb', 'us')]")
-	if got, err := gnomeSource(); err != nil || got != "ru" {
+	if got, err := gnomeSource(t.Context()); err != nil || got != "ru" {
 		t.Errorf("gnomeSource = %q, %v; want ru", got, err)
 	}
-	if _, err := gsettings("org.example.nothing", "key"); err == nil || !strings.Contains(err.Error(), "No such schema") {
+	if _, err := gsettings(t.Context(), "org.example.nothing", "key"); err == nil || !strings.Contains(err.Error(), "No such schema") {
 		t.Errorf("gsettings of a missing schema: %v", err)
 	}
 	t.Setenv("PATH", t.TempDir())
-	if _, err := gnomeSource(); err == nil || !strings.Contains(err.Error(), "gsettings get") {
+	if _, err := gnomeSource(t.Context()); err == nil || !strings.Contains(err.Error(), "gsettings get") {
 		t.Errorf("gnomeSource without gsettings: %v", err)
 	}
 }
 
 func TestGnomeSourceWithoutRecentOnes(t *testing.T) {
 	fakeGsettings(t, "[('xkb', 'de')]", "@a(ss) []")
-	if got, err := gnomeSource(); err != nil || got != "de" {
+	if got, err := gnomeSource(t.Context()); err != nil || got != "de" {
 		t.Errorf("gnomeSource = %q, %v; want de", got, err)
 	}
 }
@@ -124,7 +128,7 @@ func TestGnomeSourceWithoutRecentOnes(t *testing.T) {
 func TestGnomeSourceWithoutRecentOnesToRead(t *testing.T) {
 	dir := fakeGsettings(t, "[('xkb', 'de')]", "")
 	os.Remove(filepath.Join(dir, "mru"))
-	if got, err := gnomeSource(); err == nil {
+	if got, err := gnomeSource(t.Context()); err == nil {
 		t.Errorf("gnomeSource = %q, want an error", got)
 	}
 }
@@ -186,7 +190,7 @@ key <AE01> { [ 1, exclam ] }; key <AC01> { [ Cyrillic_ef, Cyrillic_EF ] }; key <
 func testKeyboard(t *testing.T, source *string, err *error) *keyboard {
 	dir := testLayouts(t)
 	return &keyboard{
-		source: func() (string, error) { return *source, *err },
+		source: func(context.Context) (string, error) { return *source, *err },
 		load: func(l, v string) (xkb.Layout, error) {
 			return xkb.Load([]string{dir}, l, v)
 		},
@@ -197,7 +201,7 @@ func testKeyboard(t *testing.T, source *string, err *error) *keyboard {
 func TestKeyboardFollowsTheSource(t *testing.T) {
 	source, serr := "ru", error(nil)
 	k := testKeyboard(t, &source, &serr)
-	k.update()
+	k.update(t.Context())
 	if !k.lacks('o') || !k.lacks('A') || k.lacks('1') || k.lacks('!') || k.lacks(' ') {
 		t.Error("ru: lacks gets the ASCII the layout lacks or has wrong")
 	}
@@ -207,7 +211,7 @@ func TestKeyboardFollowsTheSource(t *testing.T) {
 
 	notes := make(chan *dbus.Signal, 2)
 	done := make(chan struct{})
-	go func() { k.follow(notes); close(done) }()
+	go func() { k.follow(t.Context(), notes); close(done) }()
 	source = "us"
 	notes <- &dbus.Signal{Body: []any{"/org/gnome/desktop/interface/font-name", []string{""}, ""}}
 	notes <- &dbus.Signal{Body: []any{"/org/gnome/desktop/input-sources/mru-sources", []string{""}, ""}}
@@ -224,7 +228,7 @@ func TestKeyboardFollowsTheSource(t *testing.T) {
 		err    error
 	}{{"ru", nil}, {"nosuchlayout", nil}, {"ru", nil}, {"", nil}, {"ru", nil}, {"", errors.New("no gsettings")}} {
 		source, serr = tc.source, tc.err
-		k.update()
+		k.update(t.Context())
 		if got, want := k.lacks('o'), tc.source == "ru"; got != want {
 			t.Errorf("%q, %v: lacks o %v, want %v", tc.source, tc.err, got, want)
 		}
@@ -240,7 +244,7 @@ func TestKeyboardFollowsTheSource(t *testing.T) {
 func TestTypable(t *testing.T) {
 	source, serr := "ru", error(nil)
 	k := testKeyboard(t, &source, &serr)
-	k.update()
+	k.update(t.Context())
 	for _, tc := range []struct {
 		d    *Desktop
 		text string
@@ -284,6 +288,49 @@ func TestFollowKeyboard(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatal("the keyboard did not follow the switch to ru")
 		}
+	}
+}
+
+// TestFollowKeyboardCloseWaits: closing the keyboard kills a gsettings
+// read under way and returns once the follower has, so nothing it started
+// outlives the desktop.
+func TestFollowKeyboardCloseWaits(t *testing.T) {
+	conn := privateBus(t)
+	dir := fakeGsettings(t, "[('xkb', 'us')]", "@a(ss) []")
+	t.Setenv("XKB_CONFIG_ROOT", testLayouts(t))
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	k := followKeyboard(newSignals(conn), slog.New(slog.DiscardHandler))
+	if err := os.WriteFile(filepath.Join(dir, "hang"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	other, err := sessionBus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	if err := other.Emit(dconfPath, dconfWriter+".Notify", "/org/gnome/desktop/input-sources/sources", []string{""}, "tag"); err != nil {
+		t.Fatal(err)
+	}
+	var pid int
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if b, err := os.ReadFile(filepath.Join(dir, "started")); err == nil {
+			if pid, err = strconv.Atoi(strings.TrimSpace(string(b))); err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the change did not start a read")
+		}
+	}
+	start := time.Now()
+	k.close()
+	if took := time.Since(start); took >= gsettingsTimeout {
+		t.Errorf("close took %v, as long as the read may", took)
+	}
+	if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Errorf("the read's gsettings outlived close: kill = %v", err)
 	}
 }
 
