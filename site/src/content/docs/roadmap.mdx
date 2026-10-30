@@ -5,53 +5,11 @@ section: Project
 order: 2
 ---
 
-Robin started as one command that put a remote desktop in a browser for as long as an SSH connection lasted. Most of what a day of working on a remote desktop needs has landed since, and each part shipped with its tests: unit tests for new code, container tests for anything that needs X, Wayland, PulseAudio or PipeWire, and an end-to-end scenario for anything you see in the page. This page says what is in Robin now and what is next.
+Robin started as one command that put a remote desktop in a browser for as long as an SSH connection lasted. Most of what a day of working on a remote desktop needs has landed since, each part with its tests: unit tests for new code and container tests for anything that needs X, Wayland, PulseAudio or PipeWire, plus an end-to-end scenario wherever the change shows in the page.
 
 <Callout type="note" title="Next means not built yet.">
-Nothing under [What is next](#what-is-next) has shipped, and names shown there may change before it does. For what Robin does now, see [Using Robin](/using) and [Known limits](/known-limits).
+Nothing under What is next has shipped, and names shown there may change before it does. For what Robin does now, see [Shipped](#shipped) below, [Using Robin](/using) and [Known limits](/known-limits).
 </Callout>
-
-## Shipped
-
-### Sessions that survive the connection
-
-A desktop Robin started stays on the host for `--keep`, 8 hours by default, when the connection drops, and the CLI redials until it is back. The page has a Disconnect, keep desktop button, a later `robin gui` picks the desktop up where you left it, and `robin ls` and `robin end` list and end what the host keeps. Where logind kills a user's processes on logout, the desktop runs as a user systemd unit instead. See [Kept sessions](/sessions).
-
-### Microphone and camera
-
-`--mic` and `--camera` offer the devices of the machine you sit at to the host's programs, as Robin microphone and Robin camera, on PipeWire, PulseAudio or a v4l2loopback device. They stay off until you switch them on in the page. See [Microphone and camera](/microphone-and-camera).
-
-### Files and a rich clipboard
-
-Drop files on the page to upload them to the host's download folder, offer files from the host with `robin-send` and save them with a click, and copy text, HTML and images up to 16 MiB either way. See [Files and the clipboard](/files-and-clipboard).
-
-### Private sessions
-
-On an attached desktop, `--curtain` keeps the host's own screen dark and `--silent` keeps its speakers quiet, while the page still shows and plays everything, and a keeper process gives the room its screens and speakers back even if the agent is killed. See [Private sessions](/private-session).
-
-### More clients and more ways to type
-
-Windows 10 and 11 with the OpenSSH they ship, and Android in Termux, run the CLI beside macOS and Linux. The page takes text from input methods, so CJK and dead keys work, and takes touch: a tap clicks, a long press right clicks, two fingers scroll, and a pinch zooms the picture on the phone. See [Browsers and clients](/browsers).
-
-### Crisp video in motion
-
-The browser no longer asks for a keyframe every few seconds on a still screen, since the agent refreshes the picture twice a second instead. Keyframes are spread over about 200 ms rather than sent in one burst, losses the agent cannot repair bring a keyframe at once, and the encoder skips frames rather than turn text to blocks when the link narrows. `--max-size` now defaults to 2560x1440 where the host has the cores for it, so a 1440p monitor arrives at its own size. See [How it works](/how-it-works#video-in-motion).
-
-### Sound and picture that share the link well
-
-Sound goes out ahead of the picture, the bitrate the link carried is held through a still screen so the next scroll starts at it, and files from the host travel under the picture's budget with a bounded window, so a download leaves the picture its rate and a stalled one never holds up the keyboard. See [How it works](/how-it-works#congestion-control).
-
-### Sharp text and actual size
-
-Parts of the screen that have been still for 300 ms are sent again without loss and drawn over the video, so text you stop at sharpens about half a second later, and an actual-size view shows each desktop pixel as a whole number of your screen's pixels. Both are switches in the page; sharp text is on by default. See [Using Robin](/using#sharp-text-and-actual-size).
-
-### Keys and macros
-
-A keys section sends what your browser keeps for itself, such as Ctrl+Alt+Delete, Alt+Tab and Ctrl+W, Type clipboard types the local clipboard into prompts that take no paste, and macros of your own are recorded or written in the page and kept by the CLI. See [Keys and macros](/macros).
-
-### Hardening and reproducible builds
-
-A security review of the page, the CLI and the host agent bounded what each side can make the other hold, kept the page's token off command lines, turned other users of a shared client away from the tunnel, and has the host agent take a session's sockets and its daemon from your own account only. Every binary a release ships is reproducible, so anyone can rebuild it and compare. See [Security](/security) and [Verifying a release](/verifying-a-release).
 
 ## What is next
 
@@ -74,3 +32,19 @@ Some of what ships has been checked only in part, and closing those gaps is work
 - Building the agents on a Mac, and checking that a Mac build gives the same bytes as a Linux one.
 
 What does not change: Robin stays a tool for machines you can already reach over SSH, and iOS stays out, since there is no way to run the CLI there. See [Robin and Horizon](/robin-and-horizon).
+
+## Shipped
+
+Each of these has a page of its own:
+
+- [Kept sessions](/sessions): a desktop Robin started outlives a dropped connection, and a later `robin gui` picks it up.
+- [Microphone and camera](/microphone-and-camera): the devices of the machine you sit at, offered to the host's programs.
+- [Files and the clipboard](/files-and-clipboard): uploads by a drop, downloads offered with `robin-send`, and text, HTML and images up to 16 MiB either way.
+- [Private sessions](/private-session): the host's own screen dark and its speakers quiet while you work on an attached desktop.
+- [Browsers and clients](/browsers): Windows and Android clients, input methods and touch.
+- [Video in motion](/how-it-works#video-in-motion): a refresh twice a second instead of keyframe requests, keyframes spread over 200 ms, and 2560x1440 by default where the host has the cores.
+- [Congestion control](/how-it-works#congestion-control): sound ahead of the picture, the bitrate held through a still screen, and downloads under the picture's budget.
+- [Sharp text and actual size](/using#sharp-text-and-actual-size): lossless tiles over still parts of the screen, and a view that shows each desktop pixel whole.
+- [Keys and macros](/macros): the keys your browser keeps for itself, Type clipboard, and macros of your own.
+- [Security](/security): a review that bounded what each side can make the other hold, kept the page's token off command lines, turned other users of a shared client away from the tunnel, and made the host agent take a session's sockets and its daemon from your own account only.
+- [Verifying a release](/verifying-a-release): every binary a release ships is reproducible, so anyone with a clone can rebuild it and compare the bytes.
