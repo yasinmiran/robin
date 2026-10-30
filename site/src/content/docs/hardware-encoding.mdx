@@ -53,12 +53,23 @@ On a reasonably fast CPU the GPU saves little, because copying each frame out to
 
 Measured per encoded frame at 30 fps on that machine (iHD 22.3, ffmpeg 4.4, GStreamer 1.20), with a target high enough that nothing is skipped, over typing, scrolling, a video window and full-screen noise:
 
-| | openh264 | ffmpeg `h264_vaapi` | GStreamer `vaapih264enc` |
-|---|---|---|---|
-| time per frame, 1080p | 1.2 to 3.2 ms | 4.8 to 5.1 ms | 5.5 to 6.1 ms |
-| CPU, agent and tool, 1080p | 2.9 to 8.5 ms | 2.6 to 2.8 ms | 3.2 to 3.9 ms |
-| time per frame, 2160p | 5.0 to 10.1 ms | 18.6 to 19.8 ms | 30.8 to 34.2 ms |
-| CPU, agent and tool, 2160p | 12.2 to 28.2 ms | 11.5 to 12.5 ms | 21.1 to 22.1 ms |
+CPU counts the agent and the tool together.
+
+### At 1080p
+
+| Encoder | Time per frame | CPU |
+|---|---|---|
+| openh264 | 1.2 to 3.2 ms | 2.9 to 8.5 ms |
+| ffmpeg `h264_vaapi` | 4.8 to 5.1 ms | 2.6 to 2.8 ms |
+| GStreamer `vaapih264enc` | 5.5 to 6.1 ms | 3.2 to 3.9 ms |
+
+### At 2160p
+
+| Encoder | Time per frame | CPU |
+|---|---|---|
+| openh264 | 5.0 to 10.1 ms | 12.2 to 28.2 ms |
+| ffmpeg `h264_vaapi` | 18.6 to 19.8 ms | 11.5 to 12.5 ms |
+| GStreamer `vaapih264enc` | 30.8 to 34.2 ms | 21.1 to 22.1 ms |
 
 Most of the hardware routes' CPU is the copy: a 2160p frame is 12 MB through a pipe and into a GPU surface. GStreamer's route spends 31 to 34 ms on a 2160p frame, a whole frame at 30 fps, so `auto` counts it on small hosts only.
 
