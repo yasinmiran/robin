@@ -91,7 +91,7 @@ func streamBrowser(t *testing.T, desk desktop.Desktop, skip bool) *tileBrowser {
 		return countingEncoder{&encodes}, nil
 	}
 	s := testSession(desk)
-	s.stream = newStream(desk, 60, 1280, 720, open, log)
+	s.stream = mustStream(newStream(desk, 60, 1280, 720, open, log))
 	s.stream.refresh = 50 * time.Millisecond
 	fb := peerBrowser(t, s)
 	b := &tileBrowser{t: t, dc: fb.dc, batches: make(chan protocol.TileBatch, 16)}

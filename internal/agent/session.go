@@ -225,9 +225,13 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 		return fail(conn, err)
 	}
 
+	st, err := newStream(d.desk, start.FPS, start.MaxWidth, start.MaxHeight, newEncoder, log)
+	if err != nil {
+		return fail(conn, err)
+	}
 	s := &session{
 		conn: newController(conn), desk: d.desk, start: start, log: log, tcpMux: tcpMux, cert: cert, audio: audio != nil,
-		stream:  newStream(d.desk, start.FPS, start.MaxWidth, start.MaxHeight, newEncoder, log),
+		stream:  st,
 		cursors: map[uint32]protocol.Cursor{},
 		files:   shared,
 		mic:     mic,

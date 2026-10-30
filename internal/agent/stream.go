@@ -115,13 +115,12 @@ func (s *stream) toDesktop(m protocol.Control) protocol.Control {
 	return m
 }
 
-func newStream(desk desktop.Desktop, fps, maxW, maxH int, newEncoder NewEncoderFunc, log *slog.Logger) *stream {
+func newStream(desk desktop.Desktop, fps, maxW, maxH int, newEncoder NewEncoderFunc, log *slog.Logger) (*stream, error) {
 	video, err := peer.NewVideoTrack()
 	if err != nil {
-		// It fails only on a codec Pion does not know, and H.264 it knows.
-		panic(err)
+		return nil, err
 	}
-	return &stream{desk: desk, fps: fps, maxW: maxW, maxH: maxH, newEncoder: newEncoder, log: log, refresh: refreshEvery, video: video}
+	return &stream{desk: desk, fps: fps, maxW: maxW, maxH: maxH, newEncoder: newEncoder, log: log, refresh: refreshEvery, video: video}, nil
 }
 
 // add starts sending to sub, whose peer is bound to s.video, with a

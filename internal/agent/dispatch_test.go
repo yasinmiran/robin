@@ -64,11 +64,19 @@ func (f *fakeMonitors) ShowMonitor(name string) error {
 	return f.showErr
 }
 
+// mustStream is newStream's stream, for a test that cannot go on without.
+func mustStream(s *stream, err error) *stream {
+	if err != nil {
+		panic(err)
+	}
+	return s
+}
+
 func testSession(desk desktop.Desktop) *session {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return &session{
 		desk: desk, start: protocol.Start{MaxWidth: 1280, MaxHeight: 720}, log: log,
-		stream: newStream(desk, 30, 1280, 720, nil, log),
+		stream: mustStream(newStream(desk, 30, 1280, 720, nil, log)),
 		shared: &sharing{uids: newUIDSet()},
 	}
 }

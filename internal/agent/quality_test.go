@@ -208,7 +208,7 @@ func (c clipRun) run(t *testing.T) *vqtest.Run {
 	if maxW == 0 {
 		maxW, maxH = c.clip.W, c.clip.H
 	}
-	s := newStream(desk, c.fps, maxW, maxH, tag.newEncoder, log)
+	s := mustStream(newStream(desk, c.fps, maxW, maxH, tag.newEncoder, log))
 	if c.tune != nil {
 		c.tune(s)
 	}

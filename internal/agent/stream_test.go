@@ -94,7 +94,7 @@ func TestStreamRefreshesAStillScreen(t *testing.T) {
 			log := slog.New(slog.NewTextHandler(io.Discard, nil))
 			var encodes atomic.Int64
 			open := func(int, int, int, int) (Encoder, error) { return countingEncoder{&encodes}, nil }
-			s := newStream(&stillDesktop{}, 100, 64, 64, open, log)
+			s := mustStream(newStream(&stillDesktop{}, 100, 64, 64, open, log))
 			s.refresh = tc.refresh
 			p, err := peer.New(peer.Config{
 				MinBitrate: minBitrate, StartBitrate: startBitrate, MaxBitrate: protocol.DefaultMaxKbps * 1000, Log: log,

@@ -438,7 +438,7 @@ func TestRemovingAGuestClosesItsPeerAtOnce(t *testing.T) {
 	s.desk = desk
 	s.shared.door = openTestDoor(t)
 	var encodes atomic.Int64
-	s.stream = newStream(desk, 60, 64, 64, func(int, int, int, int) (Encoder, error) { return countingEncoder{&encodes}, nil }, s.log)
+	s.stream = mustStream(newStream(desk, 60, 64, 64, func(int, int, int, int) (Encoder, error) { return countingEncoder{&encodes}, nil }, s.log))
 	s.stream.refresh = 20 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
 	streamed := make(chan struct{})
