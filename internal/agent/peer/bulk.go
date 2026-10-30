@@ -99,6 +99,8 @@ type bulkSender struct {
 	credit atomic.Int64
 	sent   atomic.Int64
 	more   chan struct{}
+	// drained ticks when the channel's queue falls under half a window.
+	drained chan struct{}
 }
 
 // newBulkSender takes over dc, which nothing else may use. It must be called
@@ -108,8 +110,16 @@ func newBulkSender(dc *webrtc.DataChannel) *bulkSender {
 	s := &bulkSender{
 		dc: dc, opened: make(chan struct{}), closed: make(chan struct{}),
 		verdict: make(chan protocol.Bulk, 1), more: make(chan struct{}, 1),
+		drained: make(chan struct{}, 1),
 	}
 	s.credit.Store(protocol.BulkWindow)
+	dc.SetBufferedAmountLowThreshold(protocol.BulkWindow / 2)
+	dc.OnBufferedAmountLow(func() {
+		select {
+		case s.drained <- struct{}{}:
+		default:
+		}
+	})
 	var opened, closed sync.Once
 	dc.OnOpen(func() { opened.Do(func() { close(s.opened) }) })
 	dc.OnClose(func() { closed.Do(func() { close(s.closed) }) })
@@ -163,10 +173,19 @@ func (s *bulkSender) send(ctx context.Context, h protocol.Bulk, r io.Reader) err
 			if err := sum.Add(buf[:n]); err != nil {
 				return err
 			}
-			// The credit bounds what waits in the channel's queue too,
-			// so cancelling drops at most a window.
 			for s.sent.Load()+int64(n) > s.credit.Load() {
 				if err := s.wait(ctx, s.more); err != nil {
+					return err
+				}
+			}
+			// Credit is the receiver's word, and a receiver that keeps
+			// granting but stops reading would have the whole transfer
+			// queue in Pion, whose queue has no bound. Only what the
+			// receiver's SCTP stack acknowledged leaves this one, so it
+			// holds at most a window however many grants come, and
+			// cancelling drops no more than that.
+			for s.dc.BufferedAmount()+uint64(n) > protocol.BulkWindow {
+				if err := s.wait(ctx, s.drained); err != nil {
 					return err
 				}
 			}

@@ -817,8 +817,9 @@ escapes, as `ls` does. Bulk transfers of any kind the agent has not registered
 are refused. A transfer runs at most 512 KiB ahead of what its receiver has
 taken, and the page fails one from the agent that runs past that, so a
 stalled transfer holds back neither the keyboard nor the page's memory. The
-agent takes no credit past 512 KiB beyond what it has sent, so a page that
-grants more and stops reading cannot leave a download queued in the host's
+agent takes no credit past 512 KiB beyond what it has sent, and sends no
+more while 512 KiB of a transfer wait unacknowledged, so a page that keeps
+granting and stops reading cannot leave a download queued in the host's
 memory either.
 
 The page holds the host to bounds of its own. A host may have two clipboard

@@ -630,6 +630,72 @@ func TestBulkSenderIgnoresCreditPastWhatWasSent(t *testing.T) {
 	}
 }
 
+// TestBulkSenderQueuesAWindowHoweverOftenCreditComes: a receiver that
+// stops reading but keeps granting credit, each grant past what it took,
+// still holds the agent to about a window in the SCTP queue: the clamp on
+// credit moves with every chunk sent, so only the queue itself bounds it.
+func TestBulkSenderQueuesAWindowHoweverOftenCreditComes(t *testing.T) {
+	bp := newBulkPair(t, Config{}, Handlers{})
+	bp.raw.Store(true)
+	dc, err := bp.agent.pc.CreateDataChannel(protocol.BulkChannel, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender := newBulkSender(dc)
+	go sender.send(context.Background(), protocol.Bulk{T: protocol.BulkHeader, Kind: testKind, ID: "greedier", Size: testLimit}, bytes.NewReader(make([]byte, testLimit)))
+	var far *webrtc.DataChannel
+	select {
+	case far = <-bp.browserChannels:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the channel never reached the browser")
+	}
+	stop := make(chan struct{})
+	granting := make(chan struct{})
+	t.Cleanup(func() {
+		close(stop)
+		<-granting
+	})
+	var once sync.Once
+	far.OnMessage(func(webrtc.DataChannelMessage) {
+		once.Do(func() {
+			go func() {
+				defer close(granting)
+				tick := time.NewTicker(5 * time.Millisecond)
+				defer tick.Stop()
+				for {
+					select {
+					case <-stop:
+						return
+					case <-tick.C:
+						if b, err := json.Marshal(protocol.Bulk{T: protocol.BulkCredit, Credit: 1 << 40}); err == nil {
+							_ = far.SendText(string(b))
+						}
+					}
+				}
+			}()
+		})
+		<-stop // the browser reads nothing more on this channel
+	})
+	deadline := time.Now().Add(10 * time.Second)
+	queued := dc.BufferedAmount()
+	for still := 0; still < 25; {
+		if time.Now().After(deadline) {
+			t.Fatalf("the queue never stopped growing: %d bytes", dc.BufferedAmount())
+		}
+		time.Sleep(20 * time.Millisecond)
+		now := dc.BufferedAmount()
+		if now == queued {
+			still++
+		} else {
+			still = 0
+		}
+		queued = now
+	}
+	if limit := uint64(2 * protocol.BulkWindow); queued > limit {
+		t.Fatalf("%d bytes queued for a receiver that stopped reading, want at most %d", queued, limit)
+	}
+}
+
 // waitStalled waits until the sink is in its first Write, which blocks, and
 // dc's queue has stopped moving since. With the credit the queue is empty
 // then: the sender has sent its credit and waits for more.

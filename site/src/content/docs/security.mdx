@@ -28,7 +28,7 @@ What a page can make the agent hold is bounded too, so even a compromised one ca
 
 - One control channel at a time; a second closes the first.
 - A file or clipboard channel must send its header within 10 seconds, and no more than 8 may wait for one at once.
-- A transfer from the host takes credit only up to 512 KiB past what it has sent, so a page that grants more and stops reading leaves no download queued in the host's memory.
+- A transfer from the host takes credit only up to 512 KiB past what it has sent, and sends no more while 512 KiB of it wait unacknowledged, so a page that keeps granting and stops reading leaves no download queued in the host's memory.
 - Media only on the microphone and camera lines the session asked for. The answer turns down every other line the page adds, and what it sends on the agent's own video or sound line is read and dropped.
 - Bulk transfers of any kind the agent has not registered are refused.
 - At most 256 ICE candidates per ICE restart, and none at the host's loopback or a link-local address. The agent never asks the host's network to resolve a `.local` name and never connects out over TCP, and it refuses an offer whose sections disagree on their ICE credentials or whose credentials hold anything but the letters, digits, `+` and `/` RFC 8839 allows. So the most the page can aim at other addresses is ICE's own connectivity checks over UDP, carrying only those credentials.

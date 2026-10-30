@@ -2639,7 +2639,14 @@ queues whatever a channel sends with no limit, so a page that granted
 2^40 bytes and stopped reading left a whole download queued in the agent
 (15,665,147 of the regression test's 16 MiB). The sender now counts what
 it sent and takes a grant only up to a window past that: no receiver can
-have taken more, so an honest page is never held back. Candidates at the
+have taken more, so an honest page is never held back. That clamp moves
+with every chunk sent, though, so a page that kept granting while it read
+nothing still drew the download into the queue a window at a time
+(15,728,727 bytes with a grant every 5 ms). The sender also waits while a
+window of its channel's queue is unacknowledged, woken by Pion's
+buffered-amount-low callback at half a window: only what the receiver's
+SCTP stack took leaves that queue, so however many grants come, a
+receiver that stops reading holds at most a window there. Candidates at the
 host's loopback, a link-local address or no
 unicast address are counted and dropped: the browser is never there, and
 services on loopback trust what comes from it (the test's UDP listener on
