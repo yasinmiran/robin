@@ -14,6 +14,7 @@ import { constrainedBaselineFirst } from './devices.js';
 import { PrivateSwitches } from './private.js';
 import { Keys } from './keys.js';
 import { SharpText } from './sharp.js';
+import { Sharing } from './share.js';
 
 const CONTROL_CHANNEL = 'control';
 const ICE_GRACE_MS = 2000;
@@ -23,6 +24,8 @@ const ICE_GRACE_MS = 2000;
 const HEARTBEAT_STALL_MS = 3500;
 const STATS_EVERY_MS = 1000;
 const TOKEN_KEY = 'robin.token';
+// A guest's page shares the owner's stream, whose tiles follow the owner's.
+const GUEST_SHARP = 'Not available to a guest: sharp text follows the page of the desktop’s owner.';
 
 const video = document.getElementById('screen');
 const typing = document.getElementById('typing');
@@ -42,6 +45,7 @@ const session = new Session();
 const sessionControls = sessionSection(overlay.addSection('session', { last: true }));
 const privateSwitches = new PrivateSwitches(overlay, sendControl);
 const sharp = new SharpText({ video, overlay, send: sendControl, input });
+const sharing = new Sharing(overlay, sendControl);
 
 let ws = null;
 let pc = null;
@@ -82,6 +86,12 @@ window.robin = {
   },
   get gesture() { return input.gesture; },
   get private() { return privateSwitches.state; },
+  share: {
+    get state() { return sharing.state; },
+    get guest() { return sharing.guest; },
+    invite: (user) => sharing.invite(user),
+    change: (id, action) => sharing.change(id, action),
+  },
   sharp: {
     get state() { return sharp.state; },
     trace: () => sharp.trace(),
@@ -161,6 +171,8 @@ async function onSignal(m) {
     case 'config':
       input.scale = m.config?.hidpi ? window.devicePixelRatio || 1 : 1;
       session.configure(m.config);
+      sharing.configure(m.config);
+      if (sharing.guest) guestControls();
       sessionControls.keep.hidden = !session.canKeep;
       keys.configure(m.config?.macros);
       // After a reconnect there is no peer; the CLI's new config asks for one.
@@ -176,9 +188,11 @@ async function onSignal(m) {
       setState('reconnecting');
       break;
     case 'ended':
-      // The host confirmed the end; the CLI closes the socket next.
+      // The host confirmed the end; the CLI closes the socket next. A
+      // guest's ending says why: it left, or the owner let it go.
       session.ended();
-      end('ended');
+      if (sharing.guest) end('left', m.error);
+      else end('ended');
       break;
     case 'answer': {
       if (!pc) break;
@@ -360,9 +374,17 @@ function sessionSection(section) {
   return { keep, end };
 }
 
-function end(reason) {
+// guestControls turns the session's buttons into a guest's: a guest
+// leaves, and the desktop stays with its owner.
+function guestControls() {
+  sharp.withhold(GUEST_SHARP);
+  sessionControls.end.textContent = 'Leave';
+  sessionControls.end.title = 'Stop watching; the desktop stays with its owner';
+}
+
+function end(reason, detail = '') {
   if (state === 'ended') return;
   dropPeer();
   setState('ended');
-  overlay.showNotice(reason);
+  overlay.showNotice(reason, detail);
 }

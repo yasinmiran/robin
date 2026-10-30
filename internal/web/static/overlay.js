@@ -3,6 +3,7 @@
 // the pointer is a finger, which hovers nowhere, it stays out.
 
 import { touchFirst } from './device.js';
+import { sentence } from './sharestate.js';
 
 const TUCK_AFTER_MS = 2500;
 const REVEAL_ZONE_PX = 48;
@@ -43,6 +44,10 @@ const NOTICES = {
   unconfirmed: [
     'Session ended',
     'Robin could not confirm that the host ended the session. Run robin end for the host to make sure.',
+  ],
+  left: [
+    'Session ended',
+    'You are no longer watching this desktop. To watch again, ask its owner for another invitation.',
   ],
 };
 
@@ -202,10 +207,12 @@ export class Overlay {
     this.#reveal();
   }
 
-  showNotice(reason) {
+  // showNotice ends the tab with the notice for reason, after detail, a
+  // reason the CLI gave, when there is one.
+  showNotice(reason, detail = '') {
     const [title, body] = NOTICES[reason];
     this.#label.textContent = title;
-    this.#notice.textContent = body;
+    this.#notice.textContent = detail ? `${sentence(detail)} ${body}` : body;
     this.#notice.hidden = false;
     this.#closeMonitorMenu(false);
     for (const el of [this.#transport, this.#picture, this.#fullscreen, this.#sound, this.#keyboard, this.#keys, this.#monitors, this.#sections]) {

@@ -721,3 +721,52 @@ body[data-dropping]::after {
     background: repeating-linear-gradient(90deg, var(--wait) 0 12px, transparent 12px 20px);
   }
 }
+
+/* Sharing (share.js). The owner's part: a name to invite, the command each
+   invited account joins with, a row per guest. A guest's part: whose
+   desktop this is and whether the guest has control. */
+.share-head { margin: 0 0 4px; font-weight: 600; }
+.share-invite { display: flex; gap: 6px; }
+.share-invite input {
+  flex: 0 1 22ch;
+  min-width: 0;
+  padding: 3px 6px;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px var(--ink-soft);
+  font: 400 13px/18px var(--ui);
+}
+.share-invite input:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.share-error { margin: 4px 0 0; color: var(--down); font-weight: 400; }
+.share-invitations,
+.share-guests {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.share-invitation,
+.share-guest {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+.share-user { font-weight: 600; }
+.share-command {
+  overflow-wrap: anywhere;
+  padding: 1px 5px;
+  color: var(--ink);
+  background: var(--veil-edge);
+  border-radius: 4px;
+  font: 400 12px/18px ui-monospace, monospace;
+  user-select: all;
+}
+.share-until,
+.share-state { color: var(--ink-soft); font-weight: 400; }
+.share-guest[data-control="true"] .share-state { color: var(--ok); }
+.share-status { margin: 0; color: var(--ink-soft); font-weight: 400; }
+.share-status[data-control="true"] { color: var(--ok); }
