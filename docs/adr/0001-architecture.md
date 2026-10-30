@@ -2350,7 +2350,23 @@ loopback port. Two of the CLI's surfaces failed that reading.
   websocket. At most 16 connections wait for their check at once, and past
   that the oldest is closed, so silent ones cost the CLI no more than 16
   descriptors; the browser checks a loopback round trip after connecting,
-  so the oldest waiting is not the browser's. Only the latest answer's: after an ICE restart Pion's mux no
+  so the oldest waiting is not the browser's. The second security audit
+  showed that holds only while nobody tries: another user who opens silent
+  connections faster than that round trip cycles all 16 places, and the
+  browser's connection is closed before its check arrives, which under
+  `--transport tunnel` or with UDP blocked leaves the session without
+  media. On Linux the tunnel now asks the kernel who opened each
+  connection, with the exact `NETLINK_SOCK_DIAG` request the agent's
+  listener makes (`internal/tcpowner`, which both use), and closes one that
+  is not this user's, or that no process holds open any more, before it
+  counts. That also shuts out a check copied off the UDP path on the
+  network and replayed by someone with an account here. Where the kernel
+  cannot be asked (macOS, Windows, Android's app sandbox, any sandbox that
+  blocks netlink) the cap stays the only bound. The lookup runs on the
+  accept loop, one netlink round trip per connection. In the regression
+  test a stand-in for the lookup names a flood of 34147 connections in 3 s
+  as another user's; before the fix the browser's check never reached the
+  forward, and after it the check is spliced. Only the latest answer's: after an ICE restart Pion's mux no
   longer routes the old ufrag either. In the e2e `blocked` and `nomux`
   scenarios every TCP session ran through the check; in `restart`, the
   page was back on the tunnel 4151 ms after UDP was dropped, on a machine
