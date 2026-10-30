@@ -245,6 +245,46 @@ test('clipboard: browser to session and session to browser, through the portal',
     .toBe('from-session');
 });
 
+// Text an input method commits goes as a text control: as keys where the
+// layout has every character, and otherwise pasted through the session's
+// clipboard, which gets back what it held a second later.
+test('text: Latin text types as keys, the rest is pasted once, and the clipboard is put back', async () => {
+  const center = await pagePoint(page, SCREEN, 640, 360);
+  await page.mouse.click(center.x, center.y);
+  expect(await page.evaluate(() => document.activeElement?.id), 'the text box holds the focus').toBe('typing');
+  const entered = async (n: number) =>
+    (await eventsSince(n))
+      .filter((e) => (e.ev === 'key' && e.text && e.text !== '\u0000') || e.ev === 'paste')
+      .map((e) => e.text)
+      .join('');
+  const cdp = await context.newCDPSession(page);
+  try {
+    let n = (await wl.events()).length;
+    await cdp.send('Input.insertText', { text: 'robin ok!' });
+    await expect.poll(() => entered(n), { message: 'Latin text the probe window received', timeout: 5_000 }).toBe('robin ok!');
+    expect((await eventsSince(n)).filter((e) => e.ev === 'paste'), 'no paste for Latin text').toEqual([]);
+
+    n = (await wl.events()).length;
+    await cdp.send('Input.insertText', { text: '日本語ü' });
+    await expect.poll(() => entered(n), { message: 'non-Latin text the probe window received', timeout: 5_000 }).toBe('日本語ü');
+    expect((await eventsSince(n)).filter((e) => e.ev === 'paste-key'), 'one paste').toHaveLength(1);
+  } finally {
+    await cdp.detach();
+  }
+  // The clipboard test left "from-session" there.
+  await page.waitForTimeout(1_500);
+  await expect
+    .poll(
+      async () => {
+        await page.keyboard.press('F2');
+        await page.waitForTimeout(300);
+        return (await wl.events()).filter((e) => e.ev === 'clipboard').pop()?.text;
+      },
+      { message: "the session's clipboard after the paste", timeout: 10_000 },
+    )
+    .toBe('from-session');
+});
+
 test('sound: what the desktop plays through PipeWire is heard once the speaker is on', async ({}, testInfo) => {
   expect(cli!.stderrTail(), 'the CLI reports no missing sound').not.toContain('no sound from');
   const audio = () =>
