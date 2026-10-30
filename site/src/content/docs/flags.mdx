@@ -1,34 +1,38 @@
 ---
 title: Flags
-description: Every flag robin gui takes and its default, grouped by what it changes.
+description: Every command and flag robin takes, with its default, grouped by what it changes.
 section: Reference
 order: 1
 ---
 
 ```text
 robin gui [flags] [user@]host [-- ssh-args...]
+robin ls [user@]host [-- ssh-args...]
+robin end [user@]host [id] [-- ssh-args...]
 robin version
 ```
+
+`robin gui` opens a desktop, or picks up one the host kept for you. `robin ls` lists the sessions the host keeps, with when each ends on its own, and `robin end` ends one without opening it; [Kept sessions](/sessions) says how they fit together. `robin ls` and `robin end` take `--ssh`, `--ssh-mux` and `-v` as well.
 
 Flags take one dash or two (`-v`, `--max-size`) and go before the destination. `robin gui -h` prints the same list. [Using Robin](/using) explains what they change in a session.
 
 ## Picture
 
 <Flags>
-<Flag name="--max-size" arg="WxH" def="`1920x1080`, or `1280x720` on hosts with 2 cores or fewer">
-Largest remote resolution, as WxH.
+<Flag name="--max-size" arg="WxH" def="`2560x1440`, `1920x1080` on hosts with 4 cores or fewer, `1280x720` with 2 or fewer">
+Largest remote resolution, as WxH. A spawned display follows your window up to this, and a larger attached desktop is scaled down to it.
 </Flag>
 <Flag name="--fps" arg="N" def="`30`, or `20` on small hosts">
 Frame rate cap.
 </Flag>
 <Flag name="--hidpi" def="off">
-Size a spawned display in device pixels: sharper on HiDPI screens, more to encode; raise `--max-size` to go native.
+Size the remote display in the browser's device pixels: sharp text on Retina screens, about four times the pixels to encode. Raise `--max-size` to go fully native.
 </Flag>
 <Flag name="--max-kbps" arg="N" def="`10000`">
 Video bitrate ceiling in kbit/s; congestion control works below it.
 </Flag>
 <Flag name="--encoder" arg="MODE" def="`auto`">
-Video encoder on the host: `auto` (the GPU where the host has one and it pays, else software), `software`, `vaapi` or `nvenc`.
+Video encoder on the host: `auto` (the GPU where it pays, else software), `software`, `vaapi` or `nvenc`. See [Hardware encoding](/hardware-encoding).
 </Flag>
 </Flags>
 
@@ -39,13 +43,49 @@ Video encoder on the host: `auto` (the GPU where the host has one and it pays, e
 Command to run in the spawned display, such as `startxfce4`.
 </Flag>
 <Flag name="--attach" arg="TARGET" def="none (spawn)">
-Stream a desktop already running on the host: `auto` for your active session, `wayland` for your Wayland session, or an X11 display such as `:0`.
+Stream a desktop already running on the host: `auto` for your active session, `wayland` for your Wayland session, or an X11 display such as `:1`.
 </Flag>
 <Flag name="--monitor" arg="MONITOR" def="`primary`">
-For X11 desktops attached with `--attach`: the monitor to show first, by name (such as `DP-1`), by number (`1`, `2`, ...), `primary`, or `all` for every monitor as one picture; the page switches between them. Wayland shows the monitor picked in its sharing dialog.
+The monitor of an attached X11 desktop to show first: a name such as `DP-2`, its number in `xrandr --listmonitors` order, or `all` for every monitor as one picture; the page switches between them. Wayland shows the monitor picked in its sharing dialog.
 </Flag>
 <Flag name="--audio" def="`true`">
 Stream the desktop's sound; `--audio=false` leaves it out.
+</Flag>
+</Flags>
+
+## Kept sessions
+
+<Flags>
+<Flag name="--keep" arg="DURATION" def="`8h`, `0` with `--attach`">
+How long the host keeps the desktop after the connection drops or the page detaches, for a later `robin gui` to resume, as a duration such as `8h`. `0` ends the desktop with the connection.
+</Flag>
+<Flag name="--id" arg="ID" def="the one kept session">
+Which kept session to resume. Needed when the host keeps more than one; `robin ls` lists their ids.
+</Flag>
+<Flag name="--new" def="off">
+Start a new desktop even when a kept one could be resumed.
+</Flag>
+</Flags>
+
+## Microphone and camera
+
+<Flags>
+<Flag name="--mic" def="off">
+Offer your microphone to the host's programs, as Robin microphone. It stays off until you switch it on in the page. See [Microphone and camera](/microphone-and-camera).
+</Flag>
+<Flag name="--camera" def="off">
+Offer your camera to the host's programs, through PipeWire or a v4l2loopback device. It stays off until you switch it on in the page.
+</Flag>
+</Flags>
+
+## Private session
+
+<Flags>
+<Flag name="--curtain" def="off">
+Attached desktops: black out the host's screen while the page still shows it, from the start or, with `--id`, as the CLI resumes a kept one. The keyboard and mouse at the host still work. See [A private session](/private-session).
+</Flag>
+<Flag name="--silent" def="off">
+Attached desktops: keep the host's speakers quiet while the page still plays the sound, from the start or as the CLI resumes.
 </Flag>
 </Flags>
 
@@ -53,13 +93,13 @@ Stream the desktop's sound; `--audio=false` leaves it out.
 
 <Flags>
 <Flag name="--transport" arg="MODE" def="`auto`">
-Media path: `auto` (direct UDP, SSH tunnel as fallback), `direct`, or `tunnel`.
+Media path: `auto` (direct UDP, SSH tunnel as fallback), `direct` for UDP only, or `tunnel` to force the SSH path.
 </Flag>
 <Flag name="--stun" arg="SERVERS" def="`stun:stun.l.google.com:19302`">
-Comma-separated STUN servers for NAT traversal, or `none`. With `--transport tunnel` none is asked.
+Comma-separated STUN servers for NAT traversal, or `none`. The browser and the agent each ask them for their public address (see [Security](/security#stun-tells-a-server-where-you-are)), except with `--transport tunnel`, which asks none.
 </Flag>
 <Flag name="--listen" arg="ADDR" def="`127.0.0.1:0`">
-Loopback address for the browser page.
+Address for the local page; loopback only.
 </Flag>
 </Flags>
 
@@ -70,10 +110,13 @@ Loopback address for the browser page.
 Print the page URL on stdout instead of opening a browser. Without it the browser gets a single-use launch link, never the token.
 </Flag>
 <Flag name="--ssh" arg="PATH" def="`ssh`">
-The ssh client to use.
+The ssh client to drive.
+</Flag>
+<Flag name="--ssh-mux" def="`true`, `false` on Windows">
+Carry everything over one ControlMaster connection. `--ssh-mux=false` gives the probe, the upload, the agent and the tunnel an ssh connection each, as on Windows, whose OpenSSH has no ControlMaster.
 </Flag>
 <Flag name="-v" def="off">
-Verbose logging to stderr, including the agent's log.
+Log the CLI and the agent to stderr.
 </Flag>
 </Flags>
 
