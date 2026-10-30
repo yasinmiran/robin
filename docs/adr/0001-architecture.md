@@ -725,7 +725,7 @@ window that keeps a stalled one from filling the association; see
 
 ### Features register what they handle
 
-Several features are built in parallel (docs/plan-horizon-parity.md), and
+Several features are built in parallel, and
 each needs control messages, bulk kinds or a place in the status tab. So
 nothing switches on message types any more. On the agent, each control type
 and bulk kind maps to a handler its feature registers from `init` in its
