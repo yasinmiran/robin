@@ -40,9 +40,10 @@ func init() {
 
 // sharing is the session's guests and the door they come in by.
 type sharing struct {
-	door  *share.Door // nil when the session takes no guests
-	owner string      // the owner's user name, as a guest's page shows it
-	uids  *uidSet     // guests connected now, whom the tunnel admits
+	door  *share.Door      // nil when the session takes no guests
+	owner string           // the owner's user name, as a guest's page shows it
+	uids  *uidSet          // guests connected now, whom the tunnel admits
+	now   func() time.Time // nil is time.Now; tests move it by hand
 	wg    sync.WaitGroup
 	// guests, seq and away are guarded by session.mu.
 	guests []*guest
@@ -57,7 +58,7 @@ type sharing struct {
 type guest struct {
 	id      string
 	user    string
-	uid     int
+	uid     uint32 // as peercred and the tunnel have it
 	conn    *protocol.Conn
 	control atomic.Bool
 	// view is the guest's page, nil between pages; gone is set once the
@@ -71,6 +72,13 @@ type guest struct {
 // reopenWait is how soon after its last a guest's page may get a new peer.
 const reopenWait = time.Second
 
+func (sh *sharing) clock() time.Time {
+	if sh.now == nil {
+		return time.Now()
+	}
+	return sh.now()
+}
+
 // uidSet counts the guests of each uid connected now.
 type uidSet struct {
 	mu sync.Mutex
@@ -79,16 +87,16 @@ type uidSet struct {
 
 func newUIDSet() *uidSet { return &uidSet{n: map[uint32]int{}} }
 
-func (u *uidSet) add(uid int) {
+func (u *uidSet) add(uid uint32) {
 	u.mu.Lock()
-	u.n[uint32(uid)]++
+	u.n[uid]++
 	u.mu.Unlock()
 }
 
-func (u *uidSet) remove(uid int) {
+func (u *uidSet) remove(uid uint32) {
 	u.mu.Lock()
-	if u.n[uint32(uid)]--; u.n[uint32(uid)] <= 0 {
-		delete(u.n, uint32(uid))
+	if u.n[uid]--; u.n[uid] <= 0 {
+		delete(u.n, uid)
 	}
 	u.mu.Unlock()
 }
@@ -133,7 +141,7 @@ func (s *session) admitGuest(ctx context.Context, dg *share.Guest) {
 		return
 	}
 	s.shared.seq++
-	g := &guest{id: "g" + strconv.Itoa(s.shared.seq), user: dg.User, uid: dg.UID, conn: dg.Conn}
+	g := &guest{id: "g" + strconv.Itoa(s.shared.seq), user: dg.User, uid: uint32(dg.UID), conn: dg.Conn}
 	s.shared.guests = append(s.shared.guests, g)
 	s.mu.Unlock()
 	s.shared.uids.add(g.uid)
@@ -206,12 +214,13 @@ func (s *session) guestOffer(g *guest, sdp string) {
 		// A page's peer costs the host a connection's worth of goroutines
 		// and buffers; a guest's CLI that churns them is held to one a
 		// second, more than any reload needs.
-		if time.Since(g.opened) < reopenWait {
+		now := s.shared.clock()
+		if now.Sub(g.opened) < reopenWait {
 			s.mu.Unlock()
 			g.conn.Send(protocol.Message{Type: protocol.TypeError, Error: "a new page within a second of the last; try again"})
 			return
 		}
-		g.opened = time.Now()
+		g.opened = now
 		var err error
 		if v, err = s.openViewer(g); err != nil {
 			s.mu.Unlock()

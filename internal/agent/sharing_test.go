@@ -737,6 +737,9 @@ func TestRemovingAGuestThatReadsNothingHoldsUpNobody(t *testing.T) {
 // A guest's CLI that churns peers gets one a second.
 func TestAGuestGetsOnePeerASecond(t *testing.T) {
 	s := guestSession(&fakeTypist{})
+	var now atomic.Int64
+	now.Store(time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC).UnixNano())
+	s.shared.now = func() time.Time { return time.Unix(0, now.Load()) }
 	endGuestsAtCleanup(t, s)
 	g, cli := addGuest(t, s, "alice", 1001)
 	offer := func() string {
@@ -762,7 +765,12 @@ func TestAGuestGetsOnePeerASecond(t *testing.T) {
 	if m := cli.next(t, protocol.TypeError); !strings.Contains(m.Error, "within a second") {
 		t.Errorf("a second peer at once: %q", m.Error)
 	}
-	time.Sleep(reopenWait)
+	now.Add(int64(reopenWait - time.Nanosecond))
+	cli.conn.Send(protocol.Message{Type: protocol.TypeOffer, SDP: offer()})
+	if m := cli.next(t, protocol.TypeError); !strings.Contains(m.Error, "within a second") {
+		t.Errorf("a peer just short of a second on: %q", m.Error)
+	}
+	now.Add(int64(time.Nanosecond))
 	cli.conn.Send(protocol.Message{Type: protocol.TypeOffer, SDP: offer()})
 	cli.next(t, protocol.TypeAnswer)
 	if s.viewOf(g) == nil {

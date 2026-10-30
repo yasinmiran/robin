@@ -82,18 +82,18 @@ func TestTunnelRefusesAnotherUsersConnection(t *testing.T) {
 
 	// A guest's forward runs as the guest, whose uid counts while a guest
 	// of it is connected, and only then.
-	guests.add(int(stranger))
-	guests.add(int(stranger))
+	guests.add(stranger)
+	guests.add(stranger)
 	guest := dial(stranger)
 	guest.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 	if _, err := guest.Read(make([]byte, 1)); !isTimeout(err) {
 		t.Errorf("a connected guest's connection: read %v, want it kept waiting for ICE", err)
 	}
-	guests.remove(int(stranger))
+	guests.remove(stranger)
 	if !guests.has(stranger) {
 		t.Fatal("one of two guests of the uid left, and the uid no longer counts")
 	}
-	guests.remove(int(stranger))
+	guests.remove(stranger)
 	gone := dial(stranger)
 	gone.SetReadDeadline(time.Now().Add(2 * time.Second))
 	if _, err := gone.Read(make([]byte, 1)); !errors.Is(err, io.EOF) && !isReset(err) {
