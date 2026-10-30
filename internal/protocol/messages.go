@@ -59,6 +59,10 @@ type Message struct {
 	// Macros and MacroChange ride TypeMacros.
 	Macros      *Macros      `json:"macros,omitempty"`
 	MacroChange *MacroChange `json:"macroChange,omitempty"`
+	// Join rides TypeJoin, Invite TypeInvite and Invitation TypeInvited.
+	Join       *Join       `json:"join,omitempty"`
+	Invite     *Invite     `json:"invite,omitempty"`
+	Invitation *Invitation `json:"invitation,omitempty"`
 }
 
 // Start asks the agent to bring up a display and get ready for an offer.
@@ -170,6 +174,8 @@ type Ready struct {
 	// Private is the private session of an attached desktop; nil for a
 	// spawned one, which nobody sits in front of.
 	Private *Private `json:"private,omitempty"`
+	// Share is set on the Ready a guest gets, and nil for the owner.
+	Share *Share `json:"share,omitempty"`
 }
 
 // Notice is something the user has to do or know before the desktop is ready.
@@ -205,6 +211,12 @@ type Config struct {
 	Camera bool `json:"camera,omitempty"`
 	// Macros are the user's key macros the page offers; see TypeMacros.
 	Macros *Macros `json:"macros,omitempty"`
+	// Host is the host as the user named it, without a user, for the join
+	// command the owner's page shows a guest.
+	Host string `json:"host,omitempty"`
+	// Share makes the page a guest's: whose desktop it is, and whether the
+	// guest starts with control.
+	Share *Share `json:"share,omitempty"`
 }
 
 // ICEServer mirrors the browser's RTCIceServer.
@@ -298,6 +310,13 @@ type Control struct {
 	// in ControlFrame.
 	Tiles *Tiles `json:"tiles,omitempty"`
 	Frame *Frame `json:"frame,omitempty"`
+
+	// Invite, Guest and Guests belong to the owner's page and Share to a
+	// guest's; see ControlInvite.
+	Invite *Invite      `json:"invite,omitempty"`
+	Guest  *GuestChange `json:"guest,omitempty"`
+	Guests *Guests      `json:"guests,omitempty"`
+	Share  *Share       `json:"share,omitempty"`
 }
 
 // Values for Start.Attach, Ready.Mode and Start.Encoder.
