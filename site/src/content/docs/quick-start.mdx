@@ -54,7 +54,7 @@ The full screen button also asks the browser for keyboard lock where the browser
 
 Press Ctrl+C in the terminal, or End session in the status tab. The CLI tells the agent goodbye, the agent stops the display, the desktop and everything else it started, and its run directory on the host is removed. The page shows "Session ended".
 
-To leave the desktop running instead, click **Disconnect, keep desktop** in the status tab. The CLI exits and the host keeps the desktop for 8 hours (`--keep` sets how long). Run the same command again to pick it up where you left it:
+To leave the desktop running instead, click **Disconnect, keep desktop** in the status tab. The CLI exits and the host keeps a desktop Robin started for 8 hours (`--keep` sets how long); an attached one is kept only when you name a `--keep`. Run the same command again to pick it up where you left it:
 
 ```sh
 bin/robin gui alice@build-box   # resumes the kept desktop
