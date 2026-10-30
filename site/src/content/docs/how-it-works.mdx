@@ -135,7 +135,7 @@ The bitrate ceiling stays at 10 Mbit/s and the hardware path at Constrained Base
 
 ## Zero playout delay
 
-Every video packet carries the playout-delay header extension with a minimum and maximum of zero, so Chrome shows a frame as soon as it is complete instead of holding it for its jitter estimate. A still screen sends nothing until Chrome, after 3 s without a frame, asks for a keyframe, and Chrome's jitter estimate used to grow on that trickle of large frames until it held new frames back for most of a second. Before the change, four keystrokes 250 ms apart after a pause produced one frame on screen, 414 ms after the first key. With the extension each keystroke reached the screen within 11 to 34 ms over direct UDP, 9 to 33 ms through the SSH tunnel, 7 to 31 ms after failing over to it, and 6 to 36 ms attached. Browsers that do not offer the extension, Firefox among them, keep their own playout timing.
+Every video packet carries the playout-delay header extension with a minimum and maximum of zero, so Chrome shows a frame as soon as it is complete instead of holding it for its jitter estimate. Before the 500 ms refresh, a still screen sent nothing until Chrome, after 3 s without a frame, asked for a keyframe, and Chrome's jitter estimate grew on that trickle of large frames until it held new frames back for most of a second. Before the change, four keystrokes 250 ms apart after a pause produced one frame on screen, 414 ms after the first key. With the extension each keystroke reached the screen within 11 to 34 ms over direct UDP, 9 to 33 ms through the SSH tunnel, 7 to 31 ms after failing over to it, and 6 to 36 ms attached. Browsers that do not offer the extension, Firefox among them, keep their own playout timing.
 
 ## Capture and input
 
