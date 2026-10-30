@@ -7,6 +7,9 @@ export const FILE_KIND = 'file';
 // MAX_FILE bounds one file either way, as protocol.MaxFile does. A download
 // is held in memory until it is whole.
 export const MAX_FILE = 4 * 1024 ** 3;
+// MAX_OFFERS bounds the downloads the host keeps on offer, as the agent's
+// maxSessionOffers does: every one is a row the tab redraws.
+export const MAX_OFFERS = 256;
 
 // formatSize writes bytes in the binary units the agent uses.
 export function formatSize(n) {
@@ -90,9 +93,17 @@ export class Transfers {
   }
 
   // offer adds a file the host offers, or leaves one it already offered as
-  // it is: a page that reconnects hears every open offer again.
+  // it is: a page that reconnects hears every open offer again. Past
+  // MAX_OFFERS, the oldest still waiting for a click on Save goes; with
+  // none such, the new one is not listed.
   offer(id, name, size) {
     if (this.#list.has(id)) return;
+    const open = this.list().filter((t) => t.dir === 'down' && t.state !== SAVED);
+    if (open.length >= MAX_OFFERS) {
+      const oldest = open.find((t) => t.state === OFFERED);
+      if (!oldest) return;
+      this.#list.delete(oldest.id);
+    }
     this.#list.set(id, { id, dir: 'down', name, size, done: 0, state: OFFERED, saved: '', error: '' });
     this.#onChange();
   }

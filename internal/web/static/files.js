@@ -9,6 +9,7 @@
 import { registerKind } from './bulkframe.js';
 import { onBulk } from './bulk.js';
 import { onControl } from './control.js';
+import { shown } from './hosttext.js';
 import {
   FAILED, FETCHING, FILE_KIND, KEPT, MAX_FILE, OFFERED, PENDING, QUEUED, RECEIVING, SAVED, SENDING, Transfers, formatSize,
   statusOf,
@@ -265,7 +266,8 @@ export class Files {
   }
 
   // row draws one transfer. Names and sizes come from the host or from
-  // local files, so they go in as text, never as markup.
+  // local files, so they go in as text, never as markup, with the marks
+  // that reorder text shown, and a name cannot reorder the row around it.
   #row(t) {
     const li = document.createElement('li');
     li.className = 'transfer';
@@ -274,14 +276,15 @@ export class Files {
     li.dataset.state = t.state;
     const name = document.createElement('span');
     name.className = 'name';
-    name.textContent = t.name;
-    name.title = t.name;
+    name.dir = 'auto';
+    name.textContent = shown(t.name);
+    name.title = name.textContent;
     const size = document.createElement('span');
     size.className = 'size';
     size.textContent = formatSize(t.size);
     const status = document.createElement('span');
     status.className = 'status';
-    status.textContent = statusOf(t);
+    status.textContent = shown(statusOf(t));
     li.append(name, size, status);
     if (t.state === SENDING || t.state === FETCHING || t.state === RECEIVING) {
       const bar = document.createElement('progress');

@@ -8,9 +8,36 @@ import (
 	"regexp"
 	"strconv"
 	"testing"
+	"unicode"
+	"unicode/utf16"
 
 	"github.com/yasinmiran/robin/internal/protocol"
+	"github.com/yasinmiran/robin/internal/runes"
 )
+
+// TestPageShowsWhatTheCLIEscapes checks that hosttext.js escapes the very
+// characters runes.ReordersText reports, which the CLI escapes in host text
+// and the agent refuses in a file name.
+func TestPageShowsWhatTheCLIEscapes(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("static", "hosttext.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^const REORDERS = /(\[[^\]]*\])/g;`).FindSubmatch(b)
+	if m == nil {
+		t.Fatal("hosttext.js: no const REORDERS = /[...]/g")
+	}
+	class := regexp.MustCompile(`\\u([0-9a-f]{4})`).ReplaceAllString(string(m[1]), `\x{$1}`)
+	re := regexp.MustCompile("^" + class + "$")
+	for r := rune(0); r <= unicode.MaxRune; r++ {
+		if utf16.IsSurrogate(r) {
+			continue
+		}
+		if got, want := re.MatchString(string(r)), runes.ReordersText(r); got != want {
+			t.Errorf("U+%04X: the page escapes it %t, the CLI %t", r, got, want)
+		}
+	}
+}
 
 // TestPageModules runs the unit tests of the page's DOM-free modules,
 // static/test/*.test.js, in node.

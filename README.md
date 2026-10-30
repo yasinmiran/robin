@@ -807,21 +807,27 @@ in its history.
 - **The clipboard**, as text, HTML or a PNG image, up to 16 MiB, held in
   memory, two transfers at a time each way.
 
-File names from the host appear in the page as text, never as markup. Words
+File names from the host appear in the page as text, never as markup, and
+the page shows the invisible marks that reorder text in them, and in monitor
+names, as escapes, as the CLI does, so a name cannot read as another. Words
 from the page that reach a terminal on the host, a refusal's reason printed by
 `robin-send`, have their control characters replaced first, and a file name it
 prints that holds any, or a mark that reorders text, is printed quoted with
 escapes, as `ls` does. Bulk transfers of any kind the agent has not registered
 are refused. A transfer runs at most 512 KiB ahead of what its receiver has
 taken, and the page fails one from the agent that runs past that, so a
-stalled transfer holds back neither the keyboard nor the page's memory.
+stalled transfer holds back neither the keyboard nor the page's memory. The
+agent takes no credit past 512 KiB beyond what it has sent, so a page that
+grants more and stops reading cannot leave a download queued in the host's
+memory either.
 
 The page holds the host to bounds of its own. A host may have two clipboard
 transfers open to the page at once, a newer copy pushing out the oldest,
 and a download only for each click on Save; what arrives is kept as it
 comes, never reserved ahead for the size a header claims. A download may be no
 larger than the offer you clicked, and the host can withdraw only the files
-it offered, never your uploads. The page keeps at most 128 pointer images
+it offered, never your uploads. The page lists at most 256 files on offer,
+as the agent does, dropping the oldest not yet clicked. The page keeps at most 128 pointer images
 of at most 256 KiB each, and puts nothing from the host into the pointer's
 CSS but base64 and whole-pixel hot spots.
 
@@ -830,7 +836,10 @@ transfers from the agent, taken only while the switch is on, at most 4 MiB
 each and four at once, open or still being decoded. Each atlas's PNG header
 must give the size its tiles take, at most 1024x1024, before the browser's
 own image decoder reads it, and a tile manifest or batch that strays outside
-its grid drops every tile instead of growing what the page keeps. Tiles are
+its grid, or a batch for a frame more than two seconds past the newest
+manifest, drops every tile instead of growing what the page keeps. At most
+8 decoded batches wait for their frame to show; the page closes older ones
+unshown, so a hidden tab costs those tiles their sharpness. Tiles are
 drawn on a canvas and nowhere else; the page sends nothing new because of
 them but the switch itself.
 

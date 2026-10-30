@@ -1138,6 +1138,19 @@ the commit, which the hash and the size check have already passed. In
 node, two clipboard headers with no data held 33,260,488 bytes of
 `ArrayBuffer` before and 512 after.
 
+**Tile batches that wait.** A transfer's place goes back once its atlas
+has decoded and the batch is in `TileBook`, so the four bound what is under
+way, not what waits there for its frame to show. Each waiting batch holds a
+decoded atlas, up to 4 MiB for a PNG of a few KB, and a host that stamped
+its batches 2^30 ticks ahead could pile them up without end; so could an
+honest agent while a hidden tab reports no frames. The book keeps the
+newest 8 and hands the oldest back to be closed, and refuses a batch whose
+frame is more than two seconds past the newest manifest, which drops every
+tile as any malformed batch does. The agent cuts a batch from a frame it
+already wrote, after that frame's manifest, so an honest one is never
+ahead. In node, 64 batches for a frame that never showed held 64 atlases
+before and 8 after.
+
 **Pointer images.** The agent keeps 64 and forgets them in the order the
 desktop reported them, which the page never learns; it sends an image by
 ID alone once it believes the page has it. A page that forgot its oldest
@@ -1159,7 +1172,21 @@ that grows while on offer, a log say, has to be offered again. An offer
 whose size is not a whole number of bytes is not listed. The host may
 withdraw only what it offered: `file-withdraw` naming one of the page's
 uploads used to remove its row and its Cancel button while its bytes still
-went.
+went. The page lists at most 256 files on offer, the agent's own
+`maxSessionOffers`, since every change redraws every row: past that, the
+oldest still waiting for a click on Save goes, so a host that offered
+without end grows neither the list nor the redraw.
+
+**Names from the host.** File names, the names uploads were kept under,
+transfer errors and monitor names go in as text, never markup, but the
+browser still applies a bidi mark in them: `invoice<U+202E>fdp.exe` read as
+`invoiceexe.pdf` beside Save. An honest agent's `files.CheckName` refuses
+such a name, so only a hostile agent could send one, and the browser saves
+under the real name either way. `hosttext.js` now shows those characters
+as escapes, the set `runes.ReordersText` names and the CLI escapes (a Go
+test holds the two to one set), and a file's name sits in `dir=auto` so
+right-to-left letters in it cannot reorder the row around it. The download
+keeps the name as sent, for the browser to clean.
 
 ### Reproducible release binaries
 
@@ -2607,7 +2634,13 @@ section's in every offer started a new count each time while Pion kept
 every candidate (768 over three offers in the regression test); an offer
 whose sections disagree is refused now, as is one whose credentials go
 outside RFC 8839's ice-char, since every check carries the browser's
-ufrag. Candidates at the host's loopback, a link-local address or no
+ufrag. A bulk sender took any credit the page granted, and Pion's SCTP
+queues whatever a channel sends with no limit, so a page that granted
+2^40 bytes and stopped reading left a whole download queued in the agent
+(15,665,147 of the regression test's 16 MiB). The sender now counts what
+it sent and takes a grant only up to a window past that: no receiver can
+have taken more, so an honest page is never held back. Candidates at the
+host's loopback, a link-local address or no
 unicast address are counted and dropped: the browser is never there, and
 services on loopback trust what comes from it (the test's UDP listener on
 127.0.0.1 got the agent's checks before). Pion's remote IP filter would

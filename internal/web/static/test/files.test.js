@@ -171,3 +171,25 @@ test('a download may not be larger than its offer', async () => {
   for (const size of ['lots', -1, 1.5]) dispatchControl({ t: 'file-offer', file: { id: 'd6', name: 'd6.bin', size } });
   assert.equal(files.list().some((t) => t.id === 'd6'), false, 'an offer of no size is listed');
 });
+
+test('a host\'s names show the marks that reorder text instead of applying them', async () => {
+  const before = saved.length;
+  const name = 'invoice\u202efdp.exe\u2066';
+  dispatchControl({ t: 'file-offer', file: { id: 'b1', name, size: 1 } });
+  const li = await row('b1');
+  const label = li.find((el) => el.className === 'name');
+  assert.equal(label.textContent, 'invoice\\u202efdp.exe\\u2066');
+  assert.equal(label.title, label.textContent);
+  assert.equal(label.dir, 'auto', 'what a name holds cannot reorder the row around it');
+  button(li, 'save').click();
+  assert.deepEqual(await fileFromAgent('b1', new Uint8Array([1])), { t: 'done' });
+  assert.equal(saved.at(-1).name, name, 'the browser saves under the name itself');
+  assert.equal(saved.length, before + 1);
+
+  files.upload([{ name: 'b2.txt', size: 1 }]);
+  const id = files.list().find((t) => t.name === 'b2.txt').id;
+  dispatchControl({ t: 'file-saved', file: { id, name: 'b2\u202etxt.exe' } });
+  await later();
+  const status = (await row(id)).find((el) => el.className === 'status');
+  assert.equal(status.textContent, 'Uploaded as b2\\u202etxt.exe');
+});

@@ -13,6 +13,14 @@ export const TILE_BATCH_LIMIT = 4 * 1048576;
 // MAX_TILE_GRID bounds each side of a grid: the largest canvas side a
 // browser draws.
 export const MAX_TILE_GRID = 16384;
+// MAX_WAITING_BATCHES bounds the batches that wait for their frame, each
+// holding a decoded atlas: the agent keeps two under way, but a hidden tab
+// reports no frames while they keep coming.
+export const MAX_WAITING_BATCHES = 8;
+// TILE_HORIZON is how far, in 90 kHz RTP ticks, a batch's frame may come
+// after the newest manifest: two seconds. A batch is cut from a frame
+// already written, whose manifest went first.
+export const TILE_HORIZON = 180000;
 
 const HEAD = 10; // RTP, generation and count, before the index
 // A PNG starts with its signature, then the IHDR chunk: its type at 12 and
@@ -151,16 +159,21 @@ export class TileBook {
 
   // batch takes a parsed tile batch with its decoded atlas in batch.image.
   // It returns what is due now, as frame does; a batch of another grid
-  // comes straight back as spent. One that names a tile outside the grid,
-  // or a tile twice, throws, and changes nothing.
+  // comes straight back as spent, and so do the oldest that wait once more
+  // than MAX_WAITING_BATCHES do. One that names a tile outside the grid, or
+  // a tile twice, or a frame more than TILE_HORIZON past the newest
+  // manifest, throws, and changes nothing.
   batch(b) {
     if (b.gen !== this.gen) return { draws: [], spent: [b.image] };
     const total = this.#cols * Math.ceil(this.height / TILE_SIZE);
     if (!b.tiles.every((i) => Number.isInteger(i) && i >= 0 && i < total) || new Set(b.tiles).size !== b.tiles.length) {
       throw new Error('malformed tile batch: a tile outside the grid, or twice');
     }
+    if (after(b.rtp, this.#latest + TILE_HORIZON)) throw new Error('malformed tile batch: a frame far past every manifest');
     this.#waiting.push(b);
-    return this.#due();
+    const due = this.#due();
+    while (this.#waiting.length > MAX_WAITING_BATCHES) due.spent.push(this.#waiting.shift().image);
+    return due;
   }
 
   // frame takes the RTP timestamp of the frame the video now shows. It
