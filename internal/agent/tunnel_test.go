@@ -12,7 +12,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -264,19 +263,6 @@ func TestTunnelAcceptDoesNotWaitOnALookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The first connection's lookup takes until the test ends.
-	release := make(chan struct{})
-	defer close(release)
-	var first atomic.Bool
-	own := newOwnConns(ln, slog.New(slog.DiscardHandler), func(net.Conn) (uint32, error) {
-		if first.CompareAndSwap(false, true) {
-			<-release
-			return uint32(os.Getuid()) + 1, nil
-		}
-		return uint32(os.Getuid()), nil
-	})
-	defer own.Close()
-
 	theirs, err := net.Dial("tcp4", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
@@ -287,6 +273,19 @@ func TestTunnelAcceptDoesNotWaitOnALookup(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer mine.Close()
+
+	// The stranger's lookup takes until the test ends. It is told by its
+	// address, not by coming first: the checks run in no set order.
+	release := make(chan struct{})
+	defer close(release)
+	own := newOwnConns(ln, slog.New(slog.DiscardHandler), func(c net.Conn) (uint32, error) {
+		if c.RemoteAddr().String() == theirs.LocalAddr().String() {
+			<-release
+			return uint32(os.Getuid()) + 1, nil
+		}
+		return uint32(os.Getuid()), nil
+	})
+	defer own.Close()
 
 	got := make(chan net.Conn, 1)
 	go func() {
