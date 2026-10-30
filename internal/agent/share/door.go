@@ -41,6 +41,30 @@ func (w boundedWriter) Write(p []byte) (int, error) {
 // guests just then: its owner is away, or it holds as many as it takes.
 var errNoGuests = errors.New("the session takes no guests now")
 
+// maxRefusedUIDs bounds the uids whose first refusal the door logs at Warn.
+const maxRefusedUIDs = 64
+
+// refusals keeps the door's log of refusals bounded: anyone on the host may
+// knock, as often as it likes, and every knock is refused before a byte is
+// read. Each uid's first refusal goes at Warn, the rest at Debug.
+type refusals struct {
+	mu   sync.Mutex
+	seen map[int]bool
+}
+
+func (r *refusals) level(uid int) slog.Level {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.seen[uid] || len(r.seen) >= maxRefusedUIDs {
+		return slog.LevelDebug
+	}
+	if r.seen == nil {
+		r.seen = map[int]bool{}
+	}
+	r.seen[uid] = true
+	return slog.LevelWarn
+}
+
 // Guest is a connection the door admitted: a guest's CLI, through its
 // agent's proxy, run by the invited account.
 type Guest struct {
@@ -56,6 +80,7 @@ type Door struct {
 	ln       net.Listener
 	log      *slog.Logger
 	joining  chan struct{} // a slot per connection presenting its code
+	refused  refusals
 	arrivals chan *Guest
 	closed   chan struct{}
 	close    sync.Once
@@ -96,20 +121,20 @@ func (d *Door) accept() {
 func (d *Door) admit(c net.Conn) {
 	cred, err := peercred.Of(c)
 	if err != nil {
-		d.log.Warn("guest refused", "err", err)
+		d.log.Log(context.Background(), d.refused.level(-1), "guest refused", "err", err)
 		c.Close()
 		return
 	}
 	uid := int(cred.Uid)
 	if !d.inv.Invited(uid) {
-		d.log.Warn("guest refused: no invitation", "uid", uid)
+		d.log.Log(context.Background(), d.refused.level(uid), "guest refused: no invitation", "uid", uid)
 		c.Close()
 		return
 	}
 	select {
 	case d.joining <- struct{}{}:
 	default:
-		d.log.Warn("guest refused: too many joining at once", "uid", uid)
+		d.log.Log(context.Background(), d.refused.level(uid), "guest refused: too many joining at once", "uid", uid)
 		c.Close()
 		return
 	}
