@@ -129,7 +129,7 @@ func streamBrowser(t *testing.T, desk desktop.Desktop, skip bool) *tileBrowser {
 			}
 		}()
 	})
-	s.stream.setPeer(s.peer)
+	s.stream.subscribe(s.owner.peer)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {

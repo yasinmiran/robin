@@ -5,6 +5,8 @@ package agent
 import (
 	"context"
 	"log/slog"
+	"slices"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -43,9 +45,12 @@ const minKeyframeGap = 300 * time.Millisecond
 // spend what it has spare sharpening it.
 const refreshEvery = 500 * time.Millisecond
 
-// stream captures, encodes and sends frames at up to fps while a peer is
-// attached. An idle screen costs one cheap DAMAGE check per tick and an
-// encode of the unchanged picture every refreshEvery.
+// stream captures, encodes and sends frames at up to fps while it has a
+// subscriber. Each frame is encoded once, at the lowest target among the
+// subscribers, and written once to the one video track bound to every
+// subscriber's peer; a keyframe any of them asks for goes to all. An idle
+// screen costs one cheap DAMAGE check per tick and an encode of the
+// unchanged picture every refreshEvery.
 type stream struct {
 	desk desktop.Desktop
 	fps  int
@@ -58,15 +63,37 @@ type stream struct {
 	// still.
 	refresh time.Duration
 
-	peer     atomic.Pointer[peer.Peer]
+	// video is the track every subscriber's peer sends.
+	video *peer.VideoTrack
+
+	subsMu   sync.Mutex
+	subs     atomic.Pointer[[]*subscriber] // replaced whole under subsMu
 	keyframe atomic.Bool
-	bitrate  atomic.Int64
 	// scale is how frames are shrunk on their way out, nil while they go
 	// out at desktop size.
 	scale atomic.Pointer[scale]
 	// tilesWanted is the page's latest ControlTiles, nil until it sends one.
 	tilesWanted atomic.Pointer[tileRequest]
 }
+
+// subscriber is one peer the stream's frames go to, with the target its
+// congestion controller last set. One subscriber at a time may take sharp
+// text tiles, which follow what that page holds.
+type subscriber struct {
+	peer    *peer.Peer
+	tiles   bool
+	bitrate atomic.Int64
+}
+
+// newSubscriber starts a subscriber at bps, its peer's start bitrate,
+// before the peer exists: the peer's Bitrate handler is its setBitrate.
+func newSubscriber(bps int, tiles bool) *subscriber {
+	sub := &subscriber{tiles: tiles}
+	sub.bitrate.Store(int64(bps))
+	return sub
+}
+
+func (sub *subscriber) setBitrate(bps int) { sub.bitrate.Store(int64(bps)) }
 
 // tileRequest is one ControlTiles from the page. Each is a value of its own,
 // so a request starts the tiles afresh even when the one before it, the
@@ -89,23 +116,68 @@ func (s *stream) toDesktop(m protocol.Control) protocol.Control {
 }
 
 func newStream(desk desktop.Desktop, fps, maxW, maxH int, newEncoder NewEncoderFunc, log *slog.Logger) *stream {
-	s := &stream{desk: desk, fps: fps, maxW: maxW, maxH: maxH, newEncoder: newEncoder, log: log, refresh: refreshEvery}
-	s.bitrate.Store(startBitrate)
-	return s
+	video, err := peer.NewVideoTrack()
+	if err != nil {
+		// It fails only on a codec Pion does not know, and H.264 it knows.
+		panic(err)
+	}
+	return &stream{desk: desk, fps: fps, maxW: maxW, maxH: maxH, newEncoder: newEncoder, log: log, refresh: refreshEvery, video: video}
 }
 
-func (s *stream) setPeer(p *peer.Peer) {
-	s.tilesWanted.Store(nil)
-	s.peer.Store(p)
+// add starts sending to sub, whose peer is bound to s.video, with a
+// keyframe. A subscriber that takes tiles starts them afresh.
+func (s *stream) add(sub *subscriber) {
+	s.subsMu.Lock()
+	defer s.subsMu.Unlock()
+	subs := append(slices.Clone(s.subscribers()), sub)
+	if sub.tiles {
+		s.tilesWanted.Store(nil)
+	}
+	s.subs.Store(&subs)
 	s.keyframe.Store(true)
+}
+
+// remove stops sending to sub.
+func (s *stream) remove(sub *subscriber) {
+	s.subsMu.Lock()
+	defer s.subsMu.Unlock()
+	subs := slices.DeleteFunc(slices.Clone(s.subscribers()), func(o *subscriber) bool { return o == sub })
+	s.subs.Store(&subs)
+}
+
+func (s *stream) subscribers() []*subscriber {
+	if p := s.subs.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
+// target is the bitrate the encoder runs at: the lowest any subscriber's
+// link allows, so none of them falls behind.
+func target(subs []*subscriber) int64 {
+	var low int64
+	for i, sub := range subs {
+		if br := sub.bitrate.Load(); i == 0 || br < low {
+			low = br
+		}
+	}
+	return low
+}
+
+// tilePeer is the peer of the subscriber that takes tiles, or nil.
+func tilePeer(subs []*subscriber) *peer.Peer {
+	for _, sub := range subs {
+		if sub.tiles {
+			return sub.peer
+		}
+	}
+	return nil
 }
 
 // wantTiles applies the page's ControlTiles.
 func (s *stream) wantTiles(on bool) { s.tilesWanted.Store(&tileRequest{on: on}) }
 
 func (s *stream) requestKeyframe() { s.keyframe.Store(true) }
-
-func (s *stream) setBitrate(bps int) { s.bitrate.Store(int64(bps)) }
 
 func (s *stream) run(ctx context.Context) {
 	interval := time.Second / time.Duration(s.fps)
@@ -144,11 +216,12 @@ func (s *stream) run(ctx context.Context) {
 			return
 		case <-tick.C:
 		}
-		p := s.peer.Load()
-		if p == nil {
+		subs := s.subscribers()
+		if len(subs) == 0 {
 			closeEncoder()
 			continue
 		}
+		p := tilePeer(subs)
 		now := time.Now()
 		force := enc == nil || (s.keyframe.Load() && now.Sub(lastKey) >= minKeyframeGap)
 		refresh := s.refresh > 0 && !lastWrite.IsZero() && now.Sub(lastWrite) >= s.refresh
@@ -177,7 +250,7 @@ func (s *stream) run(ctx context.Context) {
 		rtp, manifest := uint32(0), false
 		if withTiles {
 			tracker.update(f, now)
-			if rtp, manifest = p.NextFrameRTP(); manifest {
+			if rtp, manifest = s.video.NextRTP(); manifest {
 				if err := p.SendControl(tracker.manifest(rtp)); err != nil {
 					// The page must never see a later manifest without
 					// this one: a new grid drops whatever it holds.
@@ -189,7 +262,7 @@ func (s *stream) run(ctx context.Context) {
 		}
 		skipTimestamp := func() {
 			if manifest {
-				p.WriteFrame(nil, d)
+				s.video.Write(nil, d)
 				lastClock = now
 			}
 		}
@@ -201,7 +274,7 @@ func (s *stream) run(ctx context.Context) {
 		}
 		if enc == nil || img.Width != w || img.Height != h {
 			closeEncoder()
-			br := s.bitrate.Load()
+			br := target(subs)
 			if enc, err = s.newEncoder(w, h, s.fps, int(br)); err != nil {
 				s.log.Error("encoder", "w", w, "h", h, "err", err)
 				skipTimestamp()
@@ -211,7 +284,7 @@ func (s *stream) run(ctx context.Context) {
 			img = yuv.NewI420(w, h)
 			force = true
 		}
-		if br := s.bitrate.Load(); br != appliedBitrate {
+		if br := target(subs); br != appliedBitrate {
 			if err := enc.SetBitrate(int(br)); err != nil {
 				s.log.Warn("set bitrate", "bps", br, "err", err)
 			}
@@ -253,7 +326,7 @@ func (s *stream) run(ctx context.Context) {
 			skipTimestamp()
 			continue
 		}
-		if err := p.WriteFrame(au, d); err != nil {
+		if err := s.video.Write(au, d); err != nil {
 			s.log.Debug("write frame", "err", err)
 		}
 		lastWrite, lastClock = now, now
@@ -282,7 +355,7 @@ func (st *tileSetup) apply(t *tileTracker, p *peer.Peer, req *tileRequest, f *de
 		t.reset()
 		*st = tileSetup{peer: p, req: req}
 	}
-	if req == nil || (req.on && f == nil) {
+	if p == nil || req == nil || (req.on && f == nil) {
 		return false
 	}
 	ok := req.on && f.Format == desktop.BGRX

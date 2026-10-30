@@ -26,7 +26,12 @@ func peerBrowser(t *testing.T, s *session) *fileBrowser {
 	// The candidate relays end with the test, before the peers close.
 	quit := t.Context().Done()
 	cands := make(chan protocol.Candidate, 64)
-	p, err := peer.New(peer.Config{IncludeLoopback: true, MinBitrate: minBitrate, StartBitrate: startBitrate, MaxBitrate: startBitrate, Log: s.log},
+	v := &viewer{gen: 1, cursorsShown: map[uint32]bool{}, sub: newSubscriber(startBitrate, true)}
+	cfg := peer.Config{IncludeLoopback: true, MinBitrate: minBitrate, StartBitrate: startBitrate, MaxBitrate: startBitrate, Log: s.log}
+	if s.stream != nil {
+		cfg.Video = s.stream.video
+	}
+	p, err := peer.New(cfg,
 		peer.Handlers{
 			Candidate: func(c protocol.Candidate) {
 				select {
@@ -34,14 +39,17 @@ func peerBrowser(t *testing.T, s *session) *fileBrowser {
 				case <-quit:
 				}
 			},
-			Control: s.control, Bulk: s.bulk, ControlOpen: s.resendOffers,
+			Control:     s.controlFrom(v),
+			Bulk:        func(h protocol.Bulk) (peer.BulkSink, error) { return s.bulkFrom(v, h) },
+			ControlOpen: func() { s.resendOffers(v) },
 		})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { p.Close() })
+	v.peer, v.sub.peer = p, p
 	s.mu.Lock()
-	s.peer = p
+	s.owner = v
 	s.mu.Unlock()
 
 	m := &webrtc.MediaEngine{}

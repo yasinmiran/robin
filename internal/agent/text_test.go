@@ -216,7 +216,7 @@ func TestNothingAppliesFromABrowserThatLeft(t *testing.T) {
 	if _, err := s.currentPeer(); err != nil {
 		t.Fatal(err)
 	}
-	left := s.controlFrom(s.peers)
+	left := s.controlFrom(s.owner)
 	key := protocol.Control{T: protocol.ControlKey, Key: "a", Code: "KeyA", Down: true}
 	left(key)
 	s.closePeer()

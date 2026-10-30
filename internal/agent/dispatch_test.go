@@ -69,6 +69,7 @@ func testSession(desk desktop.Desktop) *session {
 	return &session{
 		desk: desk, start: protocol.Start{MaxWidth: 1280, MaxHeight: 720}, log: log,
 		stream: newStream(desk, 30, 1280, 720, nil, log),
+		shared: &sharing{uids: newUIDSet()},
 	}
 }
 

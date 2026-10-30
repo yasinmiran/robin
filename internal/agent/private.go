@@ -449,14 +449,14 @@ func (p *private) close() {
 
 func init() {
 	for _, t := range []protocol.ControlType{protocol.ControlCurtain, protocol.ControlSilent} {
-		handleControl(t, func(s *session, m protocol.Control) { s.private.set(m.T, m.On) })
+		handleOwner(t, func(s *session, m protocol.Control) { s.private.set(m.T, m.On) })
 	}
 }
 
 // sendPrivate tells the page the private session's state.
 func (s *session) sendPrivate() {
 	st := s.private.snapshot()
-	p := s.currentOrNil()
+	p := s.ownerPeer()
 	if st == nil || p == nil {
 		return
 	}

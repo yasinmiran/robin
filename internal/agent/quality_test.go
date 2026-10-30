@@ -216,13 +216,15 @@ func (c clipRun) run(t *testing.T) *vqtest.Run {
 		maxBitrate = protocol.DefaultMaxKbps * 1000
 	}
 	cands := make(chan protocol.Candidate, 64)
+	sub := newSubscriber(min(startBitrate, maxBitrate), true)
 	p, err := peer.New(peer.Config{
 		Net: net.Agent, MinBitrate: minBitrate, StartBitrate: min(startBitrate, maxBitrate), MaxBitrate: maxBitrate,
 		Unpaced: c.unpaced, Audio: c.sound, FeedWhileLimited: c.feedWhileLimited, SoundBehindVideo: c.soundBehindVideo, Log: log,
+		Video: s.video,
 	}, peer.Handlers{
 		Candidate: func(pc protocol.Candidate) { cands <- pc },
 		Keyframe:  s.requestKeyframe,
-		Bitrate:   s.setBitrate,
+		Bitrate:   sub.setBitrate,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -236,7 +238,8 @@ func (c clipRun) run(t *testing.T) *vqtest.Run {
 	if err := b.Connect(p, cands); err != nil {
 		t.Fatal(err)
 	}
-	s.setPeer(p)
+	sub.peer = p
+	s.add(sub)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {

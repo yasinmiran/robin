@@ -20,7 +20,7 @@ import (
 
 func init() {
 	protocol.RegisterBulkKind(protocol.BulkTile, protocol.TileBatchLimit)
-	handleControl(protocol.ControlTiles, func(s *session, m protocol.Control) { s.stream.wantTiles(m.On) })
+	handleOwner(protocol.ControlTiles, func(s *session, m protocol.Control) { s.stream.wantTiles(m.On) })
 }
 
 // tileStill is how long a tile must stay unchanged before it is sent

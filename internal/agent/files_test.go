@@ -179,8 +179,10 @@ func TestOffersSettleOnDecline(t *testing.T) {
 		}
 	}
 	// Without a browser a fetch does nothing, and the offer stands.
-	s.fetchOffer(protocol.Control{T: protocol.ControlFileFetch, File: &protocol.File{ID: offers[0].info.ID}})
-	s.resendOffers()
+	s.fetchOffer(nil, protocol.Control{T: protocol.ControlFileFetch, File: &protocol.File{ID: offers[0].info.ID}})
+	for _, v := range s.viewers() {
+		s.resendOffers(v)
+	}
 	openOffers(t, s, 2)
 
 	s.declineOffer(protocol.Control{T: protocol.ControlFileDecline, File: &protocol.File{ID: "unknown"}})

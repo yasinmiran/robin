@@ -33,6 +33,7 @@ func TestTunnelRefusesAnotherUsersConnection(t *testing.T) {
 	stranger := uint32(os.Getuid()) + 1
 	var mu sync.Mutex
 	owners := map[string]uint32{} // by the dialling end's address
+	guests := newUIDSet()
 	own := newOwnConns(ln, slog.New(slog.DiscardHandler), func(c net.Conn) (uint32, error) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -40,7 +41,7 @@ func TestTunnelRefusesAnotherUsersConnection(t *testing.T) {
 			return uid, nil
 		}
 		return 0, errors.New("no such connection")
-	})
+	}, guests.has)
 	mux := ice.NewTCPMuxDefault(ice.TCPMuxParams{Listener: own, ReadBufferSize: 64})
 	// After the connections close, or the mux waits out its first read.
 	t.Cleanup(func() { mux.Close() })
@@ -78,6 +79,26 @@ func TestTunnelRefusesAnotherUsersConnection(t *testing.T) {
 	if _, err := mine.Read(make([]byte, 1)); !isTimeout(err) {
 		t.Errorf("this user's connection: read %v, want it kept waiting for ICE", err)
 	}
+
+	// A guest's forward runs as the guest, whose uid counts while a guest
+	// of it is connected, and only then.
+	guests.add(int(stranger))
+	guests.add(int(stranger))
+	guest := dial(stranger)
+	guest.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	if _, err := guest.Read(make([]byte, 1)); !isTimeout(err) {
+		t.Errorf("a connected guest's connection: read %v, want it kept waiting for ICE", err)
+	}
+	guests.remove(int(stranger))
+	if !guests.has(stranger) {
+		t.Fatal("one of two guests of the uid left, and the uid no longer counts")
+	}
+	guests.remove(int(stranger))
+	gone := dial(stranger)
+	gone.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := gone.Read(make([]byte, 1)); !errors.Is(err, io.EOF) && !isReset(err) {
+		t.Errorf("a guest's connection once the guest left: read %v, want the agent to hang up", err)
+	}
 }
 
 func isReset(err error) bool { return errors.Is(err, syscall.ECONNRESET) }
@@ -91,7 +112,7 @@ func isTimeout(err error) bool {
 // with the kernel's word on who connected: this process did, and the
 // connection is kept for ICE.
 func TestListenTunnelKeepsThisUsersConnection(t *testing.T) {
-	mux, addr, err := listenTunnel(slog.New(slog.DiscardHandler))
+	mux, addr, err := listenTunnel(slog.New(slog.DiscardHandler), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +251,7 @@ func TestTunnelSkipsAClosedDialersConnection(t *testing.T) {
 	}
 	defer mine.Close()
 	// Both wait in the backlog, so the check comes after the close.
-	own := newOwnConns(ln, slog.New(slog.DiscardHandler), connUID)
+	own := newOwnConns(ln, slog.New(slog.DiscardHandler), connUID, nil)
 	defer own.Close()
 	c, err := own.Accept()
 	if err != nil {
@@ -274,7 +295,7 @@ func TestTunnelAcceptDoesNotWaitOnALookup(t *testing.T) {
 			return uint32(os.Getuid()) + 1, nil
 		}
 		return uint32(os.Getuid()), nil
-	})
+	}, nil)
 	defer own.Close()
 
 	theirs, err := net.Dial("tcp4", ln.Addr().String())
@@ -361,7 +382,7 @@ func TestOwnConnsClosesWhatItCannotCheck(t *testing.T) {
 		busy <- struct{}{}
 		<-release
 		return uint32(os.Getuid()), nil
-	})
+	}, nil)
 	dial := func() net.Conn {
 		t.Helper()
 		c, err := net.Dial("tcp4", ln.Addr().String())

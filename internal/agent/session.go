@@ -23,9 +23,11 @@ import (
 
 	"github.com/pion/ice/v4"
 	"github.com/pion/webrtc/v4"
+	"github.com/pion/webrtc/v4/pkg/media"
 
 	"github.com/yasinmiran/robin/internal/agent/desktop"
 	"github.com/yasinmiran/robin/internal/agent/peer"
+	"github.com/yasinmiran/robin/internal/agent/share"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
@@ -74,7 +76,11 @@ type Options struct {
 	// Silence makes an attached desktop's room silent; nil when this build
 	// cannot.
 	Silence SilenceFunc
-	Log     *slog.Logger
+	// Door takes guests of other accounts on the host; nil shares nothing.
+	// The session lets its guests go when it ends; the door is the
+	// caller's to close.
+	Door *share.Door
+	Log  *slog.Logger
 }
 
 // Run serves one session over r and w (the SSH exec channel) until the CLI
@@ -203,7 +209,8 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 		}
 	}
 
-	tcpMux, tunnelAddr, err := listenTunnel(log)
+	guestUIDs := newUIDSet()
+	tcpMux, tunnelAddr, err := listenTunnel(log, guestUIDs.has)
 	if err != nil {
 		return fail(conn, err)
 	}
@@ -225,10 +232,17 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 		files:   shared,
 		mic:     mic,
 		camera:  camera,
+		shared:  &sharing{door: o.Door, owner: share.UserName(os.Getuid()), uids: guestUIDs},
+	}
+	if audio != nil {
+		if s.sound, err = peer.NewAudioTrack(); err != nil {
+			return fail(conn, err)
+		}
 	}
 	// Registered after the microphone's and camera's Close, so it runs
-	// before them.
+	// before them: no peer, the guests' included, outlives the session.
 	defer func() {
+		s.endGuests()
 		s.closePeer()
 		s.endPlays()
 	}()
@@ -250,6 +264,7 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 		ms := mm.MonitorState()
 		ready.Monitors, ready.Monitor = ms.List, ms.Current
 	}
+	s.ready = ready
 	if err := conn.Send(protocol.Message{Type: protocol.TypeReady, Ready: ready}); err != nil {
 		return err
 	}
@@ -270,6 +285,7 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 	run(s.forwardCursor)
 	run(s.forwardMonitors)
 	run(s.heartbeat)
+	run(s.acceptGuests)
 	if audio != nil {
 		run(func(ctx context.Context) { s.forwardAudio(ctx, audio) })
 	}
@@ -282,6 +298,7 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 
 type session struct {
 	conn   *controller
+	ready  *protocol.Ready // the owner's first Ready
 	desk   desktop.Desktop
 	start  protocol.Start
 	log    *slog.Logger
@@ -307,16 +324,21 @@ type session struct {
 	playsEnded bool
 	plays      sync.WaitGroup
 
-	mu    sync.Mutex
-	peer  *peer.Peer
-	peers uint64 // peers made so far; the current one is the peers-th
+	mu sync.Mutex
+	// owner is the owner's page, nil while none is connected, and gens
+	// counts the pages' peers made so far.
+	owner *viewer
+	gens  uint64
 	// cursors holds the last maxCursors pointer images, so a page that
 	// connects later can be sent images the desktop reported before it
 	// arrived. cursorOrder lists their IDs oldest first.
-	cursors      map[uint32]protocol.Cursor
-	cursorOrder  []uint32
-	cursor       uint32          // current pointer image
-	cursorsShown map[uint32]bool // images the current page already has
+	cursors     map[uint32]protocol.Cursor
+	cursorOrder []uint32
+	cursor      uint32 // current pointer image
+	// sound is the Opus track every page's peer sends; nil without sound.
+	sound *webrtc.TrackLocalStaticSample
+	// shared holds the guests; never nil.
+	shared *sharing
 
 	files   *fileShare   // nil when the session takes no files
 	clipsIn atomic.Int32 // clipboard transfers from the browser under way
@@ -340,7 +362,14 @@ func (s *session) keepCursor(c protocol.Cursor) {
 		old := s.cursorOrder[0]
 		s.cursorOrder = s.cursorOrder[1:]
 		delete(s.cursors, old)
-		delete(s.cursorsShown, old)
+		if s.owner != nil {
+			delete(s.owner.cursorsShown, old)
+		}
+		for _, g := range s.shared.guests {
+			if g.view != nil {
+				delete(g.view.cursorsShown, old)
+			}
+		}
 	}
 }
 
@@ -361,10 +390,7 @@ func (s *session) handle(m protocol.Message) (done bool, err error) {
 		}
 		return false, s.conn.Send(protocol.Message{Type: protocol.TypeAnswer, SDP: answer})
 	case protocol.TypeCandidate:
-		s.mu.Lock()
-		p := s.peer
-		s.mu.Unlock()
-		if p != nil && m.Candidate != nil {
+		if p := s.ownerPeer(); p != nil && m.Candidate != nil {
 			// The peer logs the first candidate past its bound itself.
 			if err := p.AddCandidate(*m.Candidate); err != nil && !errors.Is(err, peer.ErrTooManyCandidates) {
 				s.log.Warn("remote candidate rejected", "err", err)
@@ -376,90 +402,11 @@ func (s *session) handle(m protocol.Message) (done bool, err error) {
 		return false, nil
 	case protocol.TypeBye:
 		return true, nil
+	case protocol.TypeInvite:
+		return false, s.answerInvite(m)
 	}
 	s.log.Warn("ignoring message", "type", m.Type)
 	return false, nil
-}
-
-// currentPeer returns the live peer, creating one for a fresh browser.
-func (s *session) currentPeer() (*peer.Peer, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.peer != nil {
-		return s.peer, nil
-	}
-	s.peers++
-	maxBitrate := max(s.start.MaxKbps*1000, startBitrate)
-	p, err := peer.New(peer.Config{
-		STUN: s.start.STUN, TCPMux: s.tcpMux, IncludeLoopback: true, Certificate: s.cert, Audio: s.audio,
-		Mic: s.mic != nil, Camera: s.camera != nil,
-		MinBitrate: minBitrate, StartBitrate: min(startBitrate, maxBitrate), MaxBitrate: maxBitrate,
-		Log: s.log,
-	}, peer.Handlers{
-		Candidate: func(c protocol.Candidate) {
-			if err := s.conn.Send(protocol.Message{Type: protocol.TypeCandidate, Candidate: &c}); err != nil {
-				s.log.Warn("send candidate", "err", err)
-			}
-		},
-		Control: s.controlFrom(s.peers),
-		Bulk:    s.bulk,
-		Track:   s.track,
-		ControlOpen: func() {
-			s.sendCurrentCursor()
-			s.sendMonitors()
-			s.resendOffers()
-			s.sendPrivate()
-		},
-		Keyframe: s.stream.requestKeyframe,
-		Bitrate:  s.stream.setBitrate,
-		State: func(st webrtc.PeerConnectionState) {
-			if st == webrtc.PeerConnectionStateConnected {
-				s.desk.Input(protocol.Control{T: protocol.ControlRelease})
-			}
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create peer: %w", err)
-	}
-	s.peer = p
-	s.cursorsShown = map[uint32]bool{}
-	s.stream.setPeer(p)
-	return p, nil
-}
-
-// controlFrom returns the handler of the control messages of the gen-th
-// peer. Once closePeer has let that browser go, nothing more it sends
-// applies: its data channel can still deliver a message or two while the
-// peer closes, and text among them would start the lane typing again.
-func (s *session) controlFrom(gen uint64) func(protocol.Control) {
-	return func(m protocol.Control) {
-		s.inputMu.Lock()
-		defer s.inputMu.Unlock()
-		s.mu.Lock()
-		live := s.peer != nil && s.peers == gen
-		s.mu.Unlock()
-		if live {
-			s.control(m)
-		}
-	}
-}
-
-func (s *session) closePeer() {
-	s.inputMu.Lock()
-	s.mu.Lock()
-	p := s.peer
-	s.peer = nil
-	s.mu.Unlock()
-	s.inputMu.Unlock()
-	if p == nil {
-		return
-	}
-	s.stream.setPeer(nil)
-	// Whatever the departing browser held down must not stay pressed, nor
-	// what it typed last go on typing.
-	s.typing.discard()
-	s.desk.Input(protocol.Control{T: protocol.ControlRelease})
-	p.Close()
 }
 
 // applyInput takes key, pointer, wheel and release messages.
@@ -499,8 +446,8 @@ func (s *session) applyMonitor(m protocol.Control) {
 	s.log.Info("showing monitor", "monitor", m.Monitor)
 }
 
-// heartbeat tells the page every second that the media path still works; the
-// page restarts ICE when they stop arriving.
+// heartbeat tells every page every second that the media path still works;
+// a page restarts ICE when they stop arriving.
 func (s *session) heartbeat(ctx context.Context) {
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
@@ -510,16 +457,10 @@ func (s *session) heartbeat(ctx context.Context) {
 			return
 		case <-t.C:
 		}
-		if p := s.currentOrNil(); p != nil {
-			p.SendControl(protocol.Control{T: protocol.ControlHeartbeat})
+		for _, v := range s.viewers() {
+			v.peer.SendControl(protocol.Control{T: protocol.ControlHeartbeat})
 		}
 	}
-}
-
-func (s *session) currentOrNil() *peer.Peer {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.peer
 }
 
 func (s *session) forwardCursor(ctx context.Context) {
@@ -537,7 +478,9 @@ func (s *session) forwardCursor(ctx context.Context) {
 			}
 			s.cursor = c.ID
 			s.mu.Unlock()
-			s.sendCurrentCursor()
+			for _, v := range s.viewers() {
+				s.sendCurrentCursor(v)
+			}
 		}
 	}
 }
@@ -562,38 +505,39 @@ func (s *session) forwardMonitors(ctx context.Context) {
 	}
 }
 
-// sendMonitors shows the page the desktop's monitors and the one shown, for
-// a desktop that has them.
+// sendMonitors shows every page the desktop's monitors and the one shown,
+// for a desktop that has them.
 func (s *session) sendMonitors() {
+	for _, v := range s.viewers() {
+		s.sendMonitorsTo(v)
+	}
+}
+
+func (s *session) sendMonitorsTo(v *viewer) {
 	mm, ok := s.desk.(desktop.MultiMonitor)
 	if !ok {
 		return
 	}
-	p := s.currentOrNil()
-	if p == nil {
-		return
-	}
 	ms := mm.MonitorState()
-	if err := p.SendControl(protocol.Control{T: protocol.ControlMonitors, Monitors: &ms}); err != nil && !errors.Is(err, peer.ErrNoControl) {
+	if err := v.peer.SendControl(protocol.Control{T: protocol.ControlMonitors, Monitors: &ms}); err != nil && !errors.Is(err, peer.ErrNoControl) {
 		s.log.Debug("send monitors", "err", err)
 	}
 }
 
-// sendCurrentCursor shows the page the current pointer image, with its PNG
-// the first time this page sees it.
-func (s *session) sendCurrentCursor() {
+// sendCurrentCursor shows v's page the current pointer image, with its
+// PNG the first time this page sees it.
+func (s *session) sendCurrentCursor(v *viewer) {
 	s.mu.Lock()
-	p := s.peer
 	c, known := s.cursors[s.cursor]
-	if p == nil || !known {
+	if !known {
 		s.mu.Unlock()
 		return
 	}
-	if s.cursorsShown[c.ID] {
+	if v.cursorsShown[c.ID] {
 		c.PNG = nil
 	}
 	s.mu.Unlock()
-	if err := p.SendControl(protocol.Control{T: protocol.ControlCursor, Cursor: &c}); err != nil {
+	if err := v.peer.SendControl(protocol.Control{T: protocol.ControlCursor, Cursor: &c}); err != nil {
 		// Before the channel opens nothing is marked; ControlOpen resends.
 		if !errors.Is(err, peer.ErrNoControl) {
 			s.log.Debug("send cursor", "err", err)
@@ -601,9 +545,7 @@ func (s *session) sendCurrentCursor() {
 		return
 	}
 	s.mu.Lock()
-	if s.peer == p {
-		s.cursorsShown[c.ID] = true
-	}
+	v.cursorsShown[c.ID] = true
 	s.mu.Unlock()
 }
 
@@ -616,10 +558,9 @@ func (s *session) forwardAudio(ctx context.Context, src AudioSource) {
 			if !ok {
 				return
 			}
-			if p := s.currentOrNil(); p != nil {
-				if err := p.WriteAudio(pkt, AudioFrame); err != nil {
-					s.log.Debug("write audio", "err", err)
-				}
+			// One write reaches every page: the track is bound to each peer.
+			if err := s.sound.WriteSample(media.Sample{Data: pkt, Duration: AudioFrame}); err != nil {
+				s.log.Debug("write audio", "err", err)
 			}
 		}
 	}
