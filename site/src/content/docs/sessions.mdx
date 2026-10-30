@@ -1,0 +1,59 @@
+---
+title: Kept sessions
+description: How a desktop outlives a dropped connection, how to detach and resume it later, and what the host needs for that.
+section: Use
+order: 2
+---
+
+```sh
+robin gui build-box          # again later: picks the desktop up where you left it
+robin gui --new build-box    # another desktop beside the kept one
+robin ls build-box           # the sessions the host keeps
+robin end build-box          # end one without opening it
+```
+
+A desktop Robin started stays on the host when the connection drops, for `--keep` (8 hours by default), and the CLI keeps redialing meanwhile: the page says Reconnecting, then comes back to the same windows. Close the laptop, change networks, lose the VPN, and the session is where you left it.
+
+## Leaving and coming back
+
+The CLI itself may die, or you may choose to leave. The page's status tab has a **Disconnect, keep desktop** button beside **End session**, and a later `robin gui <host>` resumes the one kept desktop by default. `--new` starts another beside it; with more than one kept, the CLI lists them and asks for `--id`.
+
+`robin ls <host>` shows what the host keeps, with when each kept desktop ends on its own, and `robin end <host> [id]` ends one.
+
+## What ends a session
+
+Ctrl+C in the CLI, the page's End session button and an error that stops the CLI once the desktop is up all end the session, desktop included, even when the CLI has to reconnect to say so. The page reports the end only once the host confirmed it, and says so when it could not.
+
+An attached desktop is not kept by default: nothing of yours would be lost, so `--keep` defaults to 0 there and the session ends with the connection. Name a `--keep` and it is kept like any other.
+
+<Callout type="note" title="Reconnecting keeps the desktop, not the picture.">
+The browser builds a fresh peer connection each time, so the first second after a reconnect is a new keyframe, anything held down in the page is released, and a microphone or camera that was on is off until switched on again.
+</Callout>
+
+## A resume is the same session
+
+The agent on the host kept its identity, so the fingerprint the CLI pinned still holds. A CLI that carries a different agent than the one running refuses to resume, before it uploads anything, and says to run `robin end`, since the daemon runs code this CLI does not carry. Started beside it with `--new`, the upload leaves the kept session's agent in place, so `robin-send` in that desktop keeps working.
+
+A new `robin gui` that resumes a desktop gets what its own command line names, or is told why not:
+
+- `--curtain` and `--silent` switch on the curtain and the silent room of a kept attached desktop before the page connects, as they would for a new one, and a switch the page had turned on stays on. When one cannot go on, the CLI says why and leaves the desktop as it was, still kept.
+- The microphone and camera are the ones the desktop started with. A resume that offers one it lacks is refused, with how to get it (resume without the flag, or `robin end` and start again), and a resume without `--mic` or `--camera` offers neither to the page.
+- The flags that shape the desktop itself (`--max-size`, `--fps`, `--max-kbps`, `--encoder`, `--monitor`, `--audio`, `--session`) apply to a new desktop only.
+
+The same CLI redialing after a drop asks for nothing, so a switch the page turned off stays off.
+
+## On the host
+
+The session lives in a daemon of its own, in its own process session (`setsid`), so sshd closing the channel does not reach it. The exec channel only runs a proxy, which reaches the daemon through a unix socket in the session's 0700 run directory. The daemon accepts a connection only from a process of its own uid (`SO_PEERCRED`), one controller at a time, so another account on the host can neither drive nor end your session.
+
+Where logind is set to kill user processes on logout (`KillUserProcesses=yes`, not the default), the daemon runs under `systemd-run --user` instead, and the CLI says so when that would still not outlive your last login (it does once `loginctl enable-linger` is on). Where neither is possible the desktop ends with the connection, and the CLI says that too.
+
+When the keep window runs out, the daemon ends the session with the same teardown as Ctrl+C: everything it started stops and its run directory is removed.
+
+## Limits
+
+- While a kept session has a controller, a second `robin gui` for it is refused as busy. A CLI that lost its network keeps the daemon's socket busy until the daemon's 20 s idle timeout notices, so a fresh `robin gui` started sooner has to retry.
+- Ctrl+C while the CLI redials a session the host reports busy leaves the session running, since another `robin gui` may be using it; the CLI says so, and `robin end` ends it.
+- While a session is kept, its X server, its sound socket and its loopback ICE-TCP listener stay up in the 0700 run directory for the whole keep window, reachable by anything running as the same user on the host, as they are while a CLI is connected.
+
+The full list is on [Known limits](/known-limits).
