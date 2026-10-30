@@ -26,7 +26,6 @@ import (
 	"github.com/godbus/dbus/v5/introspect"
 
 	"github.com/yasinmiran/robin/internal/agent/desktop"
-	"github.com/yasinmiran/robin/internal/agent/keysym"
 	"github.com/yasinmiran/robin/internal/agent/wayland/wltest"
 	"github.com/yasinmiran/robin/internal/agent/xdg"
 	"github.com/yasinmiran/robin/internal/protocol"
@@ -534,11 +533,21 @@ func TestAttachLayout(t *testing.T) {
 
 // TestAttachLayoutFourthLevel runs in the session wltest.sh gives US
 // international with dead keys, which has ~, ^ and " only on the fourth
-// level, Shift and AltGr, and ` and ' on the third, AltGr.
+// level, Shift and AltGr, and ` and ' on the third, AltGr. mutter cannot
+// press the fourth level: it logs "Unhandled level" and presses the key
+// alone. So the agent never asks for one, as mutter's log shows.
 func TestAttachLayoutFourthLevel(t *testing.T) {
 	needSession(t)
 	if os.Getenv("ROBIN_WLTEST_LAYOUT") != "us+intl" {
 		t.Skip("needs the session wltest.sh starts with US international")
+	}
+	unhandled := func() int {
+		t.Helper()
+		b, err := os.ReadFile("/tmp/session-logs/compositor.log")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return bytes.Count(b, []byte("Unhandled level"))
 	}
 	p := startProbe(t)
 	d, _ := open(t, true)
@@ -549,24 +558,14 @@ func TestAttachLayoutFourthLevel(t *testing.T) {
 	if d.kb == nil || !d.kb.lacks('~') || !d.kb.lacks('^') || !d.kb.lacks('"') || d.kb.lacks('`') || d.kb.lacks('\'') || d.kb.lacks('a') {
 		t.Fatal("the agent does not follow the levels of US international")
 	}
+	before := unhandled()
 	isKey := func(keyval string) func(probeEvent) bool {
 		return func(e probeEvent) bool { return e.Ev == "key" && e.Keyval == keyval }
 	}
 
-	// mutter presses a key it finds a keysym on at the fourth level with
-	// no modifier: ~'s keysym types the dead grave of its key's first.
-	mark := p.mark()
-	if err := d.in.tap(keysym.Rune('~')); err != nil {
-		t.Fatal(err)
-	}
-	p.await(t, mark, isKey("dead_grave"))
-	if p.count(mark, isKey("asciitilde")) != 0 {
-		t.Error("~ went as its keysym and typed itself")
-	}
-
-	// So a key of the fourth level goes not at all, and one of the third
+	// A key of the fourth level goes not at all, and one of the third
 	// types itself with AltGr.
-	mark = p.mark()
+	mark := p.mark()
 	for _, m := range []protocol.Control{
 		{T: protocol.ControlKey, Key: "~", Code: "Backquote", Down: true},
 		{T: protocol.ControlKey, Key: "~", Code: "Backquote"},
@@ -583,7 +582,11 @@ func TestAttachLayoutFourthLevel(t *testing.T) {
 	}
 
 	// Text of the third level types as keys, and text with one of the
-	// fourth is pasted.
+	// fourth is pasted, with the clipboard put back after.
+	if d.clip == nil {
+		t.Fatal("clipboard not granted")
+	}
+	probeCopies(t, p, d, "F3", "from-session")
 	mark = p.mark()
 	if err := d.Type(t.Context(), "`'"); err != nil {
 		t.Fatal(err)
@@ -593,12 +596,17 @@ func TestAttachLayoutFourthLevel(t *testing.T) {
 		t.Errorf("entered %q, want `' as keys", got)
 	}
 	mark = p.mark()
+	start := time.Now()
 	if err := d.Type(t.Context(), `a~^"b`); err != nil {
 		t.Fatal(err)
 	}
 	p.await(t, mark, func(e probeEvent) bool { return e.Ev == "paste" || e.Ev == "paste-error" })
 	if got := p.entered(mark); got != `a~^"b` {
 		t.Errorf("entered %q, want the text pasted whole", got)
+	}
+	awaitClipboard(t, p, d, "from-session", start)
+	if n := unhandled() - before; n != 0 {
+		t.Errorf("mutter logged %d unhandled levels", n)
 	}
 }
 
@@ -924,6 +932,7 @@ func probeCopies(t *testing.T, p *probe, d *Desktop, key, want string) {
 	for len(d.Clipboard()) > 0 {
 		<-d.Clipboard()
 	}
+	mark := p.mark()
 	tap(t, d, key)
 	select {
 	case text := <-d.Clipboard():
@@ -931,7 +940,7 @@ func probeCopies(t *testing.T, p *probe, d *Desktop, key, want string) {
 			t.Fatalf("desktop copied %q, want %q", text, want)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatalf("the probe's copy of %q never reached the agent", want)
+		t.Fatalf("the probe's copy of %q never reached the agent; the probe saw %+v", want, p.since(mark))
 	}
 	for len(d.ClipboardContent()) > 0 {
 		<-d.ClipboardContent()
