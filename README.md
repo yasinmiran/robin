@@ -28,7 +28,8 @@ That fetches a pinned zig toolchain and builds openh264 and libopus the first
 time (about half a minute, cached under `.cache/`), builds static agents for
 linux/amd64 and linux/arm64, and embeds both in `bin/robin`. `make dist`
 cross-builds the CLI for macOS, Linux and Windows on amd64 and arm64 into
-`dist/`. The CLI itself is pure Go; only the agents need the C toolchain, and
+`dist/`, from a release tag or with a `VERSION` named (see
+[Verifying a release](#verifying-a-release)). The CLI itself is pure Go; only the agents need the C toolchain, and
 the build downloads it, so there is nothing to install by hand on Linux or
 macOS.
 
@@ -849,7 +850,7 @@ make test-js  # the page's pure modules under node --test (make test runs them t
 make test-x   # capture, input, display, sound server and agent session tests against Xvfb and pulseaudio, in podman
 make test-wayland  # Wayland attach against headless GNOME 46, GNOME 49 and KDE Plasma 6.7, in podman
 make e2e      # the whole thing: podman host, Playwright and Chrome client
-make check    # all four
+make check    # all four, and make test-agents
 make cover    # all four again with coverage, merged, checked against coverage-baseline.txt
 make repro    # builds the agents, the CLI and dist twice, from two paths, and compares them
 ```
