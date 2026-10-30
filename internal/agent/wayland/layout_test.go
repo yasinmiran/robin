@@ -4,6 +4,7 @@ package wayland
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/godbus/dbus/v5"
 
@@ -124,13 +126,40 @@ func TestGnomeSourceWithoutRecentOnesToRead(t *testing.T) {
 	}
 }
 
+// testLayouts writes a us and a ru layout, as far as the tests need them,
+// into a directory of xkb data, which it returns: the tests run in the
+// Wayland test containers too, where the source tree is not.
+func testLayouts(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "symbols"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var latin strings.Builder
+	for i, r := range "abcdefghijklmnopqrstuvwxyz" {
+		fmt.Fprintf(&latin, "key <L%02d> { [ %c, %c ] };\n", i, r, unicode.ToUpper(r))
+	}
+	for name, symbols := range map[string]string{
+		"us": `default xkb_symbols "basic" { name[Group1] = "English (US)"; ` + latin.String() +
+			`key <TLDE> { [ grave, asciitilde ] }; key <AE01> { [ 1, exclam ] }; };`,
+		"ru": `default xkb_symbols "basic" { name[Group1] = "Russian";
+key <AE01> { [ 1, exclam ] }; key <AC01> { [ Cyrillic_ef, Cyrillic_EF ] }; key <AB10> { [ period, comma ] }; };`,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, "symbols", name), []byte(symbols), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
 // testKeyboard is a keyboard whose source is whatever *source holds, read
-// from the xkb package's test layouts.
-func testKeyboard(source *string, err *error) *keyboard {
+// from testLayouts.
+func testKeyboard(t *testing.T, source *string, err *error) *keyboard {
+	dir := testLayouts(t)
 	return &keyboard{
 		source: func() (string, error) { return *source, *err },
 		load: func(l, v string) (xkb.Layout, error) {
-			return xkb.Load([]string{"../xkb/testdata"}, l, v)
+			return xkb.Load([]string{dir}, l, v)
 		},
 		log: slog.New(slog.DiscardHandler),
 	}
@@ -138,7 +167,7 @@ func testKeyboard(source *string, err *error) *keyboard {
 
 func TestKeyboardFollowsTheSource(t *testing.T) {
 	source, serr := "ru", error(nil)
-	k := testKeyboard(&source, &serr)
+	k := testKeyboard(t, &source, &serr)
 	k.update()
 	if !k.lacks('o') || !k.lacks('A') || k.lacks('1') || k.lacks('!') || k.lacks(' ') {
 		t.Error("ru: lacks gets the ASCII the layout lacks or has wrong")
@@ -181,7 +210,7 @@ func TestKeyboardFollowsTheSource(t *testing.T) {
 
 func TestTypable(t *testing.T) {
 	source, serr := "ru", error(nil)
-	k := testKeyboard(&source, &serr)
+	k := testKeyboard(t, &source, &serr)
 	k.update()
 	for _, tc := range []struct {
 		d    *Desktop
@@ -205,7 +234,7 @@ func TestTypable(t *testing.T) {
 func TestFollowKeyboard(t *testing.T) {
 	conn := privateBus(t)
 	dir := fakeGsettings(t, "[('xkb', 'us'), ('xkb', 'ru')]", "@a(ss) []")
-	t.Setenv("XKB_CONFIG_ROOT", "../xkb/testdata")
+	t.Setenv("XKB_CONFIG_ROOT", testLayouts(t))
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	k := followKeyboard(newSignals(conn), slog.New(slog.DiscardHandler))
@@ -234,7 +263,7 @@ func TestFollowKeyboard(t *testing.T) {
 func TestFollowKeyboardWithoutABus(t *testing.T) {
 	conn := privateBus(t)
 	fakeGsettings(t, "[('xkb', 'ru')]", "@a(ss) []")
-	t.Setenv("XKB_CONFIG_ROOT", "../xkb/testdata")
+	t.Setenv("XKB_CONFIG_ROOT", testLayouts(t))
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	sigs := newSignals(conn)
