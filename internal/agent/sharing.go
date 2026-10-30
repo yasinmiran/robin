@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pion/interceptor"
 	"github.com/pion/rtp"
@@ -64,7 +65,12 @@ type guest struct {
 	// session let the guest go. session.mu guards both.
 	view *viewer
 	gone bool
+	// opened is when the guest's last page got its peer; session.mu guards it.
+	opened time.Time
 }
+
+// reopenWait is how soon after its last a guest's page may get a new peer.
+const reopenWait = time.Second
 
 // uidSet counts the guests of each uid connected now.
 type uidSet struct {
@@ -198,6 +204,15 @@ func (s *session) guestOffer(g *guest, sdp string) {
 	}
 	v := g.view
 	if v == nil {
+		// A page's peer costs the host a connection's worth of goroutines
+		// and buffers; a guest's CLI that churns them is held to one a
+		// second, more than any reload needs.
+		if time.Since(g.opened) < reopenWait {
+			s.mu.Unlock()
+			g.conn.Send(protocol.Message{Type: protocol.TypeError, Error: "a new page within a second of the last; try again"})
+			return
+		}
+		g.opened = time.Now()
 		var err error
 		if v, err = s.openViewer(g); err != nil {
 			s.mu.Unlock()
@@ -266,8 +281,13 @@ func (s *session) dropGuest(g *guest, why string) {
 	}
 	g.control.Store(false)
 	s.shared.uids.remove(g.uid)
-	g.conn.Send(protocol.Message{Type: protocol.TypeEnded, Error: why})
-	g.conn.Close()
+	// The farewell goes off this goroutine, which holds the input lock: a
+	// guest that stopped reading holds up nobody but itself, and only until
+	// its connection's write bound.
+	s.shared.wg.Go(func() {
+		g.conn.Send(protocol.Message{Type: protocol.TypeEnded, Error: why})
+		g.conn.Close()
+	})
 	s.log.Info("guest gone", "guest", g.id, "user", g.user, "why", why)
 	s.sendGuests()
 }

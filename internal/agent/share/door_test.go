@@ -344,3 +344,34 @@ func waitFor(t *testing.T, ok func() bool) {
 	}
 	t.Fatal("timed out")
 }
+
+// A guest that stops reading fails its connection within writeWait rather
+// than hold up whoever writes to it.
+func TestAGuestThatStopsReadingIsDropped(t *testing.T) {
+	defer func(w time.Duration) { writeWait = w }(writeWait)
+	writeWait = 200 * time.Millisecond
+	d, _ := openDoor(t, map[string]int{"me": os.Getuid()})
+	inv, _ := d.Invites().Invite("me")
+	c := dialDoor(t, d)
+	c.Write(joinLine(t, inv.Code))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	g, err := d.Next(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.Conn.Close()
+	big := protocol.Message{Type: protocol.TypeError, Error: strings.Repeat("x", 64<<10)}
+	start := time.Now()
+	for i := 0; ; i++ {
+		if err := g.Conn.Send(big); err != nil {
+			if !errors.Is(err, os.ErrDeadlineExceeded) {
+				t.Fatalf("send %d: %v, want the write bound", i, err)
+			}
+			break
+		}
+		if time.Since(start) > 5*time.Second {
+			t.Fatal("a guest that reads nothing took writes for 5 s")
+		}
+	}
+}

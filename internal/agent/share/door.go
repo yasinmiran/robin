@@ -25,6 +25,18 @@ const (
 	handoffWait = 2 * time.Second
 )
 
+// writeWait bounds one write to a guest: a guest that stops reading fails
+// its connection instead of holding up whoever writes to it.
+var writeWait = 10 * time.Second
+
+// boundedWriter writes to c within writeWait each time.
+type boundedWriter struct{ c net.Conn }
+
+func (w boundedWriter) Write(p []byte) (int, error) {
+	w.c.SetWriteDeadline(time.Now().Add(writeWait))
+	return w.c.Write(p)
+}
+
 // errNoGuests is what an admitted guest hears when the session takes no
 // guests just then: its owner is away, or it holds as many as it takes.
 var errNoGuests = errors.New("the session takes no guests now")
@@ -110,7 +122,7 @@ func (d *Door) admit(c net.Conn) {
 // join reads the guest's Join and redeems its code, then waits for the
 // session to take it.
 func (d *Door) join(c net.Conn, uid int) {
-	conn := protocol.NewConn(c, c, protocol.DefaultPingInterval, protocol.DefaultIdleTimeout)
+	conn := protocol.NewConn(c, boundedWriter{c}, protocol.DefaultPingInterval, protocol.DefaultIdleTimeout)
 	// protocol.Conn never closes its stream; the socket goes when it does.
 	go func() {
 		<-conn.Done()

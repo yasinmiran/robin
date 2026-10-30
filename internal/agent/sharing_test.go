@@ -686,3 +686,72 @@ func TestTheStreamRunsAtTheLowestTarget(t *testing.T) {
 		t.Error("tiles go to someone other than the owner's page")
 	}
 }
+
+// Removing a guest that reads nothing returns at once: the farewell waits
+// on its own goroutine, not under the input lock every page needs.
+func TestRemovingAGuestThatReadsNothingHoldsUpNobody(t *testing.T) {
+	s := guestSession(&fakeTypist{})
+	a, b := net.Pipe() // nobody reads b
+	conn := protocol.NewConn(a, a, 0, 0)
+	s.mu.Lock()
+	s.shared.seq++
+	g := &guest{id: "g1", user: "alice", uid: 1001, conn: conn}
+	s.shared.guests = append(s.shared.guests, g)
+	s.mu.Unlock()
+	s.shared.uids.add(g.uid)
+	done := make(chan struct{})
+	go func() {
+		s.inputMu.Lock()
+		s.applyGuest(protocol.Control{Guest: &protocol.GuestChange{ID: "g1", Action: protocol.GuestRemove}})
+		s.inputMu.Unlock()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the removal waited on a guest that reads nothing")
+	}
+	if s.findGuest("g1") != nil {
+		t.Error("the guest is still the session's")
+	}
+	// The farewell ends once the guest's end is gone.
+	a.Close()
+	b.Close()
+	s.endGuests()
+}
+
+// A guest's CLI that churns peers gets one a second.
+func TestAGuestGetsOnePeerASecond(t *testing.T) {
+	s := guestSession(&fakeTypist{})
+	endGuestsAtCleanup(t, s)
+	g, cli := addGuest(t, s, "alice", 1001)
+	offer := func() string {
+		b, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { b.Close() })
+		b.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly})
+		if _, err := b.CreateDataChannel(protocol.ControlChannel, nil); err != nil {
+			t.Fatal(err)
+		}
+		o, err := b.CreateOffer(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return o.SDP
+	}
+	cli.conn.Send(protocol.Message{Type: protocol.TypeOffer, SDP: offer()})
+	cli.next(t, protocol.TypeAnswer)
+	cli.conn.Send(protocol.Message{Type: protocol.TypeHangup})
+	cli.conn.Send(protocol.Message{Type: protocol.TypeOffer, SDP: offer()})
+	if m := cli.next(t, protocol.TypeError); !strings.Contains(m.Error, "within a second") {
+		t.Errorf("a second peer at once: %q", m.Error)
+	}
+	time.Sleep(reopenWait)
+	cli.conn.Send(protocol.Message{Type: protocol.TypeOffer, SDP: offer()})
+	cli.next(t, protocol.TypeAnswer)
+	if s.viewOf(g) == nil {
+		t.Error("the guest has no page after its second offer")
+	}
+}
