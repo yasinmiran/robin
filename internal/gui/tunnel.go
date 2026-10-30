@@ -38,6 +38,18 @@ const maxCheckBytes = 512
 // connection no longer counts.
 const maxPending = 16
 
+// maxSplices bounds the tunnel connections spliced at once. Each is an SSH
+// channel, and on Windows an ssh of its own that logs in, so a check
+// captured off the network and sent again on many connections must not
+// start a login for each. The browser keeps one connection per pair of
+// candidates, and a few across an ICE restart.
+const maxSplices = 8
+
+// maxSeenChecks bounds the transaction IDs the tunnel remembers for the
+// agent's current credentials, the oldest forgotten first. A browser sends
+// each check once over TCP, so an ID that comes again is a copy.
+const maxSeenChecks = 4096
+
 // A listener out of file descriptors is tried again after acceptRetryFirst,
 // doubling up to acceptRetryMax, so a moment without descriptors costs one
 // connection, not the tunnel.
@@ -59,17 +71,22 @@ type dialer interface{ Dial() (net.Conn, error) }
 // credentials sign, which only the page learns: anything else would get an
 // SSH channel and a connection to the agent's listener for the asking.
 // Where the kernel says who opened a connection, one that is not this
-// user's is closed before it waits for that check.
+// user's is closed before it waits for that check. A check passes once
+// for the credentials it was signed with, and at most maxSplices
+// connections are spliced at once.
 type tunnel struct {
 	ln         net.Listener
 	log        *slog.Logger
 	firstCheck time.Duration
 	selfOf     func(net.Conn) (bool, error) // tcpowner.PeerIsSelf
 
-	mu      sync.Mutex
-	fwd     dialer            // nil while there is none
-	creds   relay.Credentials // of the agent's last answer
-	pending []net.Conn        // still to send their check, oldest first
+	mu       sync.Mutex
+	fwd      dialer            // nil while there is none
+	creds    relay.Credentials // of the agent's last answer
+	pending  []net.Conn        // still to send their check, oldest first
+	splices  int               // spliced now
+	seen     map[[12]byte]bool // transaction IDs of checks passed with creds
+	seenFIFO [][12]byte        // the same, oldest first
 }
 
 // openTunnel sets the tunnel up for transport: none for Direct, and for
@@ -208,6 +225,7 @@ func (t *tunnel) answered(sdp string) {
 	}
 	t.mu.Lock()
 	t.creds = creds
+	t.seen, t.seenFIFO = nil, nil
 	t.mu.Unlock()
 }
 
@@ -255,6 +273,11 @@ func (t *tunnel) splice(c net.Conn) {
 		t.log.Debug("tunnel refused a connection", "from", c.RemoteAddr(), "err", err)
 		return
 	}
+	if why := t.admit(creds, first[2:]); why != "" {
+		t.log.Debug("tunnel refused a connection", "from", c.RemoteAddr(), "why", why)
+		return
+	}
+	defer t.release()
 	u, err := fwd.Dial()
 	if err != nil {
 		t.log.Warn("tunnel dial", "err", err)
@@ -268,6 +291,43 @@ func (t *tunnel) splice(c net.Conn) {
 	go func() { io.Copy(u, c); done <- struct{}{} }()
 	go func() { io.Copy(c, u); done <- struct{}{} }()
 	<-done
+}
+
+// admit takes a splice for check, a STUN message that creds admit, or says
+// why there is none: its transaction ID passed before, or maxSplices are
+// under way. A check of credentials replaced meanwhile is not counted.
+func (t *tunnel) admit(creds relay.Credentials, check []byte) string {
+	var id [12]byte
+	copy(id[:], check[8:20])
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.creds != creds {
+		return "credentials replaced"
+	}
+	if t.seen[id] {
+		return "a check seen before"
+	}
+	if t.splices >= maxSplices {
+		return "too many spliced at once"
+	}
+	if t.seen == nil {
+		t.seen = make(map[[12]byte]bool)
+	}
+	if len(t.seenFIFO) == maxSeenChecks {
+		delete(t.seen, t.seenFIFO[0])
+		t.seenFIFO = t.seenFIFO[1:]
+	}
+	t.seen[id] = true
+	t.seenFIFO = append(t.seenFIFO, id)
+	t.splices++
+	return ""
+}
+
+// release gives back the splice admit took.
+func (t *tunnel) release() {
+	t.mu.Lock()
+	t.splices--
+	t.mu.Unlock()
 }
 
 // firstMessage reads c's first RFC 4571 frame, length included, within

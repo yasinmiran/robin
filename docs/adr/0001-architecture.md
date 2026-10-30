@@ -1336,8 +1336,20 @@ every TCP listener a forward's ssh holds, in `/proc/net/tcp` and the
 process's descriptors, before and during a connection, and found the
 `-L` one. The cost of `-W` is a login per tunnel connection rather than one
 a session: silent with a key or an agent, a prompt with a password, and the
-browser opens one at each ICE start. Nothing here runs Windows; the tests
-take that path on Linux with a real ssh and sshd.
+browser opens one at each ICE start. The round 2 review priced that in:
+nothing capped the splices under way, and a signed check is good for the
+whole answer, so someone on the network path with an account here could
+send captured checks (the browser sends them for as long as the session
+runs) and start an ssh and a login for each, a prompt each on the user's
+console with a password. The tunnel now remembers the transaction IDs it
+spliced for the current answer (4096 at most, oldest forgotten) and
+refuses one again, since a browser sends each check once over TCP, and
+splices at most 8 connections at once, refusing past that: the browser
+keeps one per candidate pair and a few across an ICE restart. The
+regression test sends one check on two connections and distinct checks
+on 11, and counts the forward's dials: 2 and 12 before, 1 and 8 after.
+Nothing here runs Windows; the tests take that path on Linux with a real
+ssh and sshd.
 Once a forward's ssh `-L` has exited, its `Dial` refuses rather than
 connect to whatever listens there next. That ssh cannot clear the config's
 forwards: `ssh -G -o ClearAllForwardings=yes -L ...` shows the option drops

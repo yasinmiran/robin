@@ -355,6 +355,60 @@ func TestTunnelBoundsPendingConnections(t *testing.T) {
 	spliced(t, accepted, check)
 }
 
+// countingForward counts the connections asked of a forward: on Windows
+// each one is an ssh that logs in.
+type countingForward struct {
+	dialer
+	dials atomic.Int32
+}
+
+func (f *countingForward) Dial() (net.Conn, error) {
+	f.dials.Add(1)
+	return f.dialer.Dial()
+}
+
+// TestTunnelSplicesACheckOnce: a check captured off the network passes
+// the signature test however often it is sent, and each splice is an SSH
+// channel, or on Windows a login. The tunnel splices a transaction ID once
+// for the agent's credentials, and at most maxSplices connections at once.
+func TestTunnelSplicesACheckOnce(t *testing.T) {
+	inner, accepted := testForward(t)
+	go func() {
+		for range accepted { // the forward's ends stay open, as the agent's would
+		}
+	}()
+	fwd := &countingForward{dialer: inner}
+	ln := loopback(t)
+	tun := &tunnel{ln: ln, log: slog.New(slog.DiscardHandler), firstCheck: 5 * time.Second, fwd: fwd, selfOf: tcpowner.PeerIsSelf}
+	go tun.serve()
+	t.Cleanup(func() { ln.Close() })
+	tun.answered(iceAnswer("agentufrag", "agentpasswordagentpasswo"))
+	settled := func(want int32) {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Second)
+		for fwd.dials.Load() < want && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		time.Sleep(100 * time.Millisecond)
+		if got := fwd.dials.Load(); got != want {
+			t.Fatalf("the forward was dialled %d times, want %d", got, want)
+		}
+	}
+
+	check := framedCheck(t, "agentufrag:brws", "agentpasswordagentpasswo")
+	dialTunnel(t, tun, check)
+	settled(1)
+	refused(t, "the same check again", dialTunnel(t, tun, check))
+	settled(1)
+
+	// Checks of their own, as many as one could capture, still splice no
+	// more than maxSplices connections at once.
+	for range maxSplices + 3 {
+		dialTunnel(t, tun, framedCheck(t, "agentufrag:brws", "agentpasswordagentpasswo"))
+	}
+	settled(maxSplices)
+}
+
 // TestTunnelTrustsALookupThatKnowsThisUser: a kernel without the TCP
 // sock_diag handler answers ENOENT for every socket, the same error as for
 // a socket it does not have, and the tunnel would close the browser's

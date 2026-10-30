@@ -921,8 +921,11 @@ connection and closes one that is not yours at once, before it waits for
 anything, so another user cannot crowd your browser's connection out. At most 16
 connections wait for that check at once, and past that the oldest is
 closed, so connections that say nothing cannot run the CLI out of file
-descriptors either. Behind that port the SSH forward is a unix socket in a private
-directory, with ControlMaster or without, except on Windows, whose OpenSSH
+descriptors either. A check passes once for the answer it was signed for,
+and at most 8 connections are spliced at once, so a check copied off the
+network and sent again cannot open an SSH channel, or on Windows a login,
+for each copy. Behind that port the SSH forward is a unix socket in a
+private directory, with ControlMaster or without, except on Windows, whose OpenSSH
 forwards no unix sockets: there nothing listens behind the port, and each
 connection that passes the check gets an `ssh -W` of its own, so no other
 user can reach the forward or stand in for it. The forward's target
