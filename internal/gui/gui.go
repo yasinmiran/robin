@@ -69,6 +69,12 @@ type Options struct {
 	Resume string
 	New    bool
 
+	// Share names the accounts on the host invited to join the session as
+	// guests once it is up. Join is a guest's: the code of the invitation
+	// it joins with, in place of a desktop of its own.
+	Share []string
+	Join  string
+
 	Listen    string // page address, default 127.0.0.1:0
 	NoBrowser bool   // print the URL on stdout instead of opening a browser
 	Verbose   bool
@@ -101,6 +107,12 @@ func Run(ctx context.Context, o Options) (err error) {
 			err = printableError{err}
 		}
 	}()
+	if err := checkJoin(o); err != nil {
+		return err
+	}
+	if o.Join != "" {
+		return runGuest(ctx, o, log)
+	}
 	if err := checkPrivate(o); err != nil {
 		return err
 	}
@@ -177,6 +189,9 @@ func Run(ctx context.Context, o Options) (err error) {
 	for _, note := range deviceNotes(o.Dest, mic, camera) {
 		fmt.Fprintln(o.Stderr, note)
 	}
+	if err := invite(ctx, ag, o.Share, o.Dest, o.Stderr); err != nil {
+		return h.abandon(err, ag, ready, path)
+	}
 
 	t, err := openTunnel(ctx, h.m, ready.TunnelAddr, o.Transport, log)
 	if err != nil {
@@ -199,7 +214,7 @@ func Run(ctx context.Context, o Options) (err error) {
 		fmt.Fprintln(o.Stderr, note)
 	}
 
-	config := protocol.Config{ICEServers: iceServers(start.STUN), HiDPI: o.HiDPI, Keep: ready.Keep}
+	config := protocol.Config{ICEServers: iceServers(start.STUN), HiDPI: o.HiDPI, Keep: ready.Keep, Host: hostOf(o.Dest)}
 	config.Mic, config.Camera = offeredDevices(mic, camera)
 	b := newBridge(ag.conn, relay.New(relay.Policy{Transport: o.Transport, TunnelPort: t.Port()}), config, userMacros(o.Dest, o.Stderr), log)
 	b.answered = t.answered
@@ -733,7 +748,13 @@ func (a serveArgs) list(path string) []string {
 // ends Run's, and the session has to end over this connection then; stop
 // ends it.
 func startAgent(m *sshmux.Master, path string, args serveArgs, stderr io.Writer) (*agentProc, error) {
-	cmd := m.Command(context.Background(), sshmux.Quote(args.list(path)...))
+	return startCommand(m, sshmux.Quote(args.list(path)...), args.verbose, stderr)
+}
+
+// startCommand runs command, an agent proxy, over m; with verbose its
+// stderr is shown as the agent's log as well as kept for errors.
+func startCommand(m *sshmux.Master, command string, verbose bool, stderr io.Writer) (*agentProc, error) {
+	cmd := m.Command(context.Background(), command)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -743,7 +764,7 @@ func startAgent(m *sshmux.Master, path string, args serveArgs, stderr io.Writer)
 		return nil, err
 	}
 	logTail := &tail.Buffer{Max: 8 << 10}
-	if args.verbose {
+	if verbose {
 		cmd.Stderr = io.MultiWriter(logTail, prefixWriter(stderr, "agent: "))
 	} else {
 		cmd.Stderr = logTail
