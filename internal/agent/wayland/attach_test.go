@@ -330,6 +330,7 @@ func TestAttachStreamsAndDrives(t *testing.T) {
 			t.Errorf("the terminal pasted on %+v, want Ctrl+Shift+V", ev)
 		}
 		p.await(t, mark, func(e probeEvent) bool { return e.Ev == "paste" || e.Ev == "paste-error" })
+		t.Logf("pasted %v after the paste began", time.Since(start))
 		// A Ctrl+V after the paste would reach the terminal's program as ^V.
 		time.Sleep(pasteRead)
 		if got := p.entered(mark); got != "日本" {
@@ -398,29 +399,51 @@ func TestAttachStreamsAndDrives(t *testing.T) {
 	d.Close()
 	checkTornDown(t)
 
+	// The first paste of a session reads the clipboard from before it in
+	// text, HTML and PNG, and puts all of them back: the probe's rich copy,
+	// then one of text alone, whose owner has no HTML or PNG to give.
 	t.Run("text after a session", func(t *testing.T) {
-		d, _ := open(t, true)
-		defer func() {
+		for _, before := range []struct {
+			key, text string
+			rich      bool
+		}{{"F5", "rich-from-session", true}, {"F3", "from-session", false}} {
+			if !before.rich {
+				// The session before copies text alone as it ends.
+				d, _ := open(t, true)
+				probeCopies(t, p, d, before.key, before.text)
+				d.Close()
+				checkTornDown(t)
+			}
+			d, _ := open(t, true)
+			select {
+			case text := <-d.Clipboard():
+				t.Logf("the portal reported the clipboard from before the session: %q", text)
+			case <-time.After(time.Second):
+				t.Log("the portal did not report the clipboard from before the session")
+			}
+			mark := p.mark()
+			start := time.Now()
+			if err := d.paste(t.Context(), "日本"); err != nil {
+				t.Fatal(err)
+			}
+			took := time.Since(start)
+			p.await(t, mark, func(e probeEvent) bool { return e.Ev == "paste" || e.Ev == "paste-error" })
+			if got := p.entered(mark); got != "日本" {
+				t.Errorf("entered %q, want 日本", got)
+			}
+			// KWin never answers a read of a format the owner lacks, which
+			// costs that read its timeout; KWin types text as keys, though.
+			t.Logf("a paste after %s took %v", before.key, took)
+			if !d.anyKeysym && took > time.Second {
+				t.Errorf("a paste after %s took %v, reading what was there before", before.key, took)
+			}
+			awaitClipboard(t, p, d, before.text, start)
+			if before.rich {
+				awaitRich(t, p, d)
+			}
 			d.Close()
 			checkTornDown(t)
-		}()
-		select {
-		case text := <-d.Clipboard():
-			t.Logf("the portal reported the clipboard from before the session: %q", text)
-		case <-time.After(time.Second):
-			t.Log("the portal did not report the clipboard from before the session")
 		}
-		mark := p.mark()
-		start := time.Now()
-		if err := d.paste(t.Context(), "日本"); err != nil {
-			t.Fatal(err)
-		}
-		p.await(t, mark, func(e probeEvent) bool { return e.Ev == "paste" || e.Ev == "paste-error" })
-		if got := p.entered(mark); got != "日本" {
-			t.Errorf("entered %q, want 日本", got)
-		}
-		awaitClipboard(t, p, d, "rich-from-session", start)
-		awaitRich(t, p, d)
 	})
 }
 
@@ -468,6 +491,20 @@ func TestAttachLayout(t *testing.T) {
 		t.Error("Ctrl+C did not reach the probe as Ctrl and the C key")
 	}
 
+	// A Cyrillic key goes as its Unicode keysym, which is not the one the
+	// layout lists, and so types nothing: a known limit, measured here.
+	mark = p.mark()
+	for _, m := range []protocol.Control{
+		{T: protocol.ControlKey, Key: "ф", Code: "KeyA", Down: true},
+		{T: protocol.ControlKey, Key: "ф", Code: "KeyA"},
+		{T: protocol.ControlKey, Key: "Enter", Code: "Enter", Down: true},
+		{T: protocol.ControlKey, Key: "Enter", Code: "Enter"},
+	} {
+		send(t, d, m)
+	}
+	p.await(t, mark, func(e probeEvent) bool { return e.Ev == "key" && e.Keyval == "Return" })
+	t.Logf("a Cyrillic key typed %q", p.typed(mark))
+
 	// Text the layout has types as keys; the rest is pasted, with V by
 	// its key.
 	if d.clip == nil {
@@ -490,6 +527,44 @@ func TestAttachLayout(t *testing.T) {
 	p.await(t, mark, func(e probeEvent) bool { return e.Ev == "paste" || e.Ev == "paste-error" })
 	if got := p.entered(mark); got != "ok" {
 		t.Errorf("entered %q, want ok", got)
+	}
+	awaitClipboard(t, p, d, "from-session", start)
+}
+
+// TestAttachPutBackUnderReads has the probe read the clipboard every 5 ms
+// from 200 ms before each put-back is due to 200 ms after: GNOME 46's
+// xdg-desktop-portal once died when a read met the put-back's new offer.
+func TestAttachPutBackUnderReads(t *testing.T) {
+	needSession(t)
+	p := startProbe(t)
+	d, _ := open(t, true)
+	defer func() {
+		d.Close()
+		checkTornDown(t)
+	}()
+	if d.clip == nil {
+		t.Fatal("clipboard not granted")
+	}
+	probeCopies(t, p, d, "F3", "from-session")
+	var start time.Time
+	for i := range 5 {
+		start = time.Now()
+		if err := d.paste(t.Context(), "日本"); err != nil {
+			t.Fatalf("paste %d: %v", i, err)
+		}
+		due := start.Add(restoreAfter)
+		time.Sleep(time.Until(due.Add(-200 * time.Millisecond)))
+		mark := p.mark()
+		tap(t, d, "F8")
+		time.Sleep(time.Until(due.Add(200 * time.Millisecond)))
+		tap(t, d, "F8")
+		ev := p.await(t, mark, func(e probeEvent) bool { return e.Ev == "hammered" })
+		select {
+		case err := <-d.Done():
+			t.Fatalf("the desktop ended at put-back %d: %v", i, err)
+		default:
+		}
+		t.Logf("put-back %d: %d reads around it", i, ev.Reads)
 	}
 	awaitClipboard(t, p, d, "from-session", start)
 }
@@ -754,8 +829,8 @@ func tap(t *testing.T, d *Desktop, key string) {
 
 // awaitClipboard has the probe read the clipboard, with F2, until it reads
 // want, which a put-back brings restoreAfter after the paste that began at
-// pasted. It starts reading half a second after that: GNOME 46's portal
-// has crashed when a read met the put-back's new offer.
+// pasted. It starts reading half a second after that, once the put-back is
+// done; TestAttachPutBackUnderReads reads while it happens.
 func awaitClipboard(t *testing.T, p *probe, d *Desktop, want string, pasted time.Time) {
 	t.Helper()
 	time.Sleep(time.Until(pasted.Add(restoreAfter + 500*time.Millisecond)))
@@ -844,6 +919,7 @@ type probeEvent struct {
 	Keycode int  `json:"keycode"`
 	Ctrl    bool `json:"ctrl"`
 	Shift   bool `json:"shift"`
+	Reads   int  `json:"reads"`
 	// Clipboard formats and reads.
 	Mimes  []string `json:"mimes"`
 	Mime   string   `json:"mime"`

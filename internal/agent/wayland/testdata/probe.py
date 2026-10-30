@@ -8,7 +8,8 @@ F5 sets the clipboard to RICH_TEXT, RICH_HTML and RICH_PNG at once; F7 sets
 it to a type nothing reads. Ctrl+V prints the clipboard's text as pasted,
 unless F6 has made the window a terminal, which pastes with Ctrl+Shift+V
 and takes Ctrl+V as the character ^V, until F6 again. Any other key
-pressed with Ctrl held types nothing.
+pressed with Ctrl held types nothing. F8 starts reading the clipboard every
+5 ms, and F8 again stops and prints how many reads there were.
 Each key press, and each SIGUSR1, moves the picture on by one frame, the way
 a terminal echoes what is typed. --animate repaints the whole window 60
 times a second, for frame rate tests.
@@ -46,6 +47,8 @@ class Probe(Gtk.Application):
         super().__init__(application_id="dev.robin.Probe")
         self.frame = 0
         self.terminal = False
+        self.hammer = 0
+        self.hammered = 0
 
     def do_activate(self):
         win = Gtk.ApplicationWindow(application=self, title="probe")
@@ -135,12 +138,31 @@ class Probe(Gtk.Application):
         elif name == "F6":
             self.terminal = not self.terminal
             log(ev="mode", terminal=self.terminal)
+        elif name == "F8":
+            if self.hammer:
+                GLib.source_remove(self.hammer)
+                self.hammer = 0
+                log(ev="hammered", reads=self.hammered)
+            else:
+                self.hammered = 0
+                self.hammer = GLib.timeout_add(5, self.read_again)
         elif name == "F7":
             # Nothing the agent reads. Emptied instead, mutter's clipboard
             # manager would put back what it kept of the copy before.
             self.clipboard.set_content(Gdk.ContentProvider.new_for_bytes(
                 "application/x-robin-probe", GLib.Bytes.new(b"opaque")))
         return True
+
+    def read_again(self):
+        self.hammered += 1
+        self.clipboard.read_text_async(None, lambda cb, res: self.ignore(cb, res))
+        return True
+
+    def ignore(self, cb, res):
+        try:
+            cb.read_text_finish(res)
+        except GLib.Error:
+            pass
 
     def on_paste(self, cb, res):
         try:

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -39,6 +40,9 @@ type recorder struct {
 	pastesOn       string // "ctrl+v", "ctrl+shift+v" or ""
 	clip           map[string][]byte
 	read           func() // counts a read of the agent's offer
+	// fail makes calls of that method fail, once failAfter more have gone.
+	fail      string
+	failAfter int
 }
 
 // keyV is the evdev code of the V key.
@@ -51,6 +55,13 @@ func (r *recorder) CallWithContext(_ context.Context, method string, flags dbus.
 func (r *recorder) Call(method string, _ dbus.Flags, args ...any) *dbus.Call {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if strings.HasSuffix(method, "."+r.fail) {
+		if r.failAfter == 0 {
+			r.calls = append(r.calls, "failed "+r.fail)
+			return &dbus.Call{Err: errors.New("portal refused")}
+		}
+		r.failAfter--
+	}
 	switch method {
 	case ifaceRemote + ".NotifyKeyboardKeysym":
 		sym, down := args[2].(int32), args[3].(uint32) == 1
@@ -590,6 +601,67 @@ func TestTypeCancelled(t *testing.T) {
 		// The text goes back off the clipboard all the same.
 		if got := d.restoreNow(t, r); !slices.Equal(got, []string{"offer"}) || d.clip.offered().Text != "kept" {
 			t.Errorf("%s: put back with %q to %q, want kept", tc.name, got, d.clip.offered().Text)
+		}
+	}
+}
+
+// TestTypeWhenThePortalRefuses: a call the portal refuses ends Type with
+// its error, and text already on the clipboard still goes back.
+func TestTypeWhenThePortalRefuses(t *testing.T) {
+	source := "cy"
+	for _, tc := range []struct {
+		name      string
+		layout    bool
+		text      string
+		fail      string
+		failAfter int
+	}{
+		{"a keysym", false, "ok", "NotifyKeyboardKeysym", 0},
+		{"the offer", false, "日本", "SetSelection", 0},
+		{"Control", false, "日本", "NotifyKeyboardKeysym", 0},
+		{"Shift", false, "日本", "NotifyKeyboardKeysym", 1},
+		{"V", false, "日本", "NotifyKeyboardKeysym", 2},
+		{"letting go", false, "日本", "NotifyKeyboardKeysym", 4},
+		{"Ctrl+V", false, "日本", "NotifyKeyboardKeysym", 6},
+		{"V by its key", true, "ok", "NotifyKeyboardKeycode", 0},
+		{"V let go by its key", true, "ok", "NotifyKeyboardKeycode", 1},
+	} {
+		d, r := recorded(true, "kept")
+		if tc.layout {
+			d.in.lacks = cyrillic(t, &source).lacks
+		}
+		r.fail, r.failAfter = tc.fail, tc.failAfter
+		if err := d.Type(t.Context(), tc.text); err == nil || !strings.Contains(err.Error(), "portal refused") {
+			t.Errorf("%s: Type = %v, want the portal's refusal", tc.name, err)
+		}
+		if got := r.take(); !slices.Contains(got, "failed "+tc.fail) {
+			t.Errorf("%s: portal got %q", tc.name, got)
+		}
+		if tc.fail == "SetSelection" || tc.text == "ok" && !tc.layout {
+			continue
+		}
+		r.fail = ""
+		if got := d.restoreNow(t, r); !slices.Equal(got, []string{"offer"}) || d.clip.offered().Text != "kept" {
+			t.Errorf("%s: put back with %q to %q, want kept", tc.name, got, d.clip.offered().Text)
+		}
+	}
+}
+
+// TestKeysWhenThePortalRefuses: a key the layout lacks reports the
+// portal's refusal of any of its presses.
+func TestKeysWhenThePortalRefuses(t *testing.T) {
+	source := "cy"
+	for _, tc := range []struct {
+		fail      string
+		failAfter int
+	}{{"NotifyKeyboardKeysym", 0}, {"NotifyKeyboardKeycode", 0}, {"NotifyKeyboardKeycode", 1}, {"NotifyKeyboardKeysym", 1}} {
+		d, r := recorded(false, "")
+		d.in.lacks = cyrillic(t, &source).lacks
+		r.fail, r.failAfter = tc.fail, tc.failAfter
+		// A capital without Shift held: Shift, the key down and up, Shift.
+		err := d.Input(protocol.Control{T: protocol.ControlKey, Key: "A", Code: "KeyA", Down: true})
+		if err == nil || !strings.Contains(err.Error(), "portal refused") {
+			t.Errorf("%s after %d: key = %v, want the portal's refusal", tc.fail, tc.failAfter, err)
 		}
 	}
 }
