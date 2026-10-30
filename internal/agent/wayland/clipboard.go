@@ -63,6 +63,9 @@ type clipboard struct {
 	// is closed and replaced at each one, waking whoever waits for a read.
 	served    uint64
 	servedNow chan struct{}
+	// waiting, where a test sets it, runs each time readsAfter is about
+	// to wait for a read, so the test can time a read inside that wait.
+	waiting func()
 	// paste puts back what pastes of typed text replaced.
 	paste pasteRestore
 }
@@ -223,6 +226,9 @@ func (c *clipboard) readsAfter(ctx context.Context, n uint64, timeout <-chan tim
 		c.mu.Unlock()
 		if served > n {
 			return served, true, nil
+		}
+		if c.waiting != nil {
+			c.waiting()
 		}
 		select {
 		case <-next:

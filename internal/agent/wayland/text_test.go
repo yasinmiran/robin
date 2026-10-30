@@ -296,7 +296,8 @@ func TestTypePastesIntoATerminal(t *testing.T) {
 }
 
 // TestTypePasteWithoutAClipboardManager: with no manager to read the
-// offer first, the paste waits managerRead for one, then goes as before.
+// offer first, the paste waits managerRead for one, then presses
+// Ctrl+Shift+V and, with nothing read, Ctrl+V.
 func TestTypePasteWithoutAClipboardManager(t *testing.T) {
 	d, r := recorded(true, "kept")
 	r.managers = 0
@@ -318,11 +319,14 @@ func TestTypePasteWithoutAClipboardManager(t *testing.T) {
 func TestTypePasteAfterManyManagers(t *testing.T) {
 	d, r := recorded(true, "kept")
 	r.managers = 3
-	// The last manager reads after the others, though within managerQuiet.
-	go func() {
-		time.Sleep(managerQuiet / 2)
-		r.read()
-	}()
+	// A fourth manager reads after the others, while the paste waits for
+	// reads to stop.
+	var late sync.Once
+	d.clip.waiting = func() {
+		if d.clip.reads() == 3 {
+			late.Do(r.read)
+		}
+	}
 	if err := d.Type(t.Context(), "日本"); err != nil {
 		t.Fatal(err)
 	}
