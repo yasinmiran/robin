@@ -446,6 +446,16 @@ func (s *session) revoke(g *guest) {
 	}
 }
 
+// revokeGuests takes control from every guest; the caller holds s.inputMu.
+func (s *session) revokeGuests() {
+	s.mu.Lock()
+	gs := slices.Clone(s.shared.guests)
+	s.mu.Unlock()
+	for _, g := range gs {
+		s.revoke(g)
+	}
+}
+
 func (s *session) viewOf(g *guest) *viewer {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -498,18 +508,52 @@ func (s *session) sendShare(g *guest) {
 	}
 }
 
-// gated is a guest's microphone track as the microphone reads it: its
-// packets pass while the guest has control and are dropped otherwise.
+// errControlTaken ends a guest's turn at the microphone once its control
+// is taken.
+var errControlTaken = errors.New("the guest's control was taken")
+
+// gated is a guest's microphone track as the microphone reads it while the
+// guest has control, starting with first, the packet that found it had
+// control. The first packet to arrive without control ends the read with
+// errControlTaken, so the guest's Play gives the microphone up.
 type gated struct {
 	r       track.Reader
 	allowed func() bool
+	first   *rtp.Packet
+	attrs   interceptor.Attributes
 }
 
-func (g gated) ReadRTP() (*rtp.Packet, interceptor.Attributes, error) {
+func (g *gated) ReadRTP() (*rtp.Packet, interceptor.Attributes, error) {
+	if p := g.first; p != nil {
+		// The turn may have come after control went.
+		g.first = nil
+		if !g.allowed() {
+			return nil, nil, errControlTaken
+		}
+		return p, g.attrs, nil
+	}
+	p, a, err := g.r.ReadRTP()
+	if err == nil && !g.allowed() {
+		return nil, nil, errControlTaken
+	}
+	return p, a, err
+}
+
+// playGuestMic feeds the microphone from guest track r only while allowed
+// says the guest has control. Without control r is read and dropped and
+// the guest holds no turn at the microphone, whose tracks take turns: a
+// guest that only watches never keeps another page's from being heard.
+func (s *session) playGuestMic(r track.Reader, allowed func() bool) error {
 	for {
-		p, a, err := g.r.ReadRTP()
-		if err != nil || g.allowed() {
-			return p, a, err
+		p, a, err := r.ReadRTP()
+		if err != nil {
+			return err
+		}
+		if !allowed() {
+			continue
+		}
+		if err := s.mic.Play(&gated{r: r, allowed: allowed, first: p, attrs: a}); !errors.Is(err, errControlTaken) {
+			return err
 		}
 	}
 }

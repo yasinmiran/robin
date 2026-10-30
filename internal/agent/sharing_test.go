@@ -24,6 +24,7 @@ import (
 
 	"github.com/yasinmiran/robin/internal/agent/desktop"
 	"github.com/yasinmiran/robin/internal/agent/share"
+	"github.com/yasinmiran/robin/internal/agent/track"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
@@ -632,28 +633,41 @@ func waitUntil(t *testing.T, ok func() bool) {
 	t.Fatal("timed out")
 }
 
-func TestGatedDropsWhatArrivesWithoutControl(t *testing.T) {
-	var allowed atomic.Bool
+// A guest's microphone hears only what arrives while it has control, and
+// each spell without control ends its turn at the microphone.
+func TestAGuestsMicrophoneFollowsItsControl(t *testing.T) {
 	src := &packets{n: 6}
-	g := gated{r: src, allowed: func() bool {
-		allowed.Store(src.i%2 == 0) // every other packet arrives with control
-		return allowed.Load()
-	}}
-	var got []uint16
-	for {
-		p, _, err := g.ReadRTP()
-		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				t.Fatal(err)
-			}
-			break
-		}
-		got = append(got, p.SequenceNumber)
+	s := testSession(&fakeDesktop{})
+	mic := &seqMic{}
+	s.mic = mic
+	// Packets 3 and 4 arrive without control.
+	allowed := func() bool { return src.i != 3 && src.i != 4 }
+	if err := s.playGuestMic(src, allowed); !errors.Is(err, io.EOF) {
+		t.Fatal(err)
 	}
-	if !slices.Equal(got, []uint16{2, 4, 6}) {
-		t.Errorf("read %v, want the packets that came with control", got)
+	if !slices.Equal(mic.got, []uint16{1, 2, 5, 6}) || mic.plays != 2 {
+		t.Errorf("heard %v over %d turns, want the packets that came with control over 2", mic.got, mic.plays)
 	}
 }
+
+// seqMic records the sequence numbers it is given and how many turns.
+type seqMic struct {
+	got   []uint16
+	plays int
+}
+
+func (m *seqMic) Play(r track.Reader) error {
+	m.plays++
+	for {
+		p, _, err := r.ReadRTP()
+		if err != nil {
+			return err
+		}
+		m.got = append(m.got, p.SequenceNumber)
+	}
+}
+func (*seqMic) Where() string { return "" }
+func (*seqMic) Close() error  { return nil }
 
 // packets yields n packets numbered from 1, then EOF.
 type packets struct{ i, n int }

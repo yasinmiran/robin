@@ -144,7 +144,8 @@ func (s *session) currentPeer() (*peer.Peer, error) {
 	return v.peer, nil
 }
 
-// closePeer lets the owner's page go.
+// closePeer lets the owner's page go, and takes control from every guest:
+// no page of the owner's is left to take it back.
 func (s *session) closePeer() {
 	s.inputMu.Lock()
 	defer s.inputMu.Unlock()
@@ -155,6 +156,7 @@ func (s *session) closePeer() {
 	if v != nil {
 		s.closeViewer(v)
 	}
+	s.revokeGuests()
 }
 
 // ownerPeer is the owner page's peer, or nil.

@@ -119,11 +119,10 @@ func (s *session) track(v *viewer, tr *webrtc.TrackRemote, _ *webrtc.RTPReceiver
 	switch {
 	case tr.Kind() == webrtc.RTPCodecTypeAudio && s.mic != nil:
 		device = "microphone"
-		var r track.Reader = tr
+		play = func() error { return s.mic.Play(tr) }
 		if v != nil && v.guest != nil {
-			r = gated{r: tr, allowed: v.control}
+			play = func() error { return s.playGuestMic(tr, v.control) }
 		}
-		play = func() error { return s.mic.Play(r) }
 	case tr.Kind() == webrtc.RTPCodecTypeVideo && s.camera != nil && (v == nil || v.guest == nil):
 		device = "camera"
 		p, ssrc := s.peerOf(v), uint32(tr.SSRC())
