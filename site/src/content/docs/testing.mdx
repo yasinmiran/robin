@@ -7,10 +7,14 @@ order: 2
 
 ```sh
 make test          # unit and integration tests; the encoders against real openh264 and libopus on linux/amd64
+make test-js       # the page's pure modules under node --test (make test runs them too where node is installed)
 make test-x        # capture, input, display, sound server and agent session tests against Xvfb and pulseaudio, in podman
 make test-wayland  # Wayland attach against headless GNOME 46, GNOME 49 and KDE Plasma 6.7, in podman
 make e2e           # the whole thing: podman host, Playwright and Chrome client
-make check         # all four
+make test-agents   # builds the agents and scans them for anything of the builder
+make check         # test, test-agents, test-x, test-wayland and e2e
+make cover         # every suite again with coverage, merged, checked against coverage-baseline.txt
+make repro         # builds the agents, the CLI and dist twice, from two paths, and compares them
 ```
 
 Containers are rootless podman. Docker is not supported. `make test` alone runs anywhere Go does and skips what needs podman.
@@ -27,6 +31,21 @@ Containers are rootless podman. Docker is not supported. `make test` alone runs 
 go test ./internal/agent/peer -run Congestion
 ```
 
+`TestCongestionControlHoldsThroughAStillScreen` holds a shaped link still for 20 s (`ROBIN_FEED_WHILE_LIMITED=1` feeds congestion control as Pion would, to see it fail), and `TestCongestionControlProbesOnTheWayOut` narrows the link while the screen is still and checks that the motion after it finds the narrower link.
+
+**Video quality.** `make test` also streams a 15 s clip of a 1080p screen of small text, still and moving, through the agent's stream loop, peer and openh264 to a stand-in for Chrome's video receiver (`internal/agent/vqtest`), and fails if the browser would have had to ask for a keyframe. It also scrolls, sits still for 20 s with sound playing and scrolls again over a tight link (`TestVideoQualityAfterStill`), and fails when the first second after the still shows under a third of the settled frame rate or went out at under half the settled target. The longer matrix runs by hand:
+
+```sh
+ROBIN_VQ=1 go test -tags openh264 -run TestVideoQualityMatrix ./internal/agent/
+ROBIN_VQ=all go test -tags openh264 -run 'TestVideoQualityMatrix/^1440p$/tight/unpaced$' ./internal/agent/
+```
+
+`ROBIN_VQ=1`, in the toolchain `make test` sets up, runs the longer clip at 1080p and 1440p over three shaped links and prints, per stretch of the clip, what was sent, what was shown and how it scored against the screen. `ROBIN_VQ=all` adds the variants that put back each earlier policy, and the `vaapi` variant, which streams through the host's VA-API encoder where one works; `-run` picks cells by size, link and variant.
+
+**Bulk transfers** run between two Pion peers in one process, both ways, along with the ones that must fail: oversized, corrupt, truncated, refused and cancelled, including a cancel while the sender waits for credit, and a sink that stops taking chunks while control messages cross beside it, which must arrive at once (`go test ./internal/agent/peer -run Bulk`). Uploads have units of their own in `internal/agent/files`: every name and collision rule, a symlink in the way, a full disk, a disk that stops, cancel and the end of a session, and the offer socket's checks.
+
+**The page.** `go test ./internal/web` runs the page's DOM-free modules under `node --test`, and, with the browser smoke test's dependencies installed, sends bulk transfers both ways between Chrome and the agent's own peer. It also drives an input method in desktop Chrome and taps, a long press, a two-finger scroll, a pinch and the soft keyboard in Chrome as a phone, and checks what the page sends for each.
+
 **Hardware encoders** are tested against stand-in tools everywhere, and against the real GPU wherever `make test` runs on a host that has one along with a tool to drive it; a GPU with neither ffmpeg nor a GStreamer encoder plugin is skipped. Every route the host offers must produce a Baseline keyframe first, P slices after, a keyframe on request and the target bitrate on noise, and ffmpeg, where it is installed, must decode the result. Two environment variables change that:
 
 - `ROBIN_HWENC_REQUIRE=vaapi` (or `nvenc`) makes a missing route fail the run instead of skipping it.
@@ -34,7 +53,9 @@ go test ./internal/agent/peer -run Congestion
 
 ## `make test-x`
 
-Builds the X-dependent tests of the agent, the display and the X11 packages, plus the sound server tests, and runs them in a container with Xvfb and pulseaudio. These cover capture, input, resize, the clipboard, compositors and DAMAGE, the private sound server, and whole agent sessions, including that an attached display's keymap is byte-identical afterwards and that the private sound server goes with an agent killed by SIGKILL.
+Builds the X-dependent tests of the agent, the display and the X11 packages, plus the sound server tests, and runs them in a container with Xvfb and pulseaudio. These cover capture, input, resize, the clipboard, compositors and DAMAGE, the private sound server, and whole agent sessions, including that an attached display's keymap is byte-identical afterwards and that the private sound server goes with an agent killed by SIGKILL. Uploads, offers and the rich clipboard run again through a whole agent session, with the X11 targets and INCR both ways against `xclip`, and so does the microphone, on a spawned desktop's pulseaudio and on a PulseAudio of the user's own, where a dead agent's leftovers must be swept.
+
+The private session is tested here against real servers and nowhere near the workstation's own screen or speakers. Xvfb keeps a 256-entry gamma ramp per CRTC and hands back what was set, so the curtain has to zero every ramp, darken it again after a stand-in for night light sets a new one, and on lifting put that newest ramp back. The silent room runs against a pulseaudio in the user's place: a tone played on the desktop must reach the silent output's monitor while the room's own output hears nothing at all. Then an agent with both switched on is killed with SIGKILL, and its keeper alone has to light the screens, remove the silent output and move the program back.
 
 The container also has a second account, and its root runs a copy of the test binary as that account. That user is kept from a session's `ctl.sock` and `files.sock` by the 0700 run directory and, with the directory opened up, by the peer credential check, before a byte it sent is read. Its `robin-agent end`, aimed at another user's kept session, leaves the session running, and the owner's end takes no process of that account's for a daemon, whatever its command line. Arguments go to every test binary:
 
@@ -52,7 +73,7 @@ Boots three desktops, each in its own container with a virtual monitor, PipeWire
 | GNOME 49 | mutter 49, xdg-desktop-portal-gnome | Fedora 43 |
 | KDE Plasma 6.7 | kwin_wayland 6.7, xdg-desktop-portal-kde | Fedora 43 |
 
-Nobody sits at those screens, so the harness answers the consent dialog itself: through mutter's own remote desktop interface on GNOME, and by pressing Approve through the accessibility bus on KDE. Only the tests use those paths. The suite checks that the first session asks and the second restores without asking, that frames arrive and change, pointer, keys and held-key repeat, the clipboard both ways, view-only grants (GNOME only, since KDE has none), and that no `gst-launch-1.0` or portal session outlives the agent whether it closes or is killed. A tone played into each session's PipeWire must come out of the agent's capture through `pipewire-pulse`.
+Nobody sits at those screens, so the harness answers the consent dialog itself: through mutter's own remote desktop interface on GNOME, and by pressing Approve through the accessibility bus on KDE. Only the tests use those paths. The suite checks that the first session asks and the second restores without asking, that frames arrive and change, pointer, keys and held-key repeat, the clipboard both ways, view-only grants (GNOME only, since KDE has none), and that no `gst-launch-1.0` or portal session outlives the agent whether it closes or is killed. A tone played into each session's PipeWire must come out of the agent's capture through `pipewire-pulse`, and the other way, a tone the browser's microphone sends must be recorded from the agent's PipeWire source, and pictures sent as the camera must be read from its node, with both nodes gone when the agent closes or is killed. The silent room and the keeper's SIGKILL test run again against each desktop's PipeWire.
 
 KWin screencasts only when it composites with OpenGL, so the KDE container borrows the host's GPU render node. On a machine without one it is skipped, with a line saying SKIPPED. `WLTEST_DESKTOPS` picks fewer desktops:
 
@@ -69,15 +90,21 @@ A real browser, Google Chrome in a Playwright container, runs the real CLI again
 | `direct` | open | the session comes up on UDP |
 | `blocked` | UDP dropped before the CLI starts | ICE-TCP through the SSH forward carries the whole session |
 | `restart` | open, then UDP dropped mid-session | the page notices, restarts ICE and recovers onto TCP, typically in about 3 s, and input still works |
+| `resume` | open, SSH cut mid-session | the page says Reconnecting, the CLI redials and resumes the same daemon, Xvfb and xterm, and typing works again |
+| `rejoin` | open | the CLI is killed outright, the desktop stays and `robin ls` lists it, a `robin gui --mic` is refused for a desktop that started without a microphone, a new `robin gui` resumes it, Disconnect, keep desktop leaves it, and `robin end` tears everything down |
 | `attach` | open | `--attach auto` finds and streams a two-monitor X11 desktop the test user already has running, switches monitors, and leaves the desktop as it was |
 | `wayland` | open, GNOME Wayland host | `--attach auto` finds the GNOME session, the consent dialog is answered once, and a second run restores without it |
 | `firefox` | open | the direct scenario in Playwright's Firefox with the OpenH264 plugin |
 | `webkit` | open | the direct scenario in Playwright's WebKit, Safari's WebRTC stack, minus the checks that need a rendered picture |
+| `nomux` | UDP dropped before the CLI starts | the `blocked` checks with `--ssh-mux=false`, the way the CLI runs on Windows: no ControlMaster, no ssh outlives the CLI, and Ctrl+C ends the session with no reconnect and no end command over a fresh login |
+| `touch` | open | Chrome as a touch screen: taps and a pinch-zoomed tap put the pointer within 2 px of the pixel under the finger, two fingers scroll the xterm back, and the soft keyboard types a command that runs |
 | `systemd` | open, a host that boots systemd | where logind kills what a login started (`KillUserProcesses=yes`), the kept session's daemon runs as a `systemd-run --user` unit, outlives the CLI, and is listed, resumed and ended in that unit |
 
-The four X11 scenarios (`direct`, `blocked`, `restart` and `attach`) and `firefox` check, in order: decoded frames that are not black and that change after the host retitles the xterm; typing through the video that runs a command in the remote shell; four keystrokes after 20 s of a still screen, each on screen within 400 ms; pointer position within 2 px; the remote cursor image; the clipboard both ways; resize to a 1000x700 viewport; sound played on the host heard once the speaker is on; which transport ICE picked; and teardown. Teardown means SIGINT makes the CLI exit 0 within 10 s, no Xvfb, agent, openbox, xterm or pulseaudio is left running as the test user, the run directory is gone, and stdout held nothing but the URL. In `attach`, the desktop's processes, size, monitors, autorepeat and keymaps must match what was saved before the CLI ran. `webkit` skips the checks that need a rendered picture (frames, typing through a click, latency, pointer and cursor), and instead reads decoded frames from WebRTC stats and types into an xterm focused from the host.
+The four X11 scenarios (`direct`, `blocked`, `restart` and `attach`) and `firefox` check, in order: decoded frames that are not black and that change after the host retitles the xterm; typing through the video that runs a command in the remote shell; four keystrokes after 20 s of a still screen, each on screen within 400 ms; pointer position within 2 px; the remote cursor image; the clipboard both ways; resize to a 1000x700 viewport; sound played on the host heard once the speaker is on; which transport ICE picked; and teardown. Teardown means SIGINT makes the CLI exit 0 within 10 s, no Xvfb, agent, openbox, xterm or pulseaudio is left running as the test user, the run directory is gone, and stdout held nothing but the URL. In `attach`, the desktop's processes, size, monitors, autorepeat, keymaps, gamma and sinks must match what was saved before the CLI ran. There the curtain must black out the room's screen while the page's picture stays lit, and the silent room must keep the room's speakers quiet while the page still hears the noise; then, kept with `--keep`, a curtain switch clicked while the page waits out an SSH cut must reach the host once it is back, and `--id --curtain --silent` must darken and quiet the room before the page connects.
 
-The `wayland` scenario runs the same CLI and Chrome against the headless GNOME session from `make test-wayland`, over sshd. Chrome has to show the monitor with the remote pointer drawn in, land motion, clicks and typed text in a probe window, pass the clipboard both ways through the portal, play the session's PipeWire sound, and meet the same 400 ms latency bound. SIGINT must leave no agent, `gst-launch-1.0` or portal session behind and a 0600 restore token, and a second run must start without asking.
+`direct` and `attach` also upload files from the status tab and by a drop, twice under one name so the second lands as `(1)`, offer one from the host under a name full of markup that the page must show as text and save only on a click, paste an image and HTML into the host's clipboard and back, and type while a 256 MiB upload moves, within the same 400 ms. They check sharp text too: once the screen is still, the page's frame composed with its tiles matches `xwd -root` on the host in every pixel, where the video alone does not, and actual size lays the attached monitor out pixel for pixel. `direct` then records a macro, checks the CLI wrote `macros.json` 0600 in a 0700 directory, plays it after a reload, sends Ctrl+W from the Keys row and, in Chrome, types the local clipboard with Type clipboard. `webkit` skips the checks that need a rendered picture (frames, typing through a click, latency, pointer and cursor), and instead reads decoded frames from WebRTC stats and types into an xterm focused from the host.
+
+The `wayland` scenario runs the same CLI and Chrome against the headless GNOME session from `make test-wayland`, over sshd. Chrome has to show the monitor with the remote pointer drawn in, land motion, clicks and typed text in a probe window, pass the clipboard both ways through the portal, play the session's PipeWire sound, and meet the same 400 ms latency bound. In `direct` and `wayland` the CLI offers the microphone and camera, and Chrome plays a tone and a picture of one colour as its fake devices: off, the host hears and sees nothing; switched on, the host's source carries the tone and its camera the colour; switched off, silence and black again. SIGINT must leave no agent, `gst-launch-1.0` or portal session behind and a 0600 restore token, and a second run must start without asking.
 
 ### Running it
 
@@ -96,3 +123,15 @@ ROBIN_E2E_ID=robin-e2e-2 ROBIN_E2E_SUBNET=10.89.43.0/24 ROBIN_E2E_HOST_IP=10.89.
 ```
 
 `e2e/README.md` in the repository lists every check of every scenario.
+
+## `make cover`
+
+`make cover` runs every suite with coverage and merges it in `.cover/`: the unit tests (the cgo-tagged encoder packages included), the test-x and test-wayland binaries, and e2e with the CLI and the agent built with `-cover`. Every Go suite instruments the whole module, so a session test in `internal/agent` counts for `x11` and `peer` too. It prints statement coverage per file and per package (`summary.txt`, with `merged.out` and `cover.html` beside it), and line coverage per script of the page (`page.txt`), from Chrome in e2e and from `make test-js`. It fails when a package falls more than 0.5 points below its line in `coverage-baseline.txt`. `make cover-unit cover-report` gives a quick look without containers.
+
+## `make repro`
+
+`make repro` builds the agents, the CLI and `dist/` twice, from the checkout and from a copy outside any repository, and fails on the first byte that differs. [Verifying a release](/verifying-a-release) says what it pins and how a third party checks a release with it.
+
+## The docs site
+
+The docs website in `site/` builds and tests apart from these, with Node and npm: Vitest for its components, a link checker over the built pages and a Playwright smoke test in Chrome. See `site/README.md` in the repository.
