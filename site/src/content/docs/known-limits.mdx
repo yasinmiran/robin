@@ -25,7 +25,8 @@ These are the current limits of the shipped tool. Some of them have planned work
 ## Attaching to Wayland
 
 - Someone at the host's screen has to approve the first session. Attaching works through the portal's remote desktop interface, which GNOME and KDE Plasma have and wlroots compositors such as Sway do not.
-- Characters only type if the host's keyboard layout has them. The compositor drops any other keysym, and there is no spare keycode to bind one to as on X11. Paste such text through the clipboard instead.
+- On GNOME, a key types its own character only if the host's keyboard layout has it: mutter drops any other keysym, and there is no spare keycode to bind one to as on X11. An ASCII key the layout lacks types what the layout has on that key, as a keyboard plugged into the host would; any other character the layout lacks types nothing, Cyrillic from a Russian keyboard on a Russian host included.
+- On GNOME, text the layout lacks is pasted with Ctrl+Shift+V, then Ctrl+V if nothing read the clipboard. A program that does something else on Ctrl+Shift+V does that first (LibreOffice opens Paste Special), and a clipboard manager on the host keeps the pasted text in its history.
 - GNOME drops the first key event of each remote session, and now and then the first pointer event. The agent spends both on input that does nothing, so you should not notice, but it is why mutter logs `No keycode found for keyval ffffff` when a session starts.
 - An attached Wayland desktop keeps its own size and shows one monitor. A screen larger than `--max-size` is scaled down, and a scaled (HiDPI) screen streams at its logical size, so text is softer than on the host.
 - The pointer is drawn into the video, so it moves at the video's pace, a round trip behind your hand; the browser hides its own pointer over the picture.

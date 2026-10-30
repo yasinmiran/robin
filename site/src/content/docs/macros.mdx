@@ -13,8 +13,8 @@ There are no Ctrl+Alt+F keys. On an attached desktop they would switch the host'
 
 Type clipboard leads the Macros row. It reads this computer's clipboard when you click it and types the text on the desktop as keys, up to 16 KiB, for prompts that take no paste: a lock screen, a VM console, a password dialog. The browser has to hand the clipboard over: Chrome asks once for permission, and Firefox and Safari show a Paste button of their own at each click.
 
-<Callout type="warning" title="Wayland and text outside ASCII.">
-On a Wayland desktop only ASCII goes as keys. Text with any other character, from Type clipboard or from a macro, arrives as a paste through the desktop's clipboard, where any program there can read it for about a second and a clipboard manager may keep it in its history. Where a prompt takes no paste, such as a lock screen, nothing arrives.
+<Callout type="warning" title="GNOME and text its layout lacks.">
+On a GNOME Wayland desktop only ASCII the host's keyboard layout has goes as keys. Text with any other character, from Type clipboard or from a macro, arrives as a paste through the desktop's clipboard, where any program there can read it for about a second and a clipboard manager may keep it in its history. Where a prompt takes no paste, such as a lock screen, nothing arrives. KDE Plasma types every character as a key.
 </Callout>
 
 ## Your own macros
