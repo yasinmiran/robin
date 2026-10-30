@@ -1,0 +1,53 @@
+---
+title: A private session
+description: Keeping an attached desktop's own screen dark and its speakers quiet with the curtain and the silent room, how each works, and what neither does.
+section: Use
+order: 5
+---
+
+```sh
+robin gui --attach auto --curtain --silent workstation
+```
+
+An attached desktop shows everything you do to whoever sits in front of it, and plays its sound through their speakers. `--curtain` blacks out the screen at the host and `--silent` keeps its speakers quiet, while the page still shows the picture and plays the sound.
+
+Both are off unless you ask, and the status tab has a switch for each that works mid-session. When you attach without them, the CLI says the room can see and hear you and names the two flags. A switch clicked while the page reconnects waits, busy, and goes to the host once the page is back. `robin gui --id <id> --curtain` turns the curtain on as it resumes a desktop kept with `--keep`, and fails with the reason, the desktop still kept, when it cannot. A desktop Robin starts has nobody in front of it, so there the flags are refused.
+
+<Callout type="warning" title="The curtain is no lock.">
+The keyboard and mouse at the host keep working, so someone there can still type into your session, only blind. Whatever ends the session, a dropped connection included, lifts the curtain and leaves the desktop unlocked in front of whoever is there: Robin does not lock it for you.
+</Callout>
+
+## The curtain
+
+On X11 the curtain sets the gamma ramp of every screen to zero: gamma is applied on the way to the monitor, after the picture the agent captures. On GNOME under Wayland it does the same through mutter. KDE Plasma has no way for a program to set gamma, so there the switch is missing and `--curtain` fails with the reason.
+
+Every screen needs a ramp a program can set. One without (some USB and DisplayLink monitors, virtual GPUs) would stay lit, so there the switch is missing too, and the reason names the screen. Night light and colour profiles set those ramps as well, so the curtain checks once a second and darkens again, and lifting it restores whichever ramp was set last. A screen it finds lit and cannot darken, such as a monitor without a ramp plugged in meanwhile, shows as an error under the switch, which stays on for the screens it does cover.
+
+On GNOME the curtain also blacks out the indicator that says the screen is being shared, which leaves the black screen itself as the only sign.
+
+## The silent room
+
+The silent room gives the desktop's sound server one more output, listed as Robin silent room in its sound settings while the room is silent, and moves every program's sound into it the moment the program starts to play. The session records that output, so it hears every program, including the ones that were playing somewhere other than the default output. The default output itself is never changed.
+
+Under PipeWire the new output belongs to a `pw-record` process (PipeWire's tools, `pipewire-bin` on Debian and Ubuntu, `pipewire-utils` on Fedora) when the host has it, and goes away with that process; otherwise it is a PulseAudio `module-null-sink`, which works through `pipewire-pulse` too. Switching it off or ending the session moves each program back to the output it was on.
+
+A program that asks its sound server never to move its stream goes on playing at the host, and the switch names it until it stops. Sound already in another session's silent output stays there.
+
+## When the session ends
+
+Ending the session for any reason, Ctrl+C, a dropped connection or the idle timeout among them, lifts the curtain and gives the speakers back. A desktop you attach to with `--keep` stays dark and quiet while the host keeps it for you, until it ends. The screen comes back unlocked, with whatever you left open on it.
+
+Before it changes anything, the agent hands a child of its own, `robin-agent keeper`, what would undo the change. When the agent ends normally it undoes everything itself and the keeper exits with nothing to do; when the agent is killed, the keeper gives the room back its screens and speakers.
+
+### If both are killed
+
+A keeper killed along with the agent undoes nothing. Then a module-made silent output stays until it is unloaded (`pactl list short modules | grep robin_silent`, then `pactl unload-module` with its number), and the screens stay black until something sets their gamma. On X11 that is `xrandr --output NAME --gamma 1:1:1 --brightness 1`; on GNOME under Wayland, switching Night Light on and off, or logging out. The person at the desk would be typing blind, so do it from another machine over SSH or from a text console.
+
+## Limits
+
+- The curtain is tested on Xvfb and against a stand-in for mutter, never on a real screen. Some hardware may draw the pointer on a plane its gamma does not cover, leaving the pointer visible on the black screen; night light or a monitor plugged in shows for up to a second before the curtain darkens it again; and GNOME on real hardware is unverified.
+- No curtain on KDE Plasma or wlroots compositors, which give programs no way to set gamma.
+- A program that starts playing while the room is silent plays in the room until it is moved. In the tests that took 80 to 180 ms and none of the sound reached the room's output, but a program that is loud from its first buffer may be heard for that long.
+- A program that stops playing while the room is silent is remembered by PulseAudio, and by WirePlumber 0.4, as playing on the silent output. It plays on the default output next time, as before, but an output chosen for it earlier is forgotten.
+
+The full list is on [Known limits](/known-limits).
