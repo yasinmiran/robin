@@ -41,16 +41,20 @@ const needs = [
     term: "The host",
     text: "Linux on x86_64 or arm64 and an SSH login. For a new desktop, Xvfb and a window manager; to attach, only the desktop.",
   },
-  { term: "Your machine", text: "macOS or Linux with OpenSSH, and a browser that decodes H.264 in WebRTC." },
+  {
+    term: "Your machine",
+    text: "macOS, Linux, Windows or Android in Termux, with OpenSSH and a browser that decodes H.264 in WebRTC.",
+  },
   {
     term: "Afterwards",
-    text: "When the SSH channel closes, the agent stops everything it started and removes its run directory. Only the agent binary stays, cached for the next session, plus the restore token if you approved a Wayland share.",
+    text: "A desktop Robin started waits on the host for a dropped connection to come back. When the session ends, the agent stops everything it started and removes its run directory. Only the agent binary stays, cached for the next session, plus the restore token if you approved a Wayland share.",
   },
 ];
 
 const runs = [
   ["a new desktop on build-box", "robin gui alice@build-box"],
   ["the desktop you are logged in to there", "robin gui --attach auto workstation"],
+  ["again later: pick the desktop up where you left it", "robin gui alice@build-box"],
   ["anything after -- goes to ssh", "robin gui build-box -- -p 2222 -i ~/.ssh/other_key"],
   ["print the URL instead of opening a browser", "robin gui --no-browser lab-node"],
 ];
