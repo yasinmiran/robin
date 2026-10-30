@@ -25,9 +25,12 @@ type viewer struct {
 	cursorsShown map[uint32]bool
 }
 
+// owner reports whether v is the owner's page.
+func (v *viewer) owner() bool { return v.guest == nil }
+
 // control reports whether what the page sends may drive the desktop: the
 // owner's always does, a guest's once the owner gave it control.
-func (v *viewer) control() bool { return v.guest == nil || v.guest.control.Load() }
+func (v *viewer) control() bool { return v.owner() || v.guest.control.Load() }
 
 // openViewer makes the peer of a page's first offer: the owner's page for
 // a nil g, else guest g's. A guest's peer takes no camera, which stays the
@@ -83,7 +86,7 @@ func (s *session) opened(v *viewer) {
 	if v.control() {
 		s.resendOffers(v)
 	}
-	if v.guest == nil {
+	if v.owner() {
 		s.sendPrivate()
 		s.sendGuests()
 		return
@@ -109,7 +112,7 @@ func (s *session) controlFrom(v *viewer) func(protocol.Control) {
 func (s *session) live(v *viewer) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if v.guest == nil {
+	if v.owner() {
 		return s.owner == v
 	}
 	return v.guest.view == v
@@ -198,14 +201,6 @@ func (s *session) controlling() []*viewer {
 	return vs
 }
 
-// peerOf is v's peer; a nil v is the owner's page.
-func (s *session) peerOf(v *viewer) *peer.Peer {
-	if v == nil {
-		return s.ownerPeer()
-	}
-	return v.peer
-}
-
 // errNoControl refuses what a guest without control sends.
 var errNoControl = errors.New("the owner has not given you control of this desktop")
 
@@ -216,21 +211,15 @@ func (s *session) bulkFrom(v *viewer, h protocol.Bulk) (peer.BulkSink, error) {
 	if !v.control() {
 		return nil, errNoControl
 	}
-	sink, err := s.bulk(h)
+	sink, err := s.bulk(v, h)
 	if err != nil {
 		return nil, err
 	}
-	if a, ok := sink.(answersSender); ok {
-		a.sentBy(v)
-	}
-	if v.guest == nil {
+	if v.owner() {
 		return sink, nil
 	}
 	return &controlledSink{BulkSink: sink, s: s, v: v}, nil
 }
-
-// answersSender is a sink that tells the page that sent it how it went.
-type answersSender interface{ sentBy(*viewer) }
 
 // controlledSink is a guest's transfer, which lands only while the guest
 // has control and is still the session's.

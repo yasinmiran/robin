@@ -179,7 +179,7 @@ func TestOffersSettleOnDecline(t *testing.T) {
 		}
 	}
 	// Without a browser a fetch does nothing, and the offer stands.
-	s.fetchOffer(nil, protocol.Control{T: protocol.ControlFileFetch, File: &protocol.File{ID: offers[0].info.ID}})
+	s.fetchOffer(ownerPage(t, s), protocol.Control{T: protocol.ControlFileFetch, File: &protocol.File{ID: offers[0].info.ID}})
 	for _, v := range s.viewers() {
 		s.resendOffers(v)
 	}
@@ -245,7 +245,7 @@ func TestViewOnlyTakesNoUploads(t *testing.T) {
 	if names := dirNames(t, s.files.inbox.Dir()); len(names) != 0 {
 		t.Errorf("Downloads holds %q", names)
 	}
-	if _, err := s.acceptUpload(protocol.Bulk{Kind: protocol.BulkFile, Name: "x", Size: 1}); err == nil {
+	if _, err := s.acceptUpload(ownerPage(t, s), protocol.Bulk{Kind: protocol.BulkFile, Name: "x", Size: 1}); err == nil {
 		t.Error("a view-only session took an upload")
 	}
 }
@@ -265,7 +265,8 @@ func TestOffersEndWithTheSession(t *testing.T) {
 
 func TestUploadThroughTheSession(t *testing.T) {
 	s, _, _ := sharedSession(t, &fakeDesktop{})
-	sink, err := s.acceptUpload(protocol.Bulk{T: protocol.BulkHeader, Kind: protocol.BulkFile, ID: "u1", Name: "notes.txt", Size: 5})
+	owner := ownerPage(t, s)
+	sink, err := s.acceptUpload(owner, protocol.Bulk{T: protocol.BulkHeader, Kind: protocol.BulkFile, ID: "u1", Name: "notes.txt", Size: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,10 +278,10 @@ func TestUploadThroughTheSession(t *testing.T) {
 	if string(got) != "hello" {
 		t.Errorf("Downloads/notes.txt = %q, %v", got, err)
 	}
-	if _, err := s.acceptUpload(protocol.Bulk{Name: "../x", Size: 1}); !errors.Is(err, files.ErrName) {
+	if _, err := s.acceptUpload(owner, protocol.Bulk{Name: "../x", Size: 1}); !errors.Is(err, files.ErrName) {
 		t.Errorf("an upload named ../x: %v", err)
 	}
-	if _, err := testSession(&fakeDesktop{}).acceptUpload(protocol.Bulk{Name: "x", Size: 1}); err == nil {
+	if _, err := testSession(&fakeDesktop{}).acceptUpload(owner, protocol.Bulk{Name: "x", Size: 1}); err == nil {
 		t.Error("a session without files took an upload")
 	}
 }

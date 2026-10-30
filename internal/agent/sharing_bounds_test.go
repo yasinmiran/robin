@@ -167,7 +167,7 @@ func TestAGuestWithoutControlHoldsNoMicrophone(t *testing.T) {
 	case <-mic.entered:
 	case <-time.After(time.Second):
 	}
-	s.track(nil, trs[1], nil)
+	s.track(ownerPage(t, s), trs[1], nil)
 	select {
 	case <-mic.packets:
 	case <-time.After(5 * time.Second):

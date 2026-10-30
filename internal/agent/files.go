@@ -24,7 +24,7 @@ import (
 
 func init() {
 	protocol.RegisterBulkKind(protocol.BulkFile, protocol.MaxFile)
-	handleBulk(protocol.BulkFile, (*session).acceptUpload)
+	handleBulkFrom(protocol.BulkFile, (*session).acceptUpload)
 	handleControlFrom(protocol.ControlFileFetch, (*session).fetchOffer)
 	handleControl(protocol.ControlFileDecline, (*session).declineOffer)
 }
@@ -294,12 +294,12 @@ func (s *session) withdrawOffers(v *viewer) {
 	}
 }
 
-// fetchOffer sends an offered file to the page of v that asked for it, nil
-// for the owner's. A transfer that fails leaves the file on offer, for the
+// fetchOffer sends an offered file to the page of v that asked for it. A
+// transfer that fails leaves the file on offer, for the
 // user to try again.
 func (s *session) fetchOffer(v *viewer, m protocol.Control) {
-	fs, p := s.files, s.peerOf(v)
-	if fs == nil || m.File == nil || p == nil {
+	fs, p := s.files, v.peer
+	if fs == nil || m.File == nil {
 		return
 	}
 	fs.mu.Lock()
@@ -374,7 +374,7 @@ func (s *session) declineOffer(m protocol.Control) {
 
 // acceptUpload takes a file the page sends into the download directory,
 // unless the host allowed viewing only.
-func (s *session) acceptUpload(h protocol.Bulk) (peer.BulkSink, error) {
+func (s *session) acceptUpload(from *viewer, h protocol.Bulk) (peer.BulkSink, error) {
 	switch v, ok := s.desk.(desktop.ViewOnly); {
 	case s.files == nil:
 		return nil, errors.New("this session takes no files")
@@ -386,7 +386,7 @@ func (s *session) acceptUpload(h protocol.Bulk) (peer.BulkSink, error) {
 		return nil, err
 	}
 	s.log.Info("upload started", "name", h.Name, "bytes", h.Size)
-	return &upload{Upload: u, s: s, id: h.ID}, nil
+	return &upload{Upload: u, s: s, id: h.ID, v: from}, nil
 }
 
 // upload tells the page that sent it the name a file was kept under,
@@ -395,20 +395,16 @@ type upload struct {
 	*files.Upload
 	s  *session
 	id string
-	v  *viewer // the page that sent it; nil for the owner's
+	v  *viewer // the page that sent it
 }
-
-func (u *upload) sentBy(v *viewer) { u.v = v }
 
 func (u *upload) Commit() error {
 	if err := u.Upload.Commit(); err != nil {
 		return err
 	}
 	u.s.log.Info("upload kept", "name", u.Saved(), "dir", u.s.files.inbox.Dir())
-	if p := u.s.peerOf(u.v); p != nil {
-		if err := p.SendControl(protocol.Control{T: protocol.ControlFileSaved, File: &protocol.File{ID: u.id, Name: u.Saved()}}); err != nil && !errors.Is(err, peer.ErrNoControl) {
-			u.s.log.Warn("send file message", "type", protocol.ControlFileSaved, "err", err)
-		}
+	if err := u.v.peer.SendControl(protocol.Control{T: protocol.ControlFileSaved, File: &protocol.File{ID: u.id, Name: u.Saved()}}); err != nil && !errors.Is(err, peer.ErrNoControl) {
+		u.s.log.Warn("send file message", "type", protocol.ControlFileSaved, "err", err)
 	}
 	return nil
 }

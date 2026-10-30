@@ -120,18 +120,14 @@ func (s *session) track(v *viewer, tr *webrtc.TrackRemote, _ *webrtc.RTPReceiver
 	case tr.Kind() == webrtc.RTPCodecTypeAudio && s.mic != nil:
 		device = "microphone"
 		play = func() error { return s.mic.Play(tr) }
-		if v != nil && v.guest != nil {
+		if !v.owner() {
 			play = func() error { return s.playGuestMic(tr, v.control) }
 		}
-	case tr.Kind() == webrtc.RTPCodecTypeVideo && s.camera != nil && (v == nil || v.guest == nil):
+	case tr.Kind() == webrtc.RTPCodecTypeVideo && s.camera != nil && v.owner():
 		device = "camera"
-		p, ssrc := s.peerOf(v), uint32(tr.SSRC())
+		p, ssrc := v.peer, uint32(tr.SSRC())
 		play = func() error {
-			return s.camera.Play(tr, func() {
-				if p != nil {
-					p.RequestKeyframe(ssrc)
-				}
-			})
+			return s.camera.Play(tr, func() { p.RequestKeyframe(ssrc) })
 		}
 	default:
 		s.log.Info("ignoring a track the session did not offer to take", "kind", tr.Kind().String())

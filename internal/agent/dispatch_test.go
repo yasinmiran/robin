@@ -73,6 +73,23 @@ func testSession(desk desktop.Desktop) *session {
 	}
 }
 
+// asOwner applies m as the owner's page sends it, from a page with no
+// peer: enough for a handler that answers nobody.
+func asOwner(s *session, m protocol.Control) { s.controlAs(&viewer{}, m) }
+
+// ownerPage gives s the owner's page, a peer no browser answers, and
+// returns its viewer.
+func ownerPage(t *testing.T, s *session) *viewer {
+	t.Helper()
+	if _, err := s.currentPeer(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.closePeer)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.owner
+}
+
 func TestControlDispatch(t *testing.T) {
 	t.Run("input", func(t *testing.T) {
 		desk := &fakeDesktop{}
@@ -85,10 +102,10 @@ func TestControlDispatch(t *testing.T) {
 			{T: protocol.ControlRelease},
 		}
 		for _, m := range input {
-			s.control(m)
+			asOwner(s, m)
 		}
 		desk.inputErr = errors.New("display gone")
-		s.control(protocol.Control{T: protocol.ControlRelease})
+		asOwner(s, protocol.Control{T: protocol.ControlRelease})
 		if !slices.Equal(desk.inputs, append(input, protocol.Control{T: protocol.ControlRelease})) {
 			t.Errorf("desktop got input %+v", desk.inputs)
 		}
@@ -98,16 +115,16 @@ func TestControlDispatch(t *testing.T) {
 	t.Run("resize", func(t *testing.T) {
 		desk := &fakeDesktop{}
 		s := testSession(desk)
-		s.control(protocol.Control{T: protocol.ControlResize, W: 2560, H: 1440})
+		asOwner(s, protocol.Control{T: protocol.ControlResize, W: 2560, H: 1440})
 		if !s.stream.keyframe.Load() {
 			t.Error("a resize did not ask for a keyframe")
 		}
 		s.stream.keyframe.Store(false)
 		desk.resizeErr = desktop.ErrFixedSize
-		s.control(protocol.Control{T: protocol.ControlResize, W: 1000, H: 700})
+		asOwner(s, protocol.Control{T: protocol.ControlResize, W: 1000, H: 700})
 		desk.resizeErr = errors.New("randr says no")
-		s.control(protocol.Control{T: protocol.ControlResize, W: 900, H: 600})
-		s.control(protocol.Control{T: protocol.ControlResize}) // nothing to fit
+		asOwner(s, protocol.Control{T: protocol.ControlResize, W: 900, H: 600})
+		asOwner(s, protocol.Control{T: protocol.ControlResize}) // nothing to fit
 		if want := [][2]int{{1280, 720}, {1000, 700}, {900, 600}}; !slices.Equal(desk.sizes, want) {
 			t.Errorf("desktop resized to %v, want %v", desk.sizes, want)
 		}
@@ -119,8 +136,8 @@ func TestControlDispatch(t *testing.T) {
 	t.Run("clipboard", func(t *testing.T) {
 		desk := &fakeDesktop{}
 		s := testSession(desk)
-		s.control(protocol.Control{T: protocol.ControlClipboard, Text: "hi"})
-		s.control(protocol.Control{T: protocol.ControlClipboard, Text: strings.Repeat("x", clipboardSize+1)})
+		asOwner(s, protocol.Control{T: protocol.ControlClipboard, Text: "hi"})
+		asOwner(s, protocol.Control{T: protocol.ControlClipboard, Text: strings.Repeat("x", clipboardSize+1)})
 		if !slices.Equal(desk.clipboard, []string{"hi"}) {
 			t.Errorf("desktop clipboard set to %d texts, want only the one in bounds", len(desk.clipboard))
 		}
@@ -130,15 +147,15 @@ func TestControlDispatch(t *testing.T) {
 		// A desktop of one picture ignores monitor choices, and so does the
 		// session for message types nobody handles.
 		s := testSession(&fakeDesktop{})
-		s.control(protocol.Control{T: protocol.ControlMonitor, Monitor: "HDMI-1"})
-		s.control(protocol.Control{T: "from-a-newer-page"})
-		s.control(protocol.Control{T: protocol.ControlHeartbeat})
+		asOwner(s, protocol.Control{T: protocol.ControlMonitor, Monitor: "HDMI-1"})
+		asOwner(s, protocol.Control{T: "from-a-newer-page"})
+		asOwner(s, protocol.Control{T: protocol.ControlHeartbeat})
 
 		mm := &fakeMonitors{}
 		s = testSession(mm)
-		s.control(protocol.Control{T: protocol.ControlMonitor, Monitor: "HDMI-1"})
+		asOwner(s, protocol.Control{T: protocol.ControlMonitor, Monitor: "HDMI-1"})
 		mm.showErr = errors.New("no such monitor")
-		s.control(protocol.Control{T: protocol.ControlMonitor, Monitor: "VGA-9"})
+		asOwner(s, protocol.Control{T: protocol.ControlMonitor, Monitor: "VGA-9"})
 		if !slices.Equal(mm.shown, []string{"HDMI-1", "VGA-9"}) {
 			t.Errorf("monitors shown %v", mm.shown)
 		}
@@ -161,7 +178,7 @@ func discardBulk(*session, protocol.Bulk) (peer.BulkSink, error) { return discar
 
 func TestBulkDispatch(t *testing.T) {
 	var got []protocol.Bulk
-	bulkHandlers[dispatchKind] = func(s *session, h protocol.Bulk) (peer.BulkSink, error) {
+	bulkHandlers[dispatchKind] = func(s *session, _ *viewer, h protocol.Bulk) (peer.BulkSink, error) {
 		got = append(got, h)
 		return discardSink{}, nil
 	}
@@ -169,13 +186,13 @@ func TestBulkDispatch(t *testing.T) {
 	s := testSession(&fakeDesktop{})
 
 	h := protocol.Bulk{T: protocol.BulkHeader, Kind: dispatchKind, Size: 3}
-	if sink, err := s.bulk(h); err != nil || sink == nil {
+	if sink, err := s.bulk(&viewer{}, h); err != nil || sink == nil {
 		t.Fatalf("registered kind: %v, %v", sink, err)
 	}
 	if len(got) != 1 || got[0] != h {
 		t.Errorf("handler got %+v", got)
 	}
-	if _, err := s.bulk(protocol.Bulk{T: protocol.BulkHeader, Kind: "nobody"}); !errors.Is(err, protocol.ErrBulkKind) {
+	if _, err := s.bulk(&viewer{}, protocol.Bulk{T: protocol.BulkHeader, Kind: "nobody"}); !errors.Is(err, protocol.ErrBulkKind) {
 		t.Errorf("unhandled kind: %v, want ErrBulkKind", err)
 	}
 }

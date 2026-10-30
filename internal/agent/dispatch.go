@@ -16,11 +16,15 @@ import (
 // written only from init, the maps need no lock.
 var (
 	controlHandlers = map[protocol.ControlType]controlHandler{}
-	bulkHandlers    = map[string]func(*session, protocol.Bulk) (peer.BulkSink, error){}
+	bulkHandlers    = map[string]bulkHandler{}
 )
 
+// bulkHandler decides on one kind of bulk transfer from the page of a
+// viewer: where its payload goes, or an error that refuses it.
+type bulkHandler func(*session, *viewer, protocol.Bulk) (peer.BulkSink, error)
+
 // controlHandler applies one kind of control message from the page of a
-// viewer, nil for the owner's. Input applies in the order it came with the
+// viewer. Input applies in the order it came with the
 // text the browser types, so it waits behind any being typed; the rest
 // applies as it arrives. A guest's message applies only while the guest
 // has control, and never one that only the owner's page sends.
@@ -79,6 +83,16 @@ func addControl(t protocol.ControlType, h controlHandler) {
 // TestBulkKindsHaveLimits checks. It panics on a nil h and on a kind
 // registered twice.
 func handleBulk(kind string, h func(*session, protocol.Bulk) (peer.BulkSink, error)) {
+	var from bulkHandler
+	if h != nil {
+		from = func(s *session, _ *viewer, b protocol.Bulk) (peer.BulkSink, error) { return h(s, b) }
+	}
+	handleBulkFrom(kind, from)
+}
+
+// handleBulkFrom is handleBulk for an h that needs to know whose page sent
+// the transfer, as one that answers it does.
+func handleBulkFrom(kind string, h bulkHandler) {
 	if h == nil {
 		panic(fmt.Sprintf("agent: nil handler for bulk kind %q", kind))
 	}
@@ -98,18 +112,14 @@ func init() {
 	handleOwner(protocol.ControlMonitor, (*session).applyMonitor)
 }
 
-// control applies one message from the owner's page.
-func (s *session) control(m protocol.Control) { s.controlAs(nil, m) }
-
-// controlAs applies one message from v's page, nil for the owner's; types
-// nobody handles are ignored, as from a newer page, and so is what a
+// controlAs applies one message from v's page; types nobody handles are ignored, as from a newer page, and so is what a
 // guest may not send. Input waits behind text being typed.
 func (s *session) controlAs(v *viewer, m protocol.Control) {
 	h, ok := controlHandlers[m.T]
 	if !ok {
 		return
 	}
-	if v != nil && v.guest != nil && (h.owner || !v.control()) {
+	if !v.owner() && (h.owner || !v.control()) {
 		return
 	}
 	if !h.input {
@@ -123,11 +133,11 @@ func (s *session) controlAs(v *viewer, m protocol.Control) {
 	}
 }
 
-// bulk picks the handler for a transfer the browser opened.
-func (s *session) bulk(h protocol.Bulk) (peer.BulkSink, error) {
+// bulk picks the handler for a transfer v's page opened.
+func (s *session) bulk(v *viewer, h protocol.Bulk) (peer.BulkSink, error) {
 	accept := bulkHandlers[h.Kind]
 	if accept == nil {
 		return nil, fmt.Errorf("%w %q: this agent takes none", protocol.ErrBulkKind, h.Kind)
 	}
-	return accept(s, h)
+	return accept(s, v, h)
 }

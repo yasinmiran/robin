@@ -201,7 +201,7 @@ func TestGuestControlGatesInputAndHandsOver(t *testing.T) {
 	if len(desk.sizes) != 0 {
 		t.Fatal("a guest resized the desktop")
 	}
-	s.control(protocol.Control{T: protocol.ControlResize, W: 640, H: 480})
+	asOwner(s, protocol.Control{T: protocol.ControlResize, W: 640, H: 480})
 	if len(desk.sizes) != 1 {
 		t.Fatal("the owner's resize did not apply")
 	}
