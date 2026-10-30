@@ -688,12 +688,12 @@ connection unless a process of yours, or root's, still holds its other end
 open, which it asks the kernel, lets go within 5 s of any that has not started
 ICE, and completes ICE only with the session's credentials; the X display is
 protected by a fresh cookie in a 0600 file, which the agent hands only to the
-Xvfb it started, checked through the socket's peer credentials, whatever else
-listens at the display's socket names, and no session starts there unless
-that Xvfb holds both names, the socket file and the abstract one every X
-client dials first; the sound server of a desktop robin
-starts listens only on a socket inside the run directory; the agent and its
-run directory are 0700. The probe counts only `X<digits>` in `/tmp/.X11-unix`,
+Xvfb it started, checked through the socket's peer credentials (its pid and
+your uid), whatever else listens at the display's socket names, and no
+session starts there unless that Xvfb holds both names, the socket file and
+the abstract one every X client dials first; the sound server of a desktop
+robin starts listens only on a socket inside the run directory; the agent
+and its run directory are 0700. The probe counts only `X<digits>` in `/tmp/.X11-unix`,
 which any user can write, and prints nothing that would span lines, so no file
 name there can add to what it reports. `robin-agent end` and the sweep of old
 run directories take only a process of yours for a session's daemon.

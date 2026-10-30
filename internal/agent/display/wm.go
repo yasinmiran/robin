@@ -7,10 +7,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"os"
 	"time"
 
 	"github.com/jezek/xgb"
 	"github.com/jezek/xgb/xproto"
+	"golang.org/x/sys/unix"
 
 	"github.com/yasinmiran/robin/internal/agent/peercred"
 )
@@ -66,15 +68,15 @@ func dialServer(num string, xvfbPID int) (net.Conn, error) {
 			continue
 		}
 		cred, err := peercred.Of(nc)
-		if err == nil && int(cred.Pid) == xvfbPID {
-			return nc, nil
+		if err == nil {
+			if err = servedBy(addr, cred, xvfbPID); err == nil {
+				return nc, nil
+			}
+			ownerErr = err
+		} else {
+			ownerErr = fmt.Errorf("display: %s: cannot tell who serves it: %w", addr, err)
 		}
 		nc.Close()
-		if err != nil {
-			ownerErr = fmt.Errorf("display: %s: cannot tell who serves it: %w", addr, err)
-		} else {
-			ownerErr = &notServerError{addr: addr, pid: int(cred.Pid), xvfbPID: xvfbPID}
-		}
 	}
 	if ownerErr != nil {
 		return nil, ownerErr
@@ -99,9 +101,22 @@ func checkSockets(num string, xvfbPID int) error {
 		if err != nil {
 			return fmt.Errorf("display: %s: cannot tell who serves it: %w", addr, err)
 		}
-		if int(cred.Pid) != xvfbPID {
-			return &notServerError{addr: addr, pid: int(cred.Pid), xvfbPID: xvfbPID}
+		if err := servedBy(addr, cred, xvfbPID); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+// servedBy says whether cred, the peer credentials of a listener at addr,
+// are those of the spawned Xvfb with pid xvfbPID. SO_PEERCRED gives the
+// pid that called listen, not who holds the socket now: another user could
+// listen from a process that hands the socket on and exits, and Xvfb could
+// be given that pid later. Xvfb runs as this user, so the uid must match
+// too, and a socket of another user's never passes whatever its pid.
+func servedBy(addr string, cred *unix.Ucred, xvfbPID int) error {
+	if int(cred.Pid) != xvfbPID || cred.Uid != uint32(os.Getuid()) {
+		return &notServerError{addr: addr, pid: int(cred.Pid), uid: cred.Uid, xvfbPID: xvfbPID}
 	}
 	return nil
 }
@@ -111,8 +126,9 @@ func checkSockets(num string, xvfbPID int) error {
 type notServerError struct {
 	addr         string
 	pid, xvfbPID int
+	uid          uint32
 }
 
 func (e *notServerError) Error() string {
-	return fmt.Sprintf("display: %s is served by pid %d, not by Xvfb (pid %d)", e.addr, e.pid, e.xvfbPID)
+	return fmt.Sprintf("display: %s is served by pid %d of uid %d, not by Xvfb (pid %d)", e.addr, e.pid, e.uid, e.xvfbPID)
 }

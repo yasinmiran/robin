@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // TestWaitForWindowRefusesAStrangersSocket claims the abstract socket of a
@@ -96,4 +98,35 @@ func listenAbstract(t *testing.T) (string, net.Listener) {
 	}
 	t.Fatal("no free display number")
 	return "", nil
+}
+
+// TestServedByWantsXvfbsUser: SO_PEERCRED names the pid that called listen,
+// so another user's socket handed to a process that lives on carries a pid
+// Xvfb may be given later. Both checks of a display's sockets take a
+// listener for Xvfb only when its uid is this user's too.
+func TestServedByWantsXvfbsUser(t *testing.T) {
+	const xvfb = 4242
+	me := uint32(os.Getuid())
+	for _, tc := range []struct {
+		name string
+		cred unix.Ucred
+		ok   bool
+	}{
+		{"Xvfb", unix.Ucred{Pid: xvfb, Uid: me}, true},
+		{"another process of this user's", unix.Ucred{Pid: xvfb + 1, Uid: me}, false},
+		{"another user's, at Xvfb's pid", unix.Ucred{Pid: xvfb, Uid: me + 1}, false},
+		{"root's, at Xvfb's pid", unix.Ucred{Pid: xvfb, Uid: 0}, me == 0},
+	} {
+		err := servedBy("@/tmp/.X11-unix/X99", &tc.cred, xvfb)
+		if tc.ok {
+			if err != nil {
+				t.Errorf("%s: %v, want it taken for Xvfb", tc.name, err)
+			}
+			continue
+		}
+		var stranger *notServerError
+		if !errors.As(err, &stranger) || stranger.pid != int(tc.cred.Pid) || stranger.uid != tc.cred.Uid {
+			t.Errorf("%s: %v, want a refusal naming pid %d and uid %d", tc.name, err, tc.cred.Pid, tc.cred.Uid)
+		}
+	}
 }

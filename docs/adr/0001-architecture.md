@@ -232,7 +232,12 @@ the server it reaches, but it tries the file first and never saw the
 abstract name. Such a host now gets an error naming the free socket instead
 of a session; before the check, the regression test's stand-in Xvfb that
 listens on the file alone got its session both beside a stranger's socket
-at the abstract name and with nothing there.
+at the abstract name and with nothing there. `SO_PEERCRED` names the pid
+that called `listen`, not whoever holds the socket now, so another user
+could listen from a process that hands the socket to one that lives on,
+then exit, and the pid could come round to Xvfb; both this check and the
+agent's own dial also want the listener's uid to be the agent's, as
+Xvfb's always is, so another user's socket fails whatever its pid.
 
 ### X11 in pure Go
 
