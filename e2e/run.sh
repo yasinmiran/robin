@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the robin e2e suite in rootless podman.
 #
-#   ./run.sh                    every scenario: direct blocked restart resume rejoin attach wayland webkit firefox nomux touch systemd
+#   ./run.sh                    every scenario: direct blocked restart resume rejoin attach wayland webkit firefox nomux touch systemd share
 #   ./run.sh direct restart     just those
 #   ./run.sh selftest           prove the harness itself, no CLI needed
 #
@@ -38,7 +38,7 @@ ROBIN_BIN=${ROBIN_BIN:-bin/robin-linux-amd64}
 COVER=${ROBIN_E2E_COVER:-}
 [[ -z $COVER || $COVER = /* ]] || COVER=$PWD/$COVER
 
-ALL_SCENARIOS=(direct blocked restart resume rejoin attach wayland webkit firefox nomux touch systemd)
+ALL_SCENARIOS=(direct blocked restart resume rejoin attach wayland webkit firefox nomux touch systemd share)
 
 log() { printf '\033[1m[e2e]\033[0m %s\n' "$*" >&2; }
 die() { log "error: $*"; exit 2; }
@@ -122,6 +122,7 @@ start_host() {
     "$init" --cap-add NET_ADMIN --shm-size "$shm" --stop-timeout 2 \
     -v "$KEYS/ssh_host_ed25519_key:/etc/ssh/robin/ssh_host_ed25519_key:ro" \
     -v "$KEYS/client.pub:/etc/ssh/authorized_keys.d/robin:ro" \
+    -v "$KEYS/client.pub:/etc/ssh/authorized_keys.d/alice:ro" \
     "$@" "$image" >/dev/null
 }
 
@@ -187,6 +188,7 @@ run_scenario() {
     spec=tests/wayland.spec.ts
   fi
   [[ $s != touch ]] || spec=tests/touch.spec.ts
+  [[ $s != share ]] || spec=tests/share.spec.ts
   if [[ $s = systemd ]]; then
     image=$SDHOST_IMG
     spec=tests/systemd.spec.ts
@@ -279,6 +281,7 @@ expect_fail() {
 
 t_ssh_login() { expect_eq $'robin 1000' on_client ssh robinhost 'echo "$(id -un) $(id -u)"'; }
 t_no_root() { expect_fail on_client ssh -o User=root robinhost true; }
+t_second_account() { expect_eq $'alice 1001' on_client ssh alice@robinhost 'echo "$(id -un) $(id -u)"'; }
 t_no_password() {
   # Only publickey may be offered; no password or keyboard-interactive prompt.
   local methods
@@ -371,6 +374,7 @@ selftest() {
   log "selftest: ssh, sftp, forwarding"
   check "ssh: key login as robin (uid 1000)" t_ssh_login
   check "ssh: root login refused" t_no_root
+  check "ssh: key login as alice (uid 1001), the second account" t_second_account
   check "ssh: only publickey offered" t_no_password
   check "sftp: put and get round-trip" t_sftp
   check "ssh: ControlMaster up, exec rides it" t_master
@@ -410,8 +414,8 @@ main() {
   local s
   for s in "${scenarios[@]}"; do
     case $s in
-      selftest | direct | blocked | restart | resume | rejoin | attach | wayland | webkit | firefox | nomux | touch | systemd) ;;
-      *) die "unknown scenario '$s' (want selftest, direct, blocked, restart, resume, rejoin, attach, wayland, webkit, firefox, nomux, touch or systemd)" ;;
+      selftest | direct | blocked | restart | resume | rejoin | attach | wayland | webkit | firefox | nomux | touch | systemd | share) ;;
+      *) die "unknown scenario '$s' (want selftest, direct, blocked, restart, resume, rejoin, attach, wayland, webkit, firefox, nomux, touch, systemd or share)" ;;
     esac
   done
   command -v podman >/dev/null || die "podman not found"

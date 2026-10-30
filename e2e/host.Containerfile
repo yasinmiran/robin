@@ -22,9 +22,12 @@ RUN apt-get update \
 
 # The base image ships user "ubuntu" at uid 1000. A "*" password keeps the
 # account unlocked for sshd without PAM while allowing no password login.
+# alice is a second account, for the share scenario's guest.
 RUN userdel -r ubuntu \
  && useradd -m -u 1000 -U -s /bin/bash robin \
  && usermod -p '*' robin \
+ && useradd -m -u 1001 -U -s /bin/bash alice \
+ && usermod -p '*' alice \
  && mkdir -p /run/sshd /etc/ssh/robin /etc/ssh/authorized_keys.d \
  && install -d -m 1777 /tmp/.X11-unix /cover \
  && install -d -o robin -g robin -m 0700 /run/user/1000 \
