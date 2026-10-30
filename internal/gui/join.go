@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/yasinmiran/robin/internal/agentbin"
@@ -172,18 +171,17 @@ func (h *host) guest(ctx context.Context, ag *agentProc) error {
 	switch {
 	case ctx.Err() != nil, errors.Is(err, errPageEnded), errors.Is(err, errDetached):
 		ag.bye()
-		b.ended(whyGuestLeft)
+		b.ended(protocol.WhyGuestLeft)
 		return nil
-	case errors.Is(err, errEnded):
-		b.ended(strings.TrimPrefix(err.Error(), errEnded.Error()+": "))
+	}
+	var ended *endedError
+	if errors.As(err, &ended) {
+		b.ended(ended.why)
 		fmt.Fprintf(o.Stderr, "robin: %v\n", err)
 		return nil
 	}
 	return ag.explain(err)
 }
-
-// whyGuestLeft is what a guest's page says once the guest left.
-const whyGuestLeft = "you left the session"
 
 // guestNote is the line that tells a guest what they joined.
 func guestNote(o Options, r *protocol.Ready) string {

@@ -3,6 +3,7 @@ package gui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -158,12 +159,24 @@ func TestGuestLeavesOnCtrlC(t *testing.T) {
 		if m.Type != protocol.TypeBye {
 			t.Fatalf("the guest sent %q on Ctrl+C", m.Type)
 		}
-		f.conn.Send(protocol.Message{Type: protocol.TypeEnded, Error: "you left the session"})
+		f.conn.Send(protocol.Message{Type: protocol.TypeEnded, Error: protocol.WhyGuestLeft})
 	case <-time.After(10 * time.Second):
 		t.Fatal("no bye")
 	}
 	if err := waitDone(t, done); err != nil {
 		t.Errorf("leaving: %v", err)
+	}
+}
+
+// The host's reason survives whatever wraps the error that carries it.
+func TestEndedErrorKeepsTheHostsReason(t *testing.T) {
+	err := fmt.Errorf("bridge: %w", &endedError{why: "the owner removed you from the session"})
+	var ended *endedError
+	if !errors.Is(err, errEnded) || !errors.As(err, &ended) || ended.why != "the owner removed you from the session" {
+		t.Fatalf("%v: lost the reason", err)
+	}
+	if got := ended.Error(); got != "session ended: the owner removed you from the session" {
+		t.Errorf("Error() = %q", got)
 	}
 }
 
@@ -231,13 +244,22 @@ func TestRunGuestOfNoSession(t *testing.T) {
 	t.Log(err)
 }
 
+// guestRun is a guest's CLI under test: its host, the agent it talks to,
+// what it sends after its join, its stderr, and where its end arrives.
+type guestRun struct {
+	h      *host
+	f      *fakeHostAgent
+	rest   <-chan protocol.Message
+	stderr *lockedBuffer
+	done   <-chan error
+}
+
 // guestWith is guestOverPipes with the host's options changed by change
 // first, and the host returned too.
-// What the guest sends after its join comes on the channel returned.
-func guestWith(t *testing.T, ctx context.Context, ready protocol.Message, change func(*host)) (*host, *fakeHostAgent, <-chan protocol.Message, <-chan error) {
+func guestWith(t *testing.T, ctx context.Context, ready protocol.Message, change func(*host)) guestRun {
 	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	h, _, _ := sshHost(t)
+	h, _, stderr := sshHost(t)
 	h.o.Join, h.o.Transport, h.o.NoBrowser, h.o.Listen = testCode, relay.Direct, true, "127.0.0.1:0"
 	h.o.Stdout = &lockedBuffer{}
 	change(h)
@@ -253,7 +275,7 @@ func guestWith(t *testing.T, ctx context.Context, ready protocol.Message, change
 	}()
 	done := make(chan error, 1)
 	go func() { done <- h.guest(ctx, a) }()
-	return h, f, rest, done
+	return guestRun{h: h, f: f, rest: rest, stderr: stderr, done: done}
 }
 
 // A page server that cannot listen ends the join, with a bye so the
@@ -261,17 +283,17 @@ func guestWith(t *testing.T, ctx context.Context, ready protocol.Message, change
 func TestGuestWhosePageCannotListenSaysBye(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	_, f, rest, done := guestWith(t, ctx, guestReady(), func(h *host) { h.o.Listen = "127.0.0.1:not-a-port" })
+	g := guestWith(t, ctx, guestReady(), func(h *host) { h.o.Listen = "127.0.0.1:not-a-port" })
 	select {
-	case m := <-rest:
+	case m := <-g.rest:
 		if m.Type != protocol.TypeBye {
 			t.Fatalf("the guest sent %q", m.Type)
 		}
-		f.conn.Send(protocol.Message{Type: protocol.TypeEnded, Error: "you left the session"})
+		g.f.conn.Send(protocol.Message{Type: protocol.TypeEnded, Error: protocol.WhyGuestLeft})
 	case <-time.After(10 * time.Second):
 		t.Fatal("no bye")
 	}
-	if err := waitDone(t, done); err == nil {
+	if err := waitDone(t, g.done); err == nil {
 		t.Error("joined without a page")
 	}
 }
@@ -281,13 +303,15 @@ func TestGuestWhosePageCannotListenSaysBye(t *testing.T) {
 func TestGuestOverTheTunnelEndsWithItsConnection(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	h, _, _, done := guestWith(t, ctx, guestReady(), func(h *host) {
+	g := guestWith(t, ctx, guestReady(), func(h *host) {
 		h.o.Transport = relay.Tunnel
 		h.o.STUN = []string{"stun:stun.example:3478"}
 	})
-	time.Sleep(500 * time.Millisecond)
-	h.m.Close()
-	if err := waitDone(t, done); err == nil || !strings.Contains(err.Error(), "SSH connection") {
+	// The note comes once the tunnel and the page are up, as the bridge
+	// starts.
+	waitText(t, g.stderr, "robin: joined robin's desktop")
+	g.h.m.Close()
+	if err := waitDone(t, g.done); err == nil || !strings.Contains(err.Error(), "SSH connection") {
 		t.Errorf("the guest after its connection went: %v", err)
 	}
 }
