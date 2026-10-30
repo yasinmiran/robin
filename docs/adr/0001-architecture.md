@@ -1186,7 +1186,12 @@ under the real name either way. `hosttext.js` now shows those characters
 as escapes, the set `runes.ReordersText` names and the CLI escapes (a Go
 test holds the two to one set), and a file's name sits in `dir=auto` so
 right-to-left letters in it cannot reorder the row around it. The download
-keeps the name as sent, for the browser to clean.
+keeps the name as sent, for the browser to clean. The same goes for every
+other string the host sends the page: a private switch's error, the names
+of a share's owner and guests (a passwd entry on the host, which the host
+controls), the join command made from them, and each reason the share's
+tab or the ended notice turns into a sentence. Monitor and account names
+sit in `dir=auto` too.
 
 ### Reproducible release binaries
 

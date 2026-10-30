@@ -64,3 +64,11 @@ test('a click on an open channel goes at once, and an error ends the wait', () =
   assert.equal(errors.length, 1);
   assert.equal(errors[0].textContent, 'Quiet host speakers: no null sink');
 });
+
+test('an error from the host shows the marks that reorder text', () => {
+  fresh();
+  agentSays({ curtain: { error: 'no gamma on ‮FDP' }, silent: {} });
+  const errors = overlay.section.children.filter((el) => el.className === 'switch-error');
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].textContent, 'Black out host screen: no gamma on \\u202eFDP');
+});

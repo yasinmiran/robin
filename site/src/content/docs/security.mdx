@@ -131,6 +131,6 @@ Sharp text brings pictures of the screen into the page a second way: tile transf
 
 Host text that Robin prints (the agent's log and errors, the probe's findings, and the stderr of the `ssh` connection) leaves through two paths only, and both escape control characters, the invisible marks that reorder text and the Unicode line separators, so a hostile or broken host cannot use that text to retitle your terminal, rewrite what you see in it, or make a path or a command read as another. The CLI keeps at most 1 MiB of what a command on the host prints, and shows a log line with no end in 8 KiB pieces, so a host cannot fill its memory either. Password, 2FA and host key prompts are ssh's own: `ssh` writes them to the terminal itself, as it does without Robin.
 
-The page shows the names the host sends (files on offer, the names your uploads were kept under, monitors) with those same marks escaped, so a file cannot read as another beside its Save button.
+The page shows the names the host sends (files on offer, the names your uploads were kept under, monitors, the owner and guests of a share) and its errors and reasons (a transfer's, a private session's, why a share or a session ended) with those same marks escaped, so a file cannot read as another beside its Save button.
 
 The agent's stdout carries signaling and nothing else. No child process inherits it, so a program started on the desktop cannot write into the control channel.

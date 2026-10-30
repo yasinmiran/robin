@@ -120,7 +120,9 @@ export class Overlay {
     }
     const all = boundsOf(list);
     const current = list.find((m) => m.name === ms.current);
-    this.#monitorButton.querySelector('.label').textContent = current ? shown(current.name) : 'All monitors';
+    const label = this.#monitorButton.querySelector('.label');
+    label.dir = 'auto'; // right-to-left letters in a name stay inside it
+    label.textContent = current ? shown(current.name) : 'All monitors';
     this.#monitorButton.title = current
       ? `Showing ${shown(current.name)}, ${current.w} × ${current.h}. Choose another monitor`
       : `Showing all monitors, ${all.w} × ${all.h}. Choose one monitor`;
@@ -325,7 +327,10 @@ function menuItem(name, label, size, tag, checked) {
   check.setAttribute('aria-hidden', 'true');
   check.textContent = '✓';
   const title = document.createElement('span');
-  title.textContent = label;
+  const text = document.createElement('span');
+  text.dir = 'auto'; // right-to-left letters in a name stay inside it
+  text.textContent = label;
+  title.append(text);
   if (tag) {
     const t = document.createElement('span');
     t.className = 'tag';

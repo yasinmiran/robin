@@ -4,6 +4,7 @@
 // what was clicked.
 
 import { onControl } from './control.js';
+import { shown } from './hosttext.js';
 import { next, request, requests, settle, view } from './privatestate.js';
 import { switchButton } from './switches.js';
 
@@ -59,7 +60,7 @@ export class PrivateSwitches {
         const p = document.createElement('p');
         p.className = 'switch-error';
         p.setAttribute('role', 'alert');
-        p.textContent = `${item.label}: ${item.error}`;
+        p.textContent = `${item.label}: ${shown(item.error)}`;
         errors.push(p);
       }
     }

@@ -809,11 +809,12 @@ in its history.
 
 File names from the host appear in the page as text, never as markup, and
 the page shows the invisible marks that reorder text in them, and in monitor
-names, as escapes, as the CLI does, so a name cannot read as another. Words
-from the page that reach a terminal on the host, a refusal's reason printed by
-`robin-send`, have their control characters replaced first, and a file name it
-prints that holds any, or a mark that reorders text, is printed quoted with
-escapes, as `ls` does. Bulk transfers of any kind the agent has not registered
+names, private session errors, the names of the owner and guests of a share
+and the reasons a session or a share gives, as escapes, as the CLI does, so a
+name cannot read as another. Words from the page that reach a terminal on the
+host, a refusal's reason printed by `robin-send`, have their control
+characters replaced first, and a file name it prints that holds any, or a
+mark that reorders text, is printed quoted with escapes, as `ls` does. Bulk transfers of any kind the agent has not registered
 are refused. A transfer runs at most 512 KiB ahead of what its receiver has
 taken, and the page fails one from the agent that runs past that, so a
 stalled transfer holds back neither the keyboard nor the page's memory. The

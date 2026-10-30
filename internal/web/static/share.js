@@ -7,6 +7,7 @@
 // clicked.
 
 import { onControl } from './control.js';
+import { shown } from './hosttext.js';
 import {
   guestActions, guestRequest, guestStatus, guestsChanged, guestsSummary, holderOf, inviteRequest, joinCommand, nextExpiry,
   openInvitations, sentence, shareStatus, until,
@@ -222,7 +223,7 @@ export class Sharing {
     copy.type = 'button';
     copy.dataset.copy = '';
     copy.textContent = COPY;
-    copy.title = `Copy the command ${inv.user} runs to join`;
+    copy.title = `Copy the command ${shown(inv.user)} runs to join`;
     copy.addEventListener('click', () => {
       copy.blur();
       this.#copy(copy, command);
@@ -264,7 +265,7 @@ export class Sharing {
       b.dataset.action = action;
       b.textContent = label;
       if (action === 'remove' && this.#confirming?.id === g.id) {
-        b.textContent = `Remove ${g.user}?`;
+        b.textContent = `Remove ${shown(g.user)}?`;
         b.dataset.confirm = '';
       }
       b.addEventListener('click', () => {
@@ -309,10 +310,12 @@ function runLater(fn, ms) {
   return () => clearTimeout(timer);
 }
 
-// named is an account's name, cut short where it is long, in full on hover.
+// named is an account's name, cut short where it is long, in full on hover,
+// in dir=auto so right-to-left letters in it cannot reorder the row.
 function named(user) {
-  const name = el('span', 'share-user', user);
-  name.title = user;
+  const name = el('span', 'share-user', shown(user));
+  name.dir = 'auto';
+  name.title = name.textContent;
   return name;
 }
 

@@ -112,6 +112,20 @@ test('a reason reads as a sentence', () => {
   assert.equal(sentence(undefined), '');
 });
 
+test('names and reasons from the host show the marks that reorder text', () => {
+  const rlo = '\u202e';
+  const esc = '\\u202e';
+  assert.equal(shareStatus({ owner: `bob${rlo}` }).title, `bob${esc}’s desktop`);
+  assert.deepEqual(leftNotice(`removed${rlo}`, `bob${rlo}`), [
+    `Removed from bob${esc}’s desktop`, `Removed${esc}. Ask bob${esc} for a new invitation to watch again.`,
+  ]);
+  assert.equal(sentence(`no user ${rlo}eci`), `No user ${esc}eci.`);
+  const list = [{ id: 'g1', user: `al${rlo}ice`, control: true }, { id: 'g2', user: `ca${rlo}rol` }];
+  assert.equal(guestsSummary(list), `al${esc}ice has control, ca${esc}rol watching`);
+  assert.equal(guestActions(list[1], holderOf(list))[0].label, `Give control (takes it from al${esc}ice)`);
+  assert.equal(joinCommand({ code: `c${rlo}1`, user: `al${rlo}ice` }, 'h'), `robin gui --join c${esc}1 al${esc}ice@h`);
+});
+
 test('a guest leaving is its own notice, whatever closed the socket', () => {
   const s = new Session();
   s.configure({ share: { owner: 'robin' } });

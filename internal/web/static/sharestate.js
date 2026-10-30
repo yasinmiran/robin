@@ -1,6 +1,10 @@
 // What the sharing parts of the status tab show, worked out from what the
 // agent reports, apart from the DOM so it can be tested: the owner's
 // invitations and guests, and a guest's word on whose desktop it watches.
+// Names and reasons come from the host, so what is made of them shows the
+// marks that reorder text (hosttext.js).
+
+import { shown } from './hosttext.js';
 
 // USER_NAME is what the agent takes for an account on the host.
 export const USER_NAME = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,31}$/;
@@ -32,7 +36,7 @@ export function nextExpiry(guests, now = Date.now()) {
 
 // joinCommand is what the invited user runs on their own machine.
 export function joinCommand(invitation, host) {
-  return `robin gui --join ${invitation.code} ${invitation.user}@${host || 'host'}`;
+  return `robin gui --join ${shown(invitation.code)} ${shown(invitation.user)}@${host || 'host'}`;
 }
 
 // until says, as the owner's clock and locale read it, when an invitation
@@ -47,7 +51,7 @@ export function until(expires) {
 export function guestActions(g, holder = '') {
   let control = { action: 'grant', label: 'Give control' };
   if (g.control) control = { action: 'revoke', label: 'Take back control' };
-  else if (holder) control = { action: 'grant', label: `Give control (takes it from ${holder})` };
+  else if (holder) control = { action: 'grant', label: `Give control (takes it from ${shown(holder)})` };
   return [control, { action: 'remove', label: 'Remove' }];
 }
 
@@ -61,8 +65,8 @@ export function holderOf(list) {
 export function guestsSummary(list) {
   const guests = list ?? [];
   if (!guests.length) return '';
-  const holder = holderOf(guests);
-  const watching = guests.filter((g) => !g.control).map((g) => g.user);
+  const holder = shown(holderOf(guests));
+  const watching = guests.filter((g) => !g.control).map((g) => shown(g.user));
   const names = watching.length > 3 ? `${watching.length} guests` : watching.join(', ');
   if (!holder) return `${names} watching`;
   return watching.length ? `${holder} has control, ${names} watching` : `${holder} has control`;
@@ -85,7 +89,7 @@ export function guestStatus(g) {
 // the word that takes Connected's place. Null on the owner's page.
 export function shareStatus(share) {
   if (!share) return null;
-  const owner = share.owner || 'the owner';
+  const owner = share.owner ? shown(share.owner) : 'the owner';
   const control = Boolean(share.control);
   return {
     title: `${owner}’s desktop`,
@@ -102,7 +106,7 @@ export const WHY_GUEST_LEFT = 'you left the session';
 // leftNotice is the title and the body of the notice a guest's page ends
 // with: the guest left, or was let go for detail, a reason the CLI gave.
 export function leftNotice(detail, owner) {
-  const who = owner || 'the owner';
+  const who = owner ? shown(owner) : 'the owner';
   const ask = `Ask ${who} for a new invitation to watch again.`;
   if (!detail || detail === WHY_GUEST_LEFT) return [`You left ${who}’s desktop`, ask];
   return [`Removed from ${who}’s desktop`, `${sentence(detail)} ${ask}`];
@@ -111,7 +115,7 @@ export function leftNotice(detail, owner) {
 // sentence makes a reason the CLI gives, such as "the owner removed you",
 // read as a sentence of a notice.
 export function sentence(text) {
-  const t = String(text ?? '').trim();
+  const t = shown(String(text ?? '').trim());
   if (!t) return '';
   return t[0].toUpperCase() + t.slice(1) + (/[.!?]$/.test(t) ? '' : '.');
 }
