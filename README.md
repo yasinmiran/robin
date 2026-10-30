@@ -252,10 +252,11 @@ every new page.
 Type clipboard leads the Macros row. It reads this computer's clipboard
 when you click it and types the text as keys, up to 16 KiB, for prompts
 that take no paste: a lock screen, a VM console, a password dialog. On a
-Wayland desktop that holds only for ASCII. Any other character makes the
-agent paste the text through the desktop's clipboard instead (see
-[Security](#security)), where a clipboard manager may keep it and where a
-lock screen, which takes no paste, gets nothing.
+GNOME Wayland desktop that holds only for ASCII the host's keyboard layout
+has. Any other character makes the agent paste the text through the
+desktop's clipboard instead (see [Security](#security)), where a clipboard
+manager may keep it and where a lock screen, which takes no paste, gets
+nothing.
 
 Macros are your own. New macro opens an editor for a name and steps, each
 a chord, a run of text or a pause. Record keys takes what you press and
@@ -682,14 +683,17 @@ UDP, carrying only those credentials.
 
 Text from an input method or a soft keyboard, from Type clipboard and from
 a macro's text steps types what keys could type: through spare keycodes on
-X11 and, on Wayland, as keysyms for ASCII and as a paste for the rest, so
-one character outside ASCII sends the whole text that way. That paste puts the text on the desktop's clipboard
-for about a second, where any program on the desktop can read it, before
-the clipboard gets back what it held: what was copied on the desktop or set
-from the page during the session, in each format the agent reads, or the
-text that was there before it; where the agent knows of nothing there, it
-gets empty text. A clipboard manager there reads the paste as it would any
-copy and keeps it in its history.
+X11, as keysyms on KDE Plasma, whose KWin types any keysym, and on GNOME as
+keysyms for ASCII the host's layout has and as a paste for the rest, so one
+character the layout lacks sends the whole text that way. That paste puts
+the text on the desktop's clipboard for about a second, where any program
+on the desktop can read it, and presses Ctrl+Shift+V, then Ctrl+V if
+nothing read it, before the clipboard gets back what it held: what was
+copied on the desktop or set from the page during the session, in each
+format the agent reads, or what was there before it, read as text, HTML
+and PNG; where the agent knows of nothing there, it gets empty text. A
+clipboard manager there reads the paste as it would any copy and keeps it
+in its history.
 
 - **Writing files**, into the download folder and nowhere else, and never
   into your home directory itself, even where xdg-user-dirs names it as the
@@ -904,8 +908,10 @@ through mutter's own remote desktop interface on GNOME, and by pressing
 Approve through the accessibility bus on KDE, paths only the tests use. It
 checks that the first session asks and the second restores without asking,
 that frames arrive and change, pointer, keys and held-key repeat, text
-typed as keysyms or pasted with the clipboard put back after, the
-clipboard both ways in each of its MIME types (text, `text/html` and an
+typed as keysyms or pasted, into a window and into a terminal, with the
+clipboard put back after, rich or holding nothing the agent reads, and
+read every 5 ms while it is, keys and text on a Russian layout (GNOME
+only, each booted once more with it), the clipboard both ways in each of its MIME types (text, `text/html` and an
 `image/png` bigger than a pipe holds), view-only grants (GNOME only; KDE has none), and that
 no `gst-launch-1.0` or portal session outlives the agent, whether it closes
 or is killed. A tone played into each session's PipeWire must come out of
@@ -1116,14 +1122,24 @@ verified against a Linux build.
 - Attaching to Wayland needs someone at the host's screen to approve it the
   first time. It works through the portal's remote desktop interface, which
   GNOME and KDE Plasma have; wlroots compositors such as Sway do not.
-- On Wayland, a key only types if the host's keyboard layout has its
-  character: the compositor drops any other keysym, and there is no spare
-  keycode to bind one to as on X11. Text from an input method or a soft
-  keyboard goes in as keysyms when it is all ASCII and as a paste with
-  Ctrl+V otherwise, so it lands wherever Ctrl+V pastes: not in a terminal,
-  which pastes with Ctrl+Shift+V, and only as text the clipboard held is put
-  back a second later; an image there is lost. A host layout without Latin
-  letters drops the ASCII keysyms too.
+- On GNOME Wayland, a key only types its own character if the host's
+  keyboard layout has it: mutter drops any other keysym, and there is no
+  spare keycode to bind one to as on X11. The agent reads the layout from
+  GNOME's input sources. An ASCII key the layout lacks, such as a Latin
+  letter on a Russian layout, goes as the key a US layout has it on, so it
+  types what the host's layout has there, as a keyboard plugged into the
+  host would, and shortcuts such as Ctrl+C work; any other character the
+  layout lacks types nothing, Cyrillic from a Russian keyboard on a Russian
+  host included, since the keysyms the browser names are not the ones the
+  layout lists. Text from an input method or a soft keyboard goes as a
+  paste when the layout lacks any of it, pressing Ctrl+Shift+V, which
+  terminals paste with, then Ctrl+V if no program read the clipboard by
+  then. A program that does something else on Ctrl+Shift+V does that
+  first: LibreOffice opens Paste Special, for one. A second clipboard
+  manager that reads each copy later than mutter's can make the agent take
+  its read for the paste and skip Ctrl+V. A layout GNOME does not name as
+  an xkb input source (an input method's own) is taken to have all of
+  ASCII.
 - GNOME drops the first key event of each remote session, and now and then
   the first pointer event. The agent spends both on input that does
   nothing, so you should not notice, but it is why mutter logs `No keycode

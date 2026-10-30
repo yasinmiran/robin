@@ -596,7 +596,8 @@ Printable characters go in as keysyms through `NotifyKeyboardKeysym`, and
 mutter finds the keycode and presses Shift or AltGr as the level needs. A
 keysym missing from the active layout is dropped: a Wayland client cannot
 change the compositor's keymap, so the spare-keycode trick the X11 path uses
-has no equivalent. GNOME drops the first key event of a remote desktop
+has no equivalent. An ASCII character GNOME's layout lacks goes by its US
+key instead (see Wayland keyboard layouts below). GNOME drops the first key event of a remote desktop
 session and, about one session in five, leaves the first pointer event
 unseen by clients, so the agent opens with a `VoidSymbol` tap, which no
 layout has, and a zero relative motion.
@@ -1354,34 +1355,105 @@ wait; 15 ms was right 10 times of 10. `Type` waits until a spare keycode's
 last press is 50 ms old before binding it again, which typed those 75
 characters in about 205 ms.
 
-### Wayland text: ASCII as keysyms, the rest pasted
+### Wayland text: keysyms the layout has, the rest pasted
 
-The compositor drops a keysym its layout lacks, a Wayland client cannot add
-one, and the portal does not say what the layout has. ASCII is on every
-Latin layout, so text that is all ASCII types as keysyms; any other text is
-pasted whole: offered as the clipboard, then Ctrl+V, then 100 ms for the
-program to read it before the next input. A second after the last paste
-the clipboard gets back what the user had there, unless something was
-copied meanwhile: what a program copied or the page set, as last seen and
-in each format the rich clipboard reads (text, HTML and PNG), or before
-either, the text that was there when the session began. The portal reports
-only changes, so the first paste reads that text, and GNOME 46, GNOME 49
-and KDE Plasma 6.7 all answer the read. A paste never counts as the
-user's clipboard, or the next paste would put the last one back. Where
-there is nothing to put back (no format the agent reads, or nothing),
-empty text is offered in place of the pasted text rather than leave it
-there, and a clipboard manager that read the paste's offer reads the empty
-one too. Putting it back as soon as
-the offer was read failed on GNOME 46: mutter's clipboard manager reads
-every new offer at once, so the probe window then pasted the old text, the
-next paste read nothing, and xdg-desktop-portal crashed, leaving the remote
-desktop session behind. The timed version passes on GNOME 46, GNOME 49 and
-KDE Plasma 6.7, though GNOME 46's xdg-desktop-portal still died twice when
-the probe read the clipboard at the moment the put-back offered anew; the
-attach test reads from half a second after a put-back is due. Ctrl+V does
-not paste in a terminal, an image copied before the session cannot be put
-back, and a clipboard manager keeps the pasted text in its history; all
-three are known limits.
+mutter drops a keysym its layout lacks, a Wayland client cannot add one,
+and the portal does not say what the layout has, so on GNOME text that is
+all ASCII the layout has (below) types as keysyms, and any other text is
+pasted whole: offered as the clipboard, then Ctrl+Shift+V, then Ctrl+V if
+no program read the offer within 300 ms, then 100 ms for the program to
+read it before the next input. KWin types any keysym, its layout's or not:
+"a日本b€ c" arrives whole as keys on KDE Plasma 6.7, so there text never
+touches the clipboard. The agent tells the two apart by
+`org.kde.KWin` on the session bus.
+
+Ctrl+V does not paste in a terminal, which takes it as the character ^V
+and, in readline, quotes the next one, a bracketed paste's escape
+included. Ctrl+Shift+V pastes in terminals and in most other programs, or
+does nothing there; Ctrl+V after it would put a ^V into a terminal that
+had pasted. So the agent waits to see whether anything reads the offer
+after Ctrl+Shift+V, and counts every SelectionTransfer for that. mutter's
+own clipboard manager reads each new offer at once, so the keys go only
+once reads have stopped for 50 ms, or after 250 ms with none; a manager
+that reads later than that looks like the focused program. The probe
+window, in its terminal mode, pastes on Ctrl+Shift+V alone and logs a ^V
+for Ctrl+V; otherwise it pastes on Ctrl+V and ignores Ctrl+Shift+V. Both
+get the text once, on GNOME 46 and 49 and on KDE. On GNOME a paste into
+the window takes about 460 ms from the commit, against 155 ms into the
+terminal; on KDE, whose test session runs no clipboard manager, the
+terminal waits the whole 250 ms first and gets its text after 360 ms.
+Programs that act on Ctrl+Shift+V another way do that first (LibreOffice
+opens Paste Special), a known limit.
+
+A second after the last paste the clipboard gets back what the user had
+there, unless something was copied meanwhile: what a program copied or the
+page set, as last seen and in each format the rich clipboard reads (text,
+HTML and PNG), or before either, what was there when the session began.
+The portal reports only changes, so the first paste reads that in text,
+HTML and PNG, and an image copied before the session goes back as an
+image, as the attach test checks with the probe's text, HTML and 256 KiB
+PNG. On GNOME 46 and 49 a read of a format the owner lacks fails at once,
+so a first paste after a copy of text alone takes the same 460 ms. KWin
+answers no such read: the first costs the 2 s a read may take, and stops
+the others, so that paste took 2.7 s in the test, but KWin types text as
+keys and so never pastes it. A paste never counts as the user's
+clipboard, or the next paste would put the last one back. Where there is
+nothing to put back (no format the agent reads, or nothing), empty text is
+offered in place of the pasted text rather than leave it there, and a
+clipboard manager that read the paste's offer reads the empty one too; the
+probe checks that after copying in a type only it knows. A paste that is
+cancelled once its text is on the clipboard still puts the clipboard back.
+Putting it back as soon as the offer was read failed on GNOME 46: mutter's
+clipboard manager reads every new offer at once, so the probe window then
+pasted the old text, the next paste read nothing, and xdg-desktop-portal
+crashed, leaving the remote desktop session behind. The timed version
+passes on GNOME 46, GNOME 49 and KDE Plasma 6.7. GNOME 46's
+xdg-desktop-portal died twice more, on 2026-10-24, when the probe read the
+clipboard at the moment the put-back offered anew, and was taken for that
+desktop's flake. It did not die again: with the probe reading every 5 ms
+from 200 ms before each of 30 put-backs to 200 ms after, about 70 reads
+around each, the portal and the session lived, and nine runs of the
+whole suite on GNOME 46 passed, six of them on the code before this
+change. What fixed it is not known; the crashes came before the agent's
+reads of the portal were bounded in time. `TestAttachPutBackUnderReads`
+keeps five such rounds on every desktop. A clipboard manager keeps the
+pasted text in its history, a known limit.
+
+### Wayland keyboard layouts: GNOME's input sources, read through xkeyboard-config
+
+On a layout without Latin letters mutter dropped every ASCII keysym, Ctrl+V
+included, so neither keys nor pastes reached anything. mutter looks a
+keysym up only in the layout group in use, and nothing on the portal or
+the session bus says which layout that is or what it has. GNOME Shell
+applies the input source the user picked, the most recent of
+`org.gnome.desktop.input-sources` `mru-sources` that is still in
+`sources`, else the first, and dconf announces each change on the session
+bus. The agent reads both keys with `gsettings` when the session starts
+and again on each announcement, and reads that layout's symbols the way
+libxkbcommon finds them: the user's `~/.config/xkb` and `~/.xkb`, then
+`/etc/xkb`, then the system's. `internal/agent/xkb` follows includes, merge
+modes and the first group's levels, which is all that says which ASCII a
+layout types; every one of the 1131 layouts of xkeyboard-config 2.33
+(Ubuntu 22.04) reads without error, and German turns out to lack `^` and
+`` ` ``, which it has only as dead keys. An input method's source, or one
+the agent cannot read, counts as having all of ASCII, as before.
+
+Text the layout lacks is pasted, as above. A key the layout lacks goes by
+the key a US layout has its character on, through
+`NotifyKeyboardKeycode`, with Shift where the US layout needs it and the
+browser holds none: it types what the host's layout has on that key, as a
+keyboard plugged into the host would, and a shortcut such as Ctrl+C reaches
+programs, which match shortcuts by key on such layouts. The paste's V goes
+the same way. Typing the Latin letter instead would take a layout switch
+on the host, which the portal cannot ask for. The Wayland tests boot each
+GNOME desktop once more with Russian before US, which a stand-in for
+localed hands to mutter's default plugin as GNOME Shell would apply it, and
+`TestAttachLayout` checks there that a, 1 and Enter type ф1 and a newline,
+that Ctrl+C arrives as Ctrl and the C key, that "1." types as keys and that
+"ok" is pasted. Characters outside ASCII are not looked up: a key the
+browser names by a Cyrillic letter goes as its Unicode keysym, which is not
+the legacy keysym the Russian layout lists, and types nothing (measured on
+GNOME 46 and 49), a known limit.
 
 ### The page types through a hidden text box
 
