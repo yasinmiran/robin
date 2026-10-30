@@ -247,12 +247,12 @@ func TestTypable(t *testing.T) {
 	}{
 		{&Desktop{in: &input{}}, "ok!\n", true},
 		{&Desktop{in: &input{}}, "é", false},
-		{&Desktop{in: &input{lacks: k.lacks}}, "1!.\n", true},
-		{&Desktop{in: &input{lacks: k.lacks}}, "ok", false},
-		{&Desktop{in: &input{lacks: k.lacks}, anyKeysym: true}, "ok日本", true},
+		{&Desktop{in: &input{kb: k}}, "1!.\n", true},
+		{&Desktop{in: &input{kb: k}}, "ok", false},
+		{&Desktop{in: &input{kb: k}, anyKeysym: true}, "ok日本", true},
 	} {
 		if got := tc.d.typable(tc.text); got != tc.want {
-			t.Errorf("typable(%q) with any keysym %v, a layout %v = %v", tc.text, tc.d.anyKeysym, tc.d.in.lacks != nil, got)
+			t.Errorf("typable(%q) with any keysym %v, a layout %v = %v", tc.text, tc.d.anyKeysym, tc.d.in.kb != nil, got)
 		}
 	}
 }

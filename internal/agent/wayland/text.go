@@ -76,7 +76,7 @@ func (d *Desktop) typable(text string) bool {
 		return true
 	}
 	for _, r := range text {
-		if r >= utf8.RuneSelf || d.in.lacks != nil && d.in.lacks(r) {
+		if r >= utf8.RuneSelf || d.in.kb.lacks(r) {
 			return false
 		}
 	}

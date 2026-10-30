@@ -123,11 +123,33 @@ func (k *keyboard) update() {
 
 // lacks reports whether the layout in use is known not to type r, a
 // printable ASCII character. Of the rest it knows nothing, and so reports
-// false.
+// false, as a nil keyboard does of everything.
 func (k *keyboard) lacks(r rune) bool {
+	if k == nil {
+		return false
+	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	return k.known && r > ' ' && r < 0x7f && !k.layout.Has(r)
+}
+
+// latinless reports whether the layout in use is known to type none of
+// the letters a to z.
+func (k *keyboard) latinless() bool {
+	if k == nil {
+		return false
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if !k.known {
+		return false
+	}
+	for r := 'a'; r <= 'z'; r++ {
+		if k.layout.Has(r) {
+			return false
+		}
+	}
+	return true
 }
 
 func (k *keyboard) close() {

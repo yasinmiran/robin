@@ -451,7 +451,7 @@ func TestTypeFollowsTheLayout(t *testing.T) {
 	d, r := recorded(true, "kept")
 	source := "cy"
 	d.kb = cyrillic(t, &source)
-	d.in.lacks = d.kb.lacks
+	d.in.kb = d.kb
 	if err := d.Type(t.Context(), "1!"); err != nil {
 		t.Fatal(err)
 	}
@@ -480,48 +480,104 @@ func TestTypeFollowsTheLayout(t *testing.T) {
 	}
 }
 
-// TestKeysTheLayoutLacks: a key whose character the layout lacks goes by
-// the key a US layout has it on, with Shift where that takes it, so
-// shortcuts reach programs; one the layout has goes as its keysym.
-func TestKeysTheLayoutLacks(t *testing.T) {
-	d, r := recorded(false, "")
-	source := "cy"
-	d.in.lacks = cyrillic(t, &source).lacks
-	press := func(key, code string) {
-		t.Helper()
-		if err := d.Input(protocol.Control{T: protocol.ControlKey, Key: key, Code: code, Down: true}); err != nil {
-			t.Fatal(err)
-		}
-		if err := d.Input(protocol.Control{T: protocol.ControlKey, Key: key, Code: code}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	hold := func(key, code string, down bool) {
+// keyPresser sends each key to d as the browser does, down then up, and
+// holds sends a key down or up alone.
+func keyPresser(t *testing.T, d *Desktop) (press func(key, code string), hold func(key, code string, down bool)) {
+	hold = func(key, code string, down bool) {
 		t.Helper()
 		if err := d.Input(protocol.Control{T: protocol.ControlKey, Key: key, Code: code, Down: down}); err != nil {
 			t.Fatal(err)
 		}
 	}
+	press = func(key, code string) {
+		t.Helper()
+		hold(key, code, true)
+		hold(key, code, false)
+	}
+	return press, hold
+}
+
+// TestKeysTheLayoutLacks: on a layout without Latin letters, a letter goes
+// by the key a US layout has it on, with Shift where that takes it, so
+// shortcuts reach programs; what the layout has goes as its keysym, and
+// any other character it lacks goes not at all.
+func TestKeysTheLayoutLacks(t *testing.T) {
+	d, r := recorded(false, "")
+	source := "cy"
+	d.in.kb = cyrillic(t, &source)
+	press, hold := keyPresser(t, d)
 	press("a", "KeyA")
 	press("A", "KeyA") // Caps Lock: a capital without Shift held
 	press("!", "Digit1")
 	hold("Shift", "ShiftLeft", true)
 	press("{", "BracketLeft")
+	press("C", "KeyC")
 	hold("Shift", "ShiftLeft", false)
 	hold("Control", "ControlLeft", true)
 	press("c", "KeyC")
 	hold("Control", "ControlLeft", false)
 	press("é", "Quote")
+	// AltGr held in the browser would take the host's key to its third
+	// level, which is not the letter.
+	hold("AltGraph", "AltRight", true)
+	press("q", "KeyQ")
+	hold("AltGraph", "AltRight", false)
 	want := []string{
 		"code 30 down", "code 30 up",
 		"key Shift_L down", "code 30 down", "code 30 up", "key Shift_L up",
 		"key ! down", "key ! up",
-		"key Shift_L down", "code 26 down", "code 26 up", "key Shift_L up",
+		"key Shift_L down", "code 46 down", "code 46 up", "key Shift_L up",
 		"key Control_L down", "code 46 down", "code 46 up", "key Control_L up",
 		"key é down", "key é up",
+		"key 0xfe03 down", "key 0xfe03 up",
 	}
 	if got := r.take(); !slices.Equal(got, want) {
 		t.Errorf("portal got %q, want %q", got, want)
+	}
+}
+
+// TestKeysALatinLayoutLacks: a layout with Latin letters gets nothing it
+// lacks, neither as a keysym, which mutter would drop or type as another
+// key's first level, nor as a US key, which would type another character
+// or, as German's ^ and ` do, a dead key that composes the next one.
+func TestKeysALatinLayoutLacks(t *testing.T) {
+	var latin strings.Builder
+	for i, r := range "abcdefghijklmnopqrstuvwxyz" {
+		if r != 'q' {
+			fmt.Fprintf(&latin, "key <L%02d> { [ %c, %c ] };", i, r, unicode.ToUpper(r))
+		}
+	}
+	for _, tc := range []struct {
+		name, symbols string
+		keys          [][2]string
+		want          []string
+	}{
+		{
+			"de", "key <L16> { [ q, Q ] }; key <TLDE> { [ dead_circumflex, degree ] }; key <AE12> { [ dead_acute, dead_grave ] };",
+			[][2]string{{"^", "Backquote"}, {"`", "Equal"}, {"a", "KeyA"}},
+			[]string{"key a down", "key a up"},
+		},
+		{
+			"without q", "",
+			[][2]string{{"q", "KeyQ"}, {"Q", "KeyQ"}, {"w", "KeyW"}},
+			[]string{"key w down", "key w up"},
+		},
+	} {
+		dir := xkbData(t, map[string]string{"x": `default xkb_symbols "basic" { ` + latin.String() + tc.symbols + ` };`})
+		d, r := recorded(false, "")
+		d.in.kb = &keyboard{
+			source: func() (string, error) { return "x", nil },
+			load:   func(l, v string) (xkb.Layout, error) { return xkb.Load([]string{dir}, l, v) },
+			log:    slog.New(slog.DiscardHandler),
+		}
+		d.in.kb.update()
+		press, _ := keyPresser(t, d)
+		for _, k := range tc.keys {
+			press(k[0], k[1])
+		}
+		if got := r.take(); !slices.Equal(got, tc.want) {
+			t.Errorf("%s: portal got %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 
@@ -529,8 +585,12 @@ func TestUSKey(t *testing.T) {
 	seen := map[[2]uint32]rune{}
 	for r := rune('!'); r < 0x7f; r++ {
 		code, shift, ok := usKey(r)
+		letter := 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z'
+		if ok != letter {
+			t.Errorf("%q: a US key %v", r, ok)
+			continue
+		}
 		if !ok {
-			t.Errorf("%q: no US key", r)
 			continue
 		}
 		k := [2]uint32{code, 0}
@@ -542,7 +602,7 @@ func TestUSKey(t *testing.T) {
 		}
 		seen[k] = r
 	}
-	for r, want := range map[rune][2]uint32{'a': {30, 0}, 'Q': {16, 1}, '`': {41, 0}, '|': {43, 1}, '?': {53, 1}, '=': {13, 0}, 'v': {47, 0}} {
+	for r, want := range map[rune][2]uint32{'a': {30, 0}, 'Q': {16, 1}, 'p': {25, 0}, 'L': {38, 1}, 'm': {50, 0}, 'v': {47, 0}} {
 		code, shift, _ := usKey(r)
 		if code != want[0] || shift != (want[1] == 1) {
 			t.Errorf("%q: key %d shift %v, want %v", r, code, shift, want)
@@ -623,7 +683,7 @@ func TestTypeWhenThePortalRefuses(t *testing.T) {
 	} {
 		d, r := recorded(true, "kept")
 		if tc.layout {
-			d.in.lacks = cyrillic(t, &source).lacks
+			d.in.kb = cyrillic(t, &source)
 		}
 		r.fail, r.failAfter = tc.fail, tc.failAfter
 		if err := d.Type(t.Context(), tc.text); err == nil || !strings.Contains(err.Error(), "portal refused") {
@@ -651,7 +711,7 @@ func TestKeysWhenThePortalRefuses(t *testing.T) {
 		failAfter int
 	}{{"NotifyKeyboardKeysym", 0}, {"NotifyKeyboardKeycode", 0}, {"NotifyKeyboardKeycode", 1}, {"NotifyKeyboardKeysym", 1}} {
 		d, r := recorded(false, "")
-		d.in.lacks = cyrillic(t, &source).lacks
+		d.in.kb = cyrillic(t, &source)
 		r.fail, r.failAfter = tc.fail, tc.failAfter
 		// A capital without Shift held: Shift, the key down and up, Shift.
 		err := d.Input(protocol.Control{T: protocol.ControlKey, Key: "A", Code: "KeyA", Down: true})

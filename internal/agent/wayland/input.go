@@ -51,10 +51,9 @@ type input struct {
 	// maxY are the stream's last pixel.
 	scaleX, scaleY float64
 	maxX, maxY     float64
-	// lacks reports a printable ASCII character the layout is known not to
-	// have, which the compositor would drop as a keysym; nil while every
-	// one types.
-	lacks func(rune) bool
+	// kb says which printable ASCII the compositor's layout lacks; nil
+	// while every character types as its keysym.
+	kb *keyboard
 
 	mu      sync.Mutex
 	held    map[string]uint32 // keysym by KeyboardEvent.code
@@ -160,18 +159,25 @@ func (in *input) keysym(sym uint32, down bool) error {
 }
 
 // char taps the key that types r. That is its keysym, unless the layout
-// lacks r: then it is the key a US layout has r on, which types whatever
-// this layout has there, as a keyboard plugged into the host would, and
-// takes Ctrl+C and the like to programs, which match shortcuts by key on
-// layouts without Latin letters. in.mu must be held.
+// lacks r. Then an ASCII letter on a layout without Latin letters goes as
+// the key a US layout has it on, which types whatever this layout has
+// there, as a keyboard plugged into the host would, and takes Ctrl+C and
+// the like to programs, which match shortcuts by key on such layouts. Any
+// other character the layout lacks is dropped: its keysym would be too,
+// or would type another character, and so would a key of a layout that
+// has Latin letters, or a key AltGr held in the browser takes to the
+// layout's third level. in.mu must be held.
 func (in *input) char(r rune) error {
-	code, shifted, ok := usKey(r)
-	if in.lacks == nil || !ok || !in.lacks(r) {
+	if !in.kb.lacks(r) {
 		sym := keysym.Rune(r)
 		if err := in.keysym(sym, true); err != nil {
 			return err
 		}
 		return in.keysym(sym, false)
+	}
+	code, shifted, ok := usKey(r)
+	if !ok || !in.kb.latinless() || in.holds(keysym.ISOLevel3Shift) {
+		return nil
 	}
 	shift := shifted && !in.holds(keysym.ShiftL, keysym.ShiftR)
 	if shift {
@@ -292,30 +298,26 @@ func state(down bool) uint32 {
 	return 0
 }
 
-// usRows are the keys of a US layout that type printable ASCII, each row
-// from its first evdev code (<linux/input-event-codes.h>): the characters
-// without Shift, then with it.
-var usRows = []struct {
-	code          uint32
-	plain, shifts string
+// usLetters are the letter keys of a US layout, each row from the evdev
+// code of its first key (<linux/input-event-codes.h>).
+var usLetters = []struct {
+	code    uint32
+	letters string
 }{
-	{41, "`", "~"},                       // KEY_GRAVE
-	{2, "1234567890-=", "!@#$%^&*()_+"},  // KEY_1 to KEY_EQUAL
-	{16, "qwertyuiop[]", "QWERTYUIOP{}"}, // KEY_Q to KEY_RIGHTBRACE
-	{30, "asdfghjkl;'", "ASDFGHJKL:\""},  // KEY_A to KEY_APOSTROPHE
-	{43, "\\", "|"},                      // KEY_BACKSLASH
-	{44, "zxcvbnm,./", "ZXCVBNM<>?"},     // KEY_Z to KEY_SLASH
+	{16, "qwertyuiop"}, // KEY_Q to KEY_P
+	{30, "asdfghjkl"},  // KEY_A to KEY_L
+	{44, "zxcvbnm"},    // KEY_Z to KEY_M
 }
 
-// usKey returns the evdev code of the key a US layout types r on, and
-// whether that takes Shift.
+// usKey returns the evdev code of the key a US layout types r, an ASCII
+// letter, on, and whether that takes Shift.
 func usKey(r rune) (code uint32, shift, ok bool) {
-	for _, row := range usRows {
-		if i := strings.IndexRune(row.plain, r); i >= 0 {
-			return row.code + uint32(i), false, true
-		}
-		if i := strings.IndexRune(row.shifts, r); i >= 0 {
-			return row.code + uint32(i), true, true
+	if 'A' <= r && r <= 'Z' {
+		r, shift = r+'a'-'A', true
+	}
+	for _, row := range usLetters {
+		if i := strings.IndexRune(row.letters, r); i >= 0 {
+			return row.code + uint32(i), shift, true
 		}
 	}
 	return 0, false, false

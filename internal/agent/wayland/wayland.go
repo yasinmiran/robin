@@ -126,7 +126,7 @@ func Open(ctx context.Context, o Options) (_ *Desktop, err error) {
 	}
 	if d.anyKeysym = typesAnyKeysym(conn); !d.anyKeysym && !d.in.viewOnly {
 		d.kb = followKeyboard(p.sigs, o.Log)
-		d.in.lacks = d.kb.lacks
+		d.in.kb = d.kb
 	}
 	if d.sess.clipboard {
 		if d.clip, err = newClipboard(d.sess, o.Log); err != nil {
