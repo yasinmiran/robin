@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/yasinmiran/robin/internal/agentbin"
@@ -172,7 +173,7 @@ func (h *host) guest(ctx context.Context, ag *agentProc) error {
 		b.ended(whyGuestLeft)
 		return nil
 	case errors.Is(err, errEnded):
-		b.ended(err.Error())
+		b.ended(strings.TrimPrefix(err.Error(), errEnded.Error()+": "))
 		fmt.Fprintf(o.Stderr, "robin: %v\n", err)
 		return nil
 	}
