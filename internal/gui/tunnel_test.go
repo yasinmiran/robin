@@ -373,10 +373,25 @@ func (f *countingForward) Dial() (net.Conn, error) {
 // for the agent's credentials, and at most maxSplices connections at once.
 func TestTunnelSplicesACheckOnce(t *testing.T) {
 	inner, accepted := testForward(t)
+	// The forward's ends stay open, as the agent's would. A conn nothing
+	// refers to is closed by the garbage collector, which would end its
+	// splice and free a slot the test says is taken.
+	var endsMu sync.Mutex
+	var ends []net.Conn
 	go func() {
-		for range accepted { // the forward's ends stay open, as the agent's would
+		for c := range accepted {
+			endsMu.Lock()
+			ends = append(ends, c)
+			endsMu.Unlock()
 		}
 	}()
+	t.Cleanup(func() {
+		endsMu.Lock()
+		defer endsMu.Unlock()
+		for _, c := range ends {
+			c.Close()
+		}
+	})
 	fwd := &countingForward{dialer: inner}
 	ln := loopback(t)
 	tun := &tunnel{ln: ln, log: slog.New(slog.DiscardHandler), firstCheck: 5 * time.Second, fwd: fwd, selfOf: tcpowner.PeerIsSelf}
