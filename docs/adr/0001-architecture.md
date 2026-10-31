@@ -2934,8 +2934,8 @@ than only that it survives.
   with a test that failed before:
   - xkb includes were bounded in depth only. Sections that each include
     the next four times took 0.48 s at depth 10 and four times as long
-    for each level more, and the depth allows 16; eight ways would run for
-    days. `Load` now applies at most 1024 includes; the xkeyboard-config
+    for each level more, and the depth allows 16: half an hour, and eight
+    ways would take years. `Load` now applies at most 1024 includes; the xkeyboard-config
     of the test workstation applies 27 at most (`be(oss_latin9)`). Found
     writing `FuzzLoad`'s time bound, not by the fuzzer, which does not
     build files that regular.
