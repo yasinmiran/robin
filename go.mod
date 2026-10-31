@@ -1,6 +1,6 @@
 module github.com/yasinmiran/robin
 
-go 1.25.0
+go 1.26.0
 
 // The release binaries embed the compiler's version and change with it. The
 // Makefile exports this line as GOTOOLCHAIN, so every builder gets exactly
@@ -36,7 +36,7 @@ require (
 	github.com/pion/srtp/v3 v3.1.3 // indirect
 	github.com/pion/turn/v5 v5.1.2 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
-	golang.org/x/crypto v0.54.0 // indirect
-	golang.org/x/net v0.56.0 // indirect
+	golang.org/x/crypto v0.56.0 // indirect
+	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 )

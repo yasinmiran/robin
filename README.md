@@ -18,7 +18,7 @@ that path by itself in about three seconds.
 
 ## Install
 
-From a checkout, with Go 1.25 or newer:
+From a checkout, with Go 1.26 or newer:
 
 ```sh
 make
