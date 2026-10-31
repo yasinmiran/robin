@@ -4,6 +4,7 @@ package x11
 
 import (
 	"fmt"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -46,6 +47,9 @@ func paint(t *testing.T, tx *testX, r Rect, rgb uint32) {
 }
 
 func TestMonitors(t *testing.T) {
+	if _, err := exec.LookPath("xrandr"); err != nil {
+		t.Skip("no xrandr")
+	}
 	tx := startX(t, "sleep 1000")
 	if !tx.c.randr15 {
 		t.Skip("the X server predates RandR 1.5")

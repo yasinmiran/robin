@@ -4,6 +4,7 @@ package x11
 
 import (
 	"bytes"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -37,6 +38,9 @@ func waitIdle(t *testing.T, c *Conn) {
 }
 
 func TestCapture(t *testing.T) {
+	if _, err := exec.LookPath("xterm"); err != nil {
+		t.Skip("no xterm")
+	}
 	tx := startX(t, "xterm -geometry 80x24+0+0")
 	c := tx.c
 	if c.cap.noSHM {
