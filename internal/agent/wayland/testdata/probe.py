@@ -9,7 +9,8 @@ it to a type nothing reads. Ctrl+V prints the clipboard's text as pasted,
 unless F6 has made the window a terminal, which pastes with Ctrl+Shift+V
 and takes Ctrl+V as the character ^V, until F6 again. Any other key
 pressed with Ctrl held types nothing. F8 starts reading the clipboard every
-5 ms, and F8 again stops and prints how many reads there were.
+5 ms, and F8 again stops and prints how many reads there were. The window
+prints each time it gains or loses the keyboard focus.
 Each key press, and each SIGUSR1, moves the picture on by one frame, the way
 a terminal echoes what is typed. --animate repaints the whole window 60
 times a second, for frame rate tests.
@@ -76,6 +77,7 @@ class Probe(Gtk.Application):
         keys.connect("key-pressed", self.on_key)
         keys.connect("key-released", lambda c, kv, kc, st: log(ev="key-up", keyval=Gdk.keyval_name(kv)))
         win.add_controller(keys)
+        win.connect("notify::is-active", lambda w, _: log(ev="focus", active=w.is_active()))
 
         self.clipboard = win.get_clipboard()
         self.area = area

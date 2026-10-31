@@ -410,11 +410,15 @@ func TestAttachStreamsAndDrives(t *testing.T) {
 			if !before.rich {
 				// The session before copies text alone as it ends.
 				d, _ := open(t, true)
+				defer d.Close()
+				p.awaitFocus(t)
 				probeCopies(t, p, d, before.key, before.text)
 				d.Close()
 				checkTornDown(t)
 			}
 			d, _ := open(t, true)
+			defer d.Close()
+			p.awaitFocus(t)
 			select {
 			case text := <-d.Clipboard():
 				t.Logf("the portal reported the clipboard from before the session: %q", text)
@@ -1000,6 +1004,8 @@ type probeEvent struct {
 	Ctrl    bool `json:"ctrl"`
 	Shift   bool `json:"shift"`
 	Reads   int  `json:"reads"`
+	// Active is whether the window has the keyboard focus, on a focus event.
+	Active bool `json:"active"`
 	// Clipboard formats and reads.
 	Mimes  []string `json:"mimes"`
 	Mime   string   `json:"mime"`
@@ -1068,6 +1074,35 @@ func (p *probe) await(t *testing.T, mark int, match func(probeEvent) bool) probe
 		case <-p.added:
 		case <-timeout:
 			t.Fatalf("the probe saw no such event; it saw %+v", seen)
+		}
+	}
+}
+
+// awaitFocus waits until the probe window has the keyboard focus, which it
+// has unless its last focus event said otherwise. Mutter's headless seat has
+// no keyboard but a session's virtual one, so the window loses the focus as
+// a session ends and gets it back later, at times only an instant after the
+// next session has started: a key pressed before then reaches nobody, and
+// the window sees just its release.
+func (p *probe) awaitFocus(t *testing.T) {
+	t.Helper()
+	timeout := time.After(5 * time.Second)
+	for {
+		p.mu.Lock()
+		focused := true
+		for _, e := range p.events {
+			if e.Ev == "focus" {
+				focused = e.Active
+			}
+		}
+		p.mu.Unlock()
+		if focused {
+			return
+		}
+		select {
+		case <-p.added:
+		case <-timeout:
+			t.Fatal("the probe window never got the keyboard focus back")
 		}
 	}
 }
