@@ -124,7 +124,7 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 	if err != nil {
 		return err
 	}
-	encoderName, newEncoder, encoderErr, err := chooseEncoder(start, o.Encoders, log)
+	video, err := chooseEncoder(start, o.Encoders, log)
 	if err != nil {
 		return fail(conn, err)
 	}
@@ -225,13 +225,14 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 		return fail(conn, err)
 	}
 
-	st, err := newStream(d.desk, start.FPS, start.MaxWidth, start.MaxHeight, newEncoder, log)
+	st, err := newStream(d.desk, start.FPS, start.MaxWidth, start.MaxHeight, video.open, log)
 	if err != nil {
 		return fail(conn, err)
 	}
 	s := &session{
 		conn: newController(conn), desk: d.desk, start: start, log: log, tcpMux: tcpMux, cert: cert, audio: audio != nil,
 		stream:  st,
+		encoder: video,
 		cursors: map[uint32]protocol.Cursor{},
 		files:   shared,
 		mic:     mic,
@@ -256,6 +257,7 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 	defer s.private.close()
 
 	width, height := d.desk.Size()
+	encoderName, encoderErr := video.inUse()
 	ready := &protocol.Ready{
 		Version: protocol.Version, AgentBuild: o.Build, Display: d.name, Session: d.session,
 		Width: width, Height: height, TunnelAddr: tunnelAddr,
@@ -310,7 +312,9 @@ type session struct {
 	cert   *webrtc.Certificate
 	audio  bool
 	stream *stream
-	typing lane
+	// encoder opens the stream's encoders and says which one Ready names.
+	encoder *videoEncoder
+	typing  lane
 	// inputMu is held while a browser's control message applies. closePeer
 	// takes it too, so that once it has let a browser go nothing that
 	// browser sent is still applying, and nothing it sends later will.

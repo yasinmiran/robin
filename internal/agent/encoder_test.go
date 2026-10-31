@@ -10,9 +10,12 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/yasinmiran/robin/internal/agent/peer"
+	"github.com/yasinmiran/robin/internal/agent/yuv"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
@@ -53,21 +56,40 @@ func TestSessionReportsBrokenEncoder(t *testing.T) {
 	}
 }
 
-// encoders records which constructors ran, at what size; broken names fail
-// with "no render node".
+// encoders records which constructors ran, at what size, and each frame
+// their encoders were asked for, with whether it was to be a keyframe;
+// broken names fail with "no render node", and failing names open but fail
+// every frame, as a host tool that cannot encode the size does.
 type encoders struct {
-	opened []string
-	broken map[string]bool
+	opened  []string
+	encodes []string
+	broken  map[string]bool
+	failing map[string]bool
 }
 
 func (e *encoders) newFunc(name string) NewEncoderFunc {
 	return func(w, h, _, _ int) (Encoder, error) {
 		e.opened = append(e.opened, fmt.Sprintf("%s %dx%d", name, w, h))
-		if e.broken[name] {
+		switch {
+		case e.broken[name]:
 			return nil, errors.New("no render node")
+		case e.failing[name]:
+			return loggedEncoder{brokenToolEncoder{new(atomic.Int64)}, name, &e.encodes}, nil
 		}
-		return &fakeEncoder{sizes: make(chan [2]int, 1)}, nil
+		return loggedEncoder{&fakeEncoder{sizes: make(chan [2]int, 1)}, name, &e.encodes}, nil
 	}
+}
+
+// loggedEncoder appends each frame it is asked for to log.
+type loggedEncoder struct {
+	Encoder
+	name string
+	log  *[]string
+}
+
+func (l loggedEncoder) Encode(img *yuv.I420, ts time.Duration, keyframe bool) ([]byte, error) {
+	*l.log = append(*l.log, fmt.Sprintf("%s %dx%d keyframe=%t", l.name, img.Width, img.Height, keyframe))
+	return l.Encoder.Encode(img, ts, keyframe)
 }
 
 func (e *encoders) table() map[string]NewEncoderFunc {
@@ -99,7 +121,7 @@ func TestChooseEncoder(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := &encoders{broken: map[string]bool{tc.broken: true}}
-			name, newEncoder, why, err := chooseEncoder(tc.start, e.table(), quietLog())
+			v, err := chooseEncoder(tc.start, e.table(), quietLog())
 			switch {
 			case tc.err != "":
 				if err == nil || !strings.Contains(err.Error(), tc.err) {
@@ -107,8 +129,10 @@ func TestChooseEncoder(t *testing.T) {
 				}
 			case err != nil:
 				t.Fatal(err)
-			case name != tc.want || newEncoder == nil || (tc.why == "") != (why == "") || !strings.Contains(why, tc.why):
-				t.Fatalf("chose %s (why %q), want %s (%q)", name, why, tc.want, tc.why)
+			default:
+				if name, why := v.inUse(); name != tc.want || (tc.why == "") != (why == "") || !strings.Contains(why, tc.why) {
+					t.Fatalf("chose %s (why %q), want %s (%q)", name, why, tc.want, tc.why)
+				}
 			}
 			if !slices.Equal(e.opened, tc.opened) {
 				t.Errorf("opened %q, want %q", e.opened, tc.opened)
@@ -118,23 +142,62 @@ func TestChooseEncoder(t *testing.T) {
 }
 
 // TestPickedEncoderFallsBackForGood: hardware that passes the trial and
-// fails at the session's size gives way to software, and is not tried again
-// at every resize after that.
+// fails at the session's size where a host tool does, at its first frame,
+// gives way to software, which encodes that frame as a keyframe, since the
+// page's decoder has only the hardware stream before it; hardware is not
+// tried again at every resize after that, and Ready says why.
 func TestPickedEncoderFallsBackForGood(t *testing.T) {
-	e := &encoders{broken: map[string]bool{}}
-	name, newEncoder, why, err := chooseEncoder(protocol.Start{Encoder: "vaapi", EncoderFallback: true}, e.table(), quietLog())
-	if err != nil || name != "vaapi" || why != "" {
-		t.Fatalf("chose %s (%q, %v)", name, why, err)
+	e := &encoders{failing: map[string]bool{}}
+	v, err := chooseEncoder(protocol.Start{Encoder: "vaapi", EncoderFallback: true}, e.table(), quietLog())
+	if err != nil {
+		t.Fatal(err)
 	}
-	e.broken["vaapi"] = true
+	if name, why := v.inUse(); name != "vaapi" || why != "" {
+		t.Fatalf("chose %s (%q)", name, why)
+	}
+	e.failing["vaapi"] = true
 	for _, size := range [][2]int{{1920, 1080}, {1280, 720}} {
-		if _, err := newEncoder(size[0], size[1], 30, startBitrate); err != nil {
+		enc, err := v.open(size[0], size[1], 30, startBitrate)
+		if err != nil {
 			t.Fatal(err)
 		}
+		if au, err := enc.Encode(yuv.NewI420(size[0], size[1]), 0, false); err != nil || len(au) == 0 {
+			t.Fatalf("%dx%d: encoded %d bytes, err %v", size[0], size[1], len(au), err)
+		}
+		enc.Close()
 	}
 	want := []string{"vaapi 320x240", "vaapi 1920x1080", "software 1920x1080", "software 1280x720"}
 	if !slices.Equal(e.opened, want) {
 		t.Errorf("opened %q, want %q", e.opened, want)
+	}
+	want = []string{"vaapi 1920x1080 keyframe=false", "software 1920x1080 keyframe=true", "software 1280x720 keyframe=false"}
+	if !slices.Equal(e.encodes, want) {
+		t.Errorf("encoded %q, want %q", e.encodes, want)
+	}
+	r := (&session{encoder: v}).resumedReady(&protocol.Ready{Encoder: "vaapi"})
+	if r.Encoder != protocol.EncoderSoftware || !strings.Contains(r.EncoderError, "vaapi: hwenc") {
+		t.Errorf("a resumed ready reports encoder %s (%q), want software because vaapi failed", r.Encoder, r.EncoderError)
+	}
+}
+
+// TestNamedEncoderDoesNotFallBack: an encoder the user named that fails at
+// the session's size keeps failing, and software never opens.
+func TestNamedEncoderDoesNotFallBack(t *testing.T) {
+	e := &encoders{failing: map[string]bool{}}
+	v, err := chooseEncoder(protocol.Start{Encoder: "vaapi"}, e.table(), quietLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.failing["vaapi"] = true
+	enc, err := v.open(1920, 1080, 30, startBitrate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := enc.Encode(yuv.NewI420(1920, 1080), 0, true); err == nil {
+		t.Fatal("a named encoder's failure was hidden")
+	}
+	if name, why := v.inUse(); name != "vaapi" || why != "" || slices.Contains(e.opened, "software 1920x1080") {
+		t.Errorf("in use %s (%q) after opening %q, want vaapi alone", name, why, e.opened)
 	}
 }
 
@@ -156,4 +219,68 @@ func TestSessionFallsBackToSoftware(t *testing.T) {
 
 func quietLog() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// brokenToolEncoder opens like a hardware encoder whose host tool starts
+// and fails at every frame, as hwenc does when the tool cannot encode the
+// session's size: the tool runs only from the first Encode.
+type brokenToolEncoder struct{ encodes *atomic.Int64 }
+
+func (e brokenToolEncoder) Encode(*yuv.I420, time.Duration, bool) ([]byte, error) {
+	e.encodes.Add(1)
+	return nil, errors.New("hwenc: ffmpeg h264_vaapi: exited: unsupported resolution")
+}
+func (brokenToolEncoder) SetBitrate(int) error { return nil }
+func (brokenToolEncoder) Close() error         { return nil }
+
+// TestPickedEncoderFallsBackWhenEncodeFails: a hardware encoder the CLI
+// picked that opens at the session's size and then fails on every frame
+// must give way to software. The trial frame succeeds: the stand-in for it
+// encodes.
+func TestPickedEncoderFallsBackWhenEncodeFails(t *testing.T) {
+	var hwEncodes atomic.Int64
+	swEncoded := make(chan [2]int, 1)
+	hwOpens := 0
+	table := map[string]NewEncoderFunc{
+		protocol.EncoderSoftware: func(int, int, int, int) (Encoder, error) { return &fakeEncoder{sizes: swEncoded}, nil },
+		protocol.EncoderVAAPI: func(int, int, int, int) (Encoder, error) {
+			hwOpens++
+			if hwOpens == 1 {
+				return &fakeEncoder{sizes: make(chan [2]int, 1)}, nil // the trial frame
+			}
+			return brokenToolEncoder{&hwEncodes}, nil
+		},
+	}
+	v, err := chooseEncoder(protocol.Start{Encoder: protocol.EncoderVAAPI, EncoderFallback: true}, table, quietLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name, why := v.inUse(); name != protocol.EncoderVAAPI || why != "" {
+		t.Fatalf("chose %s (%q)", name, why)
+	}
+	s := mustStream(newStream(&stillDesktop{}, 100, 64, 64, v.open, quietLog()))
+	p, err := peer.New(peer.Config{
+		MinBitrate: minBitrate, StartBitrate: startBitrate, MaxBitrate: protocol.DefaultMaxKbps * 1000, Log: quietLog(),
+		Video: s.video,
+	}, peer.Handlers{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	s.subscribe(p)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		s.run(ctx)
+		close(done)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	select {
+	case <-swEncoded:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("hardware failed %d frames and software encoded none: the session has no video", hwEncodes.Load())
+	}
 }

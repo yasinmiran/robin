@@ -76,8 +76,9 @@ func testSession(desk desktop.Desktop) *session {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return &session{
 		desk: desk, start: protocol.Start{MaxWidth: 1280, MaxHeight: 720}, log: log,
-		stream: mustStream(newStream(desk, 30, 1280, 720, nil, log)),
-		shared: &sharing{uids: newUIDSet()},
+		stream:  mustStream(newStream(desk, 30, 1280, 720, nil, log)),
+		encoder: &videoEncoder{name: protocol.EncoderSoftware},
+		shared:  &sharing{uids: newUIDSet()},
 	}
 }
 

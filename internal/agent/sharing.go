@@ -154,9 +154,10 @@ func (s *session) admitGuest(ctx context.Context, dg *share.Guest) {
 // is now, and whose it is.
 func (s *session) guestReady() *protocol.Ready {
 	w, h := s.desk.Size()
+	encoder, _ := s.encoder.inUse()
 	r := &protocol.Ready{
 		Version: protocol.Version, AgentBuild: s.ready.AgentBuild, Display: s.ready.Display, Session: s.ready.Session,
-		Width: w, Height: h, TunnelAddr: s.ready.TunnelAddr, Mode: s.ready.Mode, Audio: s.ready.Audio, Encoder: s.ready.Encoder,
+		Width: w, Height: h, TunnelAddr: s.ready.TunnelAddr, Mode: s.ready.Mode, Audio: s.ready.Audio, Encoder: encoder,
 		Share: &protocol.Share{Owner: s.shared.owner},
 	}
 	if s.mic != nil {

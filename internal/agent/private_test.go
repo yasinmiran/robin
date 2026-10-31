@@ -501,7 +501,7 @@ func TestPrivateLeavesTheKeeperWhatItCannotUndo(t *testing.T) {
 // A controller that resumes is told the private session as it is, not as
 // it was when the session began.
 func TestResumedReadyCarriesThePrivateSessionNow(t *testing.T) {
-	s := &session{private: &private{}}
+	s := &session{private: &private{}, encoder: &videoEncoder{name: protocol.EncoderSoftware}}
 	ready := &protocol.Ready{ID: "ab12", Private: s.private.snapshot()}
 	s.private.state.Curtain.On = true
 	got := s.resumedReady(ready)
@@ -511,7 +511,7 @@ func TestResumedReadyCarriesThePrivateSessionNow(t *testing.T) {
 	if ready.Resumed || ready.Private.Curtain.On {
 		t.Error("resuming changed the first Ready")
 	}
-	if got := (&session{}).resumedReady(ready); got.Private != nil {
+	if got := (&session{encoder: s.encoder}).resumedReady(ready); got.Private != nil {
 		t.Errorf("a spawned desktop's resumed ready has private %+v", got.Private)
 	}
 }
