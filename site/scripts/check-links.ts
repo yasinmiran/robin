@@ -1,8 +1,11 @@
-// Fails when a built page links to a file or an anchor that does not exist.
-// Usage: node scripts/check-links.ts dist
+// Fails when a built page links to a file or an anchor that does not exist,
+// or to a path outside the base the site is served under.
+// Usage: node scripts/check-links.ts dist (SITE_URL as for the build)
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, posix, relative, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+
+import { siteAddress } from "./site-url.ts";
 
 export interface BrokenLink {
   page: string;
@@ -56,9 +59,16 @@ export function fileFor(dist: string, sitePath: string): string | null {
   return candidates.find((file) => existsSync(file) && statSync(file).isFile()) ?? null;
 }
 
-/** sitePathOf is the address a built file is served at. */
-export function sitePathOf(dist: string, file: string): string {
-  return `/${relative(dist, file).split(sep).join("/")}`;
+/** sitePathOf is the address a built file is served at, under base. */
+export function sitePathOf(dist: string, file: string, base = "/"): string {
+  return `${base.replace(/\/+$/, "")}/${relative(dist, file).split(sep).join("/")}`;
+}
+
+/** underBase is the path within the site of an address under base, or null for one outside it. */
+export function underBase(base: string, address: string): string | null {
+  const root = base.replace(/\/+$/, "");
+  if (address === root) return "/";
+  return address.startsWith(`${root}/`) ? address.slice(root.length) : null;
 }
 
 function htmlFiles(dir: string): string[] {
@@ -69,7 +79,7 @@ function htmlFiles(dir: string): string[] {
   });
 }
 
-export function checkLinks(dist: string): BrokenLink[] {
+export function checkLinks(dist: string, base = "/"): BrokenLink[] {
   const broken: BrokenLink[] = [];
   const idCache = new Map<string, Set<string>>();
   const idsOf = (file: string) => {
@@ -82,37 +92,42 @@ export function checkLinks(dist: string): BrokenLink[] {
   };
 
   for (const file of htmlFiles(dist)) {
-    const page = sitePathOf(dist, file);
+    const page = sitePathOf(dist, file, base);
     for (const link of linksIn(readFileSync(file, "utf8"))) {
       if (link === "" || isExternal(link)) continue;
       const [pathAndQuery, hash = ""] = link.split("#");
       const path = pathAndQuery.split("?")[0];
-      const target = path === "" ? file : fileFor(dist, posix.resolve(posix.dirname(page), path));
+      const inSite = path === "" ? "" : underBase(base, posix.resolve(posix.dirname(page), path));
+      if (inSite === null) {
+        broken.push({ page, link, reason: `outside ${base}` });
+        continue;
+      }
+      const target = inSite === "" ? file : fileFor(dist, inSite);
       if (!target) {
         broken.push({ page, link, reason: "no such file" });
         continue;
       }
       if (hash && target.endsWith(".html") && !idsOf(target).has(decodeURIComponent(hash))) {
-        broken.push({ page, link, reason: `no #${hash} on ${sitePathOf(dist, target)}` });
+        broken.push({ page, link, reason: `no #${hash} on ${sitePathOf(dist, target, base)}` });
       }
     }
   }
   return broken;
 }
 
-function main(dist: string | undefined): number {
+function main(dist: string | undefined, base = "/"): number {
   if (!dist || !existsSync(dist)) {
     console.error(`check-links: build output not found: ${dist ?? "(none given)"}`);
     return 2;
   }
-  const broken = checkLinks(dist);
+  const broken = checkLinks(dist, base);
   for (const { page, link, reason } of broken) console.error(`${page}: ${link} (${reason})`);
   console.log(broken.length ? `check-links: ${broken.length} broken` : "check-links: every internal link resolves");
   return broken.length ? 1 : 0;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  process.exitCode = main(process.argv[2]);
+  process.exitCode = main(process.argv[2], siteAddress(process.env.SITE_URL).base);
 }
 
 export { main };
