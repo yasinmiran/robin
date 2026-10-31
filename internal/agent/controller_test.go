@@ -302,7 +302,8 @@ func TestLingerGivesTheResumeWhatItAsks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &session{log: slog.New(slog.NewTextHandler(io.Discard, nil)), private: rig.p, conn: newController(nil)}
+	s := &session{log: slog.New(slog.NewTextHandler(io.Discard, nil)), private: rig.p, conn: newController(nil),
+		encoder: &videoEncoder{name: protocol.EncoderSoftware}}
 	f := &feed{conns: make(chan *protocol.Conn, 2), changes: make(chan protocol.Session, 4)}
 	ready := &protocol.Ready{Version: protocol.Version, ID: "ab12", Mode: protocol.ModeAttach}
 

@@ -160,9 +160,16 @@ of CPU a frame, GStreamer's vaapih264enc 7.6 to 7.8 ms between the agent
 and the tool for 10 to 11 ms a call (`TestCompare`, same machine). The
 threshold sat at 1920x1080 until 2560x1440 became the default size, below. Because a pick is a guess from the probe, the CLI
 marks it (`Start.EncoderFallback`): a picked encoder that fails its trial
-frame, or later at the session's size, gives way to openh264 for the rest
-of the session and Ready says why, where an encoder the user named still
-fails the session.
+frame, fails to open at a size, or fails any frame after gives way to
+openh264 for the rest of the session, resizes included. A host tool starts
+only at an encoder's first frame, so a size it cannot encode fails there
+and not at open; openh264 then encodes that frame again, as the keyframe
+its stream starts with, so the picture goes on. The agent logs why, and
+Ready says so: the first Ready when the trial failed, a resumed
+controller's with the reason and a guest's by name when a frame did. An
+encoder the user named still fails the session at its trial and is never
+swapped later: a frame it fails is skipped, and the tool is restarted
+after a second.
 
 The first `Open` tries each route the host offers on a 320x240 frame,
 ffmpeg first since it measured faster and cheaper, and keeps the first that

@@ -159,12 +159,14 @@ func (s *session) relay(ctx context.Context, conn *protocol.Conn, desktopDone <-
 }
 
 // resumedReady is ready as a controller that resumes gets it: marked
-// resumed, and with the private session as it is now, which the page may
-// have switched since the start.
+// resumed, with the private session as it is now, which the page may have
+// switched since the start, and the encoder in use now, which may have
+// given way to software since.
 func (s *session) resumedReady(ready *protocol.Ready) *protocol.Ready {
 	r := *ready
 	r.Resumed = true
 	r.Private = s.private.snapshot()
+	r.Encoder, r.EncoderError = s.encoder.inUse()
 	return &r
 }
 

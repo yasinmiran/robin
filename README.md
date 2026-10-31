@@ -534,9 +534,11 @@ By default the CLI picks the encoder from the probe. It takes the GPU when
 the host can drive it and the GPU pays for the latency it adds: on hosts
 with four cores or fewer, and for sessions above 2560x1440 when ffmpeg can
 drive the GPU. VA-API comes before NVENC. Everywhere else it stays in
-software. If the GPU it picked fails on the host, the session carries on in
-software, and `-v` shows which encoder was picked, why, and why it fell back.
-An encoder named with `--encoder` is used or the session fails.
+software. If the GPU it picked fails on the host, as the session starts or
+at any frame after, the session carries on in software to its end, and `-v`
+shows which encoder was picked, why, and why it fell back. An encoder named
+with `--encoder` is never swapped for software: one that fails as the
+session starts fails the session.
 
 The agent is a static binary and cannot load the host's GPU libraries, so
 for these it pipes frames through a tool the host already has: ffmpeg, or

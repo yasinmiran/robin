@@ -34,7 +34,7 @@ The CLI picks the encoder from the probe's findings, before it tells the agent t
 
 VA-API comes before NVENC. Everywhere else the session stays in software: on a bigger host, where openh264 needs 5 to 17 ms of CPU for a 1440p frame, the GPU would save a few milliseconds of CPU a frame and add as many of latency.
 
-If the GPU encoder that `auto` picked fails on the host, at its trial frame or later at the session's size, the session carries on with openh264. An encoder you name with `--encoder` is used or the session fails. `-v` shows which encoder was picked, why, and why it fell back.
+If the GPU encoder that `auto` picked fails on the host, at its trial frame, at the session's size or at any frame after, the session carries on with openh264 to its end, resizes included. The frame the GPU failed is encoded again in software, so the picture goes on. An encoder you name with `--encoder` is never swapped for software: if it fails its trial frame the session fails, and a frame it fails later is skipped while the agent restarts its tool. `-v` shows which encoder was picked, why, and why it fell back.
 
 ## What the host needs
 
