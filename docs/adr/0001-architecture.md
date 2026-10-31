@@ -2886,6 +2886,85 @@ has, a peer of its own for its page, and a rule for who drives.
   disconnected` when the owner's proxy was killed and with `the session
   ended` after a bye.
 
+### Every parser of untrusted input has a fuzz target
+
+Robin reads bytes from four parties it does not trust: the page, which
+holds the token and the peer connection; the host, which answers the probe
+and speaks for the agent; other accounts on the host, which reach the
+guests' door and the tunnel's loopback port; and the network, which
+reaches the tunnel too. Tests named the inputs someone thought of. Go's
+native fuzzing, which needs nothing beyond `go test`, now feeds each
+parser the rest, and each target asserts what its parser promises rather
+than only that it survives.
+
+- What is fuzzed. On the agent: the stdio lines (`protocol.decodeLine` and
+  a whole `protocol.Conn` stream), control messages as the peer decodes
+  them, and a guest's controls dispatched with and without control; bulk
+  frames, headers, a whole transfer's sum and the credit both ways, and
+  the verdicts a sender takes; clipboard payloads; tile batches and the
+  ranges of a manifest; join codes, redeeming an invitation and a real
+  door's handshake; file names, `Numbered`, uploads into a directory of
+  files, and the failure text; xkb symbols and keycodes files, parsed and
+  loaded. On the CLI: the page's websocket frames, the page server's
+  Host, Origin, subprotocol and path, answers and candidates through the
+  relay under every policy, the agent's ICE credentials, a check through
+  `Credentials.Admits` and through the tunnel's splice, the probe's
+  output, the macros file, `macros.Check` and a change to a file of any
+  contents, and the host text `printable` lets through. The page's own
+  parsers of what the agent sends (`bulkframe.js`, `clip.js`, `tiles.js`
+  and `dispatchControl`) have property tests in the node suite instead,
+  from a seeded generator: random and mutated inputs, the same invariants.
+- The invariants. What a decoder takes is a fixed point of marshalling,
+  or round-trips through its encoder byte for byte (tile batches, clips,
+  join codes, the macros file). A refusal changes nothing: the macros
+  file keeps its bytes, an invitation stays open, the upload directory
+  holds what it held, and a `TileBook` fed every input answers like one
+  fed only those it took. Bounds hold: a bulk sum never counts past its
+  size, credits only grow and never pass a window beyond what was sent,
+  no answer of the page server names the token but the launch redirect.
+  The secrets a fuzzer cannot guess (the server's token, an invitation's
+  code, the agent's ICE password) are placeholders in its input, or the
+  target signs its input and mutates after, so it can come near what
+  passes.
+- How long, and what it found. On 2026-10-31 each of the 30 targets ran
+  for 3 minutes on three workers: 0.3 to 0.6 million executions for the
+  three that write files each time (`FuzzChange`, `FuzzUpload`,
+  `FuzzLoad`), 1 to 11 million for the rest. The property tests ran
+  100,000 inputs each. Three bugs, each fixed
+  with a test that failed before:
+  - xkb includes were bounded in depth only. Sections that each include
+    the next four times took 0.48 s at depth 10 and four times as long
+    for each level more, and the depth allows 16; eight ways would run for
+    days. `Load` now applies at most 1024 includes; the xkeyboard-config
+    of the test workstation applies 27 at most (`be(oss_latin9)`). Found
+    writing `FuzzLoad`'s time bound, not by the fuzzer, which does not
+    build files that regular.
+  - The probe dropped repeated `xauth`, `ffmpeg_encoder`, `gst_plugin` and
+    `gst_dir` values by comparing each with every one before it, so the
+    megabyte `sshmux.Output` keeps, all of one such key, took 15.8 s to
+    parse. Repeats now go in one pass at the end: 18 ms. Found the same
+    way, writing `FuzzParse`.
+  - The page's `decodeClip` kept a part of no data as a format the clip
+    has, where the agent and `encodeClip` take it for one it lacks, so an
+    empty PNG part sent the copy down the `ClipboardItem` path with an
+    empty image. Found by the property test in its first long run.
+
+  The fuzzer found nothing else in its 3 minutes a target. Two of its
+  first failures were the tests' own: the door hangs up on a guest whose
+  stream ends, as `protocol.Conn` does on EOF, which can beat the error
+  it was about to send (a guest CLI waits for the answer, so it always
+  hears it); and a CR inside an SDP line is part of the value, as the
+  relay reads it.
+- Running them. `go test` replays every target's seeds and its
+  `testdata/fuzz` inputs on every run, so a failing input committed there
+  stays a regression test. `make fuzz` runs every target for `FUZZTIME`
+  (10 s), then the property tests with `PROPERTY_RUNS` (20000) inputs
+  each. Not fuzzed: the cgo codecs, whose input is the agent's own capture
+  and the browser's Opus, which libopus's own fuzzing covers; Pion's
+  packet parsers, which have fuzz targets of their own upstream; and what local programs of the same
+  user send (the keeper's steps, the X server's replies, the private
+  sound server's clients), which can do as much as the user anyway.
+
 ## Verification parked
 
 Two checks were parked by decision on 2026-10-18. Both needed hardware the

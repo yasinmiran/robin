@@ -15,6 +15,7 @@ order: 2
 | `make test-agents` | builds the agents and scans them for anything of the builder |
 | `make check` | test, test-agents, test-x, test-wayland and e2e |
 | `make cover` | every suite again with coverage, merged, checked against `coverage-baseline.txt` |
+| `make fuzz` | every Go fuzz target for `FUZZTIME` (10 s) each, then the page's property tests |
 | `make repro` | builds the agents, the CLI and dist twice, from two paths, and compares them |
 
 Containers are rootless podman. Docker is not supported. `make test` alone runs anywhere Go does and skips what needs podman.
@@ -143,6 +144,19 @@ ROBIN_E2E_ID=robin-e2e-2 ROBIN_E2E_SUBNET=10.89.43.0/24 ROBIN_E2E_HOST_IP=10.89.
 ## `make cover`
 
 `make cover` runs every suite with coverage and merges it in `.cover/`: the unit tests (the cgo-tagged encoder packages included), the test-x and test-wayland binaries, and e2e with the CLI and the agent built with `-cover`. Every Go suite instruments the whole module, so a session test in `internal/agent` counts for `x11` and `peer` too. It prints statement coverage per file and per package (`summary.txt`, with `merged.out` and `cover.html` beside it), and line coverage per script of the page (`page.txt`), from Chrome in e2e and from `make test-js`. It fails when a package falls more than 0.5 points below its line in `coverage-baseline.txt`. `make cover-unit cover-report` gives a quick look without containers.
+
+## `make fuzz`
+
+Every parser of input Robin does not trust has a Go fuzz target beside its tests: what the agent reads from the CLI, the guests' door and the page's data channels; what the CLI reads from the page's websocket, the host's probe and the agent's answers; the tunnel's first message, the page server's headers, file names, the macros file, xkb symbols files, and the host text the CLI prints. Each asserts what its parser promises, not only that it survives: what it takes round-trips through its encoder where there is one, a refusal leaves the state as it was, and nothing it takes breaks a bound. `go test` replays every target's seeds and its `testdata/fuzz` inputs on every run, so a failing input committed there stays a regression test.
+
+`make fuzz` runs the targets one at a time for `FUZZTIME` each, then the page's property tests (`internal/web/static/test/*.property.test.js`) with `PROPERTY_RUNS` (20000) random and mutated inputs each; `make test` runs them with 500. A property failure names its seed, and `ROBIN_PROPERTY_SEED` replays it. A real run, and one target by hand:
+
+```sh
+make fuzz FUZZTIME=3m
+go test -run='^$' -fuzz='^FuzzDoor$' -fuzztime=3m ./internal/agent/share
+```
+
+The ADR's section on fuzzing says what each target checks and what the first runs found.
 
 ## `make repro`
 
