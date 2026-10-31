@@ -136,3 +136,22 @@ test('the host cannot keep more than MAX_OFFERS files on offer', () => {
   assert.equal(list.get('u').state, QUEUED, 'uploads are the page\'s own');
   assert.equal(list.get(`o${MAX_OFFERS + 12}`).state, OFFERED, 'the newest is listed');
 });
+
+test('an offer heard again while fetching goes back on offer: the fetch died with its peer', () => {
+  // The agent sends every open offer again when a control channel opens,
+  // which is a new peer connection: a fetch sent on the old one never gets
+  // its transfer. A row left fetching has no Save, only Dismiss, which
+  // declines the file on the host.
+  const list = new Transfers();
+  list.offer('d1', 'report.pdf', 2048);
+  assert.equal(list.fetch('d1'), true);
+  assert.equal(list.get('d1').state, FETCHING);
+  list.offer('d1', 'report.pdf', 2048);
+  assert.equal(list.get('d1').state, OFFERED, 'offered again, so nothing is on its way');
+  assert.equal(list.fetch('d1'), true, 'Save is back');
+  // One whose bytes are arriving is not touched: its channel's close
+  // settles it.
+  assert.equal(list.receive('d1'), true);
+  list.offer('d1', 'report.pdf', 2048);
+  assert.equal(list.get('d1').state, RECEIVING);
+});
