@@ -37,8 +37,9 @@ const CodeBusy Code = "busy"
 const ExitNoSession = 3
 
 // Resume names the kept session a controller wants back, with what a new
-// robin gui asks of it. A redial of the same CLI asks only Tunnel again,
-// since the page may have switched the private session since.
+// robin gui asks of it. A redial of the same CLI asks only Tunnel again:
+// the page may have switched the private session since, and the transport
+// is the CLI's for its whole run.
 type Resume struct {
 	Version int    `json:"version"`
 	ID      string `json:"id"`

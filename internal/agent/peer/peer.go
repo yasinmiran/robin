@@ -44,6 +44,10 @@ const sctpReceiveBuffer = 8*protocol.BulkWindow + 256<<10
 // nothing was sent.
 var ErrNoControl = errors.New("peer: control channel not open")
 
+// ErrTCPOnlyNeedsMux means a Config asked for TCPOnly without a TCPMux,
+// which would leave the peer no candidate at all.
+var ErrTCPOnlyNeedsMux = errors.New("peer: TCP only needs a TCP mux")
+
 // Config is fixed for the life of a Peer.
 type Config struct {
 	STUN []string
@@ -235,7 +239,7 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 	})
 	switch {
 	case cfg.TCPOnly && cfg.TCPMux == nil:
-		return nil, errors.New("peer: TCP only needs a TCP mux")
+		return nil, ErrTCPOnlyNeedsMux
 	case cfg.TCPOnly:
 		se.SetICETCPMux(cfg.TCPMux)
 		se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeTCP4})

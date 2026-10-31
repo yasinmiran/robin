@@ -2715,7 +2715,12 @@ afresh, so a resume takes the resuming CLI's transport for the pages from
 then on, and a redial asks for it again; refusing a resume in another mode
 would only have made the user end a desktop to change a flag. A guest's
 peer follows the guest's own CLI: each flag speaks for the page of the CLI
-that was given it. `auto` and `direct` are as they were.
+that was given it. The protocol version did not change, so a guest's CLI
+can join an owner's session from an older build, which ignores
+`Join.Tunnel`; the guest's Ready therefore answers it with its own
+`Tunnel`, and a guest's CLI through the tunnel alone leaves a session
+whose Ready lacks it. The owner needs no such answer: a CLI resumes only a
+session of its own build. `auto` and `direct` are as they were.
 
 ### The host agent bounds what a page or another user can hold
 

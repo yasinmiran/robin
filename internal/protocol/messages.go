@@ -180,6 +180,10 @@ type Ready struct {
 	Private *Private `json:"private,omitempty"`
 	// Share is set on the Ready a guest gets, and nil for the owner.
 	Share *Share `json:"share,omitempty"`
+	// Tunnel answers a guest's Join.Tunnel: the agent keeps that guest's
+	// peers to the tunnel. An agent that leaves it unset gathers UDP for
+	// the guest's page, and a guest's CLI under the tunnel alone leaves.
+	Tunnel bool `json:"tunnel,omitempty"`
 }
 
 // Notice is something the user has to do or know before the desktop is ready.

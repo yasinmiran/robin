@@ -152,13 +152,14 @@ func (s *session) admitGuest(ctx context.Context, dg *share.Guest) {
 }
 
 // guestReady is what a guest's CLI hears once admitted: the desktop as it
-// is now, and whose it is.
-func (s *session) guestReady() *protocol.Ready {
+// is now, whose it is, and that g's peers keep to the tunnel when its
+// Join asked.
+func (s *session) guestReady(g *guest) *protocol.Ready {
 	w, h := s.desk.Size()
 	r := &protocol.Ready{
 		Version: protocol.Version, AgentBuild: s.ready.AgentBuild, Display: s.ready.Display, Session: s.ready.Session,
 		Width: w, Height: h, TunnelAddr: s.ready.TunnelAddr, Mode: s.ready.Mode, Audio: s.ready.Audio, Encoder: s.ready.Encoder,
-		Share: &protocol.Share{Owner: s.shared.owner},
+		Share: &protocol.Share{Owner: s.shared.owner}, Tunnel: g.tunnel,
 	}
 	if s.mic != nil {
 		r.Mic = &protocol.Device{Available: true, Where: s.mic.Where()}
@@ -171,7 +172,7 @@ func (s *session) guestReady() *protocol.Ready {
 func (s *session) serveGuest(ctx context.Context, g *guest) {
 	why := whyEnded
 	defer func() { s.removeGuest(g, why) }()
-	if err := g.conn.Send(protocol.Message{Type: protocol.TypeReady, Ready: s.guestReady()}); err != nil {
+	if err := g.conn.Send(protocol.Message{Type: protocol.TypeReady, Ready: s.guestReady(g)}); err != nil {
 		return
 	}
 	for {

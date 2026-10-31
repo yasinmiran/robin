@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yasinmiran/robin/internal/agent/peer"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
@@ -296,7 +297,7 @@ func TestTheTransportIsTheAttachedCLIs(t *testing.T) {
 		defer s.mu.Unlock()
 		v, err := s.openViewer(g)
 		if err != nil {
-			if !strings.Contains(err.Error(), "TCP only") {
+			if !errors.Is(err, peer.ErrTCPOnlyNeedsMux) {
 				t.Fatal(err)
 			}
 			return true

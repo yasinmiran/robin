@@ -1,6 +1,7 @@
 package peer
 
 import (
+	"errors"
 	"net"
 	"strings"
 	"sync"
@@ -99,9 +100,13 @@ func TestTCPOnlyPairsThroughTheMuxWhateverTheBrowserNames(t *testing.T) {
 }
 
 func TestTCPOnlyNeedsAMux(t *testing.T) {
-	if p, err := New(Config{TCPOnly: true, MinBitrate: 100_000, StartBitrate: 1_000_000, MaxBitrate: 5_000_000}, Handlers{}); err == nil {
+	p, err := New(Config{TCPOnly: true, MinBitrate: 100_000, StartBitrate: 1_000_000, MaxBitrate: 5_000_000}, Handlers{})
+	if err == nil {
 		p.Close()
 		t.Fatal("a TCP-only peer without a mux was made")
+	}
+	if !errors.Is(err, ErrTCPOnlyNeedsMux) {
+		t.Fatalf("a TCP-only peer without a mux: %v", err)
 	}
 }
 

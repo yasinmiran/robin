@@ -134,6 +134,11 @@ func (h *host) guest(ctx context.Context, ag *agentProc) error {
 	if ready.Share == nil {
 		return fmt.Errorf("the agent on %s answered the join as no guest's", o.Dest)
 	}
+	if o.Transport == relay.Tunnel && !ready.Tunnel {
+		ag.bye()
+		return fmt.Errorf("%s's session on %s runs an agent that would gather UDP for this page, which --transport tunnel rules out: ask %s to start the session again with this build of robin, or join without --transport tunnel",
+			ready.Share.Owner, o.Dest, ready.Share.Owner)
+	}
 	log.Info("joined", "owner", ready.Share.Owner, "display", ready.Display, "size", fmt.Sprintf("%dx%d", ready.Width, ready.Height))
 
 	t, err := openTunnel(ctx, h.m, ready.TunnelAddr, o.Transport, log)
