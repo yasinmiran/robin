@@ -116,6 +116,8 @@ jobs:
           node-version-file: site/.nvmrc
           cache: npm
           cache-dependency-path: site/package-lock.json
-      - run: npm ci --no-audit --no-fund
+      # No dependency needs an install script to test or build the site, and
+      # without them a package cannot run code while npm installs it.
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
       - run: npm run check

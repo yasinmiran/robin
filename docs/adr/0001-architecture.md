@@ -2897,7 +2897,9 @@ taking. Checkout keeps no credentials, no `run:` step reads an event field,
 and each of the three actions (checkout, setup-go, setup-node) is pinned to
 a full commit SHA, since a tag can be moved. It runs what needs no
 container: the stub build's tests, vet, gofmt, a tidy check, govulncheck,
-the page's node tests and the site. `make check` stays the merge gate,
+the page's node tests and the site, every `npm ci` with `--ignore-scripts`
+(no dependency needs an install script, so none runs while npm installs
+it). `make check` stays the merge gate,
 because a runner has no podman, display or GPU for the suites that matter
 most.
 
