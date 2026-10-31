@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -31,16 +32,33 @@ func openDoor(t *testing.T, users map[string]int) (*Door, *agenttest.LockedBuffe
 // openDoorWriting is openDoor with each write to a guest bounded by wait.
 func openDoorWriting(t *testing.T, users map[string]int, wait time.Duration) (*Door, *agenttest.LockedBuffer) {
 	t.Helper()
+	var logged agenttest.LockedBuffer
+	return openDoorLogging(t, users, wait, &logged), &logged
+}
+
+// openDoorLogging is openDoorWriting with the door's log going to log.
+func openDoorLogging(t *testing.T, users map[string]int, wait time.Duration, log io.Writer) *Door {
+	t.Helper()
 	in, _ := testInvites(users)
 	in.now = nil
 	in.session = fmt.Sprintf("t%d%d", os.Getpid(), time.Now().UnixNano())
-	var logged agenttest.LockedBuffer
-	d, err := open(in, slog.New(slog.NewTextHandler(&logged, nil)), wait)
+	d, err := open(in, slog.New(slog.NewTextHandler(log, nil)), wait)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { d.Close() })
-	return d, &logged
+	return d
+}
+
+// gatedWriter holds every write until gate closes.
+type gatedWriter struct {
+	gate <-chan struct{}
+	w    io.Writer
+}
+
+func (g gatedWriter) Write(p []byte) (int, error) {
+	<-g.gate
+	return g.w.Write(p)
 }
 
 func dialDoor(t *testing.T, d *Door) net.Conn {
@@ -120,12 +138,22 @@ func TestTheDoorAdmitsAnInvitedUIDWithItsCode(t *testing.T) {
 // of it is read: what it wrote is unread when the door closes, which
 // resets it, where a read would have let it see EOF.
 func TestTheDoorHangsUpOnAnUninvitedUIDUnread(t *testing.T) {
-	d, logged := openDoor(t, map[string]int{"other": 4243})
+	// The door logs a refusal before it hangs up, so holding its log until
+	// the write is in puts the bytes on the socket before the close: a door
+	// quicker than the write would otherwise leave nothing unread.
+	gate := make(chan struct{})
+	release := sync.OnceFunc(func() { close(gate) })
+	var logged agenttest.LockedBuffer
+	d := openDoorLogging(t, map[string]int{"other": 4243}, writeWait, gatedWriter{gate, &logged})
+	t.Cleanup(release)
 	if _, err := d.Invites().Invite("other"); err != nil {
 		t.Fatal(err)
 	}
 	c := dialDoor(t, d)
-	c.Write([]byte("\x1b]0;robin\x07" + strings.Repeat("x", 1024) + "\n"))
+	if _, err := c.Write([]byte("\x1b]0;robin\x07" + strings.Repeat("x", 1024) + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	release()
 	_, err := readReply(c)
 	if !errors.Is(err, syscall.ECONNRESET) {
 		t.Fatalf("read after the refusal: %v, want a reset", err)
