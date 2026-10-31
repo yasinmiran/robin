@@ -963,7 +963,28 @@ make test-wayland  # Wayland attach against headless GNOME 46, GNOME 49 and KDE 
 make e2e      # the whole thing: podman host, Playwright and Chrome client
 make check    # test, test-agents, test-x, test-wayland and e2e
 make cover    # all four again with coverage, merged, checked against coverage-baseline.txt
+make fuzz     # every Go fuzz target for FUZZTIME (10s) each, then the page's property tests
 make repro    # builds the agents, the CLI and dist twice, from two paths, and compares them
+```
+
+Every parser of untrusted input has a Go fuzz target beside its tests:
+what the agent reads from the CLI, the guests' door and the page's data
+channels, what the CLI reads from the page's websocket, the host's probe
+and the agent's answers, the tunnel's first message, the page server's
+headers, file names, the macros file, xkb symbols files and the text the
+CLI prints from the host. Each asserts more than that the parser survives:
+what it takes round-trips through its encoder where there is one, a
+refusal leaves the state as it was, and nothing it takes breaks a bound.
+`go test` replays every target's seeds and its `testdata/fuzz` inputs on
+every run, so a failing input committed there stays a regression test.
+`make fuzz` runs each target for `FUZZTIME` (`make fuzz FUZZTIME=3m` for a
+real run), one at a time, and then the page's property tests
+(`static/test/*.property.test.js`) with `PROPERTY_RUNS` (20000) random and
+mutated inputs each; they take 500 under `make test`. A failure names its
+seed, and `ROBIN_PROPERTY_SEED` replays it. One target by hand:
+
+```sh
+go test -run='^$' -fuzz='^FuzzDoor$' -fuzztime=3m ./internal/agent/share
 ```
 
 `make cover` runs every suite with coverage and merges it in

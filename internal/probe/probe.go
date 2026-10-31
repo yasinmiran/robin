@@ -181,6 +181,9 @@ func Parse(out []byte) (*Report, error) {
 			return nil, fmt.Errorf("probe: line %d: %s: %w", start+n+1, key, err)
 		}
 	}
+	for _, list := range []*[]string{&r.XAuthority, &r.FFmpegEncoders, &r.GstPlugins, &r.GstDirs} {
+		*list = unique(*list)
+	}
 	r.Arch = goarch(r.Machine)
 	return r, nil
 }
@@ -265,7 +268,7 @@ func (r *Report) set(key, val string) error {
 		r.GPU.NvidiaGPUs = append(r.GPU.NvidiaGPUs, val)
 
 	case "xauth":
-		r.XAuthority = appendNew(r.XAuthority, val)
+		r.XAuthority = append(r.XAuthority, val)
 	case "session_bus":
 		r.SessionBus = val
 	case "pulse":
@@ -273,11 +276,11 @@ func (r *Report) set(key, val string) error {
 	case "pipewire":
 		r.PipeWireSocket = val
 	case "ffmpeg_encoder":
-		r.FFmpegEncoders = appendNew(r.FFmpegEncoders, val)
+		r.FFmpegEncoders = append(r.FFmpegEncoders, val)
 	case "gst_plugin":
-		r.GstPlugins = appendNew(r.GstPlugins, val)
+		r.GstPlugins = append(r.GstPlugins, val)
 	case "gst_dir":
-		r.GstDirs = appendNew(r.GstDirs, val)
+		r.GstDirs = append(r.GstDirs, val)
 	case "v4l2loopback":
 		path, label, _ := strings.Cut(val, " ")
 		r.V4L2Loopback = append(r.V4L2Loopback, VideoDevice{Path: path, Label: label})
@@ -376,9 +379,13 @@ func goarch(machine string) string {
 	return ""
 }
 
-func appendNew(list []string, v string) []string {
-	if slices.Contains(list, v) {
-		return list
-	}
-	return append(list, v)
+// unique drops the values list has had before, in one pass: a host may
+// print as many as a megabyte holds.
+func unique(list []string) []string {
+	seen := make(map[string]bool, len(list))
+	return slices.DeleteFunc(list, func(v string) bool {
+		dup := seen[v]
+		seen[v] = true
+		return dup
+	})
 }

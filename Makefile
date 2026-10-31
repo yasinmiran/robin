@@ -76,7 +76,7 @@ $(GOBUILD) $(2) -tags openh264,opus,netgo,osusergo \
 	-o $@ ./cmd/robin-agent
 endef
 
-.PHONY: all agents cli dist repro go-version test test-agents test-js test-short test-x test-wayland check e2e clean
+.PHONY: all agents cli dist repro go-version test test-agents test-js test-short test-x test-wayland check e2e fuzz clean
 .PHONY: cover cover-unit cover-x cover-wayland cover-e2e cover-report cover-baseline
 .PRECIOUS: bin/robin-agent-linux-% bin/cover/robin-agent-linux-%
 
@@ -147,8 +147,25 @@ test-agents: agents
 
 # The page's pure modules, under Node's own test runner. make test runs them
 # too, through TestPageModules in internal/web; this target is for make cover.
+# The files are named, since Node 22 and later take a directory for a file.
 test-js:
-	node --test internal/web/static/test/
+	node --test internal/web/static/test/*.test.js
+
+# Every Go fuzz target for FUZZTIME each, one after another, then the page's
+# property tests with PROPERTY_RUNS inputs each. go test replays each
+# target's seeds and testdata/fuzz on every run; a failing input found here
+# is written there, to be committed with its fix.
+FUZZTIME ?= 10s
+PROPERTY_RUNS ?= 20000
+fuzz:
+	@set -e; for file in $$(grep -rl --include='*_test.go' '^func Fuzz' cmd internal | sort); do \
+		pkg=./$$(dirname $$file); \
+		for target in $$(sed -n 's/^func \(Fuzz[A-Za-z0-9_]*\)(.*/\1/p' $$file); do \
+			echo "fuzz $$pkg $$target"; \
+			$(GO) test -run '^$$' -fuzz "^$$target$$" -fuzztime $(FUZZTIME) $$pkg; \
+		done; \
+	done
+	ROBIN_PROPERTY_RUNS=$(PROPERTY_RUNS) node --test internal/web/static/test/*.property.test.js
 
 test-short:
 	$(GO) test -short ./...

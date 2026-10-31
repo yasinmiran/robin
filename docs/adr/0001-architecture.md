@@ -270,9 +270,16 @@ lower of the two sides, so every tunnel pair ranks below every direct UDP pair
 whatever the browser assigns its own candidates. The agent must gather a
 loopback candidate for its TCP mux to accept the forwarded connection, which
 also gathers loopback UDP candidates; the CLI drops those, since they would
-point the browser at its own machine. The browser learns nothing it should
-not: its host candidates stay mDNS names and the agent sees it as
-peer-reflexive.
+point the browser at its own machine. It drops them by allow-list, as the
+host is not trusted to send only what Pion writes: a candidate reaches the
+browser only with an IP literal that is not loopback, unspecified or
+multicast, and only spaced as the browser splits it. A name such as
+`localhost`, which the browser would resolve, and `127.1` stay behind with
+the rest; the agent gathers with mDNS off, so its own candidates are never
+names. An answer with a CR inside a line ends the session, since a parser
+that ends lines at CR too would find a candidate the CLI never read. The
+browser learns nothing it should not: its host candidates stay mDNS names
+and the agent sees it as peer-reflexive.
 
 Failover needed two more pieces. When UDP dies, Chrome nominates the
 lower-priority tunnel pair within about two seconds, and Pion, as the
@@ -2885,6 +2892,107 @@ has, a peer of its own for its page, and a rule for who drives.
   that did not hold the socket, and its proxy exited with `the owner
   disconnected` when the owner's proxy was killed and with `the session
   ended` after a bye.
+
+### Every parser of untrusted input has a fuzz target
+
+Robin reads bytes from four parties it does not trust: the page, which
+holds the token and the peer connection; the host, which answers the probe
+and speaks for the agent; other accounts on the host, which reach the
+guests' door and the tunnel's loopback port; and the network, which
+reaches the tunnel too. Tests named the inputs someone thought of. Go's
+native fuzzing, which needs nothing beyond `go test`, now feeds each
+parser the rest, and each target asserts what its parser promises rather
+than only that it survives.
+
+- What is fuzzed. On the agent: the stdio lines (`protocol.decodeLine` and
+  a whole `protocol.Conn` stream), control messages as the peer decodes
+  them, and a guest's controls dispatched with and without control; bulk
+  frames, headers, a whole transfer's sum and the credit both ways, and
+  the verdicts a sender takes; clipboard payloads; tile batches and the
+  ranges of a manifest; join codes, redeeming an invitation and a real
+  door's handshake; file names, `Numbered`, uploads into a directory of
+  files, and the failure text; xkb symbols and keycodes files, parsed and
+  loaded; the camera's pictures fitted into its frame. On the CLI: the page's websocket frames, the page server's
+  Host, Origin, subprotocol and path, answers and candidates through the
+  relay under every policy, the agent's ICE credentials, a check through
+  `Credentials.Admits` and through the tunnel's splice, the probe's
+  output, the forward target the agent names and the digest the host's
+  hash tool prints, the macros file, `macros.Check` and a change to a file of any
+  contents, and the host text `printable` lets through. The page's own
+  parsers of what the agent sends (`bulkframe.js`, `clip.js`, `tiles.js`
+  and `dispatchControl`) have property tests in the node suite instead,
+  from a seeded generator: random and mutated inputs, the same invariants.
+- The invariants. What a decoder takes is a fixed point of marshalling,
+  or round-trips through its encoder byte for byte (tile batches, clips,
+  join codes, the macros file). A refusal changes nothing: the macros
+  file keeps its bytes, an invitation stays open, the upload directory
+  holds what it held, and a `TileBook` fed every input answers like one
+  fed only those it took. Bounds hold: a bulk sum never counts past its
+  size, credits only grow and never pass a window beyond what was sent,
+  no answer of the page server names the token but the launch redirect.
+  The secrets a fuzzer cannot guess (the server's token, an invitation's
+  code, the agent's ICE password) are placeholders in its input, or the
+  target signs its input and mutates after, so it can come near what
+  passes.
+- How long, and what it found. On 2026-10-31 each of the 30 targets ran
+  for 3 minutes on three workers: 0.3 to 0.6 million executions for the
+  three that write files each time (`FuzzChange`, `FuzzUpload`,
+  `FuzzLoad`), 1 to 11 million for the rest. The property tests ran
+  100,000 inputs each. Three bugs, each fixed
+  with a test that failed before:
+  - xkb includes were bounded in depth only. Sections that each include
+    the next four times took 0.48 s at depth 10 and four times as long
+    for each level more, and the depth allows 16: half an hour, and eight
+    ways would take years. `Load` now applies at most 1024 includes; the xkeyboard-config
+    of the test workstation applies 27 at most (`be(oss_latin9)`). Found
+    writing `FuzzLoad`'s time bound, not by the fuzzer, which does not
+    build files that regular.
+  - The probe dropped repeated `xauth`, `ffmpeg_encoder`, `gst_plugin` and
+    `gst_dir` values by comparing each with every one before it, so the
+    megabyte `sshmux.Output` keeps, all of one such key, took 15.8 s to
+    parse. Repeats now go in one pass at the end: 18 ms. Found the same
+    way, writing `FuzzParse`.
+  - The page's `decodeClip` kept a part of no data as a format the clip
+    has, where the agent and `encodeClip` take it for one it lacks, so an
+    empty PNG part sent the copy down the `ClipboardItem` path with an
+    empty image. Found by the property test in its first long run.
+
+  The fuzzer found nothing else in its 3 minutes a target. Two of its
+  first failures were the tests' own: the door hangs up on a guest whose
+  stream ends, as `protocol.Conn` does on EOF, which can beat the error
+  it was about to send (a guest CLI waits for the answer, so it always
+  hears it); and a CR inside an SDP line, which the relay took as part of
+  the value. Whether a browser does too is not something to rely on, so
+  the relay now refuses such an answer.
+
+  A review of the targets after those runs found that several could not
+  fail where it mattered: `FuzzFromAgent` judged candidates with the
+  relay's own helpers, `FuzzChange` compared what a session is shown with
+  the function that picks it, and `FuzzGuestControl`,
+  `FuzzAnswerCredentials` and `FuzzUpload` never set up the state their
+  guarantee is about (another guest, conflicting credentials, a link
+  under the upload's name). Each now has an oracle of its own, checked by
+  breaking the code it guards and watching the target fail. One was a
+  real gap: the relay took anything `net.ParseIP` could not read for a
+  routable address, so `localhost`, `127.1` or a name resolving to the
+  browser's machine would have reached the browser; it now keeps only
+  routable IP literals (above, under the tunnel's details).
+- Running them. `go test` replays every target's seeds and its
+  `testdata/fuzz` inputs on every run, so a failing input committed there
+  stays a regression test. `make fuzz` runs every target for `FUZZTIME`
+  (10 s), then the property tests with `PROPERTY_RUNS` (20000) inputs
+  each. Not fuzzed: the cgo codecs, whose input is the agent's own
+  capture, the browser's Opus and the H.264 of the owner's camera, which
+  their own projects fuzz (openh264 in OSS-Fuzz, on top of which the
+  pinned 2.6.0 has the fix for CVE-2025-27091). Only the owner's page may
+  send a camera track, and what openh264 reports of a picture is checked
+  before its planes are read: a size or stride that does not describe
+  I420 is an undecodable picture, not an index out of range that ends the
+  agent. `FuzzFitter` fits every size the decoder may report into the
+  camera's frame. Pion's packet parsers have fuzz targets of their own
+  upstream; and what local programs of the same user send (the keeper's
+  steps, the X server's replies, the private sound server's clients) can
+  do as much as the user anyway.
 
 ## Verification parked
 

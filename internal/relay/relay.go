@@ -14,7 +14,7 @@ package relay
 import (
 	"errors"
 	"fmt"
-	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 
@@ -62,6 +62,11 @@ const TunnelPriority = 0<<24 | 0xffff<<8 | (256 - 1)
 // the one pinned for this session.
 var ErrFingerprintChanged = errors.New("relay: agent DTLS fingerprint changed mid-session")
 
+// ErrBareCR means an answer had a CR that does not end a line. The relay
+// reads lines as ending at LF, and a parser that also ends them at CR would
+// find lines the relay never saw, a candidate among them.
+var ErrBareCR = errors.New("relay: agent answer has a CR inside a line")
+
 // Relay holds the per-session state: the policy and the pinned fingerprint.
 // It is not safe for concurrent use; the bridge feeds it from one goroutine.
 type Relay struct {
@@ -84,6 +89,9 @@ func (r *Relay) Pinned() string { return r.pinned }
 func (r *Relay) FromAgent(m protocol.Message) ([]protocol.Message, error) {
 	switch m.Type {
 	case protocol.TypeAnswer:
+		if bareCR(m.SDP) {
+			return nil, ErrBareCR
+		}
 		fp, err := Fingerprint(m.SDP)
 		if err != nil {
 			return nil, err
@@ -120,21 +128,41 @@ func (r *Relay) keep(candidate string) bool {
 	if candidate == "" {
 		return true
 	}
-	// The agent gathers loopback because its tunnel listener lives there. A
+	// A browser splits a candidate at each space, the relay at any run of
+	// white space: only a candidate both read alike may pass. The agent
+	// gathers loopback because its tunnel listener lives there, and a
 	// loopback UDP candidate would point the browser at its own machine.
-	if transportOf(candidate) != "udp" || isLoopback(candidate) {
+	if strings.Join(strings.Fields(candidate), " ") != candidate || transportOf(candidate) != "udp" || !routable(candidate) {
 		return false
 	}
 	return r.policy.Transport != Tunnel
 }
 
-func isLoopback(candidate string) bool {
+// routable reports whether a candidate's address is one the browser may
+// send checks to: an IP literal with no zone that is not loopback,
+// unspecified or multicast. The agent gathers with mDNS off, so its own
+// candidates are never names, and a name could resolve to anything, the
+// browser's own machine included.
+func routable(candidate string) bool {
 	f := strings.Fields(candidate)
 	if len(f) < 5 {
 		return false
 	}
-	ip := net.ParseIP(f[4])
-	return ip != nil && ip.IsLoopback()
+	a, err := netip.ParseAddr(f[4])
+	if err != nil || a.Zone() != "" {
+		return false
+	}
+	a = a.Unmap()
+	return !a.IsLoopback() && !a.IsUnspecified() && !a.IsMulticast()
+}
+
+func bareCR(sdp string) bool {
+	for i := range len(sdp) {
+		if sdp[i] == '\r' && (i+1 == len(sdp) || sdp[i+1] != '\n') {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Relay) filterSDP(sdp string) string {

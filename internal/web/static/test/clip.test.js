@@ -59,6 +59,16 @@ test('decodeClip skips formats it does not know and refuses junk', () => {
   }
 });
 
+// The agent treats a format of no data as one the clip lacks, and so must
+// the page: an empty image is no image to put on the browser's clipboard.
+test('decodeClip leaves out a format of no data', () => {
+  const clip = decodeClip(concat(part(TEXT, new Uint8Array()), part(HTML, utf8.encode('<b>x</b>')), part(PNG, new Uint8Array())));
+  assert.deepEqual(clip, { html: '<b>x</b>' });
+  assert.deepEqual(clipTypes(clip), [HTML]);
+  assert.deepEqual(decodeClip(part(PNG, new Uint8Array())), {});
+  assert.throws(() => decodeClip(concat(part(PNG, new Uint8Array()), part(PNG, new Uint8Array([1])))), /given twice/);
+});
+
 test('the size bound holds both ways', () => {
   const big = { text: 'x'.repeat(MAX_CLIP), html: 'y' };
   assert.throws(() => encodeClip(big), /limit/);

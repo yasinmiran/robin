@@ -172,3 +172,59 @@ func TestParseTransport(t *testing.T) {
 		t.Error("accepted unknown transport")
 	}
 }
+
+// A candidate reaches the browser only with an address it can take for
+// no other: an IP literal that is not loopback, unspecified or multicast,
+// written as the browser splits it. A name could resolve to the browser's
+// own machine, as could the many other ways to write loopback.
+func TestCandidateNeedsARoutableLiteral(t *testing.T) {
+	r := New(Policy{Transport: Auto, TunnelPort: 4000})
+	for _, c := range []string{
+		"candidate:7 1 udp 2130706431 localhost 50000 typ host",
+		"candidate:7 1 udp 2130706431 x.local 50000 typ host",
+		"candidate:7 1 udp 2130706431 127.1 50000 typ host",
+		"candidate:7 1 udp 2130706431 127.000.0.1 50000 typ host",
+		"candidate:7 1 udp 2130706431 0.0.0.0 50000 typ host",
+		"candidate:7 1 udp 2130706431 :: 50000 typ host",
+		"candidate:7 1 udp 2130706431 ::ffff:127.0.0.1 50000 typ host",
+		"candidate:7 1 udp 2130706431 [::ffff:127.0.0.1] 50000 typ host",
+		"candidate:7 1 udp 2130706431 [10.89.0.2] 50000 typ host",
+		"candidate:7 1 udp 2130706431 fe80::1%eth0 50000 typ host",
+		"candidate:7 1 udp 2130706431 224.0.0.251 50000 typ host",
+		"candidate:7 1 udp 2130706431\t10.89.0.2 127.0.0.1 50000 typ host",
+		"candidate:7 1 udp 2130706431  10.89.0.2 50000 typ host",
+		udpHost + "\r\na=" + udpLoop,
+		udpHost + " ",
+	} {
+		if out, err := r.FromAgent(cand(c)); err != nil || len(out) != 0 {
+			t.Errorf("%q reached the browser as %+v (%v)", c, out, err)
+		}
+		out, err := r.FromAgent(protocol.Message{Type: protocol.TypeAnswer, SDP: answer(fpA, c, udpHost)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out[0].SDP, c) || !strings.Contains(out[0].SDP, udpHost) {
+			t.Errorf("the answer with %q became %q", c, out[0].SDP)
+		}
+	}
+	for _, c := range []string{udpHost, udpSrflx, "candidate:9 1 udp 2130706431 2001:db8::1 50000 typ host", "candidate:9 1 udp 2130706431 fe80::1 50000 typ host"} {
+		if out, _ := r.FromAgent(cand(c)); len(out) != 1 {
+			t.Errorf("%q did not reach the browser", c)
+		}
+	}
+}
+
+// An answer with a CR inside a line is refused before anything is pinned:
+// a parser that ends lines at CR as well would find a candidate in it the
+// relay never filtered.
+func TestAnswerWithABareCRIsRefused(t *testing.T) {
+	for _, sdp := range []string{
+		strings.Replace(answer(fpA, udpHost), "a=mid:0\r\n", "a=mid:0\ra="+udpLoop+"\r\n", 1),
+		answer(fpA) + "\r",
+	} {
+		r := New(Policy{Transport: Auto, TunnelPort: 4000})
+		if out, err := r.FromAgent(protocol.Message{Type: protocol.TypeAnswer, SDP: sdp}); !errors.Is(err, ErrBareCR) || out != nil || r.Pinned() != "" {
+			t.Errorf("an answer with a bare CR: %+v, %v, pinned %q", out, err, r.Pinned())
+		}
+	}
+}
