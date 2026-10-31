@@ -5,10 +5,15 @@ package agent
 import (
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
+	"log/slog"
+	"os"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/yasinmiran/robin/internal/agent/peer"
+	"github.com/yasinmiran/robin/internal/agent/share"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
@@ -16,8 +21,14 @@ import (
 // session, as its peer decodes them. A guest without control changes
 // nothing; one with control reaches the desktop only with input and the
 // clipboard, and never with what only the owner's page sends: the size,
-// the monitor shown, the stream's keyframes.
+// the monitor shown, the stream's keyframes and tiles, the curtain and
+// the silent room, invitations, and which guest has control.
 func FuzzGuestControl(f *testing.F) {
+	door, err := share.Open(share.NewInvites(fmt.Sprintf("f%d%d", os.Getpid(), time.Now().UnixNano()), os.Getuid()), slog.New(slog.DiscardHandler))
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Cleanup(func() { door.Close() })
 	for _, s := range []string{
 		`{"t":"key","down":true,"key":"a","code":"KeyA"}`,
 		`{"t":"move","x":3,"y":4}`,
@@ -32,7 +43,10 @@ func FuzzGuestControl(f *testing.F) {
 		`{"t":"curtain","on":true}`,
 		`{"t":"silent","on":true}`,
 		`{"t":"invite","invite":{"user":"eve"}}`,
+		`{"t":"invite","invite":{"user":"root"}}`,
 		`{"t":"guest","guest":{"id":"g1","action":"grant"}}`,
+		`{"t":"guest","guest":{"id":"g2","action":"grant"}}`,
+		`{"t":"guest","guest":{"id":"g1","action":"revoke"}}`,
 		`{"t":"file-fetch","file":{"id":"1"}}`,
 		`{"t":"file-decline","file":{"id":"1"}}`,
 		`{"t":"heartbeat"}`,
@@ -49,11 +63,27 @@ func FuzzGuestControl(f *testing.F) {
 		}
 		desk := &fakeMonitors{}
 		s := testSession(desk)
-		g := &guest{id: "g1", user: "bob"}
+		s.shared.door = door
+		door.Invites().Clear()
+		s.private = &private{kick: make(chan struct{}, 1)}
+		g, other := &guest{id: "g1", user: "bob"}, &guest{id: "g2", user: "carol"}
 		g.control.Store(control)
+		s.shared.guests = []*guest{g, other}
 		s.controlAs(&viewer{guest: g}, m)
 		s.typing.discard()
 
+		if g.control.Load() != control || other.control.Load() || len(s.shared.guests) != 2 {
+			t.Fatalf("a guest's %q changed who has control", m.T)
+		}
+		if inv := door.Invites().Open(); len(inv) > 0 {
+			t.Fatalf("a guest's %q invited %q", m.T, inv[0].User)
+		}
+		s.private.mu.Lock()
+		curtain, silent := s.private.wantCurtain, s.private.wantSilent
+		s.private.mu.Unlock()
+		if curtain || silent || s.stream.tilesWanted.Load() != nil {
+			t.Fatalf("a guest's %q asked for the curtain %v, the silent room %v or tiles", m.T, curtain, silent)
+		}
 		desk.mu.Lock()
 		defer desk.mu.Unlock()
 		if len(desk.sizes) > 0 || len(desk.shown) > 0 || s.stream.keyframe.Load() {
@@ -74,6 +104,29 @@ func FuzzGuestControl(f *testing.F) {
 			t.Fatalf("a guest's %q set the clipboard", m.T)
 		}
 	})
+}
+
+// Only input, the clipboard, typed text and answers to the host's file
+// offers reach the session from a guest with control. Every other
+// control message is the owner's page's alone.
+func TestGuestsSendOnlyInputAndAnswers(t *testing.T) {
+	guests := []protocol.ControlType{
+		protocol.ControlKey, protocol.ControlMove, protocol.ControlButton, protocol.ControlWheel, protocol.ControlRelease,
+		protocol.ControlClipboard, protocol.ControlText, protocol.ControlFileFetch, protocol.ControlFileDecline,
+	}
+	for _, ct := range []protocol.ControlType{
+		protocol.ControlResize, protocol.ControlMonitor, protocol.ControlTiles, protocol.ControlInvite,
+		protocol.ControlGuest, protocol.ControlCurtain, protocol.ControlSilent,
+	} {
+		if h, ok := controlHandlers[ct]; !ok || !h.owner {
+			t.Errorf("%q is not the owner's alone", ct)
+		}
+	}
+	for ct, h := range controlHandlers {
+		if !h.owner && !slices.Contains(guests, ct) {
+			t.Errorf("a guest with control may send %q", ct)
+		}
+	}
 }
 
 // FuzzRanges turns any set of tile indexes into a manifest's Gone: half-open
