@@ -1,7 +1,8 @@
 # Builds the docs site for https://yasinmiran.github.io/robin/ and publishes
 # it to the gh-pages branch as one orphan commit, so the branch never grows.
-# The build runs third-party npm code with a read-only token; only the publish
-# job can write, and it runs nothing but git on the built files.
+# The build runs third-party npm code with a read-only token. Only the publish
+# job can write, and only its push step sees the token; it treats the built
+# files as data (site/scripts/publish-pages.sh).
 name: Pages
 
 on:
@@ -46,6 +47,9 @@ jobs:
           name: site
           path: site/dist
           if-no-files-found: error
+          # The default, stated so a change to it cannot slip a .git through;
+          # publish-pages.sh refuses one regardless.
+          include-hidden-files: false
           retention-days: 1
 
   publish:
@@ -55,23 +59,19 @@ jobs:
     permissions:
       contents: write
     steps:
+      # The publish script from this commit, before any artifact is on disk.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: site/scripts/publish-pages.sh
+          sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: site
-          path: dist
-      - name: Push to gh-pages as a single orphan commit
-        working-directory: dist
+          path: ${{ runner.temp }}/site
+      - name: Commit the site as a single orphan commit
+        run: sh site/scripts/publish-pages.sh commit "$RUNNER_TEMP/site" "$RUNNER_TEMP/pages.git" "$GITHUB_SHA"
+      - name: Push it to gh-pages
         env:
           TOKEN: ${{ github.token }}
-        run: |
-          set -eu
-          touch .nojekyll
-          git init -q -b gh-pages
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -q -m "docs: publish $GITHUB_SHA"
-          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
-          echo "::add-mask::$auth"
-          git -c http.extraheader="AUTHORIZATION: basic $auth" \
-            push --force "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" HEAD:gh-pages
+        run: sh site/scripts/publish-pages.sh push "$RUNNER_TEMP/pages.git" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
