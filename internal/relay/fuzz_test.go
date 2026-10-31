@@ -3,9 +3,12 @@ package relay
 import (
 	"bytes"
 	"encoding/binary"
+	"maps"
+	"net/netip"
 	"slices"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/pion/stun/v4"
 
@@ -26,6 +29,7 @@ func sdpSeeds() []string {
 		answer("sha-256"),
 		"a=candidate:1 1 udp 1 127.0.0.1 1 typ host\nm=video\na=mid:\n",
 		"m=a\nm=b\na=mid:0\n",
+		strings.Replace(answer(fpA, udpHost), "a=mid:0\r\n", "a=mid:0\ra="+udpLoop+"\r\n", 1),
 		"a=fingerprint: \r\n",
 		"",
 	}
@@ -37,13 +41,24 @@ func sdpSeeds() []string {
 // candidates it drops, filtering is idempotent, and the pinned fingerprint
 // never changes once set.
 func FuzzFromAgent(f *testing.F) {
+	candidates := []string{udpHost, tcpLoop, udpLoop6, ""}
+	for _, addr := range []string{"localhost", "127.1", "0.0.0.0", "::", "[::ffff:127.0.0.1]", "::ffff:127.0.0.1", "fe80::1%eth0", "x.local"} {
+		candidates = append(candidates, "candidate:7 1 udp 2130706431 "+addr+" 50003 typ host")
+	}
+	candidates = append(candidates, "candidate:8 1 udp 2130706431\t10.89.0.2 127.0.0.1 50004 typ host")
 	for i, sdp := range sdpSeeds() {
-		f.Add(sdp, []string{udpHost, tcpLoop, udpLoop6, ""}[i%4], uint8(i), uint16(4000))
+		f.Add(sdp, candidates[i%len(candidates)], uint8(i), uint16(4000))
+	}
+	for i, c := range candidates {
+		f.Add(answer(fpA, c), c, uint8(i), uint16(4000))
 	}
 	f.Fuzz(func(t *testing.T, sdp, candidate string, transport uint8, port uint16) {
 		p := Policy{Transport: []Transport{Auto, Direct, Tunnel}[transport%3], TunnelPort: int(port)}
 		r := New(p)
 		out, err := r.FromAgent(protocol.Message{Type: protocol.TypeAnswer, SDP: sdp})
+		if err == nil && strings.Contains(strings.ReplaceAll(sdp, "\r\n", "\n"), "\r") {
+			t.Fatalf("passed an answer with a CR inside a line: %q", sdp)
+		}
 		if err != nil {
 			if r.Pinned() != "" {
 				t.Fatalf("a refused answer pinned %q", r.Pinned())
@@ -111,38 +126,57 @@ func checkAnswer(t *testing.T, r *Relay, sdp string, out []protocol.Message) {
 	}
 }
 
-// checkCandidate fails unless c may reach the browser under p.
+// checkCandidate fails unless c may reach the browser under p. It parses
+// on its own rather than with the relay's helpers, so that it does not
+// agree with them by construction.
 func checkCandidate(t *testing.T, p Policy, c string) {
 	t.Helper()
 	if c == "" {
 		return
 	}
-	if p.Transport == Tunnel || transportOf(c) != "udp" || isLoopback(c) {
+	f := strings.Split(c, " ")
+	if p.Transport == Tunnel || slices.Contains(f, "") || strings.ContainsFunc(c, func(r rune) bool { return r != ' ' && unicode.IsSpace(r) }) ||
+		len(f) < 8 || !strings.EqualFold(f[2], "udp") {
 		t.Fatalf("the browser got %q under %+v", c, p)
+	}
+	addr, err := netip.ParseAddr(f[4])
+	if err != nil || addr.Zone() != "" || addr.Unmap().IsLoopback() || addr.Unmap().IsUnspecified() {
+		t.Fatalf("the browser got %q, whose address is not one it may send checks to", c)
 	}
 }
 
 // FuzzAnswerCredentials feeds the answers the tunnel learns the agent's
-// ICE credentials from: what it returns is never empty and is on an
-// a=ice-ufrag and an a=ice-pwd line of the answer.
+// ICE credentials from. An answer whose a=ice-ufrag lines, or a=ice-pwd
+// lines, are missing, disagree or hold an empty value is refused: the
+// tunnel would otherwise admit checks signed with a password the agent
+// does not use. Any other answer gives its one pair.
 func FuzzAnswerCredentials(f *testing.F) {
 	for _, sdp := range sdpSeeds() {
 		f.Add(sdp)
 	}
+	f.Add("a=ice-ufrag:u\na=ice-pwd:p\na=ice-pwd:q\n")
+	f.Add("a=ice-ufrag:u\na=ice-ufrag:v\na=ice-pwd:p\n")
+	f.Add("a=ice-ufrag:\na=ice-ufrag:u\na=ice-pwd:p\n")
+	f.Add("a=ice-ufrag:u\r\na=ice-ufrag:u\r\na=ice-pwd:p\r\na=ice-ufrag:\r\n")
 	f.Fuzz(func(t *testing.T, sdp string) {
+		ufrags, pwds := map[string]bool{}, map[string]bool{}
+		for l := range strings.SplitSeq(sdp, "\n") {
+			l = strings.TrimRight(l, "\r")
+			if v, ok := strings.CutPrefix(l, "a=ice-ufrag:"); ok {
+				ufrags[v] = true
+			} else if v, ok := strings.CutPrefix(l, "a=ice-pwd:"); ok {
+				pwds[v] = true
+			}
+		}
 		c, err := AnswerCredentials(sdp)
-		if err != nil {
-			if c != (Credentials{}) {
-				t.Fatalf("refused with %+v", c)
+		if len(ufrags) != 1 || len(pwds) != 1 || ufrags[""] || pwds[""] {
+			if err == nil || c != (Credentials{}) {
+				t.Fatalf("took %+v from the ufrags %q and passwords %q", c, slices.Collect(maps.Keys(ufrags)), slices.Collect(maps.Keys(pwds)))
 			}
 			return
 		}
-		lines := strings.Split(sdp, "\n")
-		for i, l := range lines {
-			lines[i] = strings.TrimRight(l, "\r")
-		}
-		if c.Ufrag == "" || c.Pwd == "" || !slices.Contains(lines, "a=ice-ufrag:"+c.Ufrag) || !slices.Contains(lines, "a=ice-pwd:"+c.Pwd) {
-			t.Fatalf("credentials %+v are not the answer's", c)
+		if err != nil || !ufrags[c.Ufrag] || !pwds[c.Pwd] {
+			t.Fatalf("credentials %+v (%v) are not the answer's one pair", c, err)
 		}
 	})
 }

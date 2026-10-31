@@ -270,9 +270,16 @@ lower of the two sides, so every tunnel pair ranks below every direct UDP pair
 whatever the browser assigns its own candidates. The agent must gather a
 loopback candidate for its TCP mux to accept the forwarded connection, which
 also gathers loopback UDP candidates; the CLI drops those, since they would
-point the browser at its own machine. The browser learns nothing it should
-not: its host candidates stay mDNS names and the agent sees it as
-peer-reflexive.
+point the browser at its own machine. It drops them by allow-list, as the
+host is not trusted to send only what Pion writes: a candidate reaches the
+browser only with an IP literal that is not loopback, unspecified or
+multicast, and only spaced as the browser splits it. A name such as
+`localhost`, which the browser would resolve, and `127.1` stay behind with
+the rest; the agent gathers with mDNS off, so its own candidates are never
+names. An answer with a CR inside a line ends the session, since a parser
+that ends lines at CR too would find a candidate the CLI never read. The
+browser learns nothing it should not: its host candidates stay mDNS names
+and the agent sees it as peer-reflexive.
 
 Failover needed two more pieces. When UDP dies, Chrome nominates the
 lower-priority tunnel pair within about two seconds, and Pion, as the
@@ -2953,8 +2960,9 @@ than only that it survives.
   first failures were the tests' own: the door hangs up on a guest whose
   stream ends, as `protocol.Conn` does on EOF, which can beat the error
   it was about to send (a guest CLI waits for the answer, so it always
-  hears it); and a CR inside an SDP line is part of the value, as the
-  relay reads it.
+  hears it); and a CR inside an SDP line, which the relay took as part of
+  the value. Whether a browser does too is not something to rely on, so
+  the relay now refuses such an answer.
 - Running them. `go test` replays every target's seeds and its
   `testdata/fuzz` inputs on every run, so a failing input committed there
   stays a regression test. `make fuzz` runs every target for `FUZZTIME`

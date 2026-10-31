@@ -11,6 +11,8 @@ Robin adds as little as it can to what SSH already gives you. Authentication is 
 
 The agent's session description, including its DTLS fingerprint, reaches the browser only over the SSH channel and then the token-guarded local websocket. WebRTC already refuses a DTLS peer whose certificate does not match the fingerprint in the remote description, so someone who can reach the UDP or TCP path, or inject packets into it, cannot stand in for the agent. The CLI also pins the first fingerprint it sees and aborts the session if a later answer, from an ICE restart, carries a different one.
 
+The host chooses the candidates the browser is told about, so the CLI passes on only UDP candidates whose address is an IP literal that is not loopback, unspecified or multicast, never a name the browser would resolve, and it ends the session on an answer with a CR inside a line, which a parser could read as two. A host can make the browser send ICE connectivity checks to other machines, as any peer can, but not to your own.
+
 ## The page is the one unauthenticated surface
 
 Whatever drives the page drives the remote desktop, so it is fenced in on every side:
