@@ -2994,6 +2994,63 @@ than only that it survives.
   steps, the X server's replies, the private sound server's clients) can
   do as much as the user anyway.
 
+### Supply chain: read-only CI, pinned actions, a week's wait
+
+The repository goes public, and what it runs on GitHub's machines and what
+it pulls in become as much a part of the attack surface as the agent. CI
+(`.github/workflows/ci.yml`) runs on `push` and `pull_request` to `main`
+only, never `pull_request_target`, with `contents: read` as the whole of
+its token and no secret: a pull request from a fork gets nothing worth
+taking. Checkout keeps no credentials, no `run:` step reads an event field,
+and each of the three actions (checkout, setup-go, setup-node) is pinned to
+a full commit SHA, since a tag can be moved. It runs what needs no
+container: the stub build's tests, vet, gofmt, a tidy check, govulncheck,
+the page's node tests and the site, every `npm ci` with `--ignore-scripts`
+(no dependency needs an install script, so none runs while npm installs
+it). `make check` stays the merge gate,
+because a runner has no podman, display or GPU for the suites that matter
+most.
+
+Dependabot groups updates per ecosystem and waits seven days after a
+release (`cooldown`) before proposing it, so a hijacked publish has a week
+to be noticed and pulled before it is offered here; security updates skip
+the wait. The toolchain downloads were already pinned by SHA-256 in
+`toolchain/lib.sh` and `toolchain/zig.sh`, and `fetch` deletes and refuses
+a file that does not match, and `go test ./toolchain` now fails on a
+download outside `fetch`, over plain http or by anything but a literal
+hash. It counts as a download any line in the toolchain scripts or the
+Makefile that runs curl, wget, git's clone, fetch or pull, npm, npx or
+pip installs, a `go install`, `go run` or `go get` of a module version,
+python's or perl's HTTP client or bash's `/dev/tcp`, where it had
+looked for curl and wget alone. The Go toolchain comes through
+`GOTOOLCHAIN`, which Go checks against its checksum database.
+
+govulncheck was first a `go install ...@v1.9.0` line in the workflow,
+checked against the checksum database but out of Dependabot's sight, so a
+fix to the scanner waited for someone to notice. It is now a `tool`
+directive in `tools/go.mod`, a module of its own, with its hashes in
+`tools/go.sum` and its own Dependabot entry. Not in Robin's `go.mod`: the
+scanner needs `golang.org/x/tools`, `x/mod`, `x/sync` and `x/telemetry`,
+and one module graph would let their versions move what the release
+binaries are built from. CI builds it once with `go -C tools build` and
+runs that binary for every GOOS, since `go tool` would build it for the
+GOOS being checked.
+
+The first scan, on 2026-10-31: govulncheck v1.9.0 found
+`golang.org/x/crypto` v0.54.0 affected by GO-2026-6303, GO-2026-6354 and
+GO-2026-6355, all in `x/crypto/ssh`, which `pkg/sftp` imports. Robin runs
+sftp over the `ssh` child's pipes and never opens an `ssh.Conn`, so no
+call reached them; v0.56.0 fixes all three and moved the module's `go`
+line to 1.26. What remains is in modules required but not imported:
+`golang.org/x/net`'s `http2` and `html` (seven advisories) and
+`x/crypto/openpgp` (GO-2026-5932, never to be fixed). `npm audit` found
+six advisories in the site, every one under the `shadcn` CLI (deepmerge,
+GHSA-gcqx-w48m-w2h4, with no fixed release, and minimatch,
+GHSA-g3hv-75wg-m249, through ts-morph). The site used one file of that
+package, its `tailwind.css`, so the file moved into `site/src/styles` with
+its MIT notice and the CLI left the lockfile with 271 packages; the built
+CSS kept the same hash. `e2e` and the browser smoke test had none.
+
 ## Verification parked
 
 Two checks were parked by decision on 2026-10-18. Both needed hardware the

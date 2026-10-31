@@ -146,8 +146,9 @@ test-agents: agents
 	ROBIN_REQUIRE_AGENTS=1 $(GO) test ./internal/agentbin
 
 # The page's pure modules, under Node's own test runner. make test runs them
-# too, through TestPageModules in internal/web; this target is for make cover.
-# The files are named, since Node 22 and later take a directory for a file.
+# too, through TestPageModules in internal/web; this target is for make cover
+# and CI. The files are named: Node 22 and later take a directory given to
+# --test for a script and fail.
 test-js:
 	node --test internal/web/static/test/*.test.js
 

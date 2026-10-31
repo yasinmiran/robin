@@ -3,7 +3,10 @@
 The documentation website for Robin, built to static HTML with Astro. React
 islands carry the parts that need a script (search, the theme toggle, the
 mobile sidebar, copy buttons), styled with Tailwind CSS and shadcn/ui on the
-design tokens in `src/styles/tokens.css`. Pages are MDX in
+design tokens in `src/styles/tokens.css`. The variants those components
+use are in `src/styles/shadcn.css`, so the shadcn CLI is no dependency: to
+add a component, run it on demand with `npx shadcn@4.22.1 add <name>`.
+Pages are MDX in
 `src/content/docs`, one file per page; the `section` and `order` in each
 file's frontmatter place it in the sidebar.
 

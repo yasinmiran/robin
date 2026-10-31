@@ -8,3 +8,21 @@ node_modules
 /.claude/
 /.cover/
 /.repro/
+# Anything secret-shaped, wherever it lands.
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ecdsa*
+id_ed25519*
+wayland-restore-token*
+macros.json
+# Coverage and test output.
+coverage/
+*.coverprofile
+cover.out
+test-results/
+playwright-report/
