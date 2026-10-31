@@ -677,6 +677,10 @@ way, are in [docs/adr/0001-architecture.md](docs/adr/0001-architecture.md).
 
 ## Security
 
+To report a vulnerability, see [SECURITY.md](SECURITY.md): reports go
+through GitHub's private vulnerability reporting, never a public issue.
+This section is the threat model it points to.
+
 The agent's DTLS fingerprint reaches the browser only through SSH and the
 local page, and the CLI pins it for the session, so nobody who can merely
 reach the UDP or TCP path can stand in for the agent. The page and its
@@ -1172,6 +1176,19 @@ and ffmpeg, where it is installed, must decode the result. Set
 `ROBIN_HWENC_REQUIRE=vaapi` (or `nvenc`) to make a missing route fail the run
 instead of skipping it, and `ROBIN_HWENC_COMPARE=1` with the openh264 build tag
 to print the comparison the ADR quotes.
+
+CI (`.github/workflows/ci.yml`) runs on every push and pull request to
+`main`, on GitHub's Ubuntu runners: `go mod tidy -diff`, gofmt, `go vet`
+and `go test ./...` without the encoder tags, so the encoders build as
+stubs and no C toolchain is fetched; govulncheck for the Linux build and
+for the CLI on macOS and Windows; the page's modules under `node --test`;
+a lockfile check of `e2e` and the browser smoke test; and the docs site's
+`npm ci`, `npm test` and `npm run check`. Nothing that needs podman, a
+display or a GPU runs there, so `make check` stays the gate before a merge.
+The workflow's token can only read, checkout keeps no credentials, and
+every action is pinned to a commit. Dependabot (`.github/dependabot.yml`)
+proposes Go, npm and Actions updates weekly, one grouped pull request per
+ecosystem, each release a week old before it is offered.
 
 ## Verifying a release
 

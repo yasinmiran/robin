@@ -7,6 +7,10 @@ order: 3
 
 Robin adds as little as it can to what SSH already gives you. Authentication is SSH's, and a session runs as the account you logged in as; no port is opened on the host for authentication and nothing needs root. What is left to secure is the media path from the agent to your browser, and the one page on your machine that drives the session.
 
+## Reporting a vulnerability
+
+Report it privately, through GitHub's private vulnerability reporting: the repository's **Security** tab, then **Report a vulnerability**. Please do not open a public issue. [SECURITY.md](https://github.com/yasinmiran/robin/blob/main/SECURITY.md) says which versions get fixes, what is in scope (the guarantees on this page) and what to expect after a report.
+
 ## The agent's identity travels over SSH
 
 The agent's session description, including its DTLS fingerprint, reaches the browser only over the SSH channel and then the token-guarded local websocket. WebRTC already refuses a DTLS peer whose certificate does not match the fingerprint in the remote description, so someone who can reach the UDP or TCP path, or inject packets into it, cannot stand in for the agent. The CLI also pins the first fingerprint it sees and aborts the session if a later answer, from an ICE restart, carries a different one.
@@ -52,6 +56,8 @@ A browser the opener starts keeps the launch link on its command line for as lon
 ## Verifiable builds
 
 Every binary a release ships is reproducible, and the agent's name on the host is the hash of its content, so anyone with a clone can check that what runs on the host and on your machine is what the source says. See [Verifying a release](/verifying-a-release).
+
+The source is kept honest the same way. CI runs on every change to `main` with a token that can only read, every GitHub Action it uses is pinned to a commit, and govulncheck checks the Go build for known vulnerabilities in what it calls. Dependabot offers Go, npm and Actions updates weekly, each release a week old first. The toolchain the agents build with (zig, nasm, openh264, libopus) is downloaded by a pinned SHA-256 and refused on any other.
 
 ## STUN tells a server where you are
 
