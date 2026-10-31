@@ -1,11 +1,12 @@
-// Package relay applies the CLI's transport and trust policy to what the agent
-// sends the browser. The browser's side needs none: internal/web only ever
-// passes on offers and candidates.
+// Package relay applies the CLI's transport and trust policy to the signaling
+// between the agent and the browser.
 //
 // Transport: the agent's direct UDP candidates pass through, any TCP candidate
 // of its own is dropped, and one synthesized passive TCP candidate on the
 // client's loopback leads into the SSH forward. ICE priority then prefers UDP
-// whenever it works, so TCP media can only ever take the SSH path.
+// whenever it works, so TCP media can only ever take the SSH path. Through
+// the tunnel alone the browser's candidates are kept from the agent too: the
+// tunnel's connection reaches the agent peer-reflexive and needs none.
 //
 // Trust: the agent's DTLS fingerprint is pinned from the first answer, which
 // arrived over SSH; a later answer with a different fingerprint is rejected.
@@ -118,6 +119,37 @@ func (r *Relay) FromAgent(m protocol.Message) ([]protocol.Message, error) {
 	return nil, nil
 }
 
+// FromBrowser returns what of one page message the agent should receive,
+// and false when nothing should. Through the tunnel alone the agent gets
+// none of the browser's candidates, in the offer or trickled after it, so
+// it has no address of the browser's to check over UDP; the end of the
+// candidates still passes. An offer with a CR that does not end a line is
+// dropped then: Pion skips a CR at the start of a line, so it would read a
+// candidate there that the filter does not see. Under any other transport
+// the message passes as it is. FromBrowser reads only the policy, so it is
+// safe beside FromAgent.
+func (r *Relay) FromBrowser(m protocol.Message) (protocol.Message, bool) {
+	if r.policy.Transport != Tunnel {
+		return m, true
+	}
+	switch m.Type {
+	case protocol.TypeOffer:
+		if bareCR(m.SDP) {
+			return protocol.Message{}, false
+		}
+		// Every attribute Pion takes for a candidate, a malformed one too.
+		m.SDP = dropAttributes(m.SDP, func(attr string) bool {
+			key, _, _ := strings.Cut(attr, ":")
+			return key == "candidate"
+		})
+	case protocol.TypeCandidate:
+		if m.Candidate == nil || m.Candidate.Candidate != "" {
+			return protocol.Message{}, false
+		}
+	}
+	return m, true
+}
+
 func (r *Relay) tunnelEnabled() bool {
 	return r.policy.Transport != Direct && r.policy.TunnelPort > 0
 }
@@ -166,10 +198,18 @@ func bareCR(sdp string) bool {
 }
 
 func (r *Relay) filterSDP(sdp string) string {
+	return dropAttributes(sdp, func(attr string) bool {
+		return strings.HasPrefix(attr, "candidate:") && !r.keep(attr)
+	})
+}
+
+// dropAttributes removes the a= lines of sdp whose attribute, the text
+// after a=, drop picks.
+func dropAttributes(sdp string, drop func(attr string) bool) string {
 	lines := strings.SplitAfter(sdp, "\n")
 	out := lines[:0]
 	for _, l := range lines {
-		if c, ok := strings.CutPrefix(strings.TrimRight(l, "\r\n"), "a="); ok && strings.HasPrefix(c, "candidate:") && !r.keep(c) {
+		if attr, ok := strings.CutPrefix(strings.TrimRight(l, "\r\n"), "a="); ok && drop(attr) {
 			continue
 		}
 		out = append(out, l)

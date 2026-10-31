@@ -10,6 +10,7 @@ import (
 	"testing"
 	"unicode"
 
+	"github.com/pion/sdp/v3"
 	"github.com/pion/stun/v4"
 
 	"github.com/yasinmiran/robin/internal/protocol"
@@ -226,6 +227,48 @@ func FuzzAdmits(f *testing.F) {
 		}
 		if (Credentials{}).Admits(msg) || (Credentials{Ufrag: agentUfrag}).Admits(msg) {
 			t.Fatal("credentials without a password admitted a check")
+		}
+	})
+}
+
+// FuzzFromBrowser passes an offer and a candidate from the page through the
+// relay under every policy. Through the tunnel alone, no offer that passes
+// names a candidate as Pion reads it, and only the end of the candidates is
+// trickled; every other transport passes both unchanged.
+func FuzzFromBrowser(f *testing.F) {
+	for i, sdp := range sdpSeeds() {
+		f.Add(sdp, udpHost, uint8(i))
+	}
+	f.Add(strings.Replace(answer(fpA), "a=mid:0\r\n", "a=mid:0\n\ra="+udpHost+"\r\n", 1), "", uint8(2))
+	f.Fuzz(func(t *testing.T, offer, candidate string, transport uint8) {
+		tr := []Transport{Auto, Direct, Tunnel}[transport%3]
+		r := New(Policy{Transport: tr, TunnelPort: 4000})
+		m, ok := r.FromBrowser(protocol.Message{Type: protocol.TypeOffer, SDP: offer})
+		c, cok := r.FromBrowser(cand(candidate))
+		if tr != Tunnel {
+			if !ok || m.SDP != offer || !cok || c.Candidate.Candidate != candidate {
+				t.Fatalf("%s changed the page's offer or candidate", tr)
+			}
+			return
+		}
+		if cok && candidate != "" {
+			t.Fatalf("the tunnel passed the page's candidate %q", candidate)
+		}
+		if !ok {
+			return
+		}
+		var d sdp.SessionDescription
+		if d.UnmarshalString(m.SDP) != nil {
+			return
+		}
+		attrs := slices.Clone(d.Attributes)
+		for _, md := range d.MediaDescriptions {
+			attrs = append(attrs, md.Attributes...)
+		}
+		for _, a := range attrs {
+			if a.IsICECandidate() {
+				t.Fatalf("the tunnel passed an offer that names %q", a.Value)
+			}
 		}
 	})
 }
