@@ -477,3 +477,45 @@ func TestBridgeDropsAnOfferTooLongForTheAgent(t *testing.T) {
 		t.Fatal("nothing reached the agent")
 	}
 }
+
+// TestBridgeKeepsTheBrowsersCandidatesFromTheAgentUnderTunnel: with
+// --transport tunnel the page hears none of the agent's UDP candidates, but
+// the agent still gathers UDP and checks every address the page names, and
+// a browser that exposes its host addresses (Chrome once a page has the
+// microphone or the camera, or with mDNS obfuscation off) then connects
+// over UDP, which outranks the tunnel pair. The tunnel's connection reaches
+// the agent peer-reflexive and needs no candidate of the browser's, so
+// under Tunnel none may reach the agent: not in the offer, not trickled.
+func TestBridgeKeepsTheBrowsersCandidatesFromTheAgentUnderTunnel(t *testing.T) {
+	agent := newFakeAgent()
+	s, ctx := testServer(t)
+	b := newBridge(agent, relay.New(relay.Policy{Transport: relay.Tunnel, TunnelPort: 4242}),
+		protocol.Config{ICEServers: []protocol.ICEServer{}, Keep: 60}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	go b.accept(ctx, s)
+	t.Cleanup(b.close)
+	result, _ := runBridge(ctx, b, agent)
+
+	pg := openPage(t, s)
+	if m := pg.recv(); m.Type != protocol.TypeConfig {
+		t.Fatalf("first message to the page %+v, want config", m)
+	}
+	pg.send(protocol.Message{Type: protocol.TypeOffer, SDP: "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 102\r\na=mid:0\r\n" +
+		"a=candidate:1 1 udp 2130706431 192.0.2.10 5000 typ host\r\na=end-of-candidates\r\n"})
+	pg.send(protocol.Message{Type: protocol.TypeCandidate, Candidate: &protocol.Candidate{Candidate: "candidate:2 1 udp 2130706431 192.0.2.10 5001 typ host"}})
+	pg.send(protocol.Message{Type: protocol.TypeCandidate, Candidate: &protocol.Candidate{}})
+	// The page's messages reach the agent in order; bye is the last of
+	// them, and run returns once it has been read.
+	pg.send(protocol.Message{Type: protocol.TypeBye})
+	if err := waitResult(t, result); !errors.Is(err, errPageEnded) {
+		t.Fatalf("run: %v, want errPageEnded", err)
+	}
+	for len(agent.sent) > 0 {
+		m := <-agent.sent
+		switch {
+		case m.Type == protocol.TypeOffer && strings.Contains(m.SDP, "a=candidate:"):
+			t.Errorf("the agent got the page's offer with its candidates:\n%s", m.SDP)
+		case m.Type == protocol.TypeCandidate && m.Candidate != nil && m.Candidate.Candidate != "":
+			t.Errorf("the agent got the page's candidate %q", m.Candidate.Candidate)
+		}
+	}
+}
