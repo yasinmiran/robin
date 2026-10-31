@@ -1,8 +1,8 @@
 # Builds the docs site for https://yasinmiran.github.io/robin/ and publishes
 # it to the gh-pages branch as one orphan commit, so the branch never grows.
 # The build runs third-party npm code with a read-only token. Only the publish
-# job can write, and only its push step sees the token; it treats the built
-# files as data (site/scripts/publish-pages.sh).
+# job can write, only from main, and only its push step sees the token; it
+# treats the built files as data (site/scripts/publish-pages.sh).
 name: Pages
 
 on:
@@ -54,6 +54,13 @@ jobs:
 
   publish:
     needs: build
+    # A run dispatched from another branch builds but never publishes. The
+    # environment's deployment branch rule (main only) enforces the same on
+    # GitHub's side, where a branch's own copy of this file cannot drop it.
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: docs
+      url: https://yasinmiran.github.io/robin/
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
