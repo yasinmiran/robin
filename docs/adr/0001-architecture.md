@@ -2917,6 +2917,17 @@ python's or perl's HTTP client or bash's `/dev/tcp`, where it had
 looked for curl and wget alone. The Go toolchain comes through
 `GOTOOLCHAIN`, which Go checks against its checksum database.
 
+govulncheck was first a `go install ...@v1.9.0` line in the workflow,
+checked against the checksum database but out of Dependabot's sight, so a
+fix to the scanner waited for someone to notice. It is now a `tool`
+directive in `tools/go.mod`, a module of its own, with its hashes in
+`tools/go.sum` and its own Dependabot entry. Not in Robin's `go.mod`: the
+scanner needs `golang.org/x/tools`, `x/mod`, `x/sync` and `x/telemetry`,
+and one module graph would let their versions move what the release
+binaries are built from. CI builds it once with `go -C tools build` and
+runs that binary for every GOOS, since `go tool` would build it for the
+GOOS being checked.
+
 The first scan, on 2026-10-31: govulncheck v1.9.0 found
 `golang.org/x/crypto` v0.54.0 affected by GO-2026-6303, GO-2026-6354 and
 GO-2026-6355, all in `x/crypto/ssh`, which `pkg/sftp` imports. Robin runs

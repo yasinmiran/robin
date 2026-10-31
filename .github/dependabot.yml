@@ -13,6 +13,21 @@ updates:
       go:
         patterns: ["*"]
 
+  # The CI's Go tools (govulncheck), a module apart from Robin's so a tool's
+  # dependencies never change what Robin builds with. go.mod marks a tool's
+  # module indirect, so indirect requirements are allowed here.
+  - package-ecosystem: gomod
+    directory: /tools
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    allow:
+      - dependency-type: all
+    groups:
+      go-tools:
+        patterns: ["*"]
+
   # A bump of @playwright/test in e2e also needs PW_VERSION in
   # e2e/client.Containerfile, whose build checks that the two match.
   - package-ecosystem: npm
