@@ -13,7 +13,7 @@ not touch it.
 ## Develop
 
 ```sh
-npm ci
+npm ci --ignore-scripts
 npm run dev        # http://localhost:4321, reloads on save
 ```
 

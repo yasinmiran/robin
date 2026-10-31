@@ -37,7 +37,8 @@ jobs:
         with:
           node-version-file: site/.nvmrc
           package-manager-cache: false
-      - run: npm ci
+      # No dependency needs an install script to build the site.
+      - run: npm ci --ignore-scripts
       # Unit tests, astro check, the build for the Pages URL, the link checker
       # and the Chrome smoke test against that build, as `npm run pages` does
       # on a workstation.
