@@ -1217,7 +1217,8 @@ a lockfile check of `e2e` and the browser smoke test; and the docs site's
 `npm ci`, `npm test` and `npm run check`. Nothing that needs podman, a
 display or a GPU runs there, so `make check` stays the gate before a merge.
 The workflow's token can only read, checkout keeps no credentials, and
-every action is pinned to a commit. govulncheck is pinned in its own module,
+every action is pinned to a commit; `site/scripts/workflows.test.ts`
+fails on a workflow that drops any of those. govulncheck is pinned in its own module,
 `tools/go.mod`, apart from Robin's; `go -C tools tool govulncheck -C .. ./...`
 runs the same scan locally. Dependabot (`.github/dependabot.yml`)
 proposes Go, npm and Actions updates weekly, one grouped pull request per

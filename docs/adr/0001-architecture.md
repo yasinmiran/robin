@@ -3040,7 +3040,11 @@ the page's node tests and the site, every `npm ci` with `--ignore-scripts`
 (no dependency needs an install script, so none runs while npm installs
 it). `make check` stays the merge gate,
 because a runner has no podman, display or GPU for the suites that matter
-most. The one workflow that can write is the docs publish
+most. `site/scripts/workflows.test.ts` holds every workflow to these
+rules (pins, a read-only default token, no `pull_request_target`, no kept
+credentials, no `${{ }}` in a script, `--ignore-scripts`), so a new
+workflow or an edit that drops one fails the site's tests in CI. The one
+workflow that can write is the docs publish
 (`.github/workflows/pages.yml`), and only from `main`; "Publishing the docs
 from a build it does not trust" says how it keeps that token from the
 build.

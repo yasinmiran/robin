@@ -84,8 +84,11 @@ files, reads no git config but its own, runs no hooks and refuses a build
 holding a `.git` anywhere, since one there could carry config that runs a
 command while the token is in reach. `scripts/publish-pages.test.ts`
 checks that, and `scripts/pages-workflow.test.ts` checks the workflow's
-layout: pinned actions, no token in the build, the token in the last
-step alone.
+layout: no token in the build, the token in the last step alone.
+`scripts/workflows.test.ts` holds every workflow, CI's too, to the rest:
+actions pinned to a commit, a read-only default token, no
+`pull_request_target`, no credentials kept by a checkout, no install
+scripts under `npm ci` and no `${{ }}` inside a `run:` script.
 
 The token can write the whole repository, not only `gh-pages`, so the
 repository's settings carry the rest:
