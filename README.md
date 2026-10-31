@@ -1192,7 +1192,7 @@ user's kept session, leaves the session running, and the owner's end takes
 no process of that account's for a daemon, whatever its command line. `go test
 ./internal/web` runs the page's DOM-free modules under `node --test`, from
 `internal/web/static/test`, and, with the browser smoke test's dependencies
-installed, sends bulk transfers both ways between Chrome and the agent's own
+installed (`npm ci` in `internal/web/testdata/browser`, Node 20 or newer), sends bulk transfers both ways between Chrome and the agent's own
 peer, which is where the page's SHA-256 and flow control meet the real
 thing. It also drives an input method in desktop Chrome and taps, a long
 press, a two-finger scroll, a pinch and the soft keyboard in Chrome as a
@@ -1215,7 +1215,10 @@ stubs and no C toolchain is fetched; govulncheck for the Linux build and
 for the CLI on macOS and Windows; the page's modules under `node --test`;
 a lockfile check of `e2e` and the browser smoke test; and the docs site's
 `npm ci`, `npm test` and `npm run check`. Nothing that needs podman, a
-display or a GPU runs there, so `make check` stays the gate before a merge.
+display or a GPU runs there, and CI builds no agents and pulls no images,
+so `make test-agents` and `make repro` run only locally and the probe's
+container cases, which `make test` runs wherever podman has their images,
+skip there. `make check` stays the gate before a merge.
 The workflow's token can only read, checkout keeps no credentials, and
 every action is pinned to a commit; `site/scripts/workflows.test.ts`
 fails on a workflow that drops any of those. govulncheck is pinned in its own module,
