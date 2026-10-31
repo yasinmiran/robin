@@ -1,0 +1,118 @@
+# The checks every change to main passes. Nothing here needs a secret or
+# writes to the repository: the token is read-only, checkout keeps no
+# credentials, no step interpolates event data into a script, and every
+# action is pinned to a commit (its release in the comment, which
+# Dependabot keeps current).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOFLAGS: -mod=readonly
+
+jobs:
+  go:
+    name: Go vet, gofmt and tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      # TestPageModules runs the page's modules in node.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: site/.nvmrc
+          package-manager-cache: false
+      - name: go.mod and go.sum are tidy
+        run: go mod tidy -diff && go mod verify
+      - name: gofmt
+        run: |
+          unformatted=$(git ls-files -z '*.go' | xargs -0 gofmt -l)
+          if [ -n "$unformatted" ]; then
+            printf 'gofmt -w these:\n%s\n' "$unformatted" >&2
+            exit 1
+          fi
+      - name: go vet
+        run: go vet ./...
+      # Without the openh264 and opus tags the encoder packages build as
+      # stubs, so this needs no C toolchain.
+      - name: go test
+        run: go test ./...
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      # Pinned here, and checked against Go's checksum database. Dependabot
+      # does not see this line, so bump it by hand.
+      - name: govulncheck
+        run: |
+          go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+          for goos in darwin windows; do
+            GOOS=$goos go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./cmd/robin
+          done
+
+  page:
+    name: Page unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: site/.nvmrc
+          package-manager-cache: false
+      - name: node --test
+        run: node --test internal/web/static/test/*.test.js
+      # npm ci fails when a lockfile and its package.json disagree. No
+      # install script runs and no browser is downloaded.
+      - name: e2e and browser smoke lockfiles
+        run: |
+          (cd e2e && npm ci --ignore-scripts --no-audit --no-fund)
+          (cd internal/web/testdata/browser && npm ci --ignore-scripts --no-audit --no-fund)
+
+  site:
+    name: Docs site
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: site/.nvmrc
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - run: npm run check
