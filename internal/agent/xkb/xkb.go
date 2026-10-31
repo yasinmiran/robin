@@ -19,6 +19,12 @@ import (
 // four or five levels.
 const maxDepth = 16
 
+// maxIncludes bounds the includes one Load applies in all. Depth alone
+// does not bound the work: sections that each include the next several
+// times over would be applied that many times to the power of the depth.
+// xkeyboard-config's layouts apply a few dozen.
+const maxIncludes = 1024
+
 // maxLevel is the highest level, counted from 0, that mutter types a
 // keysym on: it presses Shift for level 1 and AltGr for level 2, and for a
 // higher one it presses the key alone, which types level 0 instead.
@@ -167,6 +173,8 @@ type reader struct {
 	dirs  []string
 	codes map[string]int // by key name
 	files map[string][]section
+	// includes counts the includes applied so far.
+	includes int
 }
 
 // apply merges the keys of file(variant) into keys, by keycode, and returns
@@ -192,6 +200,9 @@ func (r *reader) apply(keys map[int][][]string, file, variant string, m mode, de
 				f, v := ParseSource(part.ref)
 				if part.group != 1 {
 					continue
+				}
+				if r.includes++; r.includes > maxIncludes {
+					return "", fmt.Errorf("xkb: more than %d includes at %s(%s)", maxIncludes, f, v)
 				}
 				mm := part.mode
 				if m == modeAugment {
