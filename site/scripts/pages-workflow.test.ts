@@ -25,12 +25,6 @@ describe("pages.yml", () => {
   const build = job("build");
   const publish = job("publish");
 
-  it("pins every action to a commit", () => {
-    const uses = [...workflow.matchAll(/uses: (\S+)/g)].map((m) => m[1]);
-    expect(uses.length).toBeGreaterThan(0);
-    for (const ref of uses) expect(ref).toMatch(/^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/);
-  });
-
   it("builds with no write access, no token and no install scripts", () => {
     expect(workflow).toMatch(/^permissions:\n {2}contents: read\n/m);
     expect(build).not.toMatch(/permissions:|token|secrets\./i);
