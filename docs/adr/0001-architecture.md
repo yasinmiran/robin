@@ -164,9 +164,10 @@ frame, fails to open at a size, or fails any frame after gives way to
 openh264 for the rest of the session, resizes included. A host tool starts
 only at an encoder's first frame, so a size it cannot encode fails there
 and not at open; openh264 then encodes that frame again, as the keyframe
-its stream starts with, so the picture goes on. The agent logs why, and
-Ready says so: the first Ready when the trial failed, a resumed
-controller's with the reason and a guest's by name when a frame did. An
+its stream starts with, so the picture goes on. The agent logs why. A
+trial failure shows in the first Ready. A later one shows in the next Ready
+a controller gets on resume, with the reason, and in a guest's Ready by
+name. An
 encoder the user named still fails the session at its trial and is never
 swapped later: a frame it fails is skipped, and the tool is restarted
 after a second.

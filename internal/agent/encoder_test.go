@@ -56,11 +56,13 @@ func TestSessionReportsBrokenEncoder(t *testing.T) {
 	}
 }
 
-// encoders records which constructors ran, at what size; broken names fail
-// with "no render node", and failing names open but fail every frame, as a
-// host tool that cannot encode the size does.
+// encoders records which constructors ran, at what size, and each frame
+// their encoders were asked for, with whether it was to be a keyframe;
+// broken names fail with "no render node", and failing names open but fail
+// every frame, as a host tool that cannot encode the size does.
 type encoders struct {
 	opened  []string
+	encodes []string
 	broken  map[string]bool
 	failing map[string]bool
 }
@@ -72,10 +74,22 @@ func (e *encoders) newFunc(name string) NewEncoderFunc {
 		case e.broken[name]:
 			return nil, errors.New("no render node")
 		case e.failing[name]:
-			return brokenToolEncoder{new(atomic.Int64)}, nil
+			return loggedEncoder{brokenToolEncoder{new(atomic.Int64)}, name, &e.encodes}, nil
 		}
-		return &fakeEncoder{sizes: make(chan [2]int, 1)}, nil
+		return loggedEncoder{&fakeEncoder{sizes: make(chan [2]int, 1)}, name, &e.encodes}, nil
 	}
+}
+
+// loggedEncoder appends each frame it is asked for to log.
+type loggedEncoder struct {
+	Encoder
+	name string
+	log  *[]string
+}
+
+func (l loggedEncoder) Encode(img *yuv.I420, ts time.Duration, keyframe bool) ([]byte, error) {
+	*l.log = append(*l.log, fmt.Sprintf("%s %dx%d keyframe=%t", l.name, img.Width, img.Height, keyframe))
+	return l.Encoder.Encode(img, ts, keyframe)
 }
 
 func (e *encoders) table() map[string]NewEncoderFunc {
@@ -129,8 +143,9 @@ func TestChooseEncoder(t *testing.T) {
 
 // TestPickedEncoderFallsBackForGood: hardware that passes the trial and
 // fails at the session's size where a host tool does, at its first frame,
-// gives way to software, which encodes that frame; it is not tried again at
-// every resize after that, and Ready says why.
+// gives way to software, which encodes that frame as a keyframe, since the
+// page's decoder has only the hardware stream before it; hardware is not
+// tried again at every resize after that, and Ready says why.
 func TestPickedEncoderFallsBackForGood(t *testing.T) {
 	e := &encoders{failing: map[string]bool{}}
 	v, err := chooseEncoder(protocol.Start{Encoder: "vaapi", EncoderFallback: true}, e.table(), quietLog())
@@ -154,6 +169,10 @@ func TestPickedEncoderFallsBackForGood(t *testing.T) {
 	want := []string{"vaapi 320x240", "vaapi 1920x1080", "software 1920x1080", "software 1280x720"}
 	if !slices.Equal(e.opened, want) {
 		t.Errorf("opened %q, want %q", e.opened, want)
+	}
+	want = []string{"vaapi 1920x1080 keyframe=false", "software 1920x1080 keyframe=true", "software 1280x720 keyframe=false"}
+	if !slices.Equal(e.encodes, want) {
+		t.Errorf("encoded %q, want %q", e.encodes, want)
 	}
 	r := (&session{encoder: v}).resumedReady(&protocol.Ready{Encoder: "vaapi"})
 	if r.Encoder != protocol.EncoderSoftware || !strings.Contains(r.EncoderError, "vaapi: hwenc") {
@@ -204,8 +223,7 @@ func quietLog() *slog.Logger {
 
 // brokenToolEncoder opens like a hardware encoder whose host tool starts
 // and fails at every frame, as hwenc does when the tool cannot encode the
-// session's size: hwenc.Opener.Open checks nothing about the size beyond
-// its parity, and the tool runs only from the first Encode.
+// session's size: the tool runs only from the first Encode.
 type brokenToolEncoder struct{ encodes *atomic.Int64 }
 
 func (e brokenToolEncoder) Encode(*yuv.I420, time.Duration, bool) ([]byte, error) {
@@ -217,14 +235,14 @@ func (brokenToolEncoder) Close() error         { return nil }
 
 // TestPickedEncoderFallsBackWhenEncodeFails: a hardware encoder the CLI
 // picked that opens at the session's size and then fails on every frame
-// must give way to software, as the hardware encoding page promises ("at
-// its trial frame or later at the session's size, the session carries on
-// with openh264"). The trial frame succeeds: the stand-in for it encodes.
+// must give way to software. The trial frame succeeds: the stand-in for it
+// encodes.
 func TestPickedEncoderFallsBackWhenEncodeFails(t *testing.T) {
-	var hwEncodes, swEncodes atomic.Int64
+	var hwEncodes atomic.Int64
+	swEncoded := make(chan [2]int, 1)
 	hwOpens := 0
 	table := map[string]NewEncoderFunc{
-		protocol.EncoderSoftware: func(int, int, int, int) (Encoder, error) { return countingEncoder{&swEncodes}, nil },
+		protocol.EncoderSoftware: func(int, int, int, int) (Encoder, error) { return &fakeEncoder{sizes: swEncoded}, nil },
 		protocol.EncoderVAAPI: func(int, int, int, int) (Encoder, error) {
 			hwOpens++
 			if hwOpens == 1 {
@@ -260,10 +278,9 @@ func TestPickedEncoderFallsBackWhenEncodeFails(t *testing.T) {
 		cancel()
 		<-done
 	}()
-	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
-		if swEncodes.Load() > 0 {
-			return
-		}
+	select {
+	case <-swEncoded:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("hardware failed %d frames and software encoded none: the session has no video", hwEncodes.Load())
 	}
-	t.Fatalf("hardware failed %d frames and software encoded none: the session has no video", hwEncodes.Load())
 }
