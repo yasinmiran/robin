@@ -2964,6 +2964,19 @@ than only that it survives.
   hears it); and a CR inside an SDP line, which the relay took as part of
   the value. Whether a browser does too is not something to rely on, so
   the relay now refuses such an answer.
+
+  A review of the targets after those runs found that several could not
+  fail where it mattered: `FuzzFromAgent` judged candidates with the
+  relay's own helpers, `FuzzChange` compared what a session is shown with
+  the function that picks it, and `FuzzGuestControl`,
+  `FuzzAnswerCredentials` and `FuzzUpload` never set up the state their
+  guarantee is about (another guest, conflicting credentials, a link
+  under the upload's name). Each now has an oracle of its own, checked by
+  breaking the code it guards and watching the target fail. One was a
+  real gap: the relay took anything `net.ParseIP` could not read for a
+  routable address, so `localhost`, `127.1` or a name resolving to the
+  browser's machine would have reached the browser; it now keeps only
+  routable IP literals (above, under the tunnel's details).
 - Running them. `go test` replays every target's seeds and its
   `testdata/fuzz` inputs on every run, so a failing input committed there
   stays a regression test. `make fuzz` runs every target for `FUZZTIME`
