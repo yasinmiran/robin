@@ -278,8 +278,12 @@ multicast, and only spaced as the browser splits it. A name such as
 the rest; the agent gathers with mDNS off, so its own candidates are never
 names. An answer with a CR inside a line ends the session, since a parser
 that ends lines at CR too would find a candidate the CLI never read. The
-browser learns nothing it should not: its host candidates stay mDNS names
-and the agent sees it as peer-reflexive.
+agent needs none of the browser's candidates to reach the tunnel: the
+forwarded connection reaches it peer-reflexive. Under `auto` the browser's
+host candidates are usually mDNS names, which the agent does not resolve,
+but nothing in this design rests on that; under `tunnel` the browser's
+candidates never reach the agent and the agent gathers no UDP (see
+Through the tunnel alone, below).
 
 Failover needed two more pieces. When UDP dies, Chrome nominates the
 lower-priority tunnel pair within about two seconds, and Pion, as the
@@ -2672,13 +2676,46 @@ direct UDP path: the agent is known by the fingerprint pinned over SSH. The
 direct path through NAT is the fast one and needs a reflexive address, so
 the default keeps it working out of the box; `--stun none` or a server of
 one's own is the user's choice, and the README's Security section names
-the cost. With `--transport tunnel`, though, the relay drops every UDP
-candidate, so a reflexive address helps nobody, and the CLI gives neither
-the agent nor the page a STUN server. Switching to none under a ProxyJump
+the cost. With `--transport tunnel`, though, no UDP pair can form, so a
+reflexive address helps nobody, and the CLI gives neither the agent nor
+the page a STUN server; the agent's peer gathers no UDP then, so it would
+ask none in any case, a resumed session's included. Switching to none under a ProxyJump
 was considered and left: the CLI cannot see a jump in the user's ssh
 config, and a host behind one may still be reachable over UDP. Nothing
 here is measured: the e2e network reaches no STUN server, and the choice
 rests on what ICE does with the answers.
+
+### Through the tunnel alone: no candidate of the browser's, no UDP on the agent
+
+`--transport tunnel` used to filter one direction only: the relay kept the
+agent's UDP candidates from the page, but the page's offer and trickled
+candidates reached the agent untouched, and the agent gathered UDP whatever
+the transport. It checked every routable address the page named, the
+browser learned it as a peer-reflexive candidate, and that UDP pair
+outranked the tunnel's, whose type preference is 0. It held only while the
+browser hid its host addresses behind mDNS names, which the agent ignores;
+Chrome stops hiding them once a page holds the microphone or the camera,
+and policy can turn the names off. The e2e `tunnel` scenario leaves UDP
+open and starts Chrome with its mDNS names off: before the fix the session
+came up on UDP, after it on TCP through the forward.
+
+It is closed on both sides. Under `tunnel` the bridge strips every
+candidate attribute from the page's offers and drops its trickled
+candidates, passing only the end-of-candidates marker; an offer with a CR
+inside a line is dropped, since Pion skips a CR that starts a line and
+would read a candidate the filter never saw. And Start, Resume and Join say
+when a CLI runs through the tunnel alone, and that page's peer gathers TCP
+only, its passive ICE-TCP listener and the tunnel candidate as before, so
+no UDP pair can form whatever the page names, by whatever path it got
+there. A peer test with two Pions has the browser name its routable host
+addresses: gathering UDP the pair is UDP, TCP only it is the tunnel's.
+
+The owner's peer goes with each controller, and the next page's is made
+afresh, so a resume takes the resuming CLI's transport for the pages from
+then on, and a redial asks for it again; refusing a resume in another mode
+would only have made the user end a desktop to change a flag. A guest's
+peer follows the guest's own CLI: each flag speaks for the page of the CLI
+that was given it. `auto` and `direct` are as they were.
 
 ### The host agent bounds what a page or another user can hold
 

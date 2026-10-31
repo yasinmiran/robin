@@ -148,7 +148,7 @@ once, at the start, where each went on the host or why it could not.
 
 | Flag | Default | |
 |---|---|---|
-| `--transport` | `auto` | `direct` for UDP only, `tunnel` to force the SSH path |
+| `--transport` | `auto` | `direct` for UDP only, `tunnel` to keep the media on the SSH path: the agent gathers no UDP and gets none of the browser's candidates, so no UDP pair can form whatever the browser shows |
 | `--max-size` | `2560x1440` | largest remote resolution; the display follows your window up to this, and a larger attached desktop is scaled down to it. 1920x1080 on hosts with four cores or fewer, 1280x720 with two or fewer |
 | `--fps` | `30` | frame rate cap (20 on small hosts) |
 | `--hidpi` | off | size the remote display in the browser's device pixels: sharp text on Retina screens, about four times the pixels to encode. Raise `--max-size` to go fully native |
@@ -673,7 +673,9 @@ tests prove for each browser:
 6. The CLI serves the page on loopback, hands it the macros it keeps for
    you, and relays offer, answer and candidates between it and the agent,
    adding one passive TCP candidate that leads into an SSH forward to the
-   agent.
+   agent. With `--transport tunnel` it passes neither side the other's
+   candidates, and the agent gathers no UDP, so the forward carries the
+   media even when the browser shows its host addresses.
 
 The decisions behind each of these, and what measurement changed along the
 way, are in [docs/adr/0001-architecture.md](docs/adr/0001-architecture.md).
@@ -1076,8 +1078,10 @@ running, where the page has to start on the primary monitor and switch to
 the other and to both. A fifth, `nomux`, is the blocked one with
 `--ssh-mux=false`, the Windows way, and checks no ControlMaster ran, no ssh
 outlives the CLI, and Ctrl+C ends the session with no reconnect announced
-and no end command over a fresh login. Each
-asserts that decoded frames are not black and change after typing, that
+and no end command over a fresh login. Another, `tunnel`, leaves UDP open
+and has Chrome show its host addresses instead of mDNS names, and checks
+that `--transport tunnel` still runs the session through the SSH forward.
+Each asserts that decoded frames are not black and change after typing, that
 keystrokes after a 20 s pause reach the screen within 400 ms, that typed
 text runs in the remote shell, as does text an input method commits in
 Chrome, pointer position, clipboard both ways, resize,
@@ -1593,9 +1597,11 @@ verified against a Linux build.
   gets is on a command line they can read. One who opens it before your
   browser does gets the page, and your browser shows Not Found; the CLI
   says the link was opened again. `--no-browser` leaves nothing to read.
-- With `--transport tunnel`, a resumed session that was started without it
-  still has the agent ask the STUN servers it started with; the page asks
-  none.
+- A session started with `--transport tunnel` and resumed without it has
+  the agent ask no STUN server: a kept session keeps the STUN servers it
+  started with, and the tunnel started it with none. Direct UDP then works
+  where the host's own addresses reach the browser; the page still asks its
+  STUN servers.
 - `make cover` counts only runs that end normally. A test binary that
   times out or panics, and a CLI or agent that is killed, hand in nothing,
   so a failing e2e scenario lowers the numbers, and without a GPU render
