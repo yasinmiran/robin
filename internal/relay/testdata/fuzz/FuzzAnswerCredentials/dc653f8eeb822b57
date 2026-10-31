@@ -1,0 +1,2 @@
+go test fuzz v1
+string("a=ice-ufrag:0\na=ice-pwd:\r0")
