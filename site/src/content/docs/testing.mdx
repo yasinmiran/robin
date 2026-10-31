@@ -151,3 +151,5 @@ ROBIN_E2E_ID=robin-e2e-2 ROBIN_E2E_SUBNET=10.89.43.0/24 ROBIN_E2E_HOST_IP=10.89.
 ## The docs site
 
 The docs website in `site/` builds and tests apart from these, with Node and npm: Vitest for its components, a link checker over the built pages and a Playwright smoke test in Chrome. See `site/README.md` in the repository.
+
+These pages are served from [yasinmiran.github.io/robin](https://yasinmiran.github.io/robin/). A push to `main` that changes `site/` builds them for that address, under `/robin/`, runs every one of those tests against that build, and publishes it to the `gh-pages` branch as a single commit with no history. `npm run pages` in `site/` builds and checks exactly what the workflow publishes. Under the base, the link checker also fails on any link that leaves `/robin/`, as a component's `/install` would without `withBase`, and the smoke test fails on any request for a page, script, image or search index outside it.

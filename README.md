@@ -16,6 +16,9 @@ Media goes straight over UDP when the network allows it. When it does not
 connection instead, and if UDP disappears mid-session the browser moves onto
 that path by itself in about three seconds.
 
+The docs live at <https://yasinmiran.github.io/robin/>, built from `site/`.
+This README covers the same ground for a checkout.
+
 ## Install
 
 From a checkout, with Go 1.25 or newer:
@@ -1006,6 +1009,10 @@ congestion control as Pion would, to see it fail), and
 is still and checks that the motion after it finds the narrower link.
 
 The docs website in `site/` builds and tests apart from these, with Node and npm: see [site/README.md](site/README.md).
+A push to `main` that touches `site/` runs `.github/workflows/pages.yml`,
+which runs the same tests against a build for
+<https://yasinmiran.github.io/robin/> and publishes it to the `gh-pages`
+branch; `npm run pages` in `site/` runs those checks on that same build.
 
 `make test-wayland` boots three desktops, each in its own container with a
 virtual monitor, PipeWire and the desktop's own portal: mutter 46 on Ubuntu
