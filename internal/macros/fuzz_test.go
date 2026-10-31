@@ -128,7 +128,9 @@ func FuzzCheck(f *testing.F) {
 // FuzzChange makes the page's change to a macros file of any contents. A
 // change refused or a file that does not read leaves the file's bytes as
 // they were; a change made leaves a file that reads, within its cap,
-// holding the change, and the session is shown what the file holds.
+// holding the change and every macro pinned to another host as it was, in
+// its order, and the session is shown what the file holds for its host
+// alone.
 func FuzzChange(f *testing.F) {
 	changes := []string{
 		`{"put":{"id":"m3","name":"New","steps":[{"text":"x"}]}}`,
@@ -136,6 +138,7 @@ func FuzzChange(f *testing.F) {
 		`{"put":{"id":"m2","name":"Theirs","host":"other","steps":[{"pause":5}]}}`,
 		`{"delete":"m1"}`,
 		`{"delete":"m2"}`,
+		`{"put":{"id":"m2","name":"Over","steps":[{"pause":5}]}}`,
 		`{"delete":"none"}`,
 		`{"put":{"id":"m3","name":"New","steps":[{"text":"x"}]},"delete":"m1"}`,
 		`{}`, `null`,
@@ -144,6 +147,11 @@ func FuzzChange(f *testing.F) {
 		f.Add(b, []byte(changes[i%len(changes)]), "box")
 	}
 	f.Add([]byte{}, []byte(changes[0]), "")
+	for _, b := range fileSeeds(f)[:1] {
+		for _, c := range changes {
+			f.Add(b, []byte(c), "other")
+		}
+	}
 	f.Fuzz(func(t *testing.T, file, change []byte, host string) {
 		var c *protocol.MacroChange
 		if json.Unmarshal(change, &c) != nil {
@@ -157,6 +165,11 @@ func FuzzChange(f *testing.F) {
 			if err := os.WriteFile(path, file, 0o600); err != nil {
 				t.Fatal(err)
 			}
+		}
+		foreign := func(m protocol.Macro) bool { return m.Host != "" && m.Host != host }
+		var theirs []protocol.Macro
+		if before, err := decode(file); err == nil {
+			theirs = filtered(before, foreign)
 		}
 		s := New(path, host)
 		shown, err := s.Change(c)
@@ -177,8 +190,11 @@ func FuzzChange(f *testing.F) {
 		if err != nil {
 			t.Fatalf("the file written does not read: %v", err)
 		}
-		if visible := s.visible(all); !slices.EqualFunc(visible, shown, sameMacro) {
-			t.Fatal("the session is shown other macros than the file holds")
+		if mine := filtered(all, func(m protocol.Macro) bool { return !foreign(m) }); !slices.EqualFunc(mine, shown, sameMacro) {
+			t.Fatal("the session is shown other macros than the file holds for its host")
+		}
+		if !slices.EqualFunc(filtered(all, foreign), theirs, sameMacro) {
+			t.Fatalf("a change from %q touched another host's macros: %s", host, after)
 		}
 		switch {
 		case c.Put != nil:
@@ -196,6 +212,16 @@ func FuzzChange(f *testing.F) {
 			t.Fatal("a temporary file was left behind")
 		}
 	})
+}
+
+func filtered(all []protocol.Macro, keep func(protocol.Macro) bool) []protocol.Macro {
+	var out []protocol.Macro
+	for _, m := range all {
+		if keep(m) {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 func sameMacro(a, b protocol.Macro) bool {
