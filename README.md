@@ -1206,7 +1206,8 @@ sha256sum dist/*
 ```
 
 Compare the sums with the published ones. The build downloads the pinned
-zig, openh264 and libopus by hash, and the Makefile exports the Go
+zig, nasm, openh264 and libopus by hash (`go test ./toolchain` fails on a
+download that is not), and the Makefile exports the Go
 toolchain `go.mod` names as `GOTOOLCHAIN`, so `go` fetches and uses that
 release whatever is installed; a build by any other Go fails. `make dist`
 takes a `VERSION`, or a commit at a release tag: the string is linked into
