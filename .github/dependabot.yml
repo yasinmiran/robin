@@ -1,0 +1,11 @@
+# Keeps the actions' commit pins, and the version comments beside them,
+# current, so a fix to an action reaches the workflow as a pull request.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

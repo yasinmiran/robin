@@ -1,0 +1,3 @@
+# The workflows and the script the publish job runs with a write token.
+/.github/ @yasinmiran
+/site/scripts/publish-pages.sh @yasinmiran
