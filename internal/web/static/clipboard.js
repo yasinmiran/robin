@@ -6,7 +6,7 @@
 import { registerKind } from './bulkframe.js';
 import { onBulk } from './bulk.js';
 import { onControl } from './control.js';
-import { CLIP_INBOUND, CLIP_KIND, CLIP_LIMIT, MAX_CLIP, clipSize, decodeClip, encodeClip, fitsControl, splitPaste } from './clip.js';
+import { CLIP_INBOUND, CLIP_KIND, CLIP_LIMIT, HTML, MAX_CLIP, PNG, TEXT, clipSize, clipTypes, decodeClip, encodeClip, fitsControl, splitPaste } from './clip.js';
 
 registerKind(CLIP_KIND, CLIP_LIMIT);
 
@@ -77,20 +77,22 @@ export class Clipboard {
     const fallback = () => {
       if (clip.text) clipboard.writeText(clip.text).catch(() => {});
     };
-    if (clip.html || clip.png) {
-      if (typeof ClipboardItem !== 'function') {
-        fallback();
-        return;
-      }
-      const items = {};
-      if (clip.text) items['text/plain'] = new Blob([clip.text], { type: 'text/plain' });
-      if (clip.html) items['text/html'] = new Blob([clip.html], { type: 'text/html' });
-      if (clip.png) items['image/png'] = new Blob([clip.png], { type: 'image/png' });
-      clipboard.write([new ClipboardItem(items)]).catch(fallback);
+    const items = clipItems(clip);
+    if (!items || typeof ClipboardItem !== 'function') {
+      fallback();
       return;
     }
-    fallback();
+    clipboard.write([new ClipboardItem(items)]).catch(fallback);
   }
+}
+
+// clipItems is what a ClipboardItem of clip holds, by MIME type, or null
+// when clip has nothing but text: a format of no data is one it lacks.
+export function clipItems(clip) {
+  const types = clipTypes(clip);
+  if (types.every((type) => type === TEXT)) return null;
+  const data = { [TEXT]: clip.text, [HTML]: clip.html, [PNG]: clip.png };
+  return Object.fromEntries(types.map((type) => [type, new Blob([data[type]], { type })]));
 }
 
 function join(chunks) {

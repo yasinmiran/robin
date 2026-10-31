@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BULK_WINDOW, CHUNK_SIZE, Sum } from '../bulkframe.js';
 import { CLIP_KIND, CLIP_LIMIT, MAX_CLIP, encodeClip } from '../clip.js';
-import { Clipboard } from '../clipboard.js';
+import { Clipboard, clipItems } from '../clipboard.js';
 import { dispatchControl } from '../control.js';
 import { fromAgent, until, within } from './fakes.js';
 
@@ -180,3 +180,13 @@ async function copyFromHost(clip) {
   t.agent.send(JSON.stringify(sum.end()));
   assert.deepEqual(await t.verdict, { t: 'done' });
 }
+
+test('a format of no data is one the clip lacks, on the way to the browser too', () => {
+  assert.equal(clipItems({ text: 'x', png: new Uint8Array() }), null);
+  assert.equal(clipItems({ text: 'x', html: '' }), null);
+  assert.equal(clipItems({}), null);
+  assert.deepEqual(Object.keys(clipItems({ text: 'x', html: '', png: new Uint8Array([1]) })), ['text/plain', 'image/png']);
+  const items = clipItems({ text: '', html: '<b>x</b>', png: new Uint8Array() });
+  assert.deepEqual(Object.keys(items), ['text/html']);
+  assert.equal(items['text/html'].type, 'text/html');
+});
