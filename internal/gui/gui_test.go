@@ -43,16 +43,23 @@ func TestStartMessageDefaults(t *testing.T) {
 }
 
 // TestTunnelTransportAsksNoSTUNServer: with --transport tunnel neither the
-// agent nor the page is given a STUN server. Every UDP candidate is dropped
-// then, so a public address would serve nothing, and asking for it would
-// tell the server both ends' addresses. The other transports keep the
-// servers the user gave.
+// agent nor the page is given a STUN server, and the agent is told to
+// gather no UDP. No UDP pair can form then, so a public address would
+// serve nothing, and asking for it would tell the server both ends'
+// addresses. The other transports keep the servers the user gave, and
+// UDP. A resume and a redial ask for the same transport.
 func TestTunnelTransportAsksNoSTUNServer(t *testing.T) {
 	stun := []string{"stun:stun.example:3478"}
 	for transport, want := range map[relay.Transport][]string{"": stun, relay.Auto: stun, relay.Direct: stun, relay.Tunnel: nil} {
-		s, _ := startMessage(Options{Transport: transport, STUN: stun}, &probe.Report{})
+		o := Options{Transport: transport, STUN: stun}
+		s, _ := startMessage(o, &probe.Report{})
 		if !slices.Equal(s.STUN, want) {
 			t.Errorf("%q: the agent gets STUN %q, want %q", transport, s.STUN, want)
+		}
+		tunnel := transport == relay.Tunnel
+		if s.Tunnel != tunnel || resumeMessage(o, "ab12").Tunnel != tunnel || redialMessage(o, "ab12").Tunnel != tunnel {
+			t.Errorf("%q: the agent is told Tunnel %v, on a resume %v, on a redial %v",
+				transport, s.Tunnel, resumeMessage(o, "ab12").Tunnel, redialMessage(o, "ab12").Tunnel)
 		}
 		page, err := json.Marshal(protocol.Config{ICEServers: iceServers(s.STUN)})
 		if err != nil {

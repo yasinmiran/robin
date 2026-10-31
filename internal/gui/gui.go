@@ -484,7 +484,7 @@ func (h *host) redial(ctx context.Context, path, id string, until time.Time, t *
 	if err != nil {
 		return nil, nil, err
 	}
-	ready, err := ag.resume(dialCtx, protocol.Resume{ID: id})
+	ready, err := ag.resume(dialCtx, redialMessage(h.o, id))
 	if err != nil {
 		ag.stop()
 		return nil, nil, err
@@ -523,7 +523,16 @@ func checkSpawn(o Options, r *probe.Report) error {
 // asks for what the user names this time, which the session either gives or
 // refuses, rather than quietly keeping what it started with.
 func resumeMessage(o Options, id string) protocol.Resume {
-	return protocol.Resume{ID: id, Curtain: o.Curtain, Silent: o.Silent, Mic: o.Mic, Camera: o.Camera}
+	r := redialMessage(o, id)
+	r.Curtain, r.Silent, r.Mic, r.Camera = o.Curtain, o.Silent, o.Mic, o.Camera
+	return r
+}
+
+// redialMessage is the Resume of a CLI that lost its connection to the
+// session: it asks only for the transport again, which is the CLI's for
+// its whole run.
+func redialMessage(o Options, id string) protocol.Resume {
+	return protocol.Resume{ID: id, Tunnel: o.Transport == relay.Tunnel}
 }
 
 // pickSession decides which kept session, if any, robin gui resumes.
@@ -652,8 +661,8 @@ func runProbe(ctx context.Context, m *sshmux.Master) (*probe.Report, error) {
 // startMessage fills in the session parameters, with lower defaults on
 // small hosts, and picks the encoder when o leaves it to auto. The string
 // says why it picked the one it did; it is empty when the user chose.
-// Through the tunnel alone no STUN server is asked: every UDP candidate is
-// dropped, and the question would only tell the server both addresses.
+// Through the tunnel alone the agent gathers no UDP, and no STUN server is
+// asked: the question would only tell the server both addresses.
 func startMessage(o Options, r *probe.Report) (protocol.Start, string) {
 	s := protocol.Start{
 		Version: protocol.Version, MaxWidth: o.MaxWidth, MaxHeight: o.MaxHeight,
@@ -663,7 +672,7 @@ func startMessage(o Options, r *probe.Report) (protocol.Start, string) {
 		Curtain: o.Curtain, Silent: o.Silent,
 	}
 	if o.Transport == relay.Tunnel {
-		s.STUN = nil
+		s.STUN, s.Tunnel = nil, true
 	}
 	if o.Camera {
 		s.CameraDevice = r.CameraDevice()

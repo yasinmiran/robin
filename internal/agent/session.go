@@ -304,7 +304,7 @@ type session struct {
 	conn   *controller
 	ready  *protocol.Ready // the owner's first Ready
 	desk   desktop.Desktop
-	start  protocol.Start
+	start  protocol.Start // the owner's; s.mu guards Tunnel, which a resume sets
 	log    *slog.Logger
 	tcpMux ice.TCPMux
 	cert   *webrtc.Certificate

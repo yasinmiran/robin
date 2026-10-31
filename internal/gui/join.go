@@ -124,7 +124,7 @@ func runGuest(ctx context.Context, o Options, log *slog.Logger) error {
 // and serves the page until the guest's session ends.
 func (h *host) guest(ctx context.Context, ag *agentProc) error {
 	o, log := h.o, h.log
-	if err := ag.conn.Send(protocol.Message{Type: protocol.TypeJoin, Join: &protocol.Join{Version: protocol.Version, Code: o.Join}}); err != nil {
+	if err := ag.conn.Send(protocol.Message{Type: protocol.TypeJoin, Join: &protocol.Join{Version: protocol.Version, Code: o.Join, Tunnel: o.Transport == relay.Tunnel}}); err != nil {
 		return ag.explain(err)
 	}
 	ready, err := ag.awaitReady(ctx, "", io.Discard)

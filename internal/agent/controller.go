@@ -269,9 +269,11 @@ func awaitResume(ctx context.Context, conn *protocol.Conn, id string) (protocol.
 
 // takeResume does what a resuming CLI asks of the session beyond giving it
 // back: it turns on the private session's switches the CLI names, as Start
-// would have, and checks that the session has the devices the CLI offers,
-// which it has only if it started with them. An error refuses the resume
-// and leaves the session as it was.
+// would have, checks that the session has the devices the CLI offers,
+// which it has only if it started with them, and takes the CLI's
+// transport for the owner's pages from now on. The owner's peer went with
+// the last controller, so the next page's peer is made under it. An error
+// refuses the resume and leaves the session as it was.
 func (s *session) takeResume(r protocol.Resume) error {
 	var flags, devices []string
 	if r.Mic && !s.start.Mic {
@@ -284,7 +286,13 @@ func (s *session) takeResume(r protocol.Resume) error {
 		return fmt.Errorf("session %s started without %s, and a kept session keeps the devices it started with: resume it without %s, or end it with robin end and start another",
 			r.ID, strings.Join(devices, " or "), strings.Join(flags, " and "))
 	}
-	return s.private.require(switches{Curtain: r.Curtain, Silent: r.Silent})
+	if err := s.private.require(switches{Curtain: r.Curtain, Silent: r.Silent}); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.start.Tunnel = r.Tunnel
+	s.mu.Unlock()
+	return nil
 }
 
 // ended tells the controller the session is over on purpose, so it does

@@ -113,7 +113,11 @@ func TestTheDoorAdmitsAnInvitedUIDWithItsCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := dialDoor(t, d)
-	c.Write(joinLine(t, inv.Code))
+	join, err := json.Marshal(protocol.Message{Type: protocol.TypeJoin, Join: &protocol.Join{Version: protocol.Version, Code: inv.Code, Tunnel: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Write(append(join, '\n'))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	g, err := d.Next(ctx)
@@ -121,7 +125,7 @@ func TestTheDoorAdmitsAnInvitedUIDWithItsCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer g.Conn.Close()
-	if g.UID != os.Getuid() || g.User != "me" {
+	if g.UID != os.Getuid() || g.User != "me" || !g.Tunnel {
 		t.Errorf("admitted %+v", g)
 	}
 	// The connection is the guest's signaling from here.

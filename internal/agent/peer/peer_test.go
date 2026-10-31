@@ -25,7 +25,7 @@ type browser struct {
 	track   chan *webrtc.TrackRemote
 }
 
-func newBrowser(t *testing.T) *browser {
+func newBrowser(t *testing.T, opts ...func(*webrtc.API)) *browser {
 	t.Helper()
 	m := &webrtc.MediaEngine{}
 	if err := m.RegisterDefaultCodecs(); err != nil {
@@ -34,7 +34,7 @@ func newBrowser(t *testing.T) *browser {
 	if err := m.RegisterHeaderExtension(webrtc.RTPHeaderExtensionCapability{URI: playoutDelayURI}, webrtc.RTPCodecTypeVideo); err != nil {
 		t.Fatal(err)
 	}
-	pc, err := webrtc.NewAPI(webrtc.WithMediaEngine(m)).NewPeerConnection(webrtc.Configuration{})
+	pc, err := webrtc.NewAPI(append(opts, webrtc.WithMediaEngine(m))...).NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
 		t.Fatal(err)
 	}

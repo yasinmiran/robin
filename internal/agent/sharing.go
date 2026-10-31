@@ -60,6 +60,7 @@ type guest struct {
 	user    string
 	uid     uint32 // as peercred and the tunnel have it
 	conn    *protocol.Conn
+	tunnel  bool // its Join's: the guest's peer takes the SSH tunnel only
 	control atomic.Bool
 	// view is the guest's page, nil between pages; gone is set once the
 	// session let the guest go. session.mu guards both.
@@ -141,7 +142,7 @@ func (s *session) admitGuest(ctx context.Context, dg *share.Guest) {
 		return
 	}
 	s.shared.seq++
-	g := &guest{id: "g" + strconv.Itoa(s.shared.seq), user: dg.User, uid: uint32(dg.UID), conn: dg.Conn}
+	g := &guest{id: "g" + strconv.Itoa(s.shared.seq), user: dg.User, uid: uint32(dg.UID), conn: dg.Conn, tunnel: dg.Tunnel}
 	s.shared.guests = append(s.shared.guests, g)
 	s.mu.Unlock()
 	s.shared.uids.add(g.uid)

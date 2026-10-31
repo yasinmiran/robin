@@ -78,6 +78,10 @@ type Start struct {
 	// agent pick the lightest desktop it finds.
 	Session string   `json:"session,omitempty"`
 	STUN    []string `json:"stun,omitempty"`
+	// Tunnel keeps the page's media on the SSH tunnel, as --transport
+	// tunnel asks: the agent gathers no UDP candidate and asks no STUN
+	// server, so no pair but the tunnel's can form whatever the page names.
+	Tunnel bool `json:"tunnel,omitempty"`
 	// Attach names a running desktop to stream instead of spawning one: an
 	// X11 display such as ":0", or AttachWayland. Empty spawns.
 	Attach string `json:"attach,omitempty"`

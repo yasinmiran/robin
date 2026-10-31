@@ -50,6 +50,10 @@ type Config struct {
 	// TCPMux accepts ICE-TCP from the SSH tunnel. It outlives individual peers
 	// because the CLI's forward points at its listener. Nil disables ICE-TCP.
 	TCPMux ice.TCPMux
+	// TCPOnly gathers no UDP at all, so ICE pairs only through TCPMux,
+	// which it needs, whatever candidates the browser names; it asks no
+	// STUN server either, since STUN rides UDP.
+	TCPOnly bool
 	// IncludeLoopback gathers loopback candidates. The tunnel listener is
 	// loopback-only, so ICE-TCP needs this.
 	IncludeLoopback bool
@@ -229,7 +233,13 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 	se.SetICEBindingRequestHandler(func(msg *stun.Message, _, _ ice.Candidate, pair *ice.CandidatePair) bool {
 		return followNomination(msg, pair, pcRef.Load())
 	})
-	if cfg.TCPMux != nil {
+	switch {
+	case cfg.TCPOnly && cfg.TCPMux == nil:
+		return nil, errors.New("peer: TCP only needs a TCP mux")
+	case cfg.TCPOnly:
+		se.SetICETCPMux(cfg.TCPMux)
+		se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeTCP4})
+	case cfg.TCPMux != nil:
 		se.SetICETCPMux(cfg.TCPMux)
 		se.SetNetworkTypes([]webrtc.NetworkType{
 			webrtc.NetworkTypeUDP4, webrtc.NetworkTypeUDP6, webrtc.NetworkTypeTCP4,
@@ -250,7 +260,7 @@ func New(cfg Config, h Handlers) (*Peer, error) {
 
 	api := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithInterceptorRegistry(reg), webrtc.WithSettingEngine(se))
 	var servers []webrtc.ICEServer
-	if len(cfg.STUN) > 0 {
+	if len(cfg.STUN) > 0 && !cfg.TCPOnly {
 		servers = []webrtc.ICEServer{{URLs: cfg.STUN}}
 	}
 	pcConfig := webrtc.Configuration{ICEServers: servers}

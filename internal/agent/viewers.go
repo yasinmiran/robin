@@ -74,14 +74,14 @@ func (v *viewer) control() bool { return v.owner() || v.guest.control.Load() }
 func (s *session) openViewer(g *guest) (*viewer, error) {
 	s.gens++
 	v := newViewer(s.gens, g)
-	signal := s.conn.Send
+	signal, tunnel := s.conn.Send, s.start.Tunnel
 	if g != nil {
-		signal = g.conn.Send
+		signal, tunnel = g.conn.Send, g.tunnel
 	}
 	maxBitrate := max(s.start.MaxKbps*1000, startBitrate)
 	v.sub = newSubscriber(min(startBitrate, maxBitrate), g == nil)
 	p, err := peer.New(peer.Config{
-		STUN: s.start.STUN, TCPMux: s.tcpMux, IncludeLoopback: true, Certificate: s.cert,
+		STUN: s.start.STUN, TCPMux: s.tcpMux, TCPOnly: tunnel, IncludeLoopback: true, Certificate: s.cert,
 		Audio: s.audio, Video: s.stream.video, AudioTrack: s.sound,
 		Mic: s.mic != nil, Camera: s.camera != nil && g == nil,
 		MinBitrate: minBitrate, StartBitrate: min(startBitrate, maxBitrate), MaxBitrate: maxBitrate,

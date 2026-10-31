@@ -266,7 +266,8 @@ func guestWith(t *testing.T, ctx context.Context, ready protocol.Message, change
 	a, f := agentOverPipes(t)
 	rest := make(chan protocol.Message, 8)
 	go func() {
-		if m := <-f.calls; m.Type == protocol.TypeJoin {
+		// The agent keeps the guest's peer on the tunnel as the Join asks.
+		if m := <-f.calls; m.Type == protocol.TypeJoin && m.Join.Tunnel == (h.o.Transport == relay.Tunnel) {
 			f.conn.Send(ready)
 		}
 		for m := range f.calls {
