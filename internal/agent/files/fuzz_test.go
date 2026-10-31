@@ -3,7 +3,7 @@
 package files
 
 import (
-	"bytes"
+	"cmp"
 	"maps"
 	"os"
 	"path/filepath"
@@ -48,22 +48,38 @@ func FuzzCheckName(f *testing.F) {
 }
 
 // FuzzUpload uploads data under any name into a download directory that
-// holds files of its own. An upload refused leaves the directory as it
-// was; one kept adds exactly one file, of the data, under a name
-// CheckName takes that is no hidden file, and replaces nothing.
+// holds files of its own, a link that leads nowhere, one that leads out
+// of the directory and a directory. An upload refused leaves the
+// directory as it was; one kept adds exactly one regular file, of the
+// data, under a name CheckName takes that is no hidden file, and
+// replaces nothing: each link still leads where it did, and what lies
+// outside is untouched.
 func FuzzUpload(f *testing.F) {
 	for _, s := range nameSeeds {
 		f.Add(s, []byte("payload"))
 	}
 	f.Add("a (1).txt", []byte{})
-	existing := map[string]string{"a.txt": "mine", "a (1).txt": "mine too", "b.tar.gz": "tarball", "c": "no extension"}
+	f.Add("a (2).txt", []byte("through the link"))
+	f.Add("a (3).txt", []byte("into the directory"))
+	existing := map[string]string{"a.txt": "mine", "a (1).txt": "mine too", "c": "no extension"}
+	links := map[string]string{"b.tar.gz": "nowhere", "a (2).txt": ""}
+	const dir = "a (3).txt"
 	f.Fuzz(func(t *testing.T, name string, data []byte) {
 		in := testInbox(t)
-		if err := os.MkdirAll(in.Dir(), 0o700); err != nil {
+		if err := os.MkdirAll(filepath.Join(in.Dir(), dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		outside := filepath.Join(t.TempDir(), "outside")
+		if err := os.WriteFile(outside, []byte("not the inbox's"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		for n, body := range existing {
 			if err := os.WriteFile(filepath.Join(in.Dir(), n), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for n, target := range links {
+			if err := os.Symlink(cmp.Or(target, outside), filepath.Join(in.Dir(), n)); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -85,26 +101,59 @@ func FuzzUpload(f *testing.F) {
 			t.Fatal(rerr)
 		}
 		for _, e := range entries {
-			b, err := os.ReadFile(filepath.Join(in.Dir(), e.Name()))
-			if err != nil {
-				t.Fatal(err)
-			}
-			got[e.Name()] = string(b)
+			got[e.Name()] = entryAt(t, filepath.Join(in.Dir(), e.Name()))
 		}
 		want := maps.Clone(existing)
+		for n, target := range links {
+			want[n] = "link to " + cmp.Or(target, outside)
+		}
+		want[dir] = "directory"
 		if err == nil {
-			if _, taken := existing[saved]; taken || CheckName(saved) != nil || strings.HasPrefix(saved, ".") {
+			if _, taken := want[saved]; taken || CheckName(saved) != nil || strings.HasPrefix(saved, ".") {
 				t.Fatalf("%q was kept as %q", name, saved)
 			}
 			want[saved] = string(data)
 		}
 		if !maps.Equal(got, want) {
-			t.Fatalf("uploading %q (%v) left the directory holding %q", name, err, keys(got))
+			t.Fatalf("uploading %q (%v) left the directory holding %q", name, err, got)
 		}
-		if saved != "" && !bytes.Equal([]byte(got[saved]), data) {
-			t.Fatal("the file kept is not the data")
+		if fi, err := os.Lstat(filepath.Join(in.Dir(), saved)); saved != "" && (err != nil || !fi.Mode().IsRegular()) {
+			t.Fatalf("%q was kept as %q, which is no regular file: %v", name, saved, err)
+		}
+		if b, err := os.ReadFile(outside); err != nil || string(b) != "not the inbox's" {
+			t.Fatalf("uploading %q changed the file a link leads to: %q, %v", name, b, err)
+		}
+		if sub, err := os.ReadDir(filepath.Join(in.Dir(), dir)); err != nil || len(sub) > 0 {
+			t.Fatalf("uploading %q put %d files in a directory: %v", name, len(sub), err)
 		}
 	})
+}
+
+// entryAt is what lies at path, without following a link: a regular
+// file's contents, where a link leads, or that it is a directory.
+func entryAt(t *testing.T, path string) string {
+	t.Helper()
+	fi, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	switch {
+	case fi.Mode()&os.ModeSymlink != 0:
+		target, err := os.Readlink(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return "link to " + target
+	case fi.IsDir():
+		return "directory"
+	case !fi.Mode().IsRegular():
+		return "special file " + fi.Mode().String()
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
 
 func keys(m map[string]string) []string {
