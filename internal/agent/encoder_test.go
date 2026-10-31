@@ -10,9 +10,12 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/yasinmiran/robin/internal/agent/peer"
+	"github.com/yasinmiran/robin/internal/agent/yuv"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
@@ -156,4 +159,67 @@ func TestSessionFallsBackToSoftware(t *testing.T) {
 
 func quietLog() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// brokenToolEncoder opens like a hardware encoder whose host tool starts
+// and fails at every frame, as hwenc does when the tool cannot encode the
+// session's size: hwenc.Opener.Open checks nothing about the size beyond
+// its parity, and the tool runs only from the first Encode.
+type brokenToolEncoder struct{ encodes *atomic.Int64 }
+
+func (e brokenToolEncoder) Encode(*yuv.I420, time.Duration, bool) ([]byte, error) {
+	e.encodes.Add(1)
+	return nil, errors.New("hwenc: ffmpeg h264_vaapi: exited: unsupported resolution")
+}
+func (brokenToolEncoder) SetBitrate(int) error { return nil }
+func (brokenToolEncoder) Close() error         { return nil }
+
+// TestPickedEncoderFallsBackWhenEncodeFails: a hardware encoder the CLI
+// picked that opens at the session's size and then fails on every frame
+// must give way to software, as the hardware encoding page promises ("at
+// its trial frame or later at the session's size, the session carries on
+// with openh264"). The trial frame succeeds: the stand-in for it encodes.
+func TestPickedEncoderFallsBackWhenEncodeFails(t *testing.T) {
+	var hwEncodes, swEncodes atomic.Int64
+	hwOpens := 0
+	table := map[string]NewEncoderFunc{
+		protocol.EncoderSoftware: func(int, int, int, int) (Encoder, error) { return countingEncoder{&swEncodes}, nil },
+		protocol.EncoderVAAPI: func(int, int, int, int) (Encoder, error) {
+			hwOpens++
+			if hwOpens == 1 {
+				return &fakeEncoder{sizes: make(chan [2]int, 1)}, nil // the trial frame
+			}
+			return brokenToolEncoder{&hwEncodes}, nil
+		},
+	}
+	name, newEncoder, why, err := chooseEncoder(protocol.Start{Encoder: protocol.EncoderVAAPI, EncoderFallback: true}, table, quietLog())
+	if err != nil || name != protocol.EncoderVAAPI || why != "" {
+		t.Fatalf("chose %s (%q, %v)", name, why, err)
+	}
+	s := mustStream(newStream(&stillDesktop{}, 100, 64, 64, newEncoder, quietLog()))
+	p, err := peer.New(peer.Config{
+		MinBitrate: minBitrate, StartBitrate: startBitrate, MaxBitrate: protocol.DefaultMaxKbps * 1000, Log: quietLog(),
+		Video: s.video,
+	}, peer.Handlers{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	s.subscribe(p)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		s.run(ctx)
+		close(done)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if swEncodes.Load() > 0 {
+			return
+		}
+	}
+	t.Fatalf("hardware failed %d frames and software encoded none: the session has no video", hwEncodes.Load())
 }
