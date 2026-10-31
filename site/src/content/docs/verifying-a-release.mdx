@@ -20,7 +20,7 @@ Compare the sums with the ones published beside that release's binaries. `make d
 
 ## What makes the bytes match
 
-- The build downloads the pinned zig, openh264 and libopus by hash.
+- The build downloads the pinned zig, nasm, openh264 and libopus by hash, and `go test ./toolchain` fails on a download that is not.
 - The Makefile exports the Go toolchain `go.mod` names as `GOTOOLCHAIN`, so `go` fetches and uses that release whatever is installed; a build by any other Go fails.
 - `make dist` takes a `VERSION`, or a commit at a release tag. The string is linked into every binary, so a clone that would describe the commit differently (a shallow one without the tag, say), or a tree with local changes, which `git describe` marks `-dirty`, cannot match.
 - The builder's Go environment is pinned too (`GOENV=off`, `GOFLAGS`, `GOEXPERIMENT`, `GOAMD64`, `GOARM64`), and the library builds drop `CFLAGS`, `LDFLAGS` and the rest of the environment's compiler flags, so what is saved with `go env -w` or exported in a shell does not reach a binary.
