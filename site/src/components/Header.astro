@@ -3,6 +3,7 @@ import { Lockup, Mark } from "@/components/Logo";
 import { MobileNav } from "@/components/MobileNav";
 import { Search } from "@/components/Search";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { withBase } from "@/lib/base";
 import { HEADER_LINKS, type NavGroup, type Section, currentHeaderLink } from "@/lib/nav";
 
 interface Props {
@@ -22,7 +23,7 @@ const active = currentHeaderLink(current, section);
   <div class="flex nav:hidden">
     <MobileNav client:media="(max-width: 56.1875rem)" groups={groups} current={current} />
   </div>
-  <a href="/" class="flex h-full items-center text-foreground" aria-label="Robin home">
+  <a href={withBase("/")} class="flex h-full items-center text-foreground" aria-label="Robin home">
     {home ? <Mark size={24} /> : <Lockup size={24} />}
   </a>
   <nav aria-label="Main" class="hidden gap-1 text-sm nav:flex">

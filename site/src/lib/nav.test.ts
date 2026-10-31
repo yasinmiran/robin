@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   type DocLink,
@@ -77,6 +77,15 @@ describe("toDocLinks", () => {
 describe("header links", () => {
   it("links each page by its slug", () => {
     expect(docHref("install")).toBe("/install");
+  });
+
+  it("links each page under the base the site is served from", () => {
+    vi.stubEnv("BASE_URL", "/robin");
+    try {
+      expect(docHref("install")).toBe("/robin/install");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("marks the link for the section a page sits in", () => {

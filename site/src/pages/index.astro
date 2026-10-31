@@ -6,7 +6,7 @@ import { Lockup } from "@/components/Logo";
 import { buttonVariants } from "@/components/ui/button";
 import Base from "@/layouts/Base.astro";
 import { codeText } from "@/lib/html";
-import { groupDocs, toDocLinks } from "@/lib/nav";
+import { docHref, groupDocs, toDocLinks } from "@/lib/nav";
 
 const groups = groupDocs(toDocLinks(await getCollection("docs")));
 
@@ -92,8 +92,8 @@ const runsHtml = runs
           <CopyButton client:visible code={command} variant="field" label="Copy command" />
         </div>
         <div class="mt-5 flex items-center gap-3">
-          <a href="/install" class={buttonVariants({ size: "lg" })}>Install</a>
-          <a href="/how-it-works" class={buttonVariants({ size: "lg", variant: "ghost" })}>How it works</a>
+          <a href={docHref("install")} class={buttonVariants({ size: "lg" })}>Install</a>
+          <a href={docHref("how-it-works")} class={buttonVariants({ size: "lg", variant: "ghost" })}>How it works</a>
         </div>
       </div>
 

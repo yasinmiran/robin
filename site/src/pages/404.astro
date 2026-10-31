@@ -3,7 +3,7 @@ import { getCollection } from "astro:content";
 
 import { SearchBox } from "@/components/Search";
 import Base from "@/layouts/Base.astro";
-import { groupDocs, toDocLinks } from "@/lib/nav";
+import { docHref, groupDocs, toDocLinks } from "@/lib/nav";
 
 const groups = groupDocs(toDocLinks(await getCollection("docs")));
 ---
@@ -18,9 +18,9 @@ const groups = groupDocs(toDocLinks(await getCollection("docs")));
       </p>
       <SearchBox client:load />
       <ul class="mt-8 flex flex-wrap gap-x-6 gap-y-2">
-        <li><a class="link" href="/install">Install and build</a></li>
-        <li><a class="link" href="/flags">Flags</a></li>
-        <li><a class="link" href="/known-limits">Known limits</a></li>
+        <li><a class="link" href={docHref("install")}>Install and build</a></li>
+        <li><a class="link" href={docHref("flags")}>Flags</a></li>
+        <li><a class="link" href={docHref("known-limits")}>Known limits</a></li>
       </ul>
     </div>
   </main>

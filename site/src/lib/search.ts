@@ -1,3 +1,5 @@
+import { withBase } from "@/lib/base";
+
 /** The slice of Pagefind's browser API the search dialog uses. */
 export interface Pagefind {
   init?: () => Promise<void>;
@@ -26,7 +28,8 @@ export interface SearchResult {
 
 export type PagefindLoader = () => Promise<Pagefind>;
 
-export const PAGEFIND_URL = "/pagefind/pagefind.js";
+// Pagefind puts its results under the path it was loaded from, the base.
+export const PAGEFIND_URL = withBase("/pagefind/pagefind.js");
 
 export const loadPagefind: PagefindLoader = async () => {
   const pagefind = (await import(/* @vite-ignore */ PAGEFIND_URL)) as Pagefind;

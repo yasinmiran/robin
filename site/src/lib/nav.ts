@@ -1,3 +1,5 @@
+import { withBase } from "@/lib/base";
+
 export const SECTIONS = ["Start", "Use", "Reference", "Design", "Project"] as const;
 
 export type Section = (typeof SECTIONS)[number];
@@ -22,10 +24,10 @@ export interface HeaderLink {
 }
 
 export const HEADER_LINKS: readonly HeaderLink[] = [
-  { label: "Guide", href: "/introduction", sections: ["Start", "Use"] },
-  { label: "Flags", href: "/flags", sections: [] },
-  { label: "How it works", href: "/how-it-works", sections: ["Design"] },
-  { label: "Roadmap", href: "/roadmap", sections: ["Project"] },
+  { label: "Guide", href: docHref("introduction"), sections: ["Start", "Use"] },
+  { label: "Flags", href: docHref("flags"), sections: [] },
+  { label: "How it works", href: docHref("how-it-works"), sections: ["Design"] },
+  { label: "Roadmap", href: docHref("roadmap"), sections: ["Project"] },
 ];
 
 /** toDocLinks reads each page's place in the sidebar from its collection entry. */
@@ -41,7 +43,7 @@ export function toDocLinks(
 }
 
 export function docHref(slug: string): string {
-  return `/${slug}`;
+  return withBase(`/${slug}`);
 }
 
 /** sortDocs orders pages by section, then by their order within it. */
