@@ -123,30 +123,34 @@ func newBulkSender(dc *webrtc.DataChannel) *bulkSender {
 	var opened, closed sync.Once
 	dc.OnOpen(func() { opened.Do(func() { close(s.opened) }) })
 	dc.OnClose(func() { closed.Do(func() { close(s.closed) }) })
-	dc.OnMessage(func(m webrtc.DataChannelMessage) {
-		v, err := protocol.ParseBulk(m.Data)
-		if m.IsString && err == nil && v.T == protocol.BulkCredit {
-			// A receiver cannot have taken more than was sent, so a grant
-			// past a window beyond that would let it stop reading and
-			// leave the rest of the transfer queued in this process.
-			if c := min(v.Credit, s.sent.Load()+protocol.BulkWindow); c > s.credit.Load() {
-				s.credit.Store(c)
-				select {
-				case s.more <- struct{}{}:
-				default:
-				}
-			}
-			return
-		}
-		if !m.IsString || err != nil || (v.T != protocol.BulkDone && v.T != protocol.BulkError) {
-			v = protocol.Bulk{T: protocol.BulkError, Error: "malformed verdict"}
-		}
-		select {
-		case s.verdict <- v:
-		default: // only the first verdict counts
-		}
-	})
+	dc.OnMessage(s.receive)
 	return s
+}
+
+// receive takes a frame from the receiving end: a credit, or its verdict.
+// Anything else is taken for a verdict that refuses the transfer.
+func (s *bulkSender) receive(m webrtc.DataChannelMessage) {
+	v, err := protocol.ParseBulk(m.Data)
+	if m.IsString && err == nil && v.T == protocol.BulkCredit {
+		// A receiver cannot have taken more than was sent, so a grant
+		// past a window beyond that would let it stop reading and
+		// leave the rest of the transfer queued in this process.
+		if c := min(v.Credit, s.sent.Load()+protocol.BulkWindow); c > s.credit.Load() {
+			s.credit.Store(c)
+			select {
+			case s.more <- struct{}{}:
+			default:
+			}
+		}
+		return
+	}
+	if !m.IsString || err != nil || (v.T != protocol.BulkDone && v.T != protocol.BulkError) {
+		v = protocol.Bulk{T: protocol.BulkError, Error: "malformed verdict"}
+	}
+	select {
+	case s.verdict <- v:
+	default: // only the first verdict counts
+	}
 }
 
 // send runs one transfer and closes the channel.
