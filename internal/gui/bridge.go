@@ -310,12 +310,17 @@ func (b *bridge) fromBrowser(ctx context.Context, br *web.Browser, done chan<- s
 			b.changeMacros(br, m.MacroChange)
 			continue
 		}
+		out, ok := b.relay.FromBrowser(m)
+		if !ok {
+			b.log.Debug("dropped by the transport", "type", m.Type)
+			continue
+		}
 		agent := b.currentAgent()
 		if agent == nil {
 			b.log.Debug("dropped while reconnecting", "type", m.Type)
 			continue
 		}
-		if err := agent.Send(m); err != nil {
+		if err := agent.Send(out); err != nil {
 			b.log.Warn("send to agent", "err", err)
 		}
 	}

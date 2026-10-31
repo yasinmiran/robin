@@ -364,6 +364,21 @@ func TestGuestsGoWithTheOwner(t *testing.T) {
 	addGuest(t, s, "bob", 1002)
 }
 
+// A guest's Ready says the session keeps that guest's peers to the
+// tunnel only when its Join asked, so its CLI can tell this agent from
+// one that ignores the ask.
+func TestTheGuestsReadyAnswersItsJoinsTunnel(t *testing.T) {
+	s := guestSession(&fakeTypist{})
+	endGuestsAtCleanup(t, s)
+	for uid, tunnel := range map[int]bool{1001: false, 1002: true} {
+		conn, cli := guestConn(t)
+		s.admitGuest(t.Context(), &share.Guest{Conn: conn, UID: uid, User: "alice", Tunnel: tunnel})
+		if r := cli.next(t, protocol.TypeReady).Ready; r.Tunnel != tunnel {
+			t.Errorf("a guest whose Join's Tunnel is %v heard %v", tunnel, r.Tunnel)
+		}
+	}
+}
+
 func TestTheSessionTakesSoManyGuests(t *testing.T) {
 	s := guestSession(&fakeTypist{})
 	endGuestsAtCleanup(t, s)

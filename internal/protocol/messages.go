@@ -78,6 +78,10 @@ type Start struct {
 	// agent pick the lightest desktop it finds.
 	Session string   `json:"session,omitempty"`
 	STUN    []string `json:"stun,omitempty"`
+	// Tunnel keeps the page's media on the SSH tunnel, as --transport
+	// tunnel asks: the agent gathers no UDP candidate and asks no STUN
+	// server, so no pair but the tunnel's can form whatever the page names.
+	Tunnel bool `json:"tunnel,omitempty"`
 	// Attach names a running desktop to stream instead of spawning one: an
 	// X11 display such as ":0", or AttachWayland. Empty spawns.
 	Attach string `json:"attach,omitempty"`
@@ -176,6 +180,10 @@ type Ready struct {
 	Private *Private `json:"private,omitempty"`
 	// Share is set on the Ready a guest gets, and nil for the owner.
 	Share *Share `json:"share,omitempty"`
+	// Tunnel answers a guest's Join.Tunnel: the agent keeps that guest's
+	// peers to the tunnel. An agent that leaves it unset gathers UDP for
+	// the guest's page, and a guest's CLI under the tunnel alone leaves.
+	Tunnel bool `json:"tunnel,omitempty"`
 }
 
 // Notice is something the user has to do or know before the desktop is ready.

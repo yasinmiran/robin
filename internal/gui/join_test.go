@@ -266,7 +266,8 @@ func guestWith(t *testing.T, ctx context.Context, ready protocol.Message, change
 	a, f := agentOverPipes(t)
 	rest := make(chan protocol.Message, 8)
 	go func() {
-		if m := <-f.calls; m.Type == protocol.TypeJoin {
+		// The agent keeps the guest's peer on the tunnel as the Join asks.
+		if m := <-f.calls; m.Type == protocol.TypeJoin && m.Join.Tunnel == (h.o.Transport == relay.Tunnel) {
 			f.conn.Send(ready)
 		}
 		for m := range f.calls {
@@ -303,7 +304,9 @@ func TestGuestWhosePageCannotListenSaysBye(t *testing.T) {
 func TestGuestOverTheTunnelEndsWithItsConnection(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	g := guestWith(t, ctx, guestReady(), func(h *host) {
+	ready := guestReady()
+	ready.Ready.Tunnel = true
+	g := guestWith(t, ctx, ready, func(h *host) {
 		h.o.Transport = relay.Tunnel
 		h.o.STUN = []string{"stun:stun.example:3478"}
 	})
@@ -313,6 +316,30 @@ func TestGuestOverTheTunnelEndsWithItsConnection(t *testing.T) {
 	g.h.m.Close()
 	if err := waitDone(t, g.done); err == nil || !strings.Contains(err.Error(), "SSH connection") {
 		t.Errorf("the guest after its connection went: %v", err)
+	}
+}
+
+// Through the tunnel alone a guest leaves, with a bye, a session whose
+// agent does not say it keeps the guest's peers to the tunnel: an older
+// build ignores Join.Tunnel and gathers UDP for the guest's page.
+func TestGuestOverTheTunnelLeavesAnAgentThatGathersUDP(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	g := guestWith(t, ctx, guestReady(), func(h *host) { h.o.Transport = relay.Tunnel })
+	select {
+	case m := <-g.rest:
+		if m.Type != protocol.TypeBye {
+			t.Fatalf("the guest sent %q", m.Type)
+		}
+		g.f.conn.Send(protocol.Message{Type: protocol.TypeEnded, Error: protocol.WhyGuestLeft})
+	case <-time.After(10 * time.Second):
+		t.Fatal("no bye")
+	}
+	if err := waitDone(t, g.done); err == nil || !strings.Contains(err.Error(), "would gather UDP") {
+		t.Errorf("joined an agent that gathers UDP for the page: %v", err)
+	}
+	if strings.Contains(g.stderr.String(), "robin: joined") {
+		t.Errorf("the guest announced the join:\n%s", g.stderr.String())
 	}
 }
 

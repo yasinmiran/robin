@@ -100,6 +100,7 @@ A real browser, Google Chrome in a Playwright container, runs the real CLI again
 |---|---|---|
 | `direct` | open | the session comes up on UDP |
 | `blocked` | UDP dropped before the CLI starts | ICE-TCP through the SSH forward carries the whole session |
+| `tunnel` | open | `--transport tunnel` with Chrome showing its host addresses instead of mDNS names: the session still runs on ICE-TCP through the SSH forward |
 | `restart` | open, then UDP dropped mid-session | the page notices, restarts ICE and recovers onto TCP, typically in about 3 s, and input still works |
 | `resume` | open, SSH cut mid-session | the page says Reconnecting, the CLI redials and resumes the same daemon, Xvfb and xterm, and typing works again |
 | `rejoin` | open | the CLI is killed outright, the desktop stays and `robin ls` lists it, a `robin gui --mic` is refused for a desktop that started without a microphone, a new `robin gui` resumes it, Disconnect, keep desktop leaves it, and `robin end` tears everything down |

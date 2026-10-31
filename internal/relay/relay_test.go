@@ -228,3 +228,50 @@ func TestAnswerWithABareCRIsRefused(t *testing.T) {
 		}
 	}
 }
+
+// Through the tunnel alone the agent gets none of the browser's candidates:
+// a browser that shows its host addresses would otherwise have the agent
+// check them over UDP, and that pair outranks the tunnel. The end of the
+// candidates still passes, and every other transport passes all of it.
+func TestBrowserCandidatesUnderEachTransport(t *testing.T) {
+	offer := answer(fpA, udpHost, udpSrflx, tcpHost) + "a=end-of-candidates\r\n"
+	trickled := []string{udpHost, udpSrflx, tcpHost, ""}
+	for _, tc := range []struct {
+		transport Transport
+		offer     string
+		trickled  []string
+	}{
+		{Auto, offer, trickled},
+		{Direct, offer, trickled},
+		{Tunnel, answer(fpA) + "a=end-of-candidates\r\n", []string{""}},
+	} {
+		t.Run(string(tc.transport), func(t *testing.T) {
+			r := New(Policy{Transport: tc.transport, TunnelPort: 4000})
+			if m, ok := r.FromBrowser(protocol.Message{Type: protocol.TypeOffer, SDP: offer}); !ok || m.SDP != tc.offer {
+				t.Errorf("offer passed %v as\n%s\nwant\n%s", ok, m.SDP, tc.offer)
+			}
+			var got []string
+			for _, c := range trickled {
+				if m, ok := r.FromBrowser(cand(c)); ok {
+					got = append(got, m.Candidate.Candidate)
+				}
+			}
+			if strings.Join(got, "|") != strings.Join(tc.trickled, "|") {
+				t.Errorf("trickled %q, want %q", got, tc.trickled)
+			}
+			if _, ok := r.FromBrowser(protocol.Message{Type: protocol.TypeCandidate}); ok != (tc.transport != Tunnel) {
+				t.Errorf("a candidate message without a candidate passed: %v", ok)
+			}
+		})
+	}
+}
+
+// Through the tunnel alone an offer with a CR inside a line is dropped:
+// Pion skips a CR that starts a line, and would read the candidate after
+// it that the filter, which ends lines at LF, never saw.
+func TestTunnelDropsAnOfferWithABareCR(t *testing.T) {
+	sdp := strings.Replace(answer(fpA), "a=mid:0\r\n", "a=mid:0\n\ra="+udpHost+"\r\n", 1)
+	if m, ok := New(Policy{Transport: Tunnel, TunnelPort: 4000}).FromBrowser(protocol.Message{Type: protocol.TypeOffer, SDP: sdp}); ok {
+		t.Errorf("the offer passed as\n%q", m.SDP)
+	}
+}

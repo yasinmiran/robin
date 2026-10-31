@@ -124,7 +124,7 @@ func runGuest(ctx context.Context, o Options, log *slog.Logger) error {
 // and serves the page until the guest's session ends.
 func (h *host) guest(ctx context.Context, ag *agentProc) error {
 	o, log := h.o, h.log
-	if err := ag.conn.Send(protocol.Message{Type: protocol.TypeJoin, Join: &protocol.Join{Version: protocol.Version, Code: o.Join}}); err != nil {
+	if err := ag.conn.Send(protocol.Message{Type: protocol.TypeJoin, Join: &protocol.Join{Version: protocol.Version, Code: o.Join, Tunnel: o.Transport == relay.Tunnel}}); err != nil {
 		return ag.explain(err)
 	}
 	ready, err := ag.awaitReady(ctx, "", io.Discard)
@@ -133,6 +133,11 @@ func (h *host) guest(ctx context.Context, ag *agentProc) error {
 	}
 	if ready.Share == nil {
 		return fmt.Errorf("the agent on %s answered the join as no guest's", o.Dest)
+	}
+	if o.Transport == relay.Tunnel && !ready.Tunnel {
+		ag.bye()
+		return fmt.Errorf("%s's session on %s runs an agent that would gather UDP for this page, which --transport tunnel rules out: ask %s to start the session again with this build of robin, or join without --transport tunnel",
+			ready.Share.Owner, o.Dest, ready.Share.Owner)
 	}
 	log.Info("joined", "owner", ready.Share.Owner, "display", ready.Display, "size", fmt.Sprintf("%dx%d", ready.Width, ready.Height))
 

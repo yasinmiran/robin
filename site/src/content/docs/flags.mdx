@@ -105,7 +105,7 @@ Join another account's session as a guest, with the code its owner was given, ov
 
 <Flags>
 <Flag name="--transport" arg="MODE" def="`auto`">
-Media path: `auto` (direct UDP, SSH tunnel as fallback), `direct` for UDP only, or `tunnel` to force the SSH path.
+Media path: `auto` (direct UDP, SSH tunnel as fallback), `direct` for UDP only, or `tunnel` to keep the media on the SSH path: the agent gathers no UDP and gets none of the browser's candidates, so no UDP pair can form whatever the browser shows (see [How it works](/how-it-works#transports-and-fallback)).
 </Flag>
 <Flag name="--stun" arg="SERVERS" def="`stun:stun.l.google.com:19302`">
 Comma-separated STUN servers for NAT traversal, or `none`. The browser and the agent each ask them for their public address (see [Security](/security#stun-tells-a-server-where-you-are)), except with `--transport tunnel`, which asks none.

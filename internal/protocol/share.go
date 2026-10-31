@@ -38,10 +38,13 @@ const (
 // first join that presents it.
 const InviteTTL = 10 * time.Minute
 
-// Join is a guest CLI's handshake: the code of its invitation.
+// Join is a guest CLI's handshake: the code of its invitation, and how
+// the guest's page reaches the session.
 type Join struct {
 	Version int    `json:"version"`
 	Code    string `json:"code"`
+	// Tunnel is Start's, for the guest's own peer.
+	Tunnel bool `json:"tunnel,omitempty"`
 }
 
 // Invite names the account the owner shares the session with.

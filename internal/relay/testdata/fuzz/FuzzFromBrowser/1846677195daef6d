@@ -1,0 +1,4 @@
+go test fuzz v1
+string("v= o= 0 0 IN\ns=\nt=\na=candidate\n")
+string("0")
+byte('\x02')

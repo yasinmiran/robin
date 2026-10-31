@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yasinmiran/robin/internal/agent/peer"
 	"github.com/yasinmiran/robin/internal/protocol"
 )
 
@@ -279,6 +280,58 @@ func TestTakeResumeRefusesDevicesTheSessionLacks(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestTheTransportIsTheAttachedCLIs: the owner's page gets a TCP-only peer
+// while the controller attached now runs through the tunnel alone,
+// whatever the session started with, and a guest's page while its own CLI
+// does. A refused resume leaves the transport as it was. The session here
+// has no ICE-TCP listener, so a TCP-only peer cannot be made at all: that
+// failure is how the test sees which one was asked for.
+func TestTheTransportIsTheAttachedCLIs(t *testing.T) {
+	s := testSession(&richDesktop{})
+	tcpOnly := func(g *guest) bool {
+		t.Helper()
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		v, err := s.openViewer(g)
+		if err != nil {
+			if !errors.Is(err, peer.ErrTCPOnlyNeedsMux) {
+				t.Fatal(err)
+			}
+			return true
+		}
+		s.stream.remove(v.sub)
+		v.peer.Close()
+		return false
+	}
+	if tcpOnly(nil) {
+		t.Fatal("a session started without the tunnel made a TCP-only peer")
+	}
+	if err := s.takeResume(protocol.Resume{ID: "ab12", Tunnel: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !tcpOnly(nil) {
+		t.Error("resumed through the tunnel, the owner's page gets UDP")
+	}
+	if tcpOnly(&guest{}) {
+		t.Error("a guest whose CLI did not ask for the tunnel got a TCP-only peer")
+	}
+	if !tcpOnly(&guest{tunnel: true}) {
+		t.Error("a guest whose CLI asked for the tunnel gets UDP")
+	}
+	if err := s.takeResume(protocol.Resume{ID: "ab12", Mic: true}); err == nil {
+		t.Fatal("a resume with a microphone the session lacks passed")
+	}
+	if !tcpOnly(nil) {
+		t.Error("a refused resume took the tunnel away")
+	}
+	if err := s.takeResume(protocol.Resume{ID: "ab12"}); err != nil {
+		t.Fatal(err)
+	}
+	if tcpOnly(nil) {
+		t.Error("resumed without the tunnel, the owner's page still gets a TCP-only peer")
 	}
 }
 

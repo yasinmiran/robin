@@ -77,6 +77,8 @@ type Guest struct {
 	UID  int
 	// User is the name the owner invited.
 	User string
+	// Tunnel is the guest's Join.Tunnel.
+	Tunnel bool
 }
 
 // Door takes guests on the session's abstract unix socket.
@@ -199,7 +201,7 @@ func (d *Door) join(c net.Conn, uid int) {
 		refuse(err, ErrBadCode)
 		return
 	}
-	g := &Guest{Conn: conn, UID: uid, User: user}
+	g := &Guest{Conn: conn, UID: uid, User: user, Tunnel: m.Join.Tunnel}
 	select {
 	case d.arrivals <- g:
 		d.log.Info("guest joined", "user", user, "uid", uid)

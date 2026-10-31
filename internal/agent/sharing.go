@@ -60,6 +60,7 @@ type guest struct {
 	user    string
 	uid     uint32 // as peercred and the tunnel have it
 	conn    *protocol.Conn
+	tunnel  bool // its Join's: the guest's peer takes the SSH tunnel only
 	control atomic.Bool
 	// view is the guest's page, nil between pages; gone is set once the
 	// session let the guest go. session.mu guards both.
@@ -141,7 +142,7 @@ func (s *session) admitGuest(ctx context.Context, dg *share.Guest) {
 		return
 	}
 	s.shared.seq++
-	g := &guest{id: "g" + strconv.Itoa(s.shared.seq), user: dg.User, uid: uint32(dg.UID), conn: dg.Conn}
+	g := &guest{id: "g" + strconv.Itoa(s.shared.seq), user: dg.User, uid: uint32(dg.UID), conn: dg.Conn, tunnel: dg.Tunnel}
 	s.shared.guests = append(s.shared.guests, g)
 	s.mu.Unlock()
 	s.shared.uids.add(g.uid)
@@ -151,14 +152,15 @@ func (s *session) admitGuest(ctx context.Context, dg *share.Guest) {
 }
 
 // guestReady is what a guest's CLI hears once admitted: the desktop as it
-// is now, and whose it is.
-func (s *session) guestReady() *protocol.Ready {
+// is now, whose it is, and that g's peers keep to the tunnel when its
+// Join asked.
+func (s *session) guestReady(g *guest) *protocol.Ready {
 	w, h := s.desk.Size()
 	encoder, _ := s.encoder.inUse()
 	r := &protocol.Ready{
 		Version: protocol.Version, AgentBuild: s.ready.AgentBuild, Display: s.ready.Display, Session: s.ready.Session,
 		Width: w, Height: h, TunnelAddr: s.ready.TunnelAddr, Mode: s.ready.Mode, Audio: s.ready.Audio, Encoder: encoder,
-		Share: &protocol.Share{Owner: s.shared.owner},
+		Share: &protocol.Share{Owner: s.shared.owner}, Tunnel: g.tunnel,
 	}
 	if s.mic != nil {
 		r.Mic = &protocol.Device{Available: true, Where: s.mic.Where()}
@@ -171,7 +173,7 @@ func (s *session) guestReady() *protocol.Ready {
 func (s *session) serveGuest(ctx context.Context, g *guest) {
 	why := whyEnded
 	defer func() { s.removeGuest(g, why) }()
-	if err := g.conn.Send(protocol.Message{Type: protocol.TypeReady, Ready: s.guestReady()}); err != nil {
+	if err := g.conn.Send(protocol.Message{Type: protocol.TypeReady, Ready: s.guestReady(g)}); err != nil {
 		return
 	}
 	for {

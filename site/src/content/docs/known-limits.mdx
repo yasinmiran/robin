@@ -113,7 +113,7 @@ These are the current limits of the shipped tool, the same ones the README lists
 - The macOS client has run on an Apple silicon Mac, in Chrome and in Safari, attached to an X11 desktop over Tailscale. Building the agents from a Mac is untried.
 - Without ControlMaster a dropped network is noticed only when the agent's connection goes quiet for its idle timeout, not at once, and, except on Windows, every `LocalForward` in your ssh config for that host comes up with the tunnel's own ssh; one that fails takes the tunnel with it.
 - On a client shared with other users, the launch link the browser opener gets is on a command line they can read. One who opens it before your browser does gets the page, and your browser shows Not Found; the CLI says the link was opened again. `--no-browser` leaves nothing to read.
-- With `--transport tunnel`, a resumed session that was started without it still has the agent ask the STUN servers it started with; the page asks none.
+- A session started with `--transport tunnel` and resumed without it has the agent ask no STUN server: a kept session keeps the STUN servers it started with, and the tunnel started it with none. Direct UDP then works where the host's own addresses reach the browser; the page still asks its STUN servers.
 
 ## Video and network
 

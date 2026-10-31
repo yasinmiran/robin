@@ -37,11 +37,16 @@ const CodeBusy Code = "busy"
 const ExitNoSession = 3
 
 // Resume names the kept session a controller wants back, with what a new
-// robin gui asks of it. A redial of the same CLI asks nothing, since the
-// page may have switched the private session since.
+// robin gui asks of it. A redial of the same CLI asks only Tunnel again:
+// the page may have switched the private session since, and the transport
+// is the CLI's for its whole run.
 type Resume struct {
 	Version int    `json:"version"`
 	ID      string `json:"id"`
+	// Tunnel is Start's, for the peers of the owner's pages from now on:
+	// the transport is the resuming CLI's, whatever the session started
+	// with.
+	Tunnel bool `json:"tunnel,omitempty"`
 	// Curtain and Silent turn that switch of an attached desktop's private
 	// session on, as Start's do; one already on stays on either way. The
 	// resume is refused, and both left as they were, when one cannot.

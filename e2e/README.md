@@ -17,7 +17,7 @@ and `share` has a second account on the host join the session as a guest.
 
 ```sh
 # build bin/robin-linux-amd64 first (the repo Makefile does)
-e2e/run.sh                # direct, blocked, restart, resume, rejoin, attach, wayland, webkit, firefox, nomux, touch, systemd, share
+e2e/run.sh                # direct, blocked, tunnel, restart, resume, rejoin, attach, wayland, webkit, firefox, nomux, touch, systemd, share
 e2e/run.sh direct         # one scenario
 e2e/run.sh selftest       # the harness itself, no CLI needed
 ROBIN_BIN=/path/to/robin e2e/run.sh restart
@@ -60,6 +60,7 @@ cannot leak into the next one. The tests run in order against one session.
 |---|---|---|
 | `direct` | open | the session comes up on UDP |
 | `blocked` | UDP dropped (except loopback) before the CLI starts | ICE-TCP through the SSH forward carries the whole session; the selected remote candidate is `127.0.0.1` |
+| `tunnel` | open | `--transport tunnel`, with Chrome started with its mDNS names off (`--disable-features=WebRtcHideLocalIpsWithMdns`), as it shows its host addresses once a page holds the microphone or the camera: the page names a host address, and the session still runs on ICE-TCP through the SSH forward, the selected remote candidate `127.0.0.1` |
 | `restart` | open, then UDP dropped mid-session | the page notices, restarts ICE and recovers onto TCP within 15 s (`ROBIN_RESTART_TIMEOUT_MS`; typically about 3 s), and input still works afterwards |
 | `resume` | open, SSH cut mid-session | the robin user's sshd processes are killed, dropping every connection at once; the page says Reconnecting, the CLI redials and resumes the same daemon, Xvfb and xterm, the marker typed before the cut is still on screen, and typing works again |
 | `rejoin` | open | the CLI is SIGKILLed, ssh master and all; the desktop stays, `robin ls` lists it as kept, a `robin gui --mic` exits non-zero saying the session started without a microphone and leaves it kept, a new `robin gui` resumes it with the marker on screen, the page's Disconnect, keep desktop button makes the CLI exit 0 and leaves the desktop, and `robin end` tears everything down |
