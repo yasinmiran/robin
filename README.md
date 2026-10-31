@@ -1603,3 +1603,7 @@ verified against a Linux build.
   software and adds a few milliseconds to every frame, which is the price on
   the hosts and sizes where `auto` picks it. The NVENC route is untested on
   real hardware; see [Hardware encoding](#hardware-encoding).
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
