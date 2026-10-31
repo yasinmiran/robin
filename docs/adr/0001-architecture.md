@@ -2910,8 +2910,12 @@ the wait. The toolchain downloads were already pinned by SHA-256 in
 `toolchain/lib.sh` and `toolchain/zig.sh`, and `fetch` deletes and refuses
 a file that does not match, and `go test ./toolchain` now fails on a
 download outside `fetch`, over plain http or by anything but a literal
-hash. The Go toolchain comes through `GOTOOLCHAIN`, which Go checks
-against its checksum database.
+hash. It counts as a download any line in the toolchain scripts or the
+Makefile that runs curl, wget, git's clone, fetch or pull, npm, npx or
+pip installs, a `go install`, `go run` or `go get` of a module version,
+python's or perl's HTTP client or bash's `/dev/tcp`, where it had
+looked for curl and wget alone. The Go toolchain comes through
+`GOTOOLCHAIN`, which Go checks against its checksum database.
 
 The first scan, on 2026-10-31: govulncheck v1.9.0 found
 `golang.org/x/crypto` v0.54.0 affected by GO-2026-6303, GO-2026-6354 and

@@ -17,7 +17,15 @@ var (
 	fetchCall  = regexp.MustCompile(`\bfetch "([^"]+)"\s+"([^"]+)"\s+"([^"]+)"`)
 	assignment = regexp.MustCompile(`(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)=([^\s;]+)`)
 	caseSHA    = regexp.MustCompile(`\bsha=([^\s;]+)`)
-	downloader = regexp.MustCompile(`\b(curl|wget)\b`)
+	// downloader matches the ways a shell line can fetch something from the
+	// network: HTTP clients, git, npm and pip, Go's module downloads (a go
+	// run, install or get of name@version) and bash's /dev/tcp.
+	downloader = regexp.MustCompile(`\b(?:curl|wget|aria2c|npx|urllib|urlretrieve)\b|LWP::` +
+		`|\bgit\s[^\n;|&]*?\b(?:clone|fetch|pull|archive|submodule|ls-remote|remote\s+add)\b` +
+		`|\b(?:npm|pnpm|yarn)\s+(?:install|i|add|exec|dlx|ci)\b` +
+		`|\bpip3?\s+(?:install|download)\b` +
+		`|\bgo\s+(?:get\b|(?:install|run)\s+\S+@)` +
+		`|/dev/(?:tcp|udp)/`)
 )
 
 // script is a shell file with its comments dropped and its continuation
@@ -96,6 +104,60 @@ func TestDownloadsArePinned(t *testing.T) {
 	for _, check := range []string{`got=$(sha256 "$dest")`, `[ "$got" != "$2" ]`, `rm -f "$dest"`, `die "sha256 mismatch`} {
 		if !strings.Contains(lib, check) {
 			t.Errorf("lib.sh's fetch no longer has %s", check)
+		}
+	}
+}
+
+// TestDownloaderMatches pins what TestDownloadsArePinned counts as a
+// download, so a script that fetches without curl cannot slip past it.
+func TestDownloaderMatches(t *testing.T) {
+	downloads := []string{
+		`curl -fsSL -o x "$url"`,
+		`wget -q "$url"`,
+		`aria2c "$url"`,
+		`git clone https://example.com/x.git`,
+		`git -C src fetch --depth 1 origin`,
+		`git  fetch origin`,
+		`git pull`,
+		`git archive --remote=ssh://example.com/x HEAD`,
+		`git submodule update --init`,
+		`git ls-remote https://example.com/x.git`,
+		`git remote add up https://example.com/x.git`,
+		`npx some-tool`,
+		`npm install left-pad`,
+		`npm i left-pad`,
+		`npm ci`,
+		`pnpm dlx some-tool`,
+		`yarn add left-pad`,
+		`pip install requests`,
+		`pip3 download requests`,
+		`go install golang.org/x/tools/cmd/stringer@latest`,
+		`go run example.com/tool@v1.2.3`,
+		`go get example.com/mod`,
+		`python3 -c 'import urllib.request'`,
+		`python3 -c 'urlretrieve(u, f)'`,
+		`perl -MLWP::Simple -e 'getstore($u, $f)'`,
+		`exec 3<>/dev/tcp/example.com/80`,
+	}
+	for _, line := range downloads {
+		if !downloader.MatchString(line) {
+			t.Errorf("%q is a download the test does not see", line)
+		}
+	}
+	local := []string{
+		`git describe --tags --abbrev=12 --always --dirty`,
+		`git ls-files -z --cached --others`,
+		`git -c core.autocrlf=false status`,
+		`go run ./cmd/robin`,
+		`go build -o bin/robin ./cmd/robin`,
+		`go install ./cmd/robin`,
+		`curling stone`,
+		`npm test`,
+		`sha256sum "$dest"`,
+	}
+	for _, line := range local {
+		if downloader.MatchString(line) {
+			t.Errorf("%q is not a download, but the test counts it as one", line)
 		}
 	}
 }
