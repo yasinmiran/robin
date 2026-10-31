@@ -2912,11 +2912,12 @@ than only that it survives.
   ranges of a manifest; join codes, redeeming an invitation and a real
   door's handshake; file names, `Numbered`, uploads into a directory of
   files, and the failure text; xkb symbols and keycodes files, parsed and
-  loaded. On the CLI: the page's websocket frames, the page server's
+  loaded; the camera's pictures fitted into its frame. On the CLI: the page's websocket frames, the page server's
   Host, Origin, subprotocol and path, answers and candidates through the
   relay under every policy, the agent's ICE credentials, a check through
   `Credentials.Admits` and through the tunnel's splice, the probe's
-  output, the macros file, `macros.Check` and a change to a file of any
+  output, the forward target the agent names and the digest the host's
+  hash tool prints, the macros file, `macros.Check` and a change to a file of any
   contents, and the host text `printable` lets through. The page's own
   parsers of what the agent sends (`bulkframe.js`, `clip.js`, `tiles.js`
   and `dispatchControl`) have property tests in the node suite instead,
