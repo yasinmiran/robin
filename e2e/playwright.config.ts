@@ -1,6 +1,11 @@
 import { defineConfig } from '@playwright/test';
 import { fakeMediaArgs } from './tests/helpers/fakemedia';
 
+// The tunnel scenario has Chrome show its host addresses instead of mDNS
+// names, as it does once a page holds the microphone or the camera, so
+// the agent could reach it over UDP if anything let it.
+const showHostAddresses = () => (process.env.SCENARIO === 'tunnel' ? ['--disable-features=WebRtcHideLocalIpsWithMdns'] : []);
+
 // Runs inside the client container, where out/ is e2e/out/<scenario> on the
 // host. run.sh picks the spec file and the project (the browser); SCENARIO
 // tells gui.spec.ts what to expect.
@@ -27,7 +32,7 @@ export default defineConfig({
   projects: [
     {
       name: 'chrome',
-      use: { channel: 'chrome', launchOptions: { args: ['--autoplay-policy=no-user-gesture-required', ...fakeMediaArgs()] } },
+      use: { channel: 'chrome', launchOptions: { args: ['--autoplay-policy=no-user-gesture-required', ...fakeMediaArgs(), ...showHostAddresses()] } },
     },
     // Playwright's WebKit runs Safari's WebRTC stack (libwebrtc) on Linux.
     { name: 'webkit', use: { browserName: 'webkit' } },

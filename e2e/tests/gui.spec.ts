@@ -95,7 +95,7 @@ let page: Page;
 let sessionStart = 0;
 
 test.beforeAll(async ({ browser }, testInfo) => {
-  expect(['direct', 'blocked', 'restart', 'resume', 'rejoin', 'attach', 'nomux'], 'SCENARIO').toContain(SCENARIO);
+  expect(['direct', 'blocked', 'tunnel', 'restart', 'resume', 'rejoin', 'attach', 'nomux'], 'SCENARIO').toContain(SCENARIO);
   testInfo.setTimeout(150_000);
   context = await browser.newContext({
     viewport: { width: 1280, height: 720 },
@@ -848,6 +848,27 @@ if (SCENARIO === 'direct') {
 if (SCENARIO === 'blocked' || SCENARIO === 'nomux') {
   test('transport: with UDP blocked the session runs on ICE-TCP through the SSH forward', async ({}, testInfo) => {
     const s = await connectedStats(testInfo, SCENARIO);
+    expect(s.transport).toBe('tcp');
+    expect(s.remote.address).toBe('127.0.0.1');
+  });
+}
+
+if (SCENARIO === 'tunnel') {
+  // UDP is open both ways and Chrome shows its host addresses, as it does
+  // once a page has the microphone or the camera: the agent could reach
+  // the page over UDP, and that pair would outrank the tunnel's.
+  test('transport: --transport tunnel keeps the session on the SSH forward though UDP works', async ({}, testInfo) => {
+    const s = await connectedStats(testInfo, SCENARIO);
+    const hosts = await page.evaluate(async () => {
+      const report = await ((window as any).robin.pc as RTCPeerConnection).getStats();
+      const out: string[] = [];
+      report.forEach((c: any) => {
+        if (c.type === 'local-candidate' && c.candidateType === 'host' && c.protocol === 'udp') out.push(c.address ?? '');
+      });
+      return out;
+    });
+    await testInfo.attach('page host candidates', { body: hosts.join('\n'), contentType: 'text/plain' });
+    expect(hosts.filter((a) => /^[0-9.]+$|:/.test(a) && a !== '127.0.0.1'), 'a host address the page shows').not.toEqual([]);
     expect(s.transport).toBe('tcp');
     expect(s.remote.address).toBe('127.0.0.1');
   });

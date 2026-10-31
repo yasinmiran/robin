@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the robin e2e suite in rootless podman.
 #
-#   ./run.sh                    every scenario: direct blocked restart resume rejoin attach wayland webkit firefox nomux touch systemd share
+#   ./run.sh                    every scenario: direct blocked tunnel restart resume rejoin attach wayland webkit firefox nomux touch systemd share
 #   ./run.sh direct restart     just those
 #   ./run.sh selftest           prove the harness itself, no CLI needed
 #
@@ -38,7 +38,7 @@ ROBIN_BIN=${ROBIN_BIN:-bin/robin-linux-amd64}
 COVER=${ROBIN_E2E_COVER:-}
 [[ -z $COVER || $COVER = /* ]] || COVER=$PWD/$COVER
 
-ALL_SCENARIOS=(direct blocked restart resume rejoin attach wayland webkit firefox nomux touch systemd share)
+ALL_SCENARIOS=(direct blocked tunnel restart resume rejoin attach wayland webkit firefox nomux touch systemd share)
 
 log() { printf '\033[1m[e2e]\033[0m %s\n' "$*" >&2; }
 die() { log "error: $*"; exit 2; }
@@ -216,6 +216,9 @@ run_scenario() {
   fi
   local cli_args=${ROBIN_CLI_ARGS:-}
   [[ $s != nomux ]] || cli_args="--ssh-mux=false $cli_args"
+  # tunnel leaves UDP open and Chrome showing its host addresses
+  # (playwright.config.ts): only the flag keeps the media on the forward.
+  [[ $s != tunnel ]] || cli_args="--transport tunnel $cli_args"
   if [[ $s = attach ]]; then
     log "scenario $s: starting robin's own desktop"
     on_client ssh robinhost robin-live start
@@ -414,8 +417,8 @@ main() {
   local s
   for s in "${scenarios[@]}"; do
     case $s in
-      selftest | direct | blocked | restart | resume | rejoin | attach | wayland | webkit | firefox | nomux | touch | systemd | share) ;;
-      *) die "unknown scenario '$s' (want selftest, direct, blocked, restart, resume, rejoin, attach, wayland, webkit, firefox, nomux, touch, systemd or share)" ;;
+      selftest | direct | blocked | tunnel | restart | resume | rejoin | attach | wayland | webkit | firefox | nomux | touch | systemd | share) ;;
+      *) die "unknown scenario '$s' (want selftest, direct, blocked, tunnel, restart, resume, rejoin, attach, wayland, webkit, firefox, nomux, touch, systemd or share)" ;;
     esac
   done
   command -v podman >/dev/null || die "podman not found"
