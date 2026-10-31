@@ -52,6 +52,12 @@ jobs:
           fi
       - name: go vet
         run: go vet ./...
+      # The X tests run wherever Xvfb is, and expect the rest of make
+      # test-x's container with it: a window manager, xterm, xrandr,
+      # pulseaudio and agents built with openh264. The runner image has only
+      # Xvfb, so it goes and those tests skip, as they do without make test-x.
+      - name: leave the X tests to make test-x
+        run: sudo apt-get remove -y xvfb
       # Without the openh264 and opus tags the encoder packages build as
       # stubs, so this needs no C toolchain.
       - name: go test
