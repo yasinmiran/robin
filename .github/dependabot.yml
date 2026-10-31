@@ -42,6 +42,10 @@ updates:
     groups:
       npm:
         patterns: ["*"]
+    # @astrojs/check takes TypeScript 5 or 6 only.
+    ignore:
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
 
   # Keeps the actions' commit pins, and the version comments beside them,
   # current, so a fix to an action reaches the workflows as a pull request.
