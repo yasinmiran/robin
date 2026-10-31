@@ -1013,6 +1013,9 @@ A push to `main` that touches `site/` runs `.github/workflows/pages.yml`,
 which runs the same tests against a build for
 <https://yasinmiran.github.io/robin/> and publishes it to the `gh-pages`
 branch; `npm run pages` in `site/` runs those checks on that same build.
+Only the publish job, run from `main`, holds a write token, and it treats
+the build as data; site/README.md says how, and which repository settings
+it relies on.
 
 `make test-wayland` boots three desktops, each in its own container with a
 virtual monitor, PipeWire and the desktop's own portal: mutter 46 on Ubuntu

@@ -66,10 +66,37 @@ It serves on port 4817; set `SITE_E2E_PORT` if that one is taken.
 
 The docs live at <https://yasinmiran.github.io/robin/>. A push to `main`
 that touches `site/` (or a manual run) starts
-`.github/workflows/pages.yml`: it runs `npm ci` and `npm run pages`, then
-pushes `dist/` with a `.nojekyll` to the `gh-pages` branch as a single
-orphan commit, replacing what was there, so the branch never grows. The
-build job has a read-only token and no stored credentials; only the publish
-job, which runs git and nothing from npm, can write. `npm run pages` builds
-and checks exactly what it publishes, so run it before pushing a change
-here.
+`.github/workflows/pages.yml`: it runs `npm ci --ignore-scripts` and
+`npm run pages`, then pushes `dist/` with a `.nojekyll` to the `gh-pages`
+branch as a single orphan commit, replacing what was there, so the branch
+never grows. `npm run pages` builds and checks exactly what it publishes,
+so run it before pushing a change here.
+
+The build runs every npm package in the lockfile, so it gets a read-only
+token, no stored credentials and no install scripts (none of the packages
+needs one here). What it hands on is data. The publish job runs only from
+`main`, in the `docs` environment, and only its push step sees the write
+token. `scripts/publish-pages.sh` keeps git's directory outside the built
+files, reads no git config but its own, runs no hooks and refuses a build
+holding a `.git` anywhere, since one there could carry config that runs a
+command while the token is in reach. `scripts/publish-pages.test.ts`
+checks that, and `scripts/pages-workflow.test.ts` checks the workflow's
+layout: pinned actions, no token in the build, the token in the last
+step alone.
+
+The token can write the whole repository, not only `gh-pages`, so the
+repository's settings carry the rest:
+
+- Environments: `docs` with a deployment branch rule that allows `main`
+  only. GitHub enforces it, so a branch's own copy of the workflow cannot
+  publish by dropping the job's `if`.
+- Rulesets: one on `main` and one on `refs/tags/*` that block force pushes
+  and deletion and require a pull request with code owner review, with no
+  bypass for GitHub Actions; optionally one on `gh-pages` that only
+  GitHub Actions may update.
+- Actions: default workflow permissions read-only, "Allow GitHub Actions
+  to create and approve pull requests" off, and approval required for
+  workflows from every outside contributor's fork.
+- Dependabot: security updates on for the lockfile. `.github/dependabot.yml`
+  keeps the actions' commit pins current, and `.github/CODEOWNERS` puts the
+  workflows and the publish script under code owner review.
