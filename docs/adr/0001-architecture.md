@@ -2967,11 +2967,18 @@ than only that it survives.
   `testdata/fuzz` inputs on every run, so a failing input committed there
   stays a regression test. `make fuzz` runs every target for `FUZZTIME`
   (10 s), then the property tests with `PROPERTY_RUNS` (20000) inputs
-  each. Not fuzzed: the cgo codecs, whose input is the agent's own capture
-  and the browser's Opus, which libopus's own fuzzing covers; Pion's
-  packet parsers, which have fuzz targets of their own upstream; and what local programs of the same
-  user send (the keeper's steps, the X server's replies, the private
-  sound server's clients), which can do as much as the user anyway.
+  each. Not fuzzed: the cgo codecs, whose input is the agent's own
+  capture, the browser's Opus and the H.264 of the owner's camera, which
+  their own projects fuzz (openh264 in OSS-Fuzz, on top of which the
+  pinned 2.6.0 has the fix for CVE-2025-27091). Only the owner's page may
+  send a camera track, and what openh264 reports of a picture is checked
+  before its planes are read: a size or stride that does not describe
+  I420 is an undecodable picture, not an index out of range that ends the
+  agent. `FuzzFitter` fits every size the decoder may report into the
+  camera's frame. Pion's packet parsers have fuzz targets of their own
+  upstream; and what local programs of the same user send (the keeper's
+  steps, the X server's replies, the private sound server's clients) can
+  do as much as the user anyway.
 
 ## Verification parked
 

@@ -84,12 +84,7 @@ func (d *Decoder) Decode(au []byte) (*Picture, error) {
 	buf := (*C.SSysMEMBuffer)(unsafe.Pointer(&d.d.info.UsrData))
 	w, h := int(buf.iWidth), int(buf.iHeight)
 	ys, cs := int(buf.iStride[0]), int(buf.iStride[1])
-	return &Picture{
-		Width: w, Height: h, YStride: ys, CStride: cs,
-		Y: unsafe.Slice((*byte)(unsafe.Pointer(d.d.planes[0])), ys*h),
-		U: unsafe.Slice((*byte)(unsafe.Pointer(d.d.planes[1])), cs*((h+1)/2)),
-		V: unsafe.Slice((*byte)(unsafe.Pointer(d.d.planes[2])), cs*((h+1)/2)),
-	}, nil
+	return pictureAt(w, h, ys, cs, unsafe.Pointer(d.d.planes[0]), unsafe.Pointer(d.d.planes[1]), unsafe.Pointer(d.d.planes[2]))
 }
 
 // Close releases the decoder. It is safe to call more than once.
