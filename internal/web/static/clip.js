@@ -63,8 +63,10 @@ export function encodeClip(clip) {
 }
 
 // decodeClip reads a transfer's payload, skipping formats it does not
-// know. It throws on a format given twice, text that is not UTF-8, data
-// past the end and more than MAX_CLIP of data.
+// know and leaving out those of no data, which the clip lacks as
+// encodeClip and the agent have it. It throws on a format given twice,
+// text that is not UTF-8, data past the end and more than MAX_CLIP of
+// data.
 export function decodeClip(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const text = new TextDecoder('utf-8', { fatal: true });
@@ -84,6 +86,7 @@ export function decodeClip(bytes) {
     seen.add(mime);
     total += size;
     if (total > MAX_CLIP) throw new Error(`malformed clipboard payload: more than ${MAX_CLIP} bytes`);
+    if (!size) continue;
     try {
       if (mime === TEXT) clip.text = text.decode(data);
       else if (mime === HTML) clip.html = text.decode(data);
