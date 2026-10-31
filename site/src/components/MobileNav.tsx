@@ -6,6 +6,7 @@ import { SidebarNav } from "@/components/SidebarNav";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { withBase } from "@/lib/base";
 import type { NavGroup } from "@/lib/nav";
 
 interface MobileNavProps {
@@ -37,7 +38,7 @@ export function MobileNav({ groups, current }: MobileNavProps) {
         <div className="flex h-14 shrink-0 items-center border-b border-sidebar-border px-6">
           <SheetTitle className="sr-only">Navigation</SheetTitle>
           <SheetDescription className="sr-only">Every page of the Robin docs.</SheetDescription>
-          <a href="/" aria-label="Robin home" onClick={() => setOpen(false)} className="flex items-center text-foreground">
+          <a href={withBase("/")} aria-label="Robin home" onClick={() => setOpen(false)} className="flex items-center text-foreground">
             <Lockup size={24} />
           </a>
         </div>

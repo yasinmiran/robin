@@ -4,7 +4,9 @@ import "@/styles/global.css";
 import textFont from "@fontsource-variable/atkinson-hyperlegible-next/files/atkinson-hyperlegible-next-latin-wght-normal.woff2?url";
 
 import Header from "@/components/Header.astro";
+import { withBase } from "@/lib/base";
 import type { NavGroup, Section } from "@/lib/nav";
+import { pageUrl } from "@/lib/search";
 import { themeScript } from "@/lib/theme";
 
 interface Props {
@@ -21,7 +23,8 @@ interface Props {
 
 const { title, description, groups, current, section, home = false, noindex = false } = Astro.props;
 const fullTitle = title ? `${title} | Robin` : "Robin: your eyes and hands on any Linux box you can ssh to";
-const canonical = Astro.site && !noindex ? new URL(Astro.url.pathname, Astro.site).href : undefined;
+// The address the links use, /robin/install, not the file behind it.
+const canonical = Astro.site && !noindex ? new URL(pageUrl(Astro.url.pathname), Astro.site).href : undefined;
 ---
 
 <!doctype html>
@@ -35,7 +38,7 @@ const canonical = Astro.site && !noindex ? new URL(Astro.url.pathname, Astro.sit
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#f7f9fa" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#171e23" media="(prefers-color-scheme: dark)" />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href={withBase("/favicon.svg")} type="image/svg+xml" />
     <link rel="preload" href={textFont} as="font" type="font/woff2" crossorigin />
     {canonical && <link rel="canonical" href={canonical} />}
     {noindex && <meta name="robots" content="noindex" />}

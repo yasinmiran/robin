@@ -1,0 +1,85 @@
+# Builds the docs site for https://yasinmiran.github.io/robin/ and publishes
+# it to the gh-pages branch as one orphan commit, so the branch never grows.
+# The build runs third-party npm code with a read-only token. Only the publish
+# job can write, only from main, and only its push step sees the token; it
+# treats the built files as data (site/scripts/publish-pages.sh).
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time; a newer push waits for the running one and replaces
+# any older one still waiting.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: site/.nvmrc
+          package-manager-cache: false
+      # No dependency needs an install script to build the site.
+      - run: npm ci --ignore-scripts
+      # Unit tests, astro check, the build for the Pages URL, the link checker
+      # and the Chrome smoke test against that build, as `npm run pages` does
+      # on a workstation.
+      - run: npm run pages
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: site
+          path: site/dist
+          if-no-files-found: error
+          # The default, stated so a change to it cannot slip a .git through;
+          # publish-pages.sh refuses one regardless.
+          include-hidden-files: false
+          retention-days: 1
+
+  publish:
+    needs: build
+    # A run dispatched from another branch builds but never publishes. The
+    # environment's deployment branch rule (main only) enforces the same on
+    # GitHub's side, where a branch's own copy of this file cannot drop it.
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: docs
+      url: https://yasinmiran.github.io/robin/
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      # The publish script from this commit, before any artifact is on disk.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: site/scripts/publish-pages.sh
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: site
+          path: ${{ runner.temp }}/site
+      - name: Commit the site as a single orphan commit
+        run: sh site/scripts/publish-pages.sh commit "$RUNNER_TEMP/site" "$RUNNER_TEMP/pages.git" "$GITHUB_SHA"
+      - name: Push it to gh-pages
+        env:
+          TOKEN: ${{ github.token }}
+        run: sh site/scripts/publish-pages.sh push "$RUNNER_TEMP/pages.git" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"

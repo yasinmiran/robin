@@ -17,6 +17,8 @@
     "check:types": "astro check",
     "check:links": "node scripts/check-links.ts dist",
     "check": "npm run check:types && npm run build && npm run check:links",
+    "check:all": "npm run test:coverage && npm run check && npm run test:e2e",
+    "pages": "SITE_URL=https://yasinmiran.github.io/robin npm run check:all",
     "astro": "astro"
   },
   "dependencies": {

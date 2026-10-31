@@ -59,7 +59,7 @@ A browser the opener starts keeps the launch link on its command line for as lon
 
 Every binary a release ships is reproducible, and the agent's name on the host is the hash of its content, so anyone with a clone can check that what runs on the host and on your machine is what the source says. See [Verifying a release](/verifying-a-release).
 
-The source is kept honest the same way. CI runs on every change to `main` with a token that can only read, every GitHub Action it uses is pinned to a commit, and govulncheck checks the Go build for known vulnerabilities in what it calls. Dependabot offers Go, npm and Actions updates weekly, each release a week old first. The toolchain the agents build with (zig, nasm, openh264, libopus) is downloaded by a pinned SHA-256 and refused on any other.
+The source is kept honest the same way. CI runs on every change to `main` with a token that can only read (the docs publish alone can write, only from `main` and only in its last step), every GitHub Action it uses is pinned to a commit, and govulncheck checks the Go build for known vulnerabilities in what it calls. Dependabot offers Go, npm and Actions updates weekly, each release a week old first. The toolchain the agents build with (zig, nasm, openh264, libopus) is downloaded by a pinned SHA-256 and refused on any other.
 
 ## STUN tells a server where you are
 

@@ -43,6 +43,8 @@ updates:
       npm:
         patterns: ["*"]
 
+  # Keeps the actions' commit pins, and the version comments beside them,
+  # current, so a fix to an action reaches the workflows as a pull request.
   - package-ecosystem: github-actions
     directory: /
     schedule:

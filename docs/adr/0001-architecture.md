@@ -1332,7 +1332,38 @@ unit tests need no toolchain) checks the agents this tree builds for the
 checkout, the toolchain cache, the home directory, Go's directories, the pinned Go
 version and the exact set of build settings, so a leak that comes back is
 caught without the double build. Nothing checks it on every merge yet:
-the repository has no CI.
+CI builds the encoders as stubs and fetches no C toolchain, so it builds
+no agents to check.
+
+### Publishing the docs from a build it does not trust
+
+The docs site is published to the `gh-pages` branch, which means a token
+with `contents: write`, and that scope is the whole repository: `main`,
+tags and releases as well. The build that produces the site runs every
+package in its lockfile, so `.github/workflows/pages.yml` splits it in
+two. The build job has a read-only token, no stored credentials and no
+install scripts (`npm ci --ignore-scripts`; only `fsevents`, macOS only,
+has one). The publish job runs only from `main`, in a `docs` environment
+whose branch rule GitHub enforces whatever a branch's copy of the file
+says, and only its last step sees the token.
+
+The first version ran `git init`, `add` and `commit` inside the
+downloaded build with the token in the step's environment, and called
+that running nothing but git. Git on files a build shaped is not inert: a
+`.git` in the artifact survives a re-init with its config, and
+`core.fsmonitor` or a hook there runs a command during `git add` or
+`commit`. `upload-artifact` leaving out hidden files was all that stood in
+the way, and code in the build job runs as the runner user that owns the
+upload action. `site/scripts/publish-pages.sh` now keeps the git directory
+in the runner's temp dir, outside the build, reads no system or global
+config, runs no hooks or fsmonitor, refuses a build with a `.git` at any
+depth, and commits before the token exists; the push step passes the
+token through `GIT_CONFIG_*` so it is never on a command line. Its test
+builds such a `.git` and checks that nothing in it ran.
+
+What the repository's settings must hold (the branch rule, rulesets on
+`main` and tags, read-only default permissions) is listed in
+`site/README.md`; nothing in the tree can enforce those.
 
 ### Without ControlMaster: an ssh per command and per forward
 
@@ -3009,7 +3040,10 @@ the page's node tests and the site, every `npm ci` with `--ignore-scripts`
 (no dependency needs an install script, so none runs while npm installs
 it). `make check` stays the merge gate,
 because a runner has no podman, display or GPU for the suites that matter
-most.
+most. The one workflow that can write is the docs publish
+(`.github/workflows/pages.yml`), and only from `main`; "Publishing the docs
+from a build it does not trust" says how it keeps that token from the
+build.
 
 Dependabot groups updates per ecosystem and waits seven days after a
 release (`cooldown`) before proposing it, so a hijacked publish has a week

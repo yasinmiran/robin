@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { checkLinks, fileFor, idsIn, isExternal, linksIn, main, sitePathOf } from "./check-links";
+import { checkLinks, fileFor, idsIn, isExternal, linksIn, main, sitePathOf, underBase } from "./check-links";
 
 let dist: string;
 
@@ -70,6 +70,7 @@ describe("fileFor", () => {
 
   it("maps a file back to its address", () => {
     expect(sitePathOf(dist, join(dist, "guide/index.html"))).toBe("/guide/index.html");
+    expect(sitePathOf(dist, join(dist, "guide/index.html"), "/robin")).toBe("/robin/guide/index.html");
   });
 });
 
@@ -104,6 +105,38 @@ describe("checkLinks", () => {
     page("doc.svg", "<svg/>");
     expect(checkLinks(dist)).toEqual([]);
   });
+
+  it("finds pages under the base the site is served from", () => {
+    page("index.html", `<a href="/robin/install#build">x</a><a href="/robin/">home</a><a href="/robin">home</a>`);
+    page("install.html", `<h2 id="build">Build</h2><a href="sound">s</a><a href="../robin/sound">s</a>`);
+    page("sound.html", "");
+    expect(checkLinks(dist, "/robin")).toEqual([]);
+  });
+
+  it("reports a link that leaves the base, as a hard-coded root link does", () => {
+    page("index.html", `<a href="/install">x</a><a href="/robinson">y</a><a href="../install">z</a><a href="/robin/install#nope">w</a>`);
+    page("install.html", "");
+    expect(checkLinks(dist, "/robin/")).toEqual([
+      { page: "/robin/index.html", link: "/install", reason: "outside /robin/" },
+      { page: "/robin/index.html", link: "/robinson", reason: "outside /robin/" },
+      { page: "/robin/index.html", link: "../install", reason: "outside /robin/" },
+      { page: "/robin/index.html", link: "/robin/install#nope", reason: "no #nope on /robin/install.html" },
+    ]);
+  });
+});
+
+describe("underBase", () => {
+  it.each([
+    ["/", "/install", "/install"],
+    ["/", "/", "/"],
+    ["/robin", "/robin/install", "/install"],
+    ["/robin", "/robin", "/"],
+    ["/robin/", "/robin/", "/"],
+    ["/robin", "/robinson", null],
+    ["/robin", "/install", null],
+  ])("(%s, %s) is %s", (base, address, path) => {
+    expect(underBase(base, address)).toBe(path);
+  });
 });
 
 describe("main", () => {
@@ -120,6 +153,15 @@ describe("main", () => {
     page("index.html", `<a href="/nope">x</a>`);
     expect(main(dist)).toBe(1);
     expect(error).toHaveBeenCalledWith("/index.html: /nope (no such file)");
+  });
+
+  it("checks against the base it is given", () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    page("index.html", `<a href="/robin/">home</a>`);
+    expect(main(dist, "/robin")).toBe(0);
+    expect(main(dist)).toBe(1);
+    expect(error).toHaveBeenCalledWith("/index.html: /robin/ (no such file)");
   });
 
   it("exits 2 without a build to check", () => {
