@@ -68,12 +68,15 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
       # Pinned here, and checked against Go's checksum database. Dependabot
-      # does not see this line, so bump it by hand.
+      # does not see this line, so bump it by hand. Installed rather than
+      # run with go run, which would build it for the GOOS being checked.
       - name: govulncheck
         run: |
-          go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          govulncheck=$(go env GOPATH)/bin/govulncheck
+          "$govulncheck" ./...
           for goos in darwin windows; do
-            GOOS=$goos go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./cmd/robin
+            GOOS=$goos "$govulncheck" ./cmd/robin
           done
 
   page:
