@@ -285,7 +285,20 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 		wg.Add(1)
 		go func() { defer wg.Done(); f(ctx) }()
 	}
-	run(s.stream.run)
+	fatal := make(chan error, 1)
+	// report hands serve why the session cannot go on; the first reason wins.
+	report := func(err error) {
+		select {
+		case fatal <- err:
+		default:
+		}
+	}
+	run(func(ctx context.Context) {
+		if err := s.stream.run(ctx); err != nil {
+			name, _ := video.inUse()
+			report(fmt.Errorf("encoder %s: %w", name, err))
+		}
+	})
 	run(s.forwardClipboard)
 	run(s.serveFiles)
 	run(s.forwardCursor)
@@ -295,14 +308,10 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 	if audio != nil {
 		run(func(ctx context.Context) { s.forwardAudio(ctx, audio) })
 	}
-	fatal := make(chan error, 1)
 	run(func(ctx context.Context) {
 		select {
 		case err := <-d.done:
-			fatal <- fmt.Errorf("desktop went away: %w", err)
-		case err := <-s.stream.failed:
-			name, _ := video.inUse()
-			fatal <- fmt.Errorf("encoder %s: %w", name, err)
+			report(fmt.Errorf("desktop went away: %w", err))
 		case <-ctx.Done():
 		}
 	})

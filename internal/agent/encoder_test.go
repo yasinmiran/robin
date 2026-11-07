@@ -242,7 +242,7 @@ func (brokenToolEncoder) Close() error         { return nil }
 func TestPickedEncoderFallsBackWhenEncodeFails(t *testing.T) {
 	var hwEncodes atomic.Int64
 	swEncoded := make(chan [2]int, 1)
-	s, _ := streamThroughVAAPI(t, true, func(int, int, int, int) (Encoder, error) { return &fakeEncoder{sizes: swEncoded}, nil },
+	ended := streamThroughVAAPI(t, true, func(int, int, int, int) (Encoder, error) { return &fakeEncoder{sizes: swEncoded}, nil },
 		func() Encoder { return brokenToolEncoder{&hwEncodes} })
 	select {
 	case <-swEncoded:
@@ -250,8 +250,8 @@ func TestPickedEncoderFallsBackWhenEncodeFails(t *testing.T) {
 		t.Fatalf("hardware failed %d frames and software encoded none: the session has no video", hwEncodes.Load())
 	}
 	select {
-	case err := <-s.failed:
-		t.Errorf("the stream gave up on a picked encoder with software to take over: %v", err)
+	case err := <-ended:
+		t.Errorf("the stream ended (%v) on a picked encoder with software to take over", err)
 	default:
 	}
 }
@@ -259,8 +259,9 @@ func TestPickedEncoderFallsBackWhenEncodeFails(t *testing.T) {
 // streamThroughVAAPI runs a stream of a still desktop to a peer through
 // vaapi, picked by the CLI or named by the user, whose trial frame encodes
 // and whose encoders after it come from next; software opens what sw
-// makes. It returns the stream and a channel closed when its run returns.
-func streamThroughVAAPI(t *testing.T, picked bool, sw NewEncoderFunc, next func() Encoder) (*stream, <-chan struct{}) {
+// makes. It returns a channel that yields what the stream's run returned
+// once it has, then is closed.
+func streamThroughVAAPI(t *testing.T, picked bool, sw NewEncoderFunc, next func() Encoder) <-chan error {
 	t.Helper()
 	var opens atomic.Int64
 	table := map[string]NewEncoderFunc{
@@ -293,16 +294,17 @@ func streamThroughVAAPI(t *testing.T, picked bool, sw NewEncoderFunc, next func(
 	t.Cleanup(func() { p.Close() })
 	s.subscribe(p)
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
+	ended := make(chan error, 1)
 	go func() {
-		s.run(ctx)
-		close(done)
+		ended <- s.run(ctx)
+		close(ended)
 	}()
 	t.Cleanup(func() {
 		cancel()
-		<-done
+		for range ended {
+		}
 	})
-	return s, done
+	return ended
 }
 
 // noSoftware is the software encoder of a test where only the named
@@ -340,9 +342,12 @@ func (backoffEncoder) Close() error         { return nil }
 func TestNamedEncoderThatKeepsFailingEndsTheStream(t *testing.T) {
 	var calls atomic.Int64
 	const quiet = 4
-	s, done := streamThroughVAAPI(t, false, noSoftware(t), func() Encoder { return backoffEncoder{&calls, quiet} })
+	ended := streamThroughVAAPI(t, false, noSoftware(t), func() Encoder { return backoffEncoder{&calls, quiet} })
 	select {
-	case err := <-s.failed:
+	case err := <-ended:
+		if err == nil {
+			t.Fatal("the stream ended without saying why")
+		}
 		for _, want := range []string{"64x64", fmt.Sprintf("%d failed frames", maxFailedFrames), "unsupported resolution"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("the stream gave up with %q, want it to say %q", err, want)
@@ -351,18 +356,13 @@ func TestNamedEncoderThatKeepsFailingEndsTheStream(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatalf("the encoder failed %d times in %d frames and the stream goes on without video", (calls.Load()+quiet)/(quiet+1), calls.Load())
 	}
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("the stream runs on after giving up")
-	}
 	if got, want := calls.Load(), int64((maxFailedFrames-1)*(quiet+1)+1); got != want {
 		t.Errorf("the encoder was asked for %d frames, want %d: up to its last failure and none after", got, want)
 	}
 }
 
-// flakyEncoder fails all but every maxFailedFrames'th frame, one failure
-// running fewer than gives up the stream, and encodes the rest.
+// flakyEncoder fails maxFailedFrames-1 frames running, one fewer than gives
+// up the stream, then encodes one, over and over.
 type flakyEncoder struct {
 	calls   *atomic.Int64
 	encoded chan struct{}
@@ -385,21 +385,19 @@ func (flakyEncoder) Close() error         { return nil }
 // failed frames come between frames it encodes only skips those frames.
 func TestNamedEncoderThatFailsSomeFramesKeepsStreaming(t *testing.T) {
 	encoded := make(chan struct{}, 1)
-	s, done := streamThroughVAAPI(t, false, noSoftware(t), func() Encoder { return flakyEncoder{new(atomic.Int64), encoded} })
+	ended := streamThroughVAAPI(t, false, noSoftware(t), func() Encoder { return flakyEncoder{new(atomic.Int64), encoded} })
 	for i := range 5 {
 		select {
 		case <-encoded:
-		case err := <-s.failed:
-			t.Fatalf("the stream gave up after %d good frames: %v", i, err)
+		case err := <-ended:
+			t.Fatalf("the stream ended (%v) after %d good frames", err, i)
 		case <-time.After(5 * time.Second):
 			t.Fatalf("%d good frames, then none", i)
 		}
 	}
 	select {
-	case err := <-s.failed:
-		t.Fatalf("the stream gave up on an encoder that still encodes: %v", err)
-	case <-done:
-		t.Fatal("the stream stopped on an encoder that still encodes")
+	case err := <-ended:
+		t.Fatalf("the stream ended (%v) on an encoder that still encodes", err)
 	default:
 	}
 }

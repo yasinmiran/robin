@@ -46,12 +46,13 @@ const minKeyframeGap = 300 * time.Millisecond
 // spend what it has spare sharpening it.
 const refreshEvery = 500 * time.Millisecond
 
-// maxFailedFrames is how many frames running an encoder may fail at one
-// size, with none encoded between, before the stream gives up and the
-// session ends with the encoder's error: no video for ever tells the user
-// nothing. A host tool that fails is started again at most once a second,
-// so this is seconds without a frame, never one failed frame among good
-// ones.
+// maxFailedFrames is how many frames running an encoder may fail, to open
+// or to encode, with none encoded and no encoder opened between, before the
+// stream gives up and the session ends with the encoder's error: no video
+// for ever tells the user nothing. hwenc restarts its tool at most once a
+// second, so for it this is seconds without a frame; an encoder that fails
+// every call gives up after maxFailedFrames ticks. One failed frame among
+// good ones never does.
 const maxFailedFrames = 3
 
 // stream captures, encodes and sends frames at up to fps while it has a
@@ -74,8 +75,6 @@ type stream struct {
 
 	// video is the track every subscriber's peer sends.
 	video *peer.VideoTrack
-	// failed carries, once, why run gave up: an encoder that keeps failing.
-	failed chan error
 
 	subsMu   sync.Mutex
 	subs     atomic.Pointer[[]*subscriber] // replaced whole under subsMu
@@ -131,9 +130,7 @@ func newStream(desk desktop.Desktop, fps, maxW, maxH int, newEncoder NewEncoderF
 	if err != nil {
 		return nil, err
 	}
-	return &stream{desk: desk, fps: fps, maxW: maxW, maxH: maxH, newEncoder: newEncoder, log: log, refresh: refreshEvery, video: video,
-		failed: make(chan error, 1),
-	}, nil
+	return &stream{desk: desk, fps: fps, maxW: maxW, maxH: maxH, newEncoder: newEncoder, log: log, refresh: refreshEvery, video: video}, nil
 }
 
 // add starts sending to sub, whose peer is bound to s.video, with a
@@ -191,7 +188,9 @@ func (s *stream) wantTiles(on bool) { s.tilesWanted.Store(&tileRequest{on: on}) 
 
 func (s *stream) requestKeyframe() { s.keyframe.Store(true) }
 
-func (s *stream) run(ctx context.Context) {
+// run streams until ctx ends, returning nil, or until the encoder fails
+// maxFailedFrames frames running, returning why.
+func (s *stream) run(ctx context.Context) error {
 	interval := time.Second / time.Duration(s.fps)
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
@@ -212,7 +211,8 @@ func (s *stream) run(ctx context.Context) {
 		lastClock time.Time
 		tracker   = newTileTracker(s.log)
 		setup     tileSetup
-		// failures counts the frames failed in a row at this size.
+		// failures counts frames failed since a frame last went out or an
+		// encoder last opened.
 		failures int
 	)
 	closeEncoder := func() {
@@ -227,7 +227,7 @@ func (s *stream) run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case <-tick.C:
 		}
 		subs := s.subscribers()
@@ -282,17 +282,16 @@ func (s *stream) run(ctx context.Context) {
 		}
 		w, h := f.Width&^1, f.Height&^1
 		// giveUp skips a frame the encoder could not make, owing the page
-		// the screen again at the next tick, and reports whether that was
-		// one failed frame too many.
-		giveUp := func(err error) bool {
+		// the screen again at the next tick, and returns why the stream
+		// ends if that was one failed frame too many.
+		giveUp := func(err error) error {
 			skipTimestamp()
 			stale = true
 			if failures++; failures < maxFailedFrames {
-				return false
+				return nil
 			}
 			s.log.Error("video encoder keeps failing", "w", w, "h", h, "failures", failures, "err", err)
-			s.failed <- fmt.Errorf("no video at %dx%d after %d failed frames: %w", w, h, failures, err)
-			return true
+			return fmt.Errorf("no video at %dx%d after %d failed frames: %w", w, h, failures, err)
 		}
 		// An I420 desktop already delivers frames at the size it was asked for.
 		scaled := f.Format == desktop.BGRX && (f.Width > s.maxW || f.Height > s.maxH)
@@ -304,8 +303,8 @@ func (s *stream) run(ctx context.Context) {
 			br := target(subs)
 			if enc, err = s.newEncoder(w, h, s.fps, int(br)); err != nil {
 				s.log.Error("encoder", "w", w, "h", h, "err", err)
-				if giveUp(err) {
-					return
+				if err := giveUp(err); err != nil {
+					return err
 				}
 				continue
 			}
@@ -339,8 +338,8 @@ func (s *stream) run(ctx context.Context) {
 		au, err := enc.Encode(img, now.Sub(began), force)
 		if err != nil {
 			s.log.Warn("encode", "err", err)
-			if giveUp(err) {
-				return
+			if err := giveUp(err); err != nil {
+				return err
 			}
 			continue
 		}
