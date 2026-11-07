@@ -82,8 +82,8 @@ func TestScriptShells(t *testing.T) {
 			if r.OS != "Linux" || r.Arch != runtime.GOARCH || r.UID != os.Getuid() {
 				t.Errorf("os %q arch %q uid %d, want Linux %s %d", r.OS, r.Arch, r.UID, runtime.GOARCH, os.Getuid())
 			}
-			if r.CPUs < 1 || r.MemoryKB < 1 {
-				t.Errorf("cpus %d memory %d kB", r.CPUs, r.MemoryKB)
+			if r.CPUs < 1 {
+				t.Errorf("cpus %d", r.CPUs)
 			}
 			if r.AgentDir != agentDir || len(r.AgentDirRejected) != 0 {
 				t.Errorf("agent dir %q rejected %v, want %q", r.AgentDir, r.AgentDirRejected, agentDir)
@@ -359,8 +359,8 @@ func strangersNamesIgnored(t *testing.T, r *Report) {
 // mode, and the agent directory in root's cache.
 func bare(distro, hint string) func(*testing.T, *Report) {
 	return func(t *testing.T, r *Report) {
-		if r.Distro.ID != distro || r.UID != 0 || r.Home != "/root" {
-			t.Errorf("distro %q uid %d home %q", r.Distro.ID, r.UID, r.Home)
+		if r.Distro.ID != distro || r.UID != 0 {
+			t.Errorf("distro %q uid %d", r.Distro.ID, r.UID)
 		}
 		if len(r.Sessions)+len(r.X11)+len(r.Wayland) != 0 {
 			t.Errorf("desktop found in a container: %+v %+v %v", r.Sessions, r.X11, r.Wayland)

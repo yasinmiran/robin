@@ -57,7 +57,6 @@ os_release() {
 		ID=*) key=distro_id ;;
 		VERSION_ID=*) key=distro_version ;;
 		ID_LIKE=*) key=distro_like ;;
-		PRETTY_NAME=*) key=distro_name ;;
 		*) continue ;;
 		esac
 		v=${line#*=}
@@ -81,16 +80,6 @@ cpus() {
 		done </proc/cpuinfo
 	fi
 	kv cpus "$n"
-}
-
-memory() {
-	[ -r /proc/meminfo ] || return
-	while read -r k v _; do
-		if [ "$k" = MemTotal: ]; then
-			kv memory_kb "$v"
-			return
-		fi
-	done </proc/meminfo
 }
 
 # sessions reports this user's logind sessions, all fetched in one
@@ -197,8 +186,8 @@ gpu() {
 		fi
 	fi
 
-	have nvidia-smi && kv nvidia_smi "$(command -v nvidia-smi)"
-	# The loaded driver names its GPUs here; nvidia-smi can take seconds.
+	# The loaded driver names its GPUs here: nvidia-smi can take seconds, and
+	# it is installed on hosts with no NVIDIA GPU.
 	for f in /proc/driver/nvidia/gpus/*/information; do
 		[ -r "$f" ] || continue
 		while IFS= read -r line; do
@@ -217,23 +206,17 @@ commands() {
 	for c in Xvfb xkbcomp \
 		xfce4-session openbox-session openbox fluxbox icewm-session twm \
 		xterm x-terminal-emulator xfce4-terminal \
-		dbus-run-session dbus-launch \
-		pulseaudio pipewire pipewire-pulse wireplumber pactl \
-		ffmpeg gst-launch-1.0 systemd-run; do
+		gst-launch-1.0 systemd-run; do
 		p=$(command -v "$c" 2>/dev/null) && kv "cmd.$c" "$p"
 	done
 }
 
-# attachable reports what attaching to a running desktop needs: X cookies
-# for its display, the session bus for the portal, and its sound server.
-attachable() {
+# session_bus reports this user's session bus, which attaching to a Wayland
+# desktop reaches its portal through. The agent finds an X display's cookie
+# and the sound server for itself.
+session_bus() {
 	rt=${XDG_RUNTIME_DIR:-/run/user/$uid}
-	for f in "${XAUTHORITY:-}" "${HOME:-}/.Xauthority" "$rt/gdm/Xauthority" "$rt"/.mutter-Xwaylandauth.* "$rt"/xauth_*; do
-		[ -f "$f" ] && [ -r "$f" ] && kv xauth "$f"
-	done
 	[ -S "$rt/bus" ] && kv session_bus "$rt/bus"
-	[ -S "$rt/pulse/native" ] && kv pulse "$rt/pulse/native"
-	[ -S "$rt/pipewire-0" ] && kv pipewire "$rt/pipewire-0"
 	return 0
 }
 
@@ -244,7 +227,7 @@ attachable() {
 encoders() {
 	if have ffmpeg; then
 		limit ffmpeg -hide_banner -encoders 2>/dev/null | while IFS= read -r line; do
-			for e in h264_vaapi h264_nvenc h264_qsv; do
+			for e in h264_vaapi h264_nvenc; do
 				case " $line " in *" $e "*) kv ffmpeg_encoder "$e" ;; esac
 			done
 		done
@@ -432,26 +415,17 @@ main() {
 	uid=$(id -u 2>/dev/null)
 
 	kv os "$(uname -s 2>/dev/null)"
-	kv kernel "$(uname -r 2>/dev/null)"
 	kv machine "$(uname -m 2>/dev/null)"
 	os_release
 	kv user "$(id -un 2>/dev/null)"
 	kv uid "$uid"
-	kv home "${HOME:-}"
 	cpus
-	memory
-
-	kv env.XDG_SESSION_TYPE "${XDG_SESSION_TYPE:-}"
-	kv env.DISPLAY "${DISPLAY:-}"
-	kv env.WAYLAND_DISPLAY "${WAYLAND_DISPLAY:-}"
-	kv env.XDG_CURRENT_DESKTOP "${XDG_CURRENT_DESKTOP:-}"
-	kv env.XDG_RUNTIME_DIR "${XDG_RUNTIME_DIR:-}"
 
 	sessions
 	displays
 	gpu
 	commands
-	attachable
+	session_bus
 	encoders
 	logind
 	cameras
