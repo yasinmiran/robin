@@ -1,0 +1,61 @@
+---
+import { getCollection } from "astro:content";
+
+import { MOVED, landingFor, slugOf, targetHref } from "@/lib/redirects";
+
+export async function getStaticPaths() {
+  const titles = new Map((await getCollection("docs")).map((entry) => [entry.id, entry.data.title]));
+  const titleOf = (target: string) => titles.get(slugOf(target)) ?? slugOf(target);
+  return Object.entries(MOVED).map(([old, moved]) => ({
+    params: { moved: old },
+    props: {
+      landing: landingFor(moved),
+      title: titleOf(moved.to),
+      // One link per distinct target, so check-links proves every id exists.
+      also: [...new Set(Object.values(moved.anchors ?? {}))]
+        .filter((target) => target !== moved.to)
+        .map((target) => ({ href: targetHref(target), title: titleOf(target), section: target.split("#")[1] })),
+    },
+  }));
+}
+
+const { landing, title, also } = Astro.props;
+// The page the old address now is, without the section a fragment picks.
+const canonical = Astro.site ? new URL(landing.href.split("#")[0], Astro.site).href : undefined;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{`Moved to ${title} | Robin`}</title>
+    <meta name="robots" content="noindex" />
+    {canonical && <link rel="canonical" href={canonical} />}
+    <script is:inline define:vars={{ landing }}>
+      const anchor = location.hash.slice(1);
+      location.replace(
+        Object.hasOwn(landing.anchors, anchor)
+          ? landing.anchors[anchor]
+          : anchor === "" || landing.ownFragment
+            ? landing.href
+            : `${landing.href}#${anchor}`,
+      );
+    </script>
+    <noscript><meta http-equiv="refresh" content={`0; url=${landing.href}`} /></noscript>
+  </head>
+  <body>
+    <p>This page moved to <a href={landing.href}>{title}</a>.</p>
+    {
+      also.length > 0 && (
+        <ul>
+          {also.map((link) => (
+            <li>
+              <a href={link.href}>{link.section ? `${link.title}, #${link.section}` : link.title}</a>
+            </li>
+          ))}
+        </ul>
+      )
+    }
+  </body>
+</html>
