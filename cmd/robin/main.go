@@ -113,6 +113,9 @@ func runGUI(args []string) int {
 		sshArgs = sshArgs[1:]
 	}
 
+	if err := checkJoinAudio(*join, *audio); err != nil {
+		return fail(err)
+	}
 	t, err := relay.ParseTransport(*transport)
 	if err != nil {
 		return fail(err)
@@ -247,6 +250,17 @@ func parseSTUN(s string) []string {
 		}
 	}
 	return out
+}
+
+// checkJoinAudio refuses --audio=false with --join: a guest takes the
+// owner's stream as it is, sound included. It is checked here, not with
+// the guest's other flags in gui, because only the flag set can tell
+// --audio=false from a guest that never named it.
+func checkJoinAudio(join string, audio bool) error {
+	if join != "" && !audio {
+		return errors.New("--audio is the owner's: a guest hears the sound the owner's session streams")
+	}
+	return nil
 }
 
 func fail(err error) int {

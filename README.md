@@ -85,7 +85,10 @@ carries a different agent than the one running refuses to resume, before it
 uploads anything, and says to run `robin end`, since the daemon runs code
 this CLI does not carry. Started beside it with `--new`, the upload leaves
 the kept session's agent in place, so `robin-send` in that desktop keeps
-working.
+working. `robin end` ends a session with that agent of its own, still on
+the host, so ending one of another build uploads nothing; only when that
+agent cannot end it (its file gone, say) does the CLI put its own in place
+to do it.
 
 A new `robin gui` that resumes a desktop gets what its own command line
 names, or is told why not. `--curtain` and `--silent` switch on the curtain
@@ -154,14 +157,14 @@ once, at the start, where each went on the host or why it could not.
 | `--hidpi` | off | size the remote display in the browser's device pixels: sharp text on Retina screens, about four times the pixels to encode. Raise `--max-size` to go fully native |
 | `--max-kbps` | `10000` | video bitrate ceiling; congestion control works below it |
 | `--encoder` | `auto` | `auto` encodes on the host's GPU where it pays and in software elsewhere; `software`, `vaapi` or `nvenc` insist on one; see [Hardware encoding](#hardware-encoding) |
-| `--session` | lightest found | command to run in the display, e.g. `startxfce4` |
+| `--session` | lightest found | command to run in the display robin starts, e.g. `startxfce4`; refused with `--attach`, since that desktop runs its own |
 | `--attach` | | stream a desktop already running on the host: `auto`, `wayland` for your Wayland session, or an X display such as `:1` |
-| `--monitor` | `primary` | the monitor of an attached X11 desktop to show first: a name such as `DP-2`, its number, or `all`; the page switches between them. Wayland shows the monitor picked in its sharing dialog |
+| `--monitor` | `primary` | the monitor of an attached X11 desktop to show first: a name such as `DP-2`, its number, or `all`; the page switches between them. Refused for a desktop robin starts and with `--attach wayland`, where Wayland shows the monitor picked in its sharing dialog; a resume by `--id` ignores it, like the other flags that shape a new desktop |
 | `--keep` | `8h`, `0` with `--attach` | how long the host keeps the desktop after the connection drops or the page detaches; `0` ends it with the connection |
 | `--id` | the one kept session | which kept session to resume |
-| `--new` | | start a new desktop even when a kept one could be resumed |
+| `--new` | | start a new desktop even when a kept one could be resumed; refused with `--id` |
 | `--share` | | invite this account on the host to join as a guest, who watches until you give them control; repeat for more (see [Sharing a desktop](#sharing-a-desktop)) |
-| `--join` | | join another account's session as a guest, with the code its owner was given, over your own login to the host |
+| `--join` | | join another account's session as a guest, with the code its owner was given, over your own login to the host. The flags that shape the session (`--attach`, `--id`, `--new`, `--session`, `--keep`, `--max-size`, `--fps`, `--max-kbps`, `--encoder`, `--monitor`, `--audio=false`, `--camera`, `--curtain`, `--silent`, `--share`) are the owner's and refused |
 | `--audio` | `true` | stream the desktop's sound; `--audio=false` leaves it out |
 | `--mic` | off | offer your microphone to the host's programs; it stays off until you switch it on in the page |
 | `--camera` | off | offer your camera to the host's programs, through PipeWire or a v4l2loopback device; off until switched on |

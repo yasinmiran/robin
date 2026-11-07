@@ -845,7 +845,15 @@ keeps the reflex and moves it one process out.
   run first and unlink the kept daemon's binary even though the CLI then
   left the session alone, and the upload spares every agent a kept
   session runs from: the desktop's `robin-send` is a symlink to it, and
-  dangled after a `--new` beside the session.
+  dangled after a `--new` beside the session. `robin end` runs that kept
+  agent's own `end` (every agent that writes `session.json` has one), so
+  ending a session of another build is not a 15 MB upload; the CLI deploys
+  its agent only when the kept one fails to end it, its file gone, say,
+  and an error then names both failures. An agent that writes
+  `session.json` but predates the no-session exit status fails on a
+  session already gone, so ending one of those still deploys; that case
+  is rare enough to accept. The name comes from the session's file, so
+  only a bare `robin-agent-` file name in the agent directory is run.
 - The CLI: the relay, the page server, the tunnel's loopback listener and
   the page itself outlive the SSH connection; only the master, the proxy
   and the forward are remade. The page is told `reconnecting`, drops its
@@ -907,7 +915,17 @@ page for a session that is not what was asked.
   does, not with only this on. A spawned desktop refuses either flag, as
   the CLI refuses them for a new one; the CLI leaves a resume by `--id` to
   the agent, since that session may be attached, and skips its spawn check
-  for the same reason.
+  for the same reason. `--monitor` and `--session` are refused where the
+  desktop they ask for would drop them (`checkDesktop`): `--monitor`
+  without `--attach` or with Wayland, which has one picture from its
+  sharing dialog, checked again once `--attach auto` has picked; `--session`
+  with `--attach`. A resume by `--id` carries neither, as it carries none
+  of the flags that shape only a new desktop, so the CLI lets them through
+  there. `--new` with `--id` is refused rather than resuming. A
+  guest's `--join` refuses every flag that shapes the owner's session,
+  since a guest sends no Start to carry it; `--audio=false` among them,
+  which the CLI checks itself since the option's zero value cannot say
+  whether it was named.
 - Devices are made as the session starts: a spawned desktop's pulseaudio
   loads the microphone before it runs, and Start names the camera's
   v4l2loopback device. Adding one to a running session would be a second

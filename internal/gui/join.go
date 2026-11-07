@@ -26,11 +26,15 @@ func checkJoin(o Options) error {
 	if _, err := protocol.ParseJoinCode(o.Join); err != nil {
 		return err
 	}
+	shapesStream := o.Keep != 0 || o.MaxWidth > 0 || o.MaxHeight > 0 || o.FPS > 0 || o.MaxKbps > 0 ||
+		(o.Encoder != "" && o.Encoder != protocol.EncoderAuto) || o.namesMonitor()
 	switch {
 	case len(o.Share) > 0:
 		return errors.New("--share is the owner's; a guest cannot invite others")
 	case o.Attach != "" || o.Resume != "" || o.New || o.Session != "":
 		return errors.New("--join joins the owner's desktop as it is; --attach, --id, --new and --session are the owner's")
+	case shapesStream:
+		return errors.New("--join watches the owner's stream as it is; --keep, --max-size, --fps, --max-kbps, --encoder and --monitor are the owner's")
 	case o.Camera:
 		return errors.New("a guest's camera is not offered: the camera stays the owner's")
 	case o.Curtain || o.Silent:

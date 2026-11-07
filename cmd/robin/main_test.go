@@ -2,6 +2,7 @@ package main
 
 import (
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +24,21 @@ func TestParseSize(t *testing.T) {
 				t.Errorf("%q accepted", bad)
 			}
 		})
+	}
+}
+
+// TestCheckJoinAudio: a guest cannot drop the owner's sound with
+// --audio=false; an owner can, and a guest that leaves --audio alone joins.
+func TestCheckJoinAudio(t *testing.T) {
+	const code = "a1b2c3d4-1000-k3j4m5n6p7q2r3s4t5u6v7w2x3"
+	if err := checkJoinAudio(code, false); err == nil || !strings.Contains(err.Error(), "--audio is the owner's") {
+		t.Errorf("--join --audio=false: %v", err)
+	}
+	if err := checkJoinAudio(code, true); err != nil {
+		t.Errorf("--join: %v", err)
+	}
+	if err := checkJoinAudio("", false); err != nil {
+		t.Errorf("--audio=false: %v", err)
 	}
 }
 
