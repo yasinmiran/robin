@@ -12,21 +12,21 @@ import {
 } from "./nav";
 
 const docs: DocLink[] = [
-  { slug: "roadmap", title: "Roadmap", section: "Project", order: 2 },
-  { slug: "install", title: "Install and build", section: "Start", order: 3 },
+  { slug: "contributing", title: "Contributing", section: "Project", order: 2 },
+  { slug: "getting-started", title: "Getting started", section: "Start", order: 2 },
   { slug: "introduction", title: "Introduction", section: "Start", order: 1 },
   { slug: "using", title: "Using Robin", section: "Use", order: 1 },
-  { slug: "known-limits", title: "Known limits", section: "Reference", order: 2 },
+  { slug: "troubleshooting", title: "Troubleshooting", section: "Reference", order: 2 },
 ];
 
 describe("sortDocs", () => {
   it("orders by section, then by order within it", () => {
     expect(sortDocs(docs).map((doc) => doc.slug)).toEqual([
       "introduction",
-      "install",
+      "getting-started",
       "using",
-      "known-limits",
-      "roadmap",
+      "troubleshooting",
+      "contributing",
     ]);
   });
 
@@ -44,21 +44,21 @@ describe("groupDocs", () => {
   it("makes one group per section with pages, in section order", () => {
     const groups = groupDocs(docs);
     expect(groups.map((group) => group.label)).toEqual(["Start", "Use", "Reference", "Project"]);
-    expect(groups[0].items.map((doc) => doc.slug)).toEqual(["introduction", "install"]);
+    expect(groups[0].items.map((doc) => doc.slug)).toEqual(["introduction", "getting-started"]);
   });
 });
 
 describe("neighbours", () => {
   it("finds the pages either side in sidebar order", () => {
     expect(neighbours(docs, "using")).toEqual({
-      prev: expect.objectContaining({ slug: "install" }),
-      next: expect.objectContaining({ slug: "known-limits" }),
+      prev: expect.objectContaining({ slug: "getting-started" }),
+      next: expect.objectContaining({ slug: "troubleshooting" }),
     });
   });
 
   it("has no previous page at the start and no next page at the end", () => {
     expect(neighbours(docs, "introduction").prev).toBeUndefined();
-    expect(neighbours(docs, "roadmap").next).toBeUndefined();
+    expect(neighbours(docs, "contributing").next).toBeUndefined();
   });
 
   it("returns nothing for a page it does not know", () => {
@@ -76,24 +76,28 @@ describe("toDocLinks", () => {
 
 describe("header links", () => {
   it("links each page by its slug", () => {
-    expect(docHref("install")).toBe("/install");
+    expect(docHref("getting-started")).toBe("/getting-started");
   });
 
   it("links each page under the base the site is served from", () => {
     vi.stubEnv("BASE_URL", "/robin");
     try {
-      expect(docHref("install")).toBe("/robin/install");
+      expect(docHref("getting-started")).toBe("/robin/getting-started");
     } finally {
       vi.unstubAllEnvs();
     }
   });
 
   it("marks the link for the section a page sits in", () => {
-    expect(currentHeaderLink("install", "Start")).toBe("Guide");
+    expect(currentHeaderLink("getting-started", "Start")).toBe("Guide");
     expect(currentHeaderLink("sound", "Use")).toBe("Guide");
-    expect(currentHeaderLink("testing", "Design")).toBe("How it works");
-    expect(currentHeaderLink("robin-and-horizon", "Project")).toBe("Roadmap");
     expect(currentHeaderLink(undefined, undefined)).toBeUndefined();
+  });
+
+  it("marks How it works and Troubleshooting on their own pages only", () => {
+    expect(currentHeaderLink("how-it-works", "Project")).toBe("How it works");
+    expect(currentHeaderLink("contributing", "Project")).toBeUndefined();
+    expect(currentHeaderLink("troubleshooting", "Reference")).toBe("Troubleshooting");
   });
 
   it("marks Flags on the flags page only, not on the rest of its section", () => {

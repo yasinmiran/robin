@@ -1,6 +1,6 @@
 import { withBase } from "@/lib/base";
 
-export const SECTIONS = ["Start", "Use", "Reference", "Design", "Project"] as const;
+export const SECTIONS = ["Start", "Use", "Reference", "Project"] as const;
 
 export type Section = (typeof SECTIONS)[number];
 
@@ -26,8 +26,8 @@ export interface HeaderLink {
 export const HEADER_LINKS: readonly HeaderLink[] = [
   { label: "Guide", href: docHref("introduction"), sections: ["Start", "Use"] },
   { label: "Flags", href: docHref("flags"), sections: [] },
-  { label: "How it works", href: docHref("how-it-works"), sections: ["Design"] },
-  { label: "Roadmap", href: docHref("roadmap"), sections: ["Project"] },
+  { label: "Troubleshooting", href: docHref("troubleshooting"), sections: [] },
+  { label: "How it works", href: docHref("how-it-works"), sections: [] },
 ];
 
 /** toDocLinks reads each page's place in the sidebar from its collection entry. */

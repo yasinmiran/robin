@@ -1,46 +1,58 @@
 ---
 title: Sharing a desktop
-description: Invite another account on the host to watch your session, hand it control and take it back, and what stays yours.
+description: Invite another account on the host to watch your session, hand it control and take it back.
 section: Use
-order: 10
+order: 8
 ---
 
-`--share` lets another account on the host watch your session. It is for showing someone what you see, or letting a colleague on the same machine take the keyboard for a minute, without handing over your SSH login.
+## Inviting
+
+Name the account when you start the session:
 
 ```sh
 robin gui --share alice build-box
 ```
 
-Once the desktop is up, the CLI prints the command alice runs:
+Once the desktop is up, robin prints what alice runs:
 
 ```text
-robin: alice may join once, until 3:04PM, with: robin gui --join a1b2c3d4-1000-k3j4m5n6p7q2r3s4t5u6v7w2x3 alice@build-box
+robin: alice may join once, until 3:04PM, with: robin gui --join a1b2c3d4-1000-m2n3p4q5r6s7t2u3v4w5x6y7z2-k3j4m5n6p7q2r3s4t5u6v7w2x3 alice@build-box
 ```
 
-The status tab has a Share part that does the same for a name you type there. It lists every invitation still open, with a Copy button beside its command, and every guest who joined. The tab's top row says who watches and who has control, and the tab comes out whenever a guest joins, leaves or gets control.
+For more accounts, repeat `--share`, or type a name in the status tab's Share part and press Invite. The tab lists every guest and each open invitation, with a Copy join command button.
+
+A code lets the account it names, and no other, join once within 10 minutes. Inviting that account again replaces its code, and three wrong codes withdraw it.
+
+You and your guest need the same build of robin. A code from a session an older build started is refused with `this code is from a session started with an older build of robin`; end that session and start it again to share it.
 
 ## Joining
 
-Alice runs that command on her own computer, over her own SSH login to the host. Her CLI puts its own agent in her own home directory, and that agent knocks on your session's door. Her page shows your desktop, your pointer and its sound, and its top row says whose desktop it is and whether she watches or controls it. Until she has control, Upload files and the keys section say they need it.
+Alice runs the command on her own computer, over her own SSH login to the host. Her browser shows your desktop, pointer and sound, and her status tab says she is view only until you give her control.
 
-A code works once, for the account it names and for 10 minutes. Inviting the same account again replaces its code, and three wrong codes from that account withdraw it.
+`--join` refuses the flags that shape your session; see [Flags](/flags#flag-join). If the code has expired or been used, she asks you for another.
 
 ## Control
 
-A guest watches until you click Give control on their row. Then their keys, pointer and paste reach the desktop, the host's clipboard reaches them, they see the files `robin-send` offers and may upload, and with `--mic`, in a session that started with `--mic`, their microphone is heard on the host. You keep control throughout, and one guest has it at a time: giving it to another takes it from the first. Closing or reloading your page takes control from every guest; they keep watching.
+Each guest's row in your Share part has Give control. Click it and their keys, pointer and paste reach the desktop, the host's clipboard reaches them, and they can upload and save files, while you keep control too. If they ran with `--mic` and your session has a microphone, the host hears them.
 
-Take back control ends theirs at once. What they held down is let go, text still being typed is dropped, the files on offer leave their page, a transfer of theirs still under way is dropped, and so is a file or a copy on its way to them. Remove asks for a second click, then closes their connection and their page at once, and their CLI exits saying why. A guest leaves with Ctrl+C or the page's Leave button.
+One guest has control at a time: giving it to another takes it from the first.
 
-<Callout type="note" title="What stays yours.">
-A guest's window does not resize the desktop. The monitor shown, the curtain and the silent room, sharp text, the camera, and keeping or ending the desktop are yours alone.
-</Callout>
+Take back control ends theirs at once, letting go of held keys and stopping files on their way. Closing or reloading your own page takes control from every guest, though they keep watching. Remove asks for a second click, then disconnects them.
 
-## One stream for everyone
-
-Every page gets the same stream. Each frame is encoded once, at the bitrate the slowest page's link allows, so a guest on a poor link makes the picture coarser for you too. A page that loses a picture asks for a keyframe, and every page gets it.
+Some things stay yours: a guest's window never resizes the desktop, and only you pick the monitor, the [curtain and the silent room](/private-session), [sharp text](/using#sharp-text-and-actual-size), the camera, and whether the desktop is kept or ended.
 
 ## When it ends
 
-A guest never outlives your session. When your CLI goes, by Ctrl+C, a dropped connection or Disconnect, keep desktop, every guest is let go and every invitation withdrawn, and nobody joins until you are back. A guest whose connection drops does not come back by itself: the code it joined with is spent, so it needs another invitation.
+Every guest is let go and every invitation withdrawn once your robin loses the session, by Ctrl+C, a dropped link or Disconnect, keep desktop, even if it reconnects. Nobody can join a [kept desktop](/sessions) until you are back and invite them again.
 
-See [Security](/security#guests) for how the door checks who knocks, and [Known limits](/known-limits#sharing) for what sharing does not do.
+A guest leaves with Ctrl+C or the page's Leave button, and one whose connection drops needs a new invitation.
+
+See [What Robin keeps out](/security#what-robin-keeps-out) for how the host checks who joins.
+
+## Limits
+
+- Everyone gets one stream at the bitrate the slowest guest's link allows, so a guest on a poor link makes your picture coarser too.
+- Your keys and a guest's in control interleave as they arrive, so agree who types.
+- An account the host cannot find in `/etc/passwd` or through `getent` cannot be invited.
+- A guest's camera is never used.
+- Sharp text follows your page only, so a guest sees the video as it is.

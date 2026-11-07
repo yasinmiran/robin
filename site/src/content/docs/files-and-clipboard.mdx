@@ -1,55 +1,64 @@
 ---
 title: Files and the clipboard
-description: Uploading files to the host, offering files from the host with robin-send, and a clipboard that carries text, HTML and images both ways.
+description: Drop files on the page to upload them, save files the host offers with robin-send, and copy text, HTML and images both ways.
 section: Use
-order: 8
+order: 6
 ---
 
-Drop files on the page to upload them to the host, offer files from the host with `robin-send` and save them with a click, and copy text, HTML and images either way through the clipboard.
+Files and the clipboard go both ways between the page and the host, and every transfer shows in the status tab.
 
 ## Uploading files
 
-Files go to the host when you drop them anywhere on the page or pick them with **Upload files** in the status tab. Files you paste are listed there too, and each goes only when you click its Upload, since the clipboard can still hold files you copied long ago.
+Drop files anywhere on the page, or click **Upload files** in the status tab and pick them. While each one goes it has a progress bar and a Cancel button.
 
-They land in your download folder on the host: `$XDG_DOWNLOAD_DIR`, else the one `~/.config/user-dirs.dirs` names, else `~/Downloads`, which is created if it is missing. A download folder that is your home directory itself counts as unset, which is what xdg-user-dirs-update leaves once `~/Downloads` is gone, so uploads then go to `~/Downloads` too.
+Files you paste into the page are listed too, but each waits for you to click its **Upload** or **Dismiss**.
 
-A file whose name starts with a dot is refused, so no upload is hidden. Nothing on the host is ever replaced: a second `report.pdf` becomes `report (1).pdf`, and the status tab shows the name it got. An upload bigger than the free space less 256 MiB is refused before a byte is written, and four at most run at once.
+Uploads land in your download folder on the host, which is created if it is missing. Robin looks for it in this order:
+
+1. `$XDG_DOWNLOAD_DIR`
+2. the download folder `~/.config/user-dirs.dirs` names
+3. `~/Downloads`
+
+A download folder that is your home directory itself counts as unset.
+
+Nothing on the host is ever replaced: a second `report.pdf` becomes `report (1).pdf`, and the status tab shows the name it got. Robin also refuses a file whose name starts with a dot, and refuses an upload before it starts if it would leave less than 256 MiB free on that disk.
+
+An upload sent or cut off while the page has no connection to the host, as while it says Reconnecting, fails with `Upload failed: not connected to the desktop`; send it again once the page is back.
 
 ## Getting a file from the host
 
-It starts on the host:
+Offer the file from a terminal on the host:
 
 ```sh
-# in a terminal of the desktop Robin started
+# in a desktop Robin started
 robin-send report.pdf build/*.log
 
-# anywhere else on the host, an attached desktop or ssh
+# anywhere else on the host: an attached desktop, or plain ssh
 ~/.cache/robin/robin-agent-* send report.pdf
 ```
 
-The page lists each offer by name and size, and nothing downloads until you click **Save**; **Dismiss** turns it down. Save takes the file as it is by then, but never more than the size shown: a file that grew since its offer is refused, and both the page and `robin-send` say so.
+On most hosts the agent is in `~/.cache/robin`, else in `$XDG_RUNTIME_DIR/robin` or `/tmp/robin-` followed by your user id.
 
-`robin-send` stays until every file it offered has been saved or declined, prints which, and exits non-zero unless all were saved. Ctrl+C there withdraws whatever is still on offer. Programs in a spawned desktop have `robin-send` on their `PATH` and `ROBIN_FILES_SOCK` naming their session; anywhere else the agent offers to the one session it finds running, and refuses to guess between several.
+The page lists each file by name and size. Nothing downloads until you click **Save**, and **Dismiss** turns the file down instead. A Save the connection cut off, or one clicked while the page has none, shows `Download failed: not connected to the desktop` and keeps its **Save** button for when the page is back.
+
+`robin-send` waits until you have saved or dismissed every file it offered (Ctrl+C withdraws whatever is still on offer), then prints what became of each and exits 0 only if all of them were saved.
+
+Outside a desktop Robin started, the command offers to the one session it finds running, and refuses to guess between two or more.
 
 ## The clipboard
 
-The clipboard carries plain text, HTML and PNG images both ways, up to 16 MiB at a time, so a screenshot copied on one side pastes as a picture on the other. Your paste shortcut in the page sends the local clipboard to the host before the key itself, so the program there pastes what you just copied.
+The clipboard carries plain text, HTML and PNG images both ways, up to 16 MiB at a time.
 
-One PNG pasted into the page goes to the host's clipboard as an image. Any other file you paste there becomes an upload waiting for its click instead, because a browser's clipboard has no way to hand a file on as a file. The browser only takes what the host copies while the page has focus.
+Your paste shortcut in the page sends your local clipboard to the host first, so the program there pastes what you just copied. A single PNG you paste goes to the host's clipboard as an image; any other file you paste becomes an upload waiting for its click.
 
-On a prompt that takes no paste, such as a lock screen or a VM console, **Type clipboard** in the keys section types the local clipboard as keys instead: see [Keys and macros](/macros#type-clipboard).
+What you copy on the host reaches your local clipboard only while the page has focus, so copy again after you come back to the page.
 
-## How they travel
-
-Files, images and anything else too big for the input channel travel in a transfer layer of their own, a data channel each and a SHA-256 checked at the far end. Uploads land in a new file of a temporary name, which gets its name only after every byte arrived and the hash matched, through a rename that fails rather than replace anything. An upload that is cancelled, fails, or is still running when the session ends is removed.
-
-What the host sends goes under the video's congestion target, so a download never takes the picture's rate, and a transfer runs at most 512 KiB ahead of what its receiver has taken, so a stalled one holds back neither the keyboard nor the page's memory. [How it works](/how-it-works#congestion-control) has the details, and [Security](/security#files-and-the-clipboard) the bounds on each side.
+A lock screen or VM console often takes no paste, and there **Type clipboard** types your clipboard as keys instead: see [Type clipboard](/macros#type-clipboard).
 
 ## Limits
 
-- A file is at most 4 GiB either way. The page holds a download in memory until the last byte is in, then hands it to the browser's downloads, so the browser has to have room for it; uploads stream from disk.
-- On a 3 Mbit/s link a 2 MiB download takes about 7 s over a still screen and 30 s while the screen moves. Uploads are not paced, only held to 512 KiB in flight each, which bounds one to about 40 Mbit/s over a 100 ms round trip.
-- Anything else on the clipboard (RTF, JPEG, a file manager's file list) stays behind. An image bigger than 16 MiB is left out and its text still goes.
-- In an attached desktop `robin-send` is not on the `PATH`; run the agent itself, as above. With two sessions on the host it has to run inside the one it means.
-
-[Known limits](/known-limits#files-and-the-clipboard) has the rest, from what a power cut does to an upload to files in Safari.
+- A file is at most 4 GiB either way, and the browser holds a download in memory until it is complete.
+- Other clipboard formats (RTF, JPEG, a file manager's file list) stay behind, and an image that would take the clipboard over 16 MiB is left out while its text still goes.
+- A file that grew after `robin-send` offered it is refused when you click Save; offer it again to get what it holds now.
+- In an attached desktop `robin-send` is not on your `PATH`, so run the agent with `send` as shown above.
+- A power cut in the seconds after an upload finishes can leave the file short, so check anything that matters.

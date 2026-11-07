@@ -1,0 +1,136 @@
+---
+title: Getting started
+description: Build robin, check what the host needs, open your first desktop, and leave or end it.
+section: Start
+order: 2
+---
+
+Build the `robin` CLI on the machine you sit at and point it at a Linux host you can ssh to, and that host's desktop opens in your browser. Nothing of Robin's has to be installed on the host first.
+
+## Build robin
+
+There are no release downloads, so you build from a checkout; Go 1.26 or newer is the only thing you install by hand.
+
+```sh
+git clone https://github.com/yasinmiran/robin
+cd robin
+make
+```
+
+That leaves the CLI at `bin/robin`, with the agents for both host architectures inside it, so that one file is all you carry around. The first run downloads the exact Go release and the C toolchain the build pins and caches them, which is why later builds are quicker.
+
+The build runs on Linux or macOS, and `make dist` builds the CLI for other client machines:
+
+| File | Runs on |
+|---|---|
+| `dist/robin-darwin-arm64` | macOS on Apple silicon |
+| `dist/robin-darwin-amd64` | macOS on Intel |
+| `dist/robin-linux-amd64` | Linux on x86_64 |
+| `dist/robin-linux-arm64` | Linux on arm64, and Android in Termux |
+| `dist/robin-windows-amd64.exe` | Windows 10 or 11 on x86_64 |
+| `dist/robin-windows-arm64.exe` | Windows 10 or 11 on arm64 |
+
+`make dist` builds only on a release tag. On any other commit you name a version yourself, as in `make dist VERSION=v0.0.0-mine`, and `robin version` prints the version a binary was built from.
+
+## What the host needs
+
+Linux on x86_64 or arm64, and an SSH login. You do not need root, and the host needs no port open beyond SSH.
+
+**A new desktop** needs `Xvfb` and `xkbcomp` (every Xvfb package brings it), a desktop (`xfce4-session`) or a window manager (`openbox`, `fluxbox`, `icewm-session`, `twm`), and a terminal (`xterm`, `x-terminal-emulator` or `xfce4-terminal`) unless Xfce brought its own. No GPU or monitor is needed, and these packages cover it:
+
+| Package manager | Xvfb | Window manager | Terminal |
+|---|---|---|---|
+| `apt` | `xvfb` | `openbox` | `xterm` |
+| `dnf` | `xorg-x11-server-Xvfb` | `openbox` | `xterm` |
+| `zypper` | `xorg-x11-server-Xvfb` | `openbox` | `xterm` |
+| `pacman` | `xorg-server-xvfb` | `openbox` | `xterm` |
+| `apk` | `xvfb` | `openbox` | `xterm` |
+
+On Enterprise Linux the window manager comes from EPEL, so the line Robin prints installs `epel-release` first.
+
+**Sound in a new desktop** also needs `pulseaudio`; without it the session runs silent and Robin tells you why (see [Sound](/sound)).
+
+**Attaching to the desktop you are logged in to** needs only that desktop. A Wayland desktop also needs GStreamer's tools and plugins; see [Attaching to a desktop](/attach#what-the-host-needs).
+
+**The GPU** is optional. If you want Robin to encode on it, [GPU encoding](/using#gpu-encoding) explains how.
+
+Robin copies its agent to `~/.cache/robin`, or another private directory of yours when that one will not do, and reuses it on later runs.
+
+## Your first session
+
+```sh
+bin/robin gui alice@build-box
+```
+
+The destination is whatever you would give `ssh`: `user@host`, an address, or a host alias from `~/.ssh/config`. Answer any prompt `ssh` puts up, and Robin then checks the host and copies the agent over if it has to before it starts a desktop.
+
+Your browser opens on a page at `127.0.0.1`, and the terminal prints a line like this:
+
+```text
+robin: :1 on alice@build-box; kept for 8h0m0s if the connection drops; press Ctrl+C to end the session
+```
+
+If Robin cannot open a browser, it prints `open this URL in your browser:` and the link instead.
+
+Anything after `--` goes to `ssh` untouched:
+
+```sh
+bin/robin gui build-box -- -p 2222 -i ~/.ssh/other_key
+```
+
+## If the host is missing something
+
+Robin stops before it copies anything and tells you what to install, with the line for the host's package manager:
+
+```text
+robin: alice@build-box cannot run a headless desktop yet: missing Xvfb, xkbcomp, a window manager or desktop, a terminal
+install with: sudo apt install xvfb openbox xterm
+```
+
+Run that line on the host and try again. Or, if you are logged in to a desktop on that machine, show that desktop instead:
+
+```sh
+bin/robin gui --attach auto alice@workstation
+```
+
+See [Attaching to a desktop](/attach).
+
+## Using the desktop
+
+Click into the picture and type. Keys map by character, so text comes out right whatever your local keyboard layout is, and when you resize the window a new desktop follows it.
+
+The status tab at the top of the page shows the connection state, the transport (**Direct UDP** or **SSH tunnel**), the picture size, frame rate and bitrate. It tucks itself away after a moment; move the pointer to the top edge to bring it back.
+
+<Callout type="note" title="Muted at first.">
+The page starts muted, because browsers only autoplay silent video. Click the speaker in the status tab to hear the session, and again after a reload.
+</Callout>
+
+The full screen button also locks the keyboard in Chrome, so shortcuts such as Ctrl+W and Alt+Tab go to the remote desktop instead of your own.
+
+## Leave it or end it
+
+Ctrl+C in the terminal or **End session** in the status tab ends the session: the agent stops everything it started on the host and the page says **Session ended**.
+
+To leave the desktop running, click **Disconnect, keep desktop**. The CLI exits, and the host keeps a new desktop for 8 hours (an attached one only when you pass `--keep`). Run the same command to pick it up where you left it:
+
+```sh
+# resume the kept desktop
+bin/robin gui alice@build-box
+
+# what the host keeps, and until when
+bin/robin ls alice@build-box
+
+# end it without opening it
+bin/robin end alice@build-box
+```
+
+If the network drops, the page says **Reconnecting** and the CLI redials until it is back on the same windows, as long as the host still keeps the desktop.
+
+Reloading or closing the browser tab does not end the session; reload or reopen it and you are back. One browser holds a session at a time, though, so a second tab is refused until the first closes (more in [Kept sessions](/sessions)).
+
+## Next
+
+- [Using Robin](/using): size, frame rate, transports and the rest of the page.
+- [Attaching to a desktop](/attach): show the desktop you are logged in to.
+- [Flags](/flags): every option of `robin gui`.
+- [Troubleshooting](/troubleshooting): what to do when something goes wrong, starting with `-v`.

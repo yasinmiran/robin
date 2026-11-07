@@ -1,0 +1,77 @@
+---
+title: Troubleshooting
+description: What to do when the desktop does not appear, the picture is black or slow, there is no sound, or a session will not resume.
+section: Reference
+order: 2
+---
+
+## Start with verbose logs
+
+Run the same command with `-v`. Robin then logs each step and the agent's log from the host, including which encoder it picked and why it fell back to software.
+
+```sh
+robin gui -v build-box
+```
+
+A session without sound says why even without `-v`.
+
+## The host cannot run a desktop
+
+A new desktop needs Xvfb, xkbcomp, a window manager and a terminal on the host. When one is missing, Robin stops and prints the line that installs it:
+
+```text
+robin: build-box cannot run a headless desktop yet: missing Xvfb, xkbcomp, a window manager or desktop, a terminal
+install with: sudo apt install xvfb openbox xterm
+```
+
+Run that line on the host, or stream the desktop already running there with `--attach`; see [Attaching to a desktop](/attach).
+
+## No browser opens
+
+If Robin cannot start a browser, it prints `open this URL in your browser:` followed by the link. Open that on the machine where Robin runs, since the page listens on loopback only. With `--no-browser` Robin prints just the link, on stdout, and opens nothing.
+
+## The page stays black
+
+- Firefox shows no picture until it has fetched its OpenH264 plugin, which needs a network connection the first time.
+- On Wayland, someone at the host's screen has to approve the screen sharing request. The terminal says so and waits up to two minutes; see [The consent dialog](/attach#the-consent-dialog).
+- KDE Plasma cannot share its screen on a host without a GPU, and the session ends with "Start failed".
+- An encoder you name with `--encoder` stops robin if the host cannot run it, and ends the session with its error if it keeps failing once the picture starts. Leave it at `auto`, which falls back to software, or name `software`.
+
+## Could not connect
+
+The page says "Could not connect" when its link has expired or is open in another tab. A session serves [one browser](/browsers#one-browser-per-session) at a time, so close the other tab, or use the link Robin printed most recently.
+
+If your browser shows Not Found and the terminal says `the page's launch link was opened again`, someone else on your machine opened the page first. Press Ctrl+C to end the session, then start it again with `--no-browser` and open the printed link yourself; see [On a shared computer](/security#on-a-shared-computer).
+
+## No sound
+
+- The page opens muted. Click the speaker in the status tab, and again after each reload.
+- A new desktop needs `pulseaudio` on the host. Without it Robin prints `no sound from build-box: no sound server for the new desktop: install pulseaudio on the host`. Hosts with only PipeWire, such as current Fedora and Ubuntu desktops, are silent in a new desktop, though attached to the running desktop they have sound. More in [the sound limits](/sound#limits).
+
+## Many password prompts
+
+On Windows, or anywhere with `--ssh-mux=false`, Robin runs a separate ssh for each step and each one logs in, so a password or 2FA prompt comes several times a session. Log in with a key or `ssh-agent` and the prompts go away.
+
+## Stuck on the SSH tunnel
+
+The status tab shows "SSH tunnel" when direct UDP between your machine and the host does not get through, because a firewall blocks it or you reach the host through `ProxyJump`. The session works as it is; to test UDP alone, run with `--transport direct`, which never falls back to the tunnel. On a lossy link the tunnel stalls now and then where direct UDP would not.
+
+## The picture is slow or blocky
+
+A narrow link drops frames or blurs a busy picture. Ask for less with a smaller `--max-size`, such as `1600x900`, or a lower `--fps`. Neither changes a kept desktop, so run `robin end` first or start another with `--new`. About 2 fps in the status tab on an idle screen is normal, and the first second of motion after a still screen can be soft.
+
+## The session is busy
+
+`another CLI is connected to this session` means a `robin gui` is already attached to that kept desktop. If it is yours and lost its network, the host notices within 20 seconds; wait, then run it again. To end the desktop instead, run `robin end build-box`, adding the session's id when the host keeps several (`robin ls build-box` lists them).
+
+## The desktop did not survive
+
+Where logind kills user processes on logout (`KillUserProcesses=yes`), a kept desktop runs under your systemd user manager, which stops with your last login. Robin warns about this when the session starts. Run `loginctl enable-linger` on the host to keep it running after you log out. Without `systemd-run` on the host the desktop ends with the connection, and Robin says so; see [On the host](/sessions#on-the-host).
+
+## Wrong characters on GNOME Wayland
+
+On GNOME under Wayland, a key types only what the host's keyboard layout has, so a key that layout lacks types another character or nothing. Set the host's layout to match yours. Or paste the text, or send it with Type clipboard, which pastes what the layout cannot type; see [the attach limits](/attach#limits).
+
+## The host's screen stays black
+
+If everything Robin runs on the host is killed at once during a private session, nothing undoes the curtain and the host's screen stays black. [If the screen stays black](/private-session#if-the-screen-stays-black) shows how to bring it back from another machine.

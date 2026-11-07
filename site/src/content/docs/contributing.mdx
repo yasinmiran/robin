@@ -1,0 +1,111 @@
+---
+title: Contributing
+description: Build Robin from source, run its tests, check that a build is reproducible, and work on this site.
+section: Project
+order: 2
+---
+
+## Build
+
+You need Go 1.26 or newer and a checkout of the repository; on Linux or macOS nothing else is installed by hand.
+
+```sh
+make
+```
+
+Robin is two programs. The CLI, `cmd/robin`, is pure Go. The agent, `cmd/robin-agent`, runs on the host and links openh264 and libopus, built as a fully static musl binary for x86_64 and arm64.
+
+The first `make` downloads a pinned toolchain, checks each piece's SHA-256 and caches it under `.cache/`, then builds both agents and embeds them in `bin/robin`.
+
+| Component | Version | Used for |
+|---|---|---|
+| zig | 0.17.0 | C and C++ compiler for both agent targets |
+| nasm | 2.16.03 | openh264's x86 assembly, x86_64 agents only |
+| openh264 | 2.6.0 | software H.264 encoder |
+| opus | 1.5.2 | Opus audio encoder |
+
+`make dist` builds the CLI for macOS, Linux and Windows on amd64 and arm64 into `dist/`, each with every agent embedded. On a commit without a release tag it stops and asks for a version, as in `make dist VERSION=v0.0.0-test`.
+
+Building needs no containers and no root; without the `openh264` and `opus` build tags the encoders build as stubs, so `go test ./...` works anywhere.
+
+## Tests
+
+The container suites run in rootless podman; Docker is not supported. `make test` alone runs anywhere Go does and skips what needs podman, except probe cases whose images podman has.
+
+| Target | What it runs |
+|---|---|
+| `make test` | `go test ./...`, then the encoders against the real openh264 and libopus on linux/amd64 |
+| `make test-js` | the page's modules under `node --test` |
+| `make test-x` | X11 capture, input, display, sound and whole agent sessions against Xvfb, in podman |
+| `make test-wayland` | Wayland attach against headless GNOME 46, GNOME 49 and KDE Plasma 6.7, in podman |
+| `make e2e` | the real CLI against a podman host, with Chrome as the client |
+| `make test-agents` | builds the agents, scans them for anything of the builder and deploys one over a local sshd |
+| `make check` | `test`, `test-agents`, `test-x`, `test-wayland` and `e2e` |
+| `make cover` | every suite with coverage, checked against `coverage-baseline.txt` |
+| `make fuzz` | every Go fuzz target for `FUZZTIME` (10s by default) each, then the page's property tests |
+| `make repro` | builds everything twice and compares the bytes |
+
+Run `make check` before a merge.
+
+CI runs the Go tests with stub encoders, the page's tests and this site's checks, builds, scans and deploys the agents as `make test-agents` does, and runs the probe in Ubuntu 24.04, Alpine 3.20 and Fedora 40 under podman. The X11, Wayland and e2e suites, the real encoder tests and `make repro` run only locally, so `make check` stays the gate.
+
+The KDE desktop needs a GPU render node and prints SKIPPED without one; `WLTEST_DESKTOPS` picks fewer desktops:
+
+```sh
+WLTEST_DESKTOPS=gnome49 make test-wayland
+```
+
+The first `make e2e` needs network access and about 3.6 GB of disk for its images, plus 1 GB for the GNOME Wayland host. Once `make e2e` has built the CLI, run scenarios by hand with `e2e/run.sh`:
+
+```sh
+e2e/run.sh            # every scenario
+e2e/run.sh <scenario> # one scenario
+e2e/run.sh selftest   # the harness alone, no CLI needed
+```
+
+`e2e/README.md` lists every check of every scenario. Two runs on one machine each need their own `ROBIN_E2E_ID`, `ROBIN_E2E_SUBNET` and `ROBIN_E2E_HOST_IP`.
+
+`internal/web` has a Chrome smoke test that skips until you run `npm ci` in `internal/web/testdata/browser`.
+
+## Reproducible builds
+
+With the pinned toolchain on a Linux x86_64 machine, the same commit gives the same bytes from any checkout path. That covers the agents too.
+
+```sh
+make repro                      # builds everything twice and compares
+REPRO_TOOLCHAIN=1 make repro    # also rebuilds openh264 and libopus for the copy
+```
+
+`make repro` builds the agents, the CLI and `dist/` from your checkout, then again from a copy outside any repository, and fails if any file differs.
+
+No release is tagged yet. Once one is, rebuilding its tag gives the same sums as the release:
+
+```sh
+git checkout <tag>
+make dist
+sha256sum dist/*
+```
+
+A tree with local changes builds as `-dirty` and never matches.
+
+## The docs site
+
+This site, in `site/`, builds with Node and npm:
+
+```sh
+cd site
+npm ci --ignore-scripts
+npm run dev       # serves the site and reloads on save
+npm run check     # types, a full build and the link checker
+npm test          # the component tests
+```
+
+Pages are MDX files in `site/src/content/docs`, and [site/README.md](https://github.com/yasinmiran/robin/blob/main/site/README.md) covers the rest.
+
+## Design decisions
+
+`docs/adr/0001-architecture.md` in the repository records each design decision and its reasoning; read it before changing transport, encoding or session startup.
+
+## Reporting a vulnerability
+
+Report security issues privately, never in a public issue: see [Security](/security#reporting-a-vulnerability).

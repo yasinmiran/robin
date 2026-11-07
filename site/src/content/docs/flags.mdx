@@ -1,6 +1,6 @@
 ---
 title: Flags
-description: Every command and flag robin takes, with its default, grouped by what it changes.
+description: Every command and flag robin takes, with its default.
 section: Reference
 order: 1
 ---
@@ -13,27 +13,27 @@ robin end [user@]host [id] [-- ssh-args...]
 robin version
 ```
 
-`robin gui` opens a desktop, or picks up one the host kept for you. `robin ls` lists the sessions the host keeps, with when each ends on its own, and `robin end` ends one without opening it; [Kept sessions](/sessions) says how they fit together. `robin ls` and `robin end` take `--ssh`, `--ssh-mux` and `-v` as well.
+`robin gui` opens a desktop, or picks up one the host kept. `robin ls` lists the kept sessions and `robin end` ends one, given its id when there are several; see [Kept sessions](/sessions). `robin version` prints the version.
 
-Flags take one dash or two (`-v`, `--max-size`) and go before the destination. `robin gui -h` prints the same list. [Using Robin](/using) explains what they change in a session.
+Flags take one dash or two (`-v`, `--max-size`) and go before the host. `robin gui -h` prints this list; `robin ls` and `robin end` take only `--ssh`, `--ssh-mux` and `-v`.
 
 ## Picture
 
 <Flags>
 <Flag name="--max-size" arg="WxH" def="`2560x1440`, `1920x1080` on hosts with 4 cores or fewer, `1280x720` with 2 or fewer">
-Largest remote resolution, as WxH. A spawned display follows your window up to this, and a larger attached desktop is scaled down to it.
+Largest remote resolution, such as `1920x1080`. A new desktop follows your window up to this size; a larger attached desktop is scaled down to it.
 </Flag>
-<Flag name="--fps" arg="N" def="`30`, or `20` on small hosts">
+<Flag name="--fps" arg="N" def="`30`, `20` on hosts with 2 cores or fewer">
 Frame rate cap.
 </Flag>
 <Flag name="--hidpi" def="off">
-Size the remote display in the browser's device pixels: sharp text on Retina screens, about four times the pixels to encode. Raise `--max-size` to go fully native.
+Size the remote display in your screen's device pixels: sharper text on a HiDPI screen, more to encode. To see it at full size, raise `--max-size` as well.
 </Flag>
 <Flag name="--max-kbps" arg="N" def="`10000`">
-Video bitrate ceiling in kbit/s; congestion control works below it.
+Video bitrate ceiling, in kbit/s.
 </Flag>
 <Flag name="--encoder" arg="MODE" def="`auto`">
-Video encoder on the host: `auto` (the GPU where it pays, else software), `software`, `vaapi` or `nvenc`. See [Hardware encoding](/hardware-encoding).
+Video encoder on the host: `auto` (the GPU where the host has one that helps, else software), `software`, `vaapi` or `nvenc`. Name an encoder the host cannot run and `robin gui` stops and says what is missing; one that starts but keeps failing ends the session with its error. See [GPU encoding](/using#gpu-encoding).
 </Flag>
 </Flags>
 
@@ -41,16 +41,16 @@ Video encoder on the host: `auto` (the GPU where it pays, else software), `softw
 
 <Flags>
 <Flag name="--session" arg="CMD" def="the lightest desktop found">
-Command to run in the spawned display, such as `startxfce4`.
+Command to run in a new desktop, such as `startxfce4`. Refused with `--attach`, since that desktop runs its own.
 </Flag>
-<Flag name="--attach" arg="TARGET" def="none (spawn)">
-Stream a desktop already running on the host: `auto` for your active session, `wayland` for your Wayland session, or an X11 display such as `:1`.
+<Flag name="--attach" arg="TARGET" def="none, a new desktop">
+Show a desktop already running on the host: an X11 display such as `:0`, `auto` for your active session, or `wayland` for your Wayland session. See [Attaching to a desktop](/attach).
 </Flag>
 <Flag name="--monitor" arg="MONITOR" def="`primary`">
-The monitor of an attached X11 desktop to show first: a name such as `DP-2`, its number in `xrandr --listmonitors` order, or `all` for every monitor as one picture; the page switches between them. Wayland shows the monitor picked in its sharing dialog.
+On an attached X11 desktop, the monitor to show first: a name such as `DP-1`, its number counting from 1, or `all` for every monitor as one picture; the page switches between them. Naming one is refused for a desktop robin starts and on Wayland, where you pick the monitor in the sharing dialog.
 </Flag>
 <Flag name="--audio" def="`true`">
-Stream the desktop's sound; `--audio=false` leaves it out.
+Stream the desktop's sound. `--audio=false` leaves it out.
 </Flag>
 </Flags>
 
@@ -58,13 +58,13 @@ Stream the desktop's sound; `--audio=false` leaves it out.
 
 <Flags>
 <Flag name="--keep" arg="DURATION" def="`8h`, `0` with `--attach`">
-How long the host keeps the desktop after the connection drops or the page detaches, for a later `robin gui` to resume, as a duration such as `8h`. `0` ends the desktop with the connection.
+How long the host keeps the desktop after the connection drops or you detach the page, for a later `robin gui` to pick up. Give a duration such as `30m` or `8h`; `0` ends the desktop with the connection. See [Kept sessions](/sessions).
 </Flag>
 <Flag name="--id" arg="ID" def="the one kept session">
-Which kept session to resume. Needed when the host keeps more than one; `robin ls` lists their ids.
+The kept session to resume, by the id `robin ls` prints. You need it when the host keeps more than one, and to resume a kept attached desktop.
 </Flag>
 <Flag name="--new" def="off">
-Start a new desktop even when a kept one could be resumed.
+Start a new desktop even when a kept one could be resumed. Refused with `--id`.
 </Flag>
 </Flags>
 
@@ -72,10 +72,10 @@ Start a new desktop even when a kept one could be resumed.
 
 <Flags>
 <Flag name="--mic" def="off">
-Offer your microphone to the host's programs, as Robin microphone. It stays off until you switch it on in the page. See [Microphone and camera](/microphone-and-camera).
+Offer your microphone to the host's programs, as `Robin microphone`. It stays off until you switch it on in the page. See [Microphone and camera](/sound#microphone-and-camera).
 </Flag>
 <Flag name="--camera" def="off">
-Offer your camera to the host's programs, through PipeWire or a v4l2loopback device. It stays off until you switch it on in the page.
+Offer your camera to the host's programs, through PipeWire or a `v4l2loopback` device; like the microphone, it stays off until you switch it on in the page.
 </Flag>
 </Flags>
 
@@ -83,10 +83,10 @@ Offer your camera to the host's programs, through PipeWire or a v4l2loopback dev
 
 <Flags>
 <Flag name="--curtain" def="off">
-Attached desktops: black out the host's screen while the page still shows it, from the start or as the CLI resumes a kept one. The keyboard and mouse at the host still work. See [Private sessions](/private-session).
+Black out the host's screen while the page still shows the desktop. It works with `--attach`, or with `--id` when you resume an attached desktop, and it does not lock the host's keyboard. See [Private sessions](/private-session).
 </Flag>
 <Flag name="--silent" def="off">
-Attached desktops: keep the host's speakers quiet while the page still plays the sound, from the start or as the CLI resumes.
+Keep the host's speakers quiet while the page still plays the sound. It works where `--curtain` does.
 </Flag>
 </Flags>
 
@@ -94,10 +94,10 @@ Attached desktops: keep the host's speakers quiet while the page still plays the
 
 <Flags>
 <Flag name="--share" arg="USER" def="none">
-Invite this account on the host to join the session as a guest, who watches until you give them control in the page; repeat for more. See [Sharing a desktop](/sharing).
+Invite this account on the host to join your session as a guest, who watches until you give them control in the page. Repeat it to invite more. See [Sharing a desktop](/sharing).
 </Flag>
 <Flag name="--join" arg="CODE" def="none">
-Join another account's session as a guest, with the code its owner was given, over your own login to the host.
+Join another account's session as a guest, with the code its owner was given, logged in to the host as yourself. The owner's flags are refused: `--attach`, `--id`, `--new`, `--session`, `--keep`, `--max-size`, `--fps`, `--max-kbps`, `--encoder`, `--monitor`, `--audio=false`, `--camera`, `--curtain`, `--silent` and `--share`. You and the owner need the same build of robin.
 </Flag>
 </Flags>
 
@@ -105,13 +105,13 @@ Join another account's session as a guest, with the code its owner was given, ov
 
 <Flags>
 <Flag name="--transport" arg="MODE" def="`auto`">
-Media path: `auto` (direct UDP, SSH tunnel as fallback), `direct` for UDP only, or `tunnel` to keep the media on the SSH path: the agent gathers no UDP and gets none of the browser's candidates, so no UDP pair can form whatever the browser shows (see [How it works](/how-it-works#transports-and-fallback)).
+Media path: `auto` (direct UDP, with the SSH tunnel as fallback), `direct` for UDP only, or `tunnel` to keep the media on the SSH connection. See [Transports](/using#transports).
 </Flag>
 <Flag name="--stun" arg="SERVERS" def="`stun:stun.l.google.com:19302`">
-Comma-separated STUN servers for NAT traversal, or `none`. The browser and the agent each ask them for their public address (see [Security](/security#stun-tells-a-server-where-you-are)), except with `--transport tunnel`, which asks none.
+Comma-separated STUN servers for NAT traversal, or `none`. `--transport tunnel` asks none.
 </Flag>
 <Flag name="--listen" arg="ADDR" def="`127.0.0.1:0`">
-Address for the local page; loopback only.
+Address for the local page. It must be a loopback address; `robin gui` refuses any other.
 </Flag>
 </Flags>
 
@@ -119,13 +119,13 @@ Address for the local page; loopback only.
 
 <Flags>
 <Flag name="--no-browser" def="off">
-Print the page URL on stdout instead of opening a browser. Without it the browser gets a single-use launch link, never the token.
+Print the page URL on stdout instead of opening a browser.
 </Flag>
 <Flag name="--ssh" arg="PATH" def="`ssh`">
-The ssh client to drive.
+The ssh client to run.
 </Flag>
 <Flag name="--ssh-mux" def="`true`, `false` on Windows">
-Carry everything over one ControlMaster connection. `--ssh-mux=false` gives the probe, the upload, the agent and the tunnel an ssh connection each, as on Windows, whose OpenSSH has no ControlMaster.
+Carry everything over one ssh ControlMaster connection; `--ssh-mux=false` gives each command its own connection, as on Windows.
 </Flag>
 <Flag name="-v" def="off">
 Log the CLI and the agent to stderr.
@@ -136,6 +136,6 @@ Log the CLI and the agent to stderr.
 
 <Flags>
 <Flag name="--" arg="ssh-args...">
-Everything after `--` is handed to `ssh` as it is, as in `robin gui build-box -- -p 2222`. Flags for `robin` go before the destination.
+Flags for `robin` go before the host. Everything after `--` goes to `ssh` as it is, as in `robin gui build-box -- -p 2222`.
 </Flag>
 </Flags>

@@ -259,7 +259,7 @@
     overflow-wrap: anywhere;
   }
   .flag .flag-arg {
-    font-weight: 400;
+    font-weight: var(--font-weight-normal);
     color: var(--muted-foreground);
   }
   .flag .flag-default {
@@ -287,7 +287,7 @@
     margin-left: 0.375rem;
     padding: 0 0.25rem;
     font-family: var(--font-sans);
-    font-weight: 400;
+    font-weight: var(--font-weight-normal);
     color: var(--muted-foreground);
     text-decoration: none;
     opacity: 0;

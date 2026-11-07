@@ -13,45 +13,28 @@ const groups = groupDocs(toDocLinks(await getCollection("docs")));
 const command = "robin gui alice@build-box";
 
 const steps = [
-  {
-    name: "Connect",
-    text: "opens one connection, and the probe, the upload, the agent and the tunnel all ride it. Windows' OpenSSH has no ControlMaster, so there each opens its own.",
-    code: "ssh -M",
-  },
-  {
-    name: "Probe",
-    text: "A shell probe reports the distro, architecture, live sessions, GPU and a directory the agent can run from.",
-  },
-  {
-    name: "Deploy",
-    text: "The static agent for that architecture goes up over SFTP and is checked by SHA-256 before it runs.",
-  },
-  {
-    name: "Start",
-    text: "The agent starts Xvfb and a session, or attaches to the desktop you are already logged in to.",
-  },
+  { name: "Connect", text: "Your ssh logs in, once." },
+  { name: "Probe", text: "A short script checks what the host has." },
+  { name: "Deploy", text: "A small agent is copied over and checked." },
+  { name: "Start", text: "A fresh desktop starts, or Robin attaches to yours." },
   {
     name: "Stream",
-    text: "Video and sound reach your browser over WebRTC; keys, pointer and clipboard come back. Without UDP, it all rides SSH.",
+    text: "Picture and sound come to your browser; keys and mouse go back. Without UDP, everything goes through SSH.",
   },
 ];
 
 const needs = [
   {
     term: "The host",
-    text: "Linux on x86_64 or arm64 and an SSH login. For a new desktop, Xvfb and a window manager; to attach, only the desktop.",
+    text: "Linux you can ssh to. A new desktop needs Xvfb and a window manager; attaching needs only the desktop.",
   },
   {
     term: "Your machine",
-    text: "macOS, Linux, Windows or Android in Termux, with OpenSSH and a browser that decodes H.264 in WebRTC.",
+    text: "macOS, Linux, Windows or Android, with OpenSSH and a current browser.",
   },
   {
-    term: "If the connection drops",
-    text: "A desktop Robin started waits on the host for you to come back, 8 hours by default or as long as --keep says. An attached one ends with the connection unless you name a --keep.",
-  },
-  {
-    term: "When you end it",
-    text: "The agent stops everything it started and removes its run directory. Only the agent binary stays, cached for the next session, plus the restore token if you approved a Wayland share.",
+    term: "Afterwards",
+    text: "Ending a session stops everything Robin started. Only the agent stays, cached for next time, and a Wayland approval if you gave one.",
   },
 ];
 
@@ -70,7 +53,7 @@ const runsHtml = runs
 ---
 
 <Base
-  description="robin gui <host> opens a desktop from that host in your browser. The host needs only the SSH access you already have: no server to install, no ports to open, no root."
+  description="robin gui <host> opens that host's desktop in your browser. You need only the SSH login you already have."
   groups={groups}
   home
 >
@@ -82,8 +65,8 @@ const runsHtml = runs
           <span class="sr-only">Robin: </span>Your eyes and hands on any Linux box you can ssh to.
         </h1>
         <p class="mb-8 max-w-[34rem] text-lg text-muted-foreground">
-          <code class="text-foreground">robin gui &lt;host&gt;</code> opens a desktop from that host in your browser. The
-          host needs only the SSH access you already have: no server to install, no ports to open, no root.
+          <code class="text-foreground">robin gui &lt;host&gt;</code> opens that host's desktop in your browser. You need
+          only the SSH login you already have.
         </p>
         <div
           class="flex h-12 max-w-none items-center overflow-hidden rounded-panel border border-code-border bg-code pl-4 font-mono text-[0.9375rem] text-code-foreground sm:max-w-[26rem]"
@@ -92,7 +75,7 @@ const runsHtml = runs
           <CopyButton client:visible code={command} variant="field" label="Copy command" />
         </div>
         <div class="mt-5 flex items-center gap-3">
-          <a href={docHref("install")} class={buttonVariants({ size: "lg" })}>Install</a>
+          <a href={docHref("getting-started")} class={buttonVariants({ size: "lg" })}>Get started</a>
           <a href={docHref("how-it-works")} class={buttonVariants({ size: "lg", variant: "ghost" })}>How it works</a>
         </div>
       </div>
@@ -130,15 +113,14 @@ alice@build-box:~$ <span class="xterm-cursor">_</span></pre>
           </div>
         </div>
         <pre class="local-term"><span class="code-prompt">$ </span>{command}
-<span class="code-comment">robin: :2 on alice@build-box; press Ctrl+C to end the session</span></pre>
+<span class="code-comment">robin: :2 on alice@build-box; kept for 8h0m0s if the connection drops; press Ctrl+C to end the session</span></pre>
       </figure>
     </section>
 
     <section class="border-t border-border py-14 nav:py-16" aria-labelledby="flow-heading">
       <h2 id="flow-heading" class="mb-2 text-2xl font-[650] tracking-[-0.012em]">What happens when you run it</h2>
       <p class="mb-10 max-w-[42rem] text-muted-foreground">
-        Your own <code>ssh</code> does the connecting, so your config, keys, jump hosts and 2FA prompts work as they always
-        do.
+        Your own <code>ssh</code> does the connecting, so your config, keys and jump hosts just work.
       </p>
       <ol class="flow">
         {
@@ -148,7 +130,7 @@ alice@build-box:~$ <span class="xterm-cursor">_</span></pre>
                 {index + 1}
               </span>
               <b>{step.name}</b>
-              {step.code && <code>{step.code}</code>} {step.text}
+              {step.text}
             </li>
           ))
         }

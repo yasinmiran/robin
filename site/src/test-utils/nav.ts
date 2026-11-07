@@ -5,7 +5,7 @@ export const groups: NavGroup[] = [
     label: "Start",
     items: [
       { slug: "introduction", title: "Introduction", section: "Start", order: 1 },
-      { slug: "install", title: "Install and build", section: "Start", order: 3 },
+      { slug: "getting-started", title: "Getting started", section: "Start", order: 2 },
     ],
   },
   {

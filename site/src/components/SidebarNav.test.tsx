@@ -15,14 +15,14 @@ describe("SidebarNav", () => {
     const started = within(nav).getByRole("list", { name: "Start" });
     expect(within(started).getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual([
       "/introduction",
-      "/install",
+      "/getting-started",
     ]);
     expect(within(nav).getByRole("list", { name: "Use" })).toHaveTextContent("Sound");
   });
 
   it("marks the page being read", () => {
-    render(<SidebarNav groups={groups} current="install" />);
-    expect(screen.getByRole("link", { name: "Install and build" })).toHaveAttribute("aria-current", "page");
+    render(<SidebarNav groups={groups} current="getting-started" />);
+    expect(screen.getByRole("link", { name: "Getting started" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "Introduction" })).not.toHaveAttribute("aria-current");
   });
 

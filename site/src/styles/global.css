@@ -1,8 +1,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "./shadcn.css";
-@import "@fontsource-variable/atkinson-hyperlegible-next/wght.css";
-@import "@fontsource-variable/atkinson-hyperlegible-mono/wght.css";
+@import "@fontsource-variable/google-sans-flex/rond.css";
+@import "@fontsource-variable/google-sans-code/wght.css";
 @import "./tokens.css";
 @import "./no-script.css";
 @import "./content.css";
@@ -11,10 +11,18 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme {
+  /* Google Sans Flex at 400 draws a thinner stem than the text needs on
+     either theme; 430 matches the colour of the page it replaced. */
+  --font-weight-normal: 430;
+
+  /* Without the opsz axis the face is spaced for 18px everywhere; small
+     sizes get back the room their optical size would have given them. */
   --text-xs: 0.8125rem;
   --text-xs--line-height: 1.45;
+  --text-xs--letter-spacing: 0.015em;
   --text-sm: 0.875rem;
   --text-sm--line-height: 1.5;
+  --text-sm--letter-spacing: 0.01em;
   --text-base: 1rem;
   --text-base--line-height: 1.65;
   --text-lg: 1.125rem;
@@ -55,16 +63,24 @@
     color-scheme: dark;
   }
   body {
-    @apply bg-background text-base text-foreground;
+    @apply bg-background text-base font-normal text-foreground;
     -webkit-font-smoothing: antialiased;
     font-optical-sizing: auto;
+    font-variation-settings: "ROND" var(--rond-text);
+    /* The face sets its words close; a touch more keeps them apart at 14px. */
+    word-spacing: 0.04em;
     overflow-wrap: break-word;
+  }
+  /* ROND only: a wght here would override font-weight below it. */
+  :is(h1, h2, h3, h4) {
+    font-variation-settings: "ROND" var(--rond-heading);
   }
   code,
   kbd,
   pre,
   samp {
     font-family: var(--font-mono);
+    word-spacing: normal; /* columns of code stay on the grid */
   }
   :focus-visible {
     outline: 2px solid var(--ring);

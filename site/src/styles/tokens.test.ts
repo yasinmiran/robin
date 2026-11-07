@@ -121,3 +121,28 @@ describe.each([
     expect(contrast(front!.hex, back!.hex)).toBeGreaterThanOrEqual(minimum);
   });
 });
+
+// The page preloads one font file. It has to be the very file a face in the
+// imported CSS points at, or the visitor downloads two; and the stacks have
+// to name the families those faces declare.
+describe("fonts", () => {
+  const imported = [...read("./global.css").matchAll(/^@import "(@fontsource-variable\/[^"]+\.css)";$/gm)].map(
+    ([, spec]) => readFileSync(fileURLToPath(import.meta.resolve(spec)), "utf8"),
+  );
+  const families = new Set(imported.flatMap((css) => [...css.matchAll(/font-family: '([^']+)'/g)].map(([, f]) => f)));
+
+  it("leads each stack with a family the imported faces declare", () => {
+    const tokens = read("./tokens.css");
+    for (const name of ["sans", "mono"]) {
+      const first = tokens.match(new RegExp(`--font-${name}: "([^"]+)"`))?.[1];
+      expect(families, `--font-${name}`).toContain(first);
+    }
+  });
+
+  it("preloads a file an imported face uses", () => {
+    const layout = read("../layouts/Base.astro");
+    const preload = layout.match(/from "@fontsource-variable\/[^/]+\/files\/([^"?]+)\?url"/)?.[1];
+    expect(preload).toBeTruthy();
+    expect(imported.some((css) => css.includes(`url(./files/${preload})`))).toBe(true);
+  });
+});

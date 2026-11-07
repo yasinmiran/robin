@@ -1,0 +1,121 @@
+---
+title: Attaching to a desktop
+description: Stream the X11 or Wayland desktop you are already logged in to, pick a monitor, and leave it as you found it.
+section: Use
+order: 3
+---
+
+```sh
+# your active session, X11 or Wayland
+robin gui --attach auto workstation
+
+# an X display you name
+robin gui --attach :0 workstation
+
+# your GNOME or KDE Plasma session
+robin gui --attach wayland workstation
+```
+
+With `--attach`, Robin starts nothing new on the host and streams a desktop that is already running, usually the one you are logged in to at the machine.
+
+## Choosing a desktop
+
+`--attach auto` takes your active session, Wayland first, and never the Xwayland server inside a Wayland session, which shows none of your desktop. If it cannot tell which desktop you mean, it lists the sessions and X displays it found; name one with `--attach :N` or `--attach wayland`.
+
+The desktop stays shared: whoever sits at the machine sees what you do and hears its sound, and the terminal says so. To black out the screen and quiet the speakers, see [Private sessions](/private-session).
+
+Resolution stays the desktop's own. Resizing your browser window scales the picture instead of resizing the remote screen, and a desktop larger than `--max-size` is scaled down in the stream; if scaled text looks soft, see [sharp text and actual size](/using#sharp-text-and-actual-size).
+
+Nothing keeps an attached desktop after a dropped connection unless you pass a duration such as `--keep 8h`, and then it is kept like a spawned one (see [Kept sessions](/sessions)).
+
+## X11
+
+Robin looks for the display's cookie in `$XAUTHORITY`, `~/.Xauthority`, GDM's file under `/run/user/$UID`, and the files mutter and SDDM leave there. If none works and Robin says the display refused every way in, run this once in a terminal on the host's desktop:
+
+```sh
+xhost +si:localuser:$USER
+```
+
+### Monitors
+
+A desktop with several monitors shows one at a time, starting with the primary; `--monitor` picks another:
+
+```sh
+# by name
+robin gui --attach auto --monitor DP-2 workstation
+
+# by number, in xrandr --listmonitors order
+robin gui --attach auto --monitor 2 workstation
+
+# every monitor as one picture
+robin gui --attach auto --monitor all workstation
+```
+
+The terminal says which monitor you see and how many there are:
+
+```text
+robin: attached to :0 on workstation, showing monitor DP-1 (2560x1440), one of 3 (switch in the page); press Ctrl+C to end the session
+```
+
+The monitor menu in the status tab lists each one with its size, plus All monitors, and picking one switches the stream at once.
+
+### Left as found
+
+Ending the session closes Robin's connection to the display and puts back what it changed:
+
+- **Autorepeat** goes off for the whole display at your first key press, so keys held at the machine itself do not repeat either, until the session ends and autorepeat comes back with the keymap as it was.
+- **Pasted text.** What you pasted from the browser stays on the desktop's clipboard after the session only if the desktop runs a clipboard manager.
+
+The curtain and the silent room are undone too (see [Private sessions](/private-session)).
+
+## Wayland
+
+`--attach wayland` streams a GNOME or KDE Plasma session through the desktop's own screen sharing, the same one a video call app uses. The desktop asks before it is first shared and shows that sharing is on, and if the person at the screen stops it there, your session ends with it.
+
+### The consent dialog
+
+The first session brings up a dialog on the host's screen that someone sitting there has to answer, and the terminal says what to do:
+
+```text
+robin: approve the screen sharing request on workstation's screen, with remote interaction allowed (GNOME: switch on Allow Remote Interaction, then Share; KDE Plasma: Approve). Waiting up to 2m0s. Once approved, later sessions start without asking.
+```
+
+- **GNOME**: switch on **Allow Remote Interaction** before you press **Share**. Without it the session is view only: you see the screen, but your keyboard and mouse do nothing there. To get control you have to end the session, run it again and allow remote interaction.
+- **KDE Plasma**: press **Approve**, which grants the picture and the input together.
+
+If nobody answers within 2 minutes, Robin gives up.
+
+### The restore token
+
+Once you approve, Robin keeps a restore token in a file called `wayland-restore-token`, in the same directory as the agent on the host and readable only by you, and later sessions start without a dialog until you delete that file.
+
+A view-only approval is never remembered, so the next session asks again.
+
+<Callout type="warning" title="The restore token is a credential.">
+Anyone who holds it and can reach your session bus can share your screen without a dialog. Never copy it, and delete it if someone else may have read it.
+</Callout>
+
+### What the host needs
+
+The host needs the GStreamer tools and its PipeWire, base and good plugins; a desktop install usually lacks only the tools. Robin checks before it starts and prints the install line for your distribution, for example:
+
+```sh
+sudo apt install gstreamer1.0-tools gstreamer1.0-pipewire gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+```
+
+### How it differs from X11
+
+- **One monitor**, the one picked in the sharing dialog, so `--monitor` is refused.
+- **No sharp text.** The switch is greyed out, with the reason under it.
+- **The pointer is drawn into the video.** It moves at the video's pace, a little behind your hand, and the browser hides its own pointer over the picture.
+- **On GNOME, a key types its own character only if the host's keyboard layout has it.** Text from Type clipboard, a macro, a soft keyboard or an input method arrives as a paste unless it is all ASCII the layout has (see [Limits](#limits)). KDE Plasma types every character as itself.
+- **Held keys repeat at the host's rate.** During a network stall, a held key keeps repeating on the host until you let go and the key-up gets through.
+- **No curtain on KDE Plasma.** The switch is missing there and `--curtain` fails with the reason, though the silent room works on both.
+
+## Limits
+
+- One browser tab shows one monitor; `--monitor all` fits every monitor into one picture, where small text gets hard to read.
+- On GNOME Wayland, pasted text arrives as Ctrl+Shift+V, then Ctrl+V, so a program that does something else on those keys does that instead; see [Wrong characters on GNOME Wayland](/troubleshooting#wrong-characters-on-gnome-wayland).
+- KDE Plasma shares its screen only while KWin composites with OpenGL; without a GPU the session ends with "Start failed".
+- Sway and other wlroots compositors are not supported.
+- Wayland is known to work on GNOME 46 and 49 and KDE Plasma 6.7; other versions are not yet checked.
