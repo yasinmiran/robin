@@ -7,20 +7,70 @@ order: 5
 
 ## Sound from the desktop
 
-Coming soon.
+Sound is on by default; `--audio=false` leaves it out.
+
+The page opens muted, since a browser will only start a video on its own while it's silent. Once sound arrives a speaker appears in the status tab, and you click it to hear the session, then again after every reload.
+
+Where the sound comes from depends on the desktop:
+
+- **A new desktop** gets a private `pulseaudio` of its own, which touches none of the host's sound cards and stops with the session.
+- **An attached desktop** is recorded from its own sound server, PulseAudio or PipeWire, and you hear the output that was the default when the session started. The host's speakers keep playing too, unless you run with `--silent` or turn on Quiet host speakers in the status tab; see [Private sessions](/private-session#the-silent-room).
+
+When the host can't give you sound, the session runs without it and the terminal says why:
+
+```text
+robin: no sound from build-box: no sound server for the new desktop: install pulseaudio on the host
+```
 
 ## Microphone and camera
 
-Coming soon.
+You can lend the microphone and camera of the computer you sit at to the host's programs, a video call on the remote desktop for instance:
+
+```sh
+robin gui --mic --camera build-box
+```
+
+At the start the terminal says once where each one went on the host, or why it couldn't. For each one the host took, the status tab gets a Microphone or a Camera switch, and both start off.
+
+Switching one on asks the browser for the device, with the browser's own permission prompt the first time, and a red dot shows while it's being sent. Switching it off stops the device, so your camera light goes out too. After a reload both are off again until you switch them on.
+
+The host's programs list them as Robin microphone and Robin camera, though a v4l2loopback device keeps the label it was loaded with:
+
+| Desktop | Microphone | Camera |
+|---|---|---|
+| new | the default source of the session's private pulseaudio | a v4l2loopback device, if the host has one |
+| attached, PipeWire | a PipeWire source, gone when the session ends | a v4l2loopback device if the host has one, else a PipeWire camera |
+| attached, PulseAudio | a source on your PulseAudio, removed when the session ends | a v4l2loopback device, else a PipeWire camera if PipeWire runs |
+
+Robin doesn't make the microphone your default, so on an attached desktop it's one more source to pick in a program's settings.
+
+The camera is always 1280x720, with a picture of any other shape centred on black. While it's off the host sees black as well, so your last picture never stays on its screen.
 
 ## What the host needs
 
-Coming soon.
+- **Sound and the microphone in a new desktop:** `pulseaudio`.
+- **The camera, and the microphone on PipeWire:** `gst-launch-1.0`, with GStreamer's PipeWire plugin for anything that goes to PipeWire, as [Wayland attach](/attach#what-the-host-needs) needs.
+- **A camera for programs that open `/dev/video*`**, and any camera in a new desktop: a v4l2loopback device you can write.
+
+A PipeWire camera reaches programs that use PipeWire for cameras, such as GNOME Snapshot, OBS and browsers set to use the camera portal. For the rest, load v4l2loopback:
+
+```sh
+sudo apt install v4l2loopback-dkms
+sudo modprobe v4l2loopback card_label="Robin camera" exclusive_caps=1
+```
+
+If the host has a v4l2loopback device you can write, the camera goes there instead of to PipeWire, to the device whose label names Robin or else the first one.
 
 ## Who can hear and see them
 
-Coming soon.
+Every program running as you on the host can record the microphone and camera. Your sound server and PipeWire are yours alone. A v4l2loopback device, though, is readable by whoever its permissions let in, often the `video` group, and on a shared host that means they see your camera too.
+
+Nothing leaves your browser while a switch is off, and the host can't turn one on. In a [shared session](/sharing#control) only the owner's camera is sent, and a guest's microphone is heard only while that guest has control.
 
 ## Limits
 
-Coming soon.
+- A new desktop on a host with PipeWire and no `pulseaudio` has no sound and no microphone; install `pulseaudio` or attach to the running desktop.
+- A PipeWire camera is invisible to programs that open `/dev/video*` themselves; load v4l2loopback for them.
+- The microphone and camera are known to work in Chrome; Firefox and Safari haven't been checked yet.
+- A kept session keeps the devices it started with, so resuming with `--mic` or `--camera` it lacked is refused; end it and start another (see [Kept sessions](/sessions#resuming-with-other-flags)).
+- On plain PulseAudio, an agent killed outright leaves Robin microphone loaded until your next session with `--mic` there removes it.
