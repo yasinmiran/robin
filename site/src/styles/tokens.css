@@ -11,8 +11,13 @@
 }
 
 :root {
-  --font-sans: "Atkinson Hyperlegible Next Variable", "Atkinson Hyperlegible Next", system-ui, -apple-system, "Segoe UI", Cantarell, Ubuntu, sans-serif;
-  --font-mono: "Atkinson Hyperlegible Mono Variable", "Atkinson Hyperlegible Mono", ui-monospace, "SF Mono", "DejaVu Sans Mono", monospace;
+  --font-sans: "Google Sans Flex Variable", "Google Sans Flex", system-ui, -apple-system, "Segoe UI", Cantarell, Ubuntu, sans-serif;
+  --font-mono: "Google Sans Code Variable", "Google Sans Code", ui-monospace, "SF Mono", "DejaVu Sans Mono", monospace;
+  /* Google Sans Flex's ROND axis, 0 square to 100 round. Text stays at half,
+     where the corners soften but small letters keep their edges; headings
+     are big enough to take it whole. */
+  --rond-text: 50;
+  --rond-heading: 100;
 }
 
 :root {
