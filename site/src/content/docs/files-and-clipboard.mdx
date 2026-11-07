@@ -5,13 +5,13 @@ section: Use
 order: 6
 ---
 
-Files and clipboard content go both ways between the page and the host, and every transfer shows up in the status tab at the top of the page.
+Files and the clipboard go both ways between the page and the host, and every transfer shows in the status tab.
 
 ## Uploading files
 
 Drop files anywhere on the page, or click **Upload files** in the status tab and pick them. While each one goes it has a progress bar and a Cancel button.
 
-Files you paste into the page are listed too, but each waits for you to click its **Upload** (or **Dismiss**, which drops it), since the clipboard can still hold files you copied long ago.
+Files you paste into the page are listed too, but each waits for you to click its **Upload** or **Dismiss**.
 
 Uploads land in your download folder on the host, which is created if it is missing. Robin looks for it in this order:
 
@@ -21,7 +21,9 @@ Uploads land in your download folder on the host, which is created if it is miss
 
 A download folder that is your home directory itself counts as unset.
 
-Nothing on the host is ever replaced: a second `report.pdf` becomes `report (1).pdf`, and the status tab shows the name it got. Robin also refuses a file whose name starts with a dot, so no upload lands hidden, and refuses an upload before it starts if it would leave less than 256 MiB free on that disk.
+Nothing on the host is ever replaced: a second `report.pdf` becomes `report (1).pdf`, and the status tab shows the name it got. Robin also refuses a file whose name starts with a dot, and refuses an upload before it starts if it would leave less than 256 MiB free on that disk.
+
+An upload sent or cut off while the page has no connection to the host, as while it says Reconnecting, fails with `Upload failed: not connected to the desktop`; send it again once the page is back.
 
 ## Getting a file from the host
 
@@ -37,25 +39,25 @@ robin-send report.pdf build/*.log
 
 On most hosts the agent is in `~/.cache/robin`, else in `$XDG_RUNTIME_DIR/robin` or `/tmp/robin-` followed by your user id.
 
-The page lists each file by name and size. Nothing downloads until you click **Save**, and **Dismiss** turns the file down instead.
+The page lists each file by name and size. Nothing downloads until you click **Save**, and **Dismiss** turns the file down instead. A Save the connection cut off, or one clicked while the page has none, shows `Download failed: not connected to the desktop` and keeps its **Save** button for when the page is back.
 
 `robin-send` waits until you have saved or dismissed every file it offered (Ctrl+C withdraws whatever is still on offer), then prints what became of each and exits 0 only if all of them were saved.
 
-Outside a desktop Robin started, the command offers to the one session it finds running. With two or more it refuses to guess, so run `robin-send` in the desktop Robin started instead.
+Outside a desktop Robin started, the command offers to the one session it finds running, and refuses to guess between two or more.
 
 ## The clipboard
 
-The clipboard carries plain text, HTML and PNG images both ways, up to 16 MiB at a time, so a screenshot copied on one side pastes as a picture on the other.
+The clipboard carries plain text, HTML and PNG images both ways, up to 16 MiB at a time.
 
 Your paste shortcut in the page sends your local clipboard to the host first, so the program there pastes what you just copied. A single PNG you paste goes to the host's clipboard as an image; any other file you paste becomes an upload waiting for its click.
 
-What you copy on the host reaches your local clipboard only while the page has focus. Anything you copied while you were in another window has to be copied again on the host once the page has focus.
+What you copy on the host reaches your local clipboard only while the page has focus, so copy again after you come back to the page.
 
 A lock screen or VM console often takes no paste, and there **Type clipboard** types your clipboard as keys instead: see [Type clipboard](/macros#type-clipboard).
 
 ## Limits
 
-- A file is at most 4 GiB either way. The browser holds a download in memory until it is complete, so it needs room for it.
+- A file is at most 4 GiB either way, and the browser holds a download in memory until it is complete.
 - Other clipboard formats (RTF, JPEG, a file manager's file list) stay behind, and an image that would take the clipboard over 16 MiB is left out while its text still goes.
 - A file that grew after `robin-send` offered it is refused when you click Save; offer it again to get what it holds now.
 - In an attached desktop `robin-send` is not on your `PATH`, so run the agent with `send` as shown above.
