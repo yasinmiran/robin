@@ -13,9 +13,9 @@ robin end [user@]host [id] [-- ssh-args...]
 robin version
 ```
 
-`robin gui` opens a desktop on the host, or picks up one the host kept for you. `robin ls` lists the sessions the host keeps, each with its id and the time it ends on its own, and `robin end` ends one without opening it (give it the id when the host keeps more than one). `robin version` prints the version. [Kept sessions](/sessions) says how they fit together.
+`robin gui` opens a desktop, or picks up one the host kept. `robin ls` lists the kept sessions and `robin end` ends one, given its id when there are several; see [Kept sessions](/sessions). `robin version` prints the version.
 
-[Using Robin](/using) shows what the flags change in a session. They take one dash or two (`-v`, `--max-size`) and go before the host, and `robin gui -h` prints the same list with its defaults, though `robin ls` and `robin end` take only `--ssh`, `--ssh-mux` and `-v`.
+Flags take one dash or two (`-v`, `--max-size`) and go before the host. `robin gui -h` prints this list; `robin ls` and `robin end` take only `--ssh`, `--ssh-mux` and `-v`.
 
 ## Picture
 
@@ -33,7 +33,7 @@ Size the remote display in your screen's device pixels: sharper text on a HiDPI 
 Video bitrate ceiling, in kbit/s.
 </Flag>
 <Flag name="--encoder" arg="MODE" def="`auto`">
-Video encoder on the host: `auto` (the GPU where the host has one that helps, else software), `software`, `vaapi` or `nvenc`. Name an encoder the host cannot run and `robin gui` stops and says what is missing. See [GPU encoding](/using#gpu-encoding).
+Video encoder on the host: `auto` (the GPU where the host has one that helps, else software), `software`, `vaapi` or `nvenc`. Name an encoder the host cannot run and `robin gui` stops and says what is missing; one that starts but keeps failing ends the session with its error. See [GPU encoding](/using#gpu-encoding).
 </Flag>
 </Flags>
 
@@ -41,13 +41,13 @@ Video encoder on the host: `auto` (the GPU where the host has one that helps, el
 
 <Flags>
 <Flag name="--session" arg="CMD" def="the lightest desktop found">
-Command to run in a new desktop, such as `startxfce4`.
+Command to run in a new desktop, such as `startxfce4`. Refused with `--attach`, since that desktop runs its own.
 </Flag>
 <Flag name="--attach" arg="TARGET" def="none, a new desktop">
 Show a desktop already running on the host: an X11 display such as `:0`, `auto` for your active session, or `wayland` for your Wayland session. See [Attaching to a desktop](/attach).
 </Flag>
 <Flag name="--monitor" arg="MONITOR" def="`primary`">
-On an attached X11 desktop, the monitor to show first: a name such as `DP-1`, its number counting from 1, or `all` for every monitor as one picture. The page switches between them, and on Wayland you pick the monitor in the sharing dialog.
+On an attached X11 desktop, the monitor to show first: a name such as `DP-1`, its number counting from 1, or `all` for every monitor as one picture; the page switches between them. Naming one is refused for a desktop robin starts and on Wayland, where you pick the monitor in the sharing dialog.
 </Flag>
 <Flag name="--audio" def="`true`">
 Stream the desktop's sound. `--audio=false` leaves it out.
@@ -64,7 +64,7 @@ How long the host keeps the desktop after the connection drops or you detach the
 The kept session to resume, by the id `robin ls` prints. You need it when the host keeps more than one, and to resume a kept attached desktop.
 </Flag>
 <Flag name="--new" def="off">
-Start a new desktop even when a kept one could be resumed.
+Start a new desktop even when a kept one could be resumed. Refused with `--id`.
 </Flag>
 </Flags>
 
@@ -97,7 +97,7 @@ Keep the host's speakers quiet while the page still plays the sound. It works wh
 Invite this account on the host to join your session as a guest, who watches until you give them control in the page. Repeat it to invite more. See [Sharing a desktop](/sharing).
 </Flag>
 <Flag name="--join" arg="CODE" def="none">
-Join another account's session as a guest, with the code its owner was given, logged in to the host as yourself. A guest cannot use `--share`, `--attach`, `--id`, `--new`, `--session`, `--camera`, `--curtain` or `--silent`.
+Join another account's session as a guest, with the code its owner was given, logged in to the host as yourself. The owner's flags are refused: `--attach`, `--id`, `--new`, `--session`, `--keep`, `--max-size`, `--fps`, `--max-kbps`, `--encoder`, `--monitor`, `--audio=false`, `--camera`, `--curtain`, `--silent` and `--share`.
 </Flag>
 </Flags>
 
