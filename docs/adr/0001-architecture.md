@@ -1214,7 +1214,14 @@ uploads used to remove its row and its Cancel button while its bytes still
 went. The page lists at most 256 files on offer, the agent's own
 `maxSessionOffers`, since every change redraws every row: past that, the
 oldest still waiting for a click on Save goes, so a host that offered
-without end grows neither the list nor the redraw.
+without end grows neither the list nor the redraw. A fetch goes with the
+peer it was sent on: the agent sends every open offer again when a new
+control channel opens, and the page puts a row it lists as fetching back on
+offer when it hears its offer again, since nothing is on its way; a row
+whose bytes are arriving is left to its channel's close. A Save clicked
+while the page has no control channel puts the row straight back on offer,
+"not connected to the desktop", and so does an upload that meets no peer,
+which `sendBulk` refuses before it touches one.
 
 **Names from the host.** File names, the names uploads were kept under,
 transfer errors and monitor names go in as text, never markup, but the
