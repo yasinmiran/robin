@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pion/webrtc/v4"
+
 	"github.com/yasinmiran/robin/internal/agent/peer"
 	"github.com/yasinmiran/robin/internal/agent/yuv"
 	"github.com/yasinmiran/robin/internal/protocol"
@@ -240,18 +242,38 @@ func (brokenToolEncoder) Close() error         { return nil }
 func TestPickedEncoderFallsBackWhenEncodeFails(t *testing.T) {
 	var hwEncodes atomic.Int64
 	swEncoded := make(chan [2]int, 1)
-	hwOpens := 0
+	ended := streamThroughVAAPI(t, true, func(int, int, int, int) (Encoder, error) { return &fakeEncoder{sizes: swEncoded}, nil },
+		func() Encoder { return brokenToolEncoder{&hwEncodes} })
+	select {
+	case <-swEncoded:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("hardware failed %d frames and software encoded none: the session has no video", hwEncodes.Load())
+	}
+	select {
+	case err := <-ended:
+		t.Errorf("the stream ended (%v) on a picked encoder with software to take over", err)
+	default:
+	}
+}
+
+// streamThroughVAAPI runs a stream of a still desktop to a peer through
+// vaapi, picked by the CLI or named by the user, whose trial frame encodes
+// and whose encoders after it come from next; software opens what sw
+// makes. It returns a channel that yields what the stream's run returned
+// once it has, then is closed.
+func streamThroughVAAPI(t *testing.T, picked bool, sw NewEncoderFunc, next func() Encoder) <-chan error {
+	t.Helper()
+	var opens atomic.Int64
 	table := map[string]NewEncoderFunc{
-		protocol.EncoderSoftware: func(int, int, int, int) (Encoder, error) { return &fakeEncoder{sizes: swEncoded}, nil },
+		protocol.EncoderSoftware: sw,
 		protocol.EncoderVAAPI: func(int, int, int, int) (Encoder, error) {
-			hwOpens++
-			if hwOpens == 1 {
+			if opens.Add(1) == 1 {
 				return &fakeEncoder{sizes: make(chan [2]int, 1)}, nil // the trial frame
 			}
-			return brokenToolEncoder{&hwEncodes}, nil
+			return next(), nil
 		},
 	}
-	v, err := chooseEncoder(protocol.Start{Encoder: protocol.EncoderVAAPI, EncoderFallback: true}, table, quietLog())
+	v, err := chooseEncoder(protocol.Start{Encoder: protocol.EncoderVAAPI, EncoderFallback: picked}, table, quietLog())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,6 +281,9 @@ func TestPickedEncoderFallsBackWhenEncodeFails(t *testing.T) {
 		t.Fatalf("chose %s (%q)", name, why)
 	}
 	s := mustStream(newStream(&stillDesktop{}, 100, 64, 64, v.open, quietLog()))
+	// A still screen goes out again soon, so frames keep coming to fail or
+	// encode.
+	s.refresh = 10 * time.Millisecond
 	p, err := peer.New(peer.Config{
 		MinBitrate: minBitrate, StartBitrate: startBitrate, MaxBitrate: protocol.DefaultMaxKbps * 1000, Log: quietLog(),
 		Video: s.video,
@@ -266,21 +291,161 @@ func TestPickedEncoderFallsBackWhenEncodeFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
+	t.Cleanup(func() { p.Close() })
 	s.subscribe(p)
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
+	ended := make(chan error, 1)
 	go func() {
-		s.run(ctx)
-		close(done)
+		ended <- s.run(ctx)
+		close(ended)
 	}()
-	defer func() {
+	t.Cleanup(func() {
 		cancel()
-		<-done
-	}()
-	select {
-	case <-swEncoded:
-	case <-time.After(3 * time.Second):
-		t.Fatalf("hardware failed %d frames and software encoded none: the session has no video", hwEncodes.Load())
+		for range ended {
+		}
+	})
+	return ended
+}
+
+// noSoftware is the software encoder of a test where only the named
+// hardware one may open.
+func noSoftware(t *testing.T) NewEncoderFunc {
+	return func(int, int, int, int) (Encoder, error) {
+		t.Error("software opened in place of the encoder the user named")
+		return nil, errors.New("software is not for this test")
 	}
+}
+
+// backoffEncoder fails as hwenc does when its host tool cannot encode the
+// size: the tool exits on a frame, and until it is started again a second
+// later each frame gets no data and no error, as one rate control skipped.
+// quiet is how many frames that pause lasts.
+type backoffEncoder struct {
+	calls *atomic.Int64
+	quiet int64
+}
+
+func (e backoffEncoder) Encode(*yuv.I420, time.Duration, bool) ([]byte, error) {
+	if (e.calls.Add(1)-1)%(e.quiet+1) != 0 {
+		return nil, nil
+	}
+	return nil, errors.New("hwenc: ffmpeg h264_vaapi: exited: unsupported resolution")
+}
+func (backoffEncoder) SetBitrate(int) error { return nil }
+func (backoffEncoder) Close() error         { return nil }
+
+// TestNamedEncoderThatKeepsFailingEndsTheStream: an encoder the user named
+// that passes its trial and then fails every frame at the session's size,
+// with the pauses hwenc keeps between restarts of its tool, gives up the
+// stream at its maxFailedFrames'th failure with the encoder's error, which
+// ends the session, instead of leaving the page without video for ever.
+func TestNamedEncoderThatKeepsFailingEndsTheStream(t *testing.T) {
+	var calls atomic.Int64
+	const quiet = 4
+	ended := streamThroughVAAPI(t, false, noSoftware(t), func() Encoder { return backoffEncoder{&calls, quiet} })
+	select {
+	case err := <-ended:
+		if err == nil {
+			t.Fatal("the stream ended without saying why")
+		}
+		for _, want := range []string{"64x64", fmt.Sprintf("%d failed frames", maxFailedFrames), "unsupported resolution"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the stream gave up with %q, want it to say %q", err, want)
+			}
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("the encoder failed %d times in %d frames and the stream goes on without video", (calls.Load()+quiet)/(quiet+1), calls.Load())
+	}
+	if got, want := calls.Load(), int64((maxFailedFrames-1)*(quiet+1)+1); got != want {
+		t.Errorf("the encoder was asked for %d frames, want %d: up to its last failure and none after", got, want)
+	}
+}
+
+// flakyEncoder fails maxFailedFrames-1 frames running, one fewer than gives
+// up the stream, then encodes one, over and over.
+type flakyEncoder struct {
+	calls   *atomic.Int64
+	encoded chan struct{}
+}
+
+func (e flakyEncoder) Encode(*yuv.I420, time.Duration, bool) ([]byte, error) {
+	if e.calls.Add(1)%maxFailedFrames != 0 {
+		return nil, errors.New("hwenc: ffmpeg h264_vaapi: exited: signal: killed")
+	}
+	select {
+	case e.encoded <- struct{}{}:
+	default:
+	}
+	return []byte{0, 0, 0, 1, 0x65, 0x88, 0x84, 0x21}, nil
+}
+func (flakyEncoder) SetBitrate(int) error { return nil }
+func (flakyEncoder) Close() error         { return nil }
+
+// TestNamedEncoderThatFailsSomeFramesKeepsStreaming: a named encoder whose
+// failed frames come between frames it encodes only skips those frames.
+func TestNamedEncoderThatFailsSomeFramesKeepsStreaming(t *testing.T) {
+	encoded := make(chan struct{}, 1)
+	ended := streamThroughVAAPI(t, false, noSoftware(t), func() Encoder { return flakyEncoder{new(atomic.Int64), encoded} })
+	for i := range 5 {
+		select {
+		case <-encoded:
+		case err := <-ended:
+			t.Fatalf("the stream ended (%v) after %d good frames", err, i)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%d good frames, then none", i)
+		}
+	}
+	select {
+	case err := <-ended:
+		t.Fatalf("the stream ended (%v) on an encoder that still encodes", err)
+	default:
+	}
+}
+
+// TestSessionEndsWhenANamedEncoderKeepsFailing runs a whole session whose
+// named encoder passes its trial and then fails every frame at the
+// desktop's size: the CLI hears the encoder's error and the session ends,
+// leaving nothing behind.
+func TestSessionEndsWhenANamedEncoderKeepsFailing(t *testing.T) {
+	var opens atomic.Int64
+	h := startAgent(t, func(o *Options) {
+		o.Encoders[protocol.EncoderVAAPI] = func(int, int, int, int) (Encoder, error) {
+			if opens.Add(1) == 1 {
+				return &fakeEncoder{sizes: make(chan [2]int, 1)}, nil // the trial frame
+			}
+			return brokenToolEncoder{new(atomic.Int64)}, nil
+		}
+	})
+	ready := h.start(func(s *protocol.Start) { s.Encoder = protocol.EncoderVAAPI })
+	if ready.Encoder != protocol.EncoderVAAPI {
+		t.Fatalf("ready reports encoder %s (%q), want vaapi", ready.Encoder, ready.EncoderError)
+	}
+	answer(t, h, offerFromBrowser(t, h, webrtc.RTPCodecTypeVideo))
+	wantErr := func(what, got string) {
+		for _, want := range []string{"encoder vaapi", "failed frames", "unsupported resolution"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s %q, want it to say %q", what, got, want)
+			}
+		}
+	}
+	deadline := time.After(20 * time.Second)
+	for heard := false; !heard; {
+		select {
+		case m, ok := <-h.msgs:
+			if !ok {
+				t.Fatalf("the agent went without a word to the CLI (Run: %v)", h.runErr)
+			}
+			if m.Type == protocol.TypeError {
+				wantErr("the CLI heard", m.Error)
+				heard = true
+			}
+		case <-deadline:
+			t.Fatal("the session goes on without video and the CLI hears nothing")
+		}
+	}
+	err := h.waitExit(ready.Display)
+	if err == nil {
+		t.Fatal("Run ended cleanly")
+	}
+	wantErr("Run returned", err.Error())
 }

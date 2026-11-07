@@ -553,7 +553,10 @@ software. If the GPU it picked fails on the host, as the session starts or
 at any frame after, the session carries on in software to its end, and `-v`
 shows which encoder was picked, why, and why it fell back. An encoder named
 with `--encoder` is never swapped for software: one that fails as the
-session starts fails the session.
+session starts fails the session, and so does one that starts and then
+fails three frames running at the desktop's size, a GPU driver capped
+below your resolution, say; robin prints the encoder's error. A frame it
+fails now and then among good ones is only skipped.
 
 The agent is a static binary and cannot load the host's GPU libraries, so
 for these it pipes frames through a tool the host already has: ffmpeg, or

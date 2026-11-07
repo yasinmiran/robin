@@ -153,11 +153,17 @@ func (h *harness) start(configure ...func(*protocol.Start)) *protocol.Ready {
 // waitGone fails unless Run returned and the session left nothing behind.
 func (h *harness) waitGone(display string) {
 	h.t.Helper()
+	if err := h.waitExit(display); err != nil {
+		h.t.Fatalf("Run: %v", err)
+	}
+}
+
+// waitExit fails unless Run returned and the session left nothing behind,
+// and returns what Run did.
+func (h *harness) waitExit(display string) error {
+	h.t.Helper()
 	select {
 	case <-h.exited:
-		if h.runErr != nil {
-			h.t.Fatalf("Run: %v", h.runErr)
-		}
 	case <-time.After(10 * time.Second):
 		h.t.Fatal("agent did not exit")
 	}
@@ -169,6 +175,7 @@ func (h *harness) waitGone(display string) {
 	if _, err := os.Stat("/tmp/.X" + num + "-lock"); !errors.Is(err, os.ErrNotExist) {
 		h.t.Fatalf("Xvfb for %s still holds its lock (%v)", display, err)
 	}
+	return h.runErr
 }
 
 func TestSessionTearsDownOnStdinEOF(t *testing.T) {
