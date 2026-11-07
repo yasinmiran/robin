@@ -5,7 +5,7 @@ section: Project
 order: 1
 ---
 
-Coming soon.
+Robin splits a session in two. SSH carries control (it logs in, looks at the host, puts the agent in place and carries the messages that set up the call) while WebRTC carries media: picture and sound come to your browser, and keys, pointer, clipboard, files, microphone and camera go back.
 
 <figure>
 <svg viewBox="0 0 760 470" role="img" aria-labelledby="robin-arch-title robin-arch-desc" xmlns="http://www.w3.org/2000/svg">
@@ -76,25 +76,51 @@ Coming soon.
 <text x="568" y="459">control and signaling</text>
 </g>
 </svg>
-<figcaption>One SSH connection carries everything except direct media. When UDP works, video, sound and input flow straight between the browser and the agent. When it does not, the same WebRTC session runs over ICE-TCP through a loopback listener on your machine and an SSH forward to the agent.</figcaption>
+<figcaption>One SSH connection carries everything except direct media. With UDP working, video, sound and input flow straight between the browser and the agent; without it, the same WebRTC session runs over ICE-TCP, through a loopback listener on your machine and then an SSH forward to the agent.</figcaption>
 </figure>
 
 ## From robin gui to a desktop
 
-Coming soon.
+1. **Connect.** Robin runs your own `ssh` once, as a ControlMaster connection, so your config, keys and jump hosts apply and every later step rides that one login. On Windows, or with `--ssh-mux=false`, each step opens an `ssh` of its own.
+2. **Probe.** A short shell script reports the host's system, architecture, desktops and tools. If a new desktop would need tools the host lacks, Robin stops here with an install line.
+3. **Deploy.** The agent for that architecture goes up over SFTP, unless the same agent is already there, and is checked by its SHA-256 before it replaces anything.
+4. **Start.** The agent starts on an SSH exec channel, whose stdin and stdout from then on carry only the setup messages.
+5. **Desktop.** The agent starts a fresh desktop under Xvfb or attaches to an X11 or Wayland desktop that is already running, then tells the CLI it is ready.
+6. **Page and media.** The CLI serves the page on 127.0.0.1, opens your browser and passes the call's setup between page and agent. From there the picture and sound flow to you while your input flows back.
+
+Press Ctrl+C or End session and the agent stops everything it started and removes the session's files. What it started goes with it even if the agent itself is killed, though its binary stays on the host for the next run.
 
 ## Transports and fallback
 
-Coming soon.
+Whenever it can, media takes direct UDP between your browser and the host. By default a session also offers one more route, a port on your own machine's loopback that leads through the SSH connection to the agent, and the browser ranks it below every UDP route; it uses that tunnel only when UDP cannot get through, say behind a `ProxyJump` host or a firewall that drops UDP.
+
+If UDP stops mid-session, media moves to the tunnel in about 3 s while the desktop and your input carry on.
+
+`--transport tunnel` keeps media on the SSH path from the start; `--transport direct` offers no tunnel at all. Video through the tunnel rides TCP inside TCP, which on a lossy link means more stalls than direct UDP would show.
 
 ## Kept sessions
 
-Coming soon.
+The desktop runs in a process of its own on the host, apart from the SSH channel, so a dropped connection need not take it down. While no CLI is connected the host keeps the desktop for the keep window, which is 8 hours by default for a desktop Robin started and needs `--keep` for an attached one. The page shows Reconnecting, and the CLI redials until it gets through or the window closes. A later `robin gui` to the same host picks up a desktop Robin started; an attached one comes back with `--id`.
+
+Where the host kills a login's processes at logout (`KillUserProcesses=yes`), Robin starts the desktop as a user systemd unit instead, and [Kept sessions](/sessions) has the commands.
 
 ## Where the code lives
 
-Coming soon.
+| Path | What it holds |
+|---|---|
+| `cmd/robin` | the CLI, pure Go, with the agents embedded |
+| `cmd/robin-agent` | the host agent, a static binary |
+| `internal/gui` | the session from the CLI's side, and the bridge between page and agent |
+| `internal/sshmux`, `deploy`, `agentbin`, `probe` | SSH, uploading the agent, looking at the host |
+| `internal/web` | the loopback server and the page in `static/` |
+| `internal/relay` | which candidates reach each side, and the tunnel candidate |
+| `internal/protocol` | every message between CLI, agent and page |
+| `internal/agent`, `daemon` | the session, and the process that keeps it between connections |
+| `internal/agent/display`, `x11`, `wayland` | starting or attaching to a desktop |
+| `internal/agent/peer` | the WebRTC side of the agent |
+| `internal/agent/h264`, `hwenc`, `audio`, `opus` | encoding the picture and sound |
+| `internal/agent/files`, `share` | file uploads, and inviting guests |
 
 ## Why it is built this way
 
-Coming soon.
+Each design choice is explained in the architecture decision record, [docs/adr/0001-architecture.md](https://github.com/yasinmiran/robin/blob/main/docs/adr/0001-architecture.md).
