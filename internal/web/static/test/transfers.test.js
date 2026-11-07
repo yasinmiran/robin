@@ -87,12 +87,13 @@ test('a pasted file waits for its click, once', () => {
   assert.equal(list.confirm('p1'), false);
 });
 
-test('an offer heard again is left as it is, and removal is final', () => {
+test('an offer heard again keeps its place, and removal is final', () => {
   const list = new Transfers();
   list.offer('d1', 'a', 1);
   list.fetch('d1');
+  list.receive('d1');
   list.offer('d1', 'a', 1);
-  assert.equal(list.get('d1').state, FETCHING);
+  assert.equal(list.get('d1').state, RECEIVING);
   list.offer('d2', 'b', 2);
   assert.deepEqual(list.list().map((t) => t.id), ['d1', 'd2']);
   list.remove('d1');
