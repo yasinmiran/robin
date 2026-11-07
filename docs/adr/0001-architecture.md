@@ -1214,7 +1214,19 @@ uploads used to remove its row and its Cancel button while its bytes still
 went. The page lists at most 256 files on offer, the agent's own
 `maxSessionOffers`, since every change redraws every row: past that, the
 oldest still waiting for a click on Save goes, so a host that offered
-without end grows neither the list nor the redraw.
+without end grows neither the list nor the redraw. A transfer goes with
+the peer it was asked on: when the page drops its peer connection, the
+rows that peer carried settle there and then, a Save not yet answered and
+a download under way back on offer and an upload under way failed, all
+"not connected to the desktop". The page does not wait for those
+channels' close events, which the WebRTC spec has `close()` skip (Chrome
+fires them anyway), and what an old channel still delivers is nobody's
+download. An offer heard again changes nothing: the agent sends every open
+offer again when a new control channel opens, and a Save clicked on the
+new peer before they arrive must not be undone by them. A Save clicked
+while the page has no control channel goes straight back on offer the same
+way, and so does an upload that meets no peer, which `sendBulk` refuses
+before it touches one.
 
 **Names from the host.** File names, the names uploads were kept under,
 transfer errors and monitor names go in as text, never markup, but the

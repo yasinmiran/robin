@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { sendBulk } from '../bulk.js';
 import { Sum } from '../bulkframe.js';
 import { dispatchControl } from '../control.js';
 import { Clipboard } from '../clipboard.js';
 import { Files } from '../files.js';
-import { fromAgent } from './fakes.js';
+import { fromAgent, until } from './fakes.js';
 import { fakeOverlay, installDom } from './dom.js';
 
 const saved = installDom();
@@ -13,12 +14,29 @@ const later = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // One Files and one Clipboard for the whole file, as bulk kinds register
 // once; app.js wires them the same way.
+// While connected is false the page has no peer, as while it redials the
+// host: control messages do not go and transfers meet sendBulk without a
+// peer. While stall is set, the next upload hangs until it is aborted.
 const controls = [];
 const bulks = [];
+let connected = true;
+let stall = false;
 const files = new Files({
   overlay,
-  send: (c) => controls.push(c),
-  bulk: async (header, blob) => { bulks.push({ header, size: blob.size }); },
+  send: (c) => {
+    if (!connected) return false;
+    controls.push(c);
+    return true;
+  },
+  bulk: async (header, blob, options) => {
+    if (!connected) return sendBulk(null, header, blob, options);
+    if (stall) {
+      stall = false;
+      const { signal } = options;
+      await new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason)));
+    }
+    bulks.push({ header, size: blob.size });
+  },
 });
 const clipboard = new Clipboard({
   send: (c) => controls.push(c),
@@ -192,4 +210,99 @@ test('a host\'s names show the marks that reorder text instead of applying them'
   await later();
   const status = (await row(id)).find((el) => el.className === 'status');
   assert.equal(status.textContent, 'Uploaded as b2\\u202etxt.exe');
+});
+
+test('without a peer, an upload and a Save say the page is not connected', async () => {
+  connected = false;
+  try {
+    files.upload([{ name: 'offline.txt', size: 1 }]);
+    await later();
+    const up = files.list().find((t) => t.name === 'offline.txt');
+    assert.equal(up.state, 'failed');
+    const status = (await row(up.id)).find((el) => el.className === 'status');
+    assert.equal(status.textContent, 'Upload failed: not connected to the desktop');
+
+    dispatchControl({ t: 'file-offer', file: { id: 'n1', name: 'n1.bin', size: 1 } });
+    const before = controls.length;
+    button(await row('n1'), 'save').click();
+    assert.equal(controls.length, before, 'no fetch went');
+    const li = await row('n1');
+    assert.equal(li.find((el) => el.className === 'status').textContent, 'Download failed: not connected to the desktop');
+    assert.ok(button(li, 'save'), 'Save is back, for once the page reconnects');
+  } finally {
+    connected = true;
+  }
+});
+
+test('a Save lost with its peer comes back, and one on the new peer outlives the offers heard again', async () => {
+  dispatchControl({ t: 'file-offer', file: { id: 'r1', name: 'r1.bin', size: 2 } });
+  button(await row('r1'), 'save').click();
+  assert.equal(files.list().find((t) => t.id === 'r1').state, 'fetching');
+  // The peer goes before the agent sends the file.
+  files.peerLost();
+  let li = await row('r1');
+  assert.equal(li.find((el) => el.className === 'status').textContent, 'Download failed: not connected to the desktop');
+  // The new peer's control channel is open, but the agent's offers have
+  // not come again yet when the user clicks Save.
+  button(li, 'save').click();
+  assert.deepEqual(controls.at(-1), { t: 'file-fetch', file: { id: 'r1' } });
+  dispatchControl({ t: 'file-offer', file: { id: 'r1', name: 'r1.bin', size: 2 } });
+  li = await row('r1');
+  assert.equal(li.find((el) => el.className === 'status').textContent, 'Downloading 0%', 'the offer heard again leaves the Save be');
+  assert.deepEqual(await fileFromAgent('r1', new Uint8Array([1, 2])), { t: 'done' });
+  assert.equal(saved.at(-1).name, 'r1.bin');
+});
+
+test('a download and an upload under way when the peer goes are settled without their channels\' close', async () => {
+  // A browser need not fire close on the channels of a peer the page
+  // closed, so nothing here closes them.
+  dispatchControl({ t: 'file-offer', file: { id: 'g1', name: 'g1.bin', size: 4 } });
+  button(await row('g1'), 'save').click();
+  const old = fromAgent({ kind: 'file', id: 'g1', name: 'g1.bin', size: 4 });
+  old.agent.send(new Uint8Array([1, 2]));
+  await until('the download is under way', () => files.list().find((t) => t.id === 'g1').done === 2);
+
+  stall = true;
+  files.upload([{ name: 'lost.txt', size: 1 }, { name: 'next.txt', size: 1 }]);
+  await until('the first upload is under way', () => files.list().find((t) => t.name === 'lost.txt').state === 'sending');
+
+  files.peerLost();
+  const down = await row('g1');
+  assert.equal(down.find((el) => el.className === 'status').textContent, 'Download failed: not connected to the desktop');
+  assert.ok(button(down, 'save'), 'Save is back');
+  await until('the upload failed', () => files.list().find((t) => t.name === 'lost.txt').state === 'failed');
+  const lost = files.list().find((t) => t.name === 'lost.txt');
+  assert.equal((await row(lost.id)).find((el) => el.className === 'status').textContent, 'Upload failed: not connected to the desktop');
+  await until('the queue moved on', () => files.list().find((t) => t.name === 'next.txt').state === 'kept');
+
+  // What the old channel still delivers belongs to nobody, even while the
+  // file comes again over the new peer.
+  button(down, 'save').click();
+  const fresh = fromAgent({ kind: 'file', id: 'g1', name: 'g1.bin', size: 4 });
+  fresh.agent.send(new Uint8Array([5, 6]));
+  await until('the new download is under way', () => files.list().find((t) => t.id === 'g1').done === 2);
+  const ends = (bytes) => {
+    const sum = new Sum(4);
+    sum.add(new Uint8Array(bytes));
+    return JSON.stringify(sum.end());
+  };
+  const before = saved.length;
+  old.agent.send(new Uint8Array([3, 4]));
+  old.agent.send(ends([1, 2, 3, 4]));
+  assert.equal((await old.verdict).t, 'error');
+  assert.equal(saved.length, before, 'the old bytes were not saved');
+  fresh.agent.send(new Uint8Array([7, 8]));
+  fresh.agent.send(ends([5, 6, 7, 8]));
+  assert.deepEqual(await fresh.verdict, { t: 'done' });
+  assert.equal(saved.at(-1).name, 'g1.bin');
+});
+
+test('a cancelled upload leaves no row behind', async () => {
+  stall = true;
+  files.upload([{ name: 'cancelled.txt', size: 1 }]);
+  await until('the upload is under way', () => files.list().find((t) => t.name === 'cancelled.txt')?.state === 'sending');
+  const { id } = files.list().find((t) => t.name === 'cancelled.txt');
+  button(await row(id), 'cancel').click();
+  await later();
+  assert.equal(files.list().some((t) => t.id === id), false);
 });
