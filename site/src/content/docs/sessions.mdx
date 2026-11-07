@@ -19,34 +19,34 @@ robin ls build-box
 robin end build-box
 ```
 
-A desktop Robin starts stays on the host after the connection drops, 8 hours by default. Meanwhile the CLI redials and the page says Reconnecting until it comes back to the same windows; if the keep window runs out first, the CLI says it could not reconnect in time.
+A desktop Robin starts stays on the host after the connection drops, 8 hours by default. The CLI redials and the page says Reconnecting until it is back on the same windows; if the keep window runs out first, the CLI says it could not reconnect in time.
 
 ## Leaving and coming back
 
-To leave, press **Disconnect, keep desktop** in the page's status tab (it shows only when the host keeps the desktop), and the CLI prints how long the desktop is kept and how to resume or end it.
+To leave, press **Disconnect, keep desktop** in the status tab, and the CLI prints how long the desktop is kept and how to resume or end it.
 
 A later `robin gui build-box` resumes the one kept desktop, though a kept attached desktop resumes only with `--id`. When the host keeps several, the CLI lists them and asks for `--id`, or `--new` to start another.
 
-`robin ls build-box` prints one line per session (id, spawn or attach, display, start time, and `connected` or when it is kept until), and `robin end build-box` ends the one kept session; add the id when there are several.
+`robin ls build-box` prints each session's id, kind, display, start time, and `connected` or when it is kept until, and `robin end build-box` ends the one kept session; add the id when there are several. `robin end` uses the agent the session already runs, even one from another build, and uploads one only if that agent cannot end it.
 
 ## What ends a session
 
-Any of these ends the session: Ctrl+C in the CLI, the page's **End session** button, `robin end`, or the keep window running out. A desktop Robin started goes with it, and the page reports the end once the host confirms it.
+Ctrl+C in the CLI, the page's **End session** button, `robin end` or the keep window running out ends the session, and a desktop Robin started goes with it.
 
-A desktop you attach to is not kept, since `--keep` defaults to 0 with `--attach` and the session ends with the connection; pass `--keep 8h` to keep it (see [Flags](/flags#kept-sessions)).
+A desktop you attach to ends with the connection unless you pass a duration such as `--keep 8h` (see [Flags](/flags#kept-sessions)).
 
 ## Resuming with other flags
 
-`--max-size`, `--fps`, `--max-kbps`, `--encoder`, `--monitor`, `--audio`, `--session` and `--keep` shape a new desktop only, so a resume takes few flags from its command line:
+`--max-size`, `--fps`, `--max-kbps`, `--encoder`, `--monitor`, `--audio`, `--session` and `--keep` shape a new desktop only, and a resume keeps what the desktop started with. On a resume:
 
-- With `--id`, `--curtain` and `--silent` switch on the [curtain and silent room](/private-session) of a kept attached desktop before the page connects; if one cannot, the CLI says why and the desktop stays kept as it was.
+- `--curtain` and `--silent` switch on the [curtain and silent room](/private-session) of a kept attached desktop resumed with `--id`; if one cannot, the CLI says why and the desktop stays as it was.
 - The [microphone and camera](/sound) stay the ones the desktop started with, and asking for one it lacks is refused. Resume without `--mic` or `--camera`, or `robin end` and start again.
 
-A CLI that carries a different agent than the kept session refuses to resume and tells you to run `robin end`, or `robin gui --new` to start another beside it.
+A robin of another build than the session's refuses to resume and tells you to run `robin end`, or `robin gui --new` to start another beside it.
 
 ## On the host
 
-Where logind kills user processes on logout (`KillUserProcesses=yes`), Robin runs the desktop under your systemd user manager, which stops with your last login unless you run `loginctl enable-linger`, and the CLI warns you. On such a host without `systemd-run` the desktop ends with the connection and the CLI says so; see [The desktop did not survive](/troubleshooting#the-desktop-did-not-survive).
+Where logind kills user processes on logout (`KillUserProcesses=yes`), the desktop runs under your systemd user manager, which stops with your last login unless you run `loginctl enable-linger`; the CLI warns you. Without `systemd-run` there, the desktop ends with the connection; see [The desktop did not survive](/troubleshooting#the-desktop-did-not-survive).
 
 ## Limits
 
