@@ -163,7 +163,7 @@ once, at the start, where each went on the host or why it could not.
 | `--id` | the one kept session | which kept session to resume |
 | `--new` | | start a new desktop even when a kept one could be resumed; refused with `--id` |
 | `--share` | | invite this account on the host to join as a guest, who watches until you give them control; repeat for more (see [Sharing a desktop](#sharing-a-desktop)) |
-| `--join` | | join another account's session as a guest, with the code its owner was given, over your own login to the host. The flags that shape the session (`--attach`, `--id`, `--new`, `--session`, `--keep`, `--max-size`, `--fps`, `--max-kbps`, `--encoder`, `--monitor`, `--camera`, `--curtain`, `--silent`, `--share`) are the owner's and refused |
+| `--join` | | join another account's session as a guest, with the code its owner was given, over your own login to the host. The flags that shape the session (`--attach`, `--id`, `--new`, `--session`, `--keep`, `--max-size`, `--fps`, `--max-kbps`, `--encoder`, `--monitor`, `--audio=false`, `--camera`, `--curtain`, `--silent`, `--share`) are the owner's and refused |
 | `--audio` | `true` | stream the desktop's sound; `--audio=false` leaves it out |
 | `--mic` | off | offer your microphone to the host's programs; it stays off until you switch it on in the page |
 | `--camera` | off | offer your camera to the host's programs, through PipeWire or a v4l2loopback device; off until switched on |

@@ -920,7 +920,9 @@ page for a session that is not what was asked.
   of the flags that shape only a new desktop, so the CLI lets them through
   there. `--new` with `--id` is refused rather than resuming. A
   guest's `--join` refuses every flag that shapes the owner's session,
-  since a guest sends no Start to carry it.
+  since a guest sends no Start to carry it; `--audio=false` among them,
+  which the CLI checks itself since the option's zero value cannot say
+  whether it was named.
 - Devices are made as the session starts: a spawned desktop's pulseaudio
   loads the microphone before it runs, and Start names the camera's
   v4l2loopback device. Adding one to a running session would be a second
