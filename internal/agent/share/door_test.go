@@ -355,12 +355,13 @@ func TestReadJoinFindsTheDoorAndKeepsTheLine(t *testing.T) {
 		t.Errorf("after pings, the door reads %q, %v; want %q", b, err, sent)
 	}
 	for name, line := range map[string]string{
-		"nothing":    "",
-		"no newline": string(bytes.TrimSuffix(joinLine(t, code.String()), []byte("\n"))),
-		"not a join": `{"type":"start","start":{"version":2}}` + "\n",
-		"a bad code": string(joinLine(t, "a1b2c3d4-1000-x")),
-		"too long":   `{"type":"join","join":{"code":"` + strings.Repeat("a", maxJoinLine) + `"}}` + "\n",
-		"only pings": strings.Repeat(ping, maxPingsBeforeJoin+1) + string(joinLine(t, code.String())),
+		"nothing":     "",
+		"no newline":  string(bytes.TrimSuffix(joinLine(t, code.String()), []byte("\n"))),
+		"not a join":  `{"type":"start","start":{"version":2}}` + "\n",
+		"a bad code":  string(joinLine(t, "a1b2c3d4-x-d-abc")),
+		"an old code": string(joinLine(t, "a1b2c3d4-1000-x")),
+		"too long":    `{"type":"join","join":{"code":"` + strings.Repeat("a", maxJoinLine) + `"}}` + "\n",
+		"only pings":  strings.Repeat(ping, maxPingsBeforeJoin+1) + string(joinLine(t, code.String())),
 	} {
 		if c, _, err := ReadJoin(strings.NewReader(line)); err == nil {
 			t.Errorf("%s: took %+v", name, c)
