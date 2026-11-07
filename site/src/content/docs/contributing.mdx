@@ -76,7 +76,7 @@ REPRO_TOOLCHAIN=1 make repro    # also rebuilds openh264 and libopus for the cop
 
 `make repro` builds the agents, the CLI and `dist/` from your checkout, then again from a copy outside any repository, and fails if any file differs. `REPRO_SELFTEST=1 make repro` builds the copy under another version and passes only when the comparison notices.
 
-To check a release, rebuild its tag and compare the sums with the published ones:
+No release is tagged yet. Once one is, rebuilding its tag gives the same sums as the release:
 
 ```sh
 git checkout <tag>
