@@ -2861,7 +2861,11 @@ has, a peer of its own for its page, and a rule for who drives.
   starts and writes them nowhere, `session.json` included, since nothing
   restarts a daemon under its id and resume reaches the same process;
   only join codes carry them, so no account knows the name before the
-  daemon holds it. Binding first
+  daemon holds it. The code grew a field for it, so a daemon started
+  before this change still hands out codes of three fields, which a
+  guest now refuses as from an older build (`ErrOldJoinCode`), and an
+  older guest CLI cannot take a code of four: sharing needs both sides
+  on this build. Binding first
   thing and failing the session on a refused bind would have caught the
   squat without preventing it, and still cost the owner the session.
   The cost is the network namespace: an abstract name

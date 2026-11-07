@@ -127,6 +127,12 @@ func (c JoinCode) String() string {
 // ErrJoinCode is what ParseJoinCode returns for anything it did not make.
 var ErrJoinCode = errors.New("not a join code: robin gui --join takes the code the owner was given, such as a1b2c3d4-1000-...")
 
+// ErrOldJoinCode is what ParseJoinCode returns for a code of three fields,
+// session, owner and secret, which a session started by an older build
+// hands out: its door is named by the session id, which this build never
+// dials.
+var ErrOldJoinCode = errors.New("this code is from a session started with an older build of robin: ask its owner to start the session again with this build")
+
 // maxJoinCode bounds a code as the user passes it.
 const maxJoinCode = 128
 
@@ -135,15 +141,24 @@ func inAlphabet(s string) bool { return s != "" && strings.Trim(s, codeAlphabet)
 // ParseJoinCode reads a code that JoinCode.String wrote. It refuses
 // anything else, so what it returns can name a socket and a uid: a
 // session id, a door and a secret of codeAlphabet alone, and a uid that is
-// not negative.
+// not negative. A code an older build wrote is ErrOldJoinCode, anything
+// else ErrJoinCode.
 func ParseJoinCode(s string) (JoinCode, error) {
 	parts := strings.Split(s, "-")
-	if len(parts) != 4 || len(s) > maxJoinCode || !inAlphabet(parts[0]) || !inAlphabet(parts[2]) || !inAlphabet(parts[3]) {
+	if len(parts) < 3 || len(parts) > 4 || len(s) > maxJoinCode {
 		return JoinCode{}, ErrJoinCode
 	}
 	uid, err := strconv.Atoi(parts[1])
 	if err != nil || uid < 0 || strconv.Itoa(uid) != parts[1] {
 		return JoinCode{}, ErrJoinCode
+	}
+	for i, p := range parts {
+		if i != 1 && !inAlphabet(p) {
+			return JoinCode{}, ErrJoinCode
+		}
+	}
+	if len(parts) == 3 {
+		return JoinCode{}, ErrOldJoinCode
 	}
 	return JoinCode{Session: parts[0], Owner: uid, Door: parts[2], Secret: parts[3]}, nil
 }

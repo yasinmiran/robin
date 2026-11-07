@@ -346,7 +346,7 @@ func FuzzParseJoinCode(f *testing.F) {
 	f.Fuzz(func(t *testing.T, s string) {
 		c, err := ParseJoinCode(s)
 		if err != nil {
-			if !errors.Is(err, ErrJoinCode) || c != (JoinCode{}) {
+			if (!errors.Is(err, ErrJoinCode) && !errors.Is(err, ErrOldJoinCode)) || c != (JoinCode{}) {
 				t.Fatalf("refused with %+v, %v", c, err)
 			}
 			return

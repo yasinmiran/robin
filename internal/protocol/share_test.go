@@ -23,7 +23,7 @@ func TestJoinCodeRoundTrips(t *testing.T) {
 // anything a JoinCode would not have written.
 func TestParseJoinCodeRefusesWhatItDidNotWrite(t *testing.T) {
 	for _, s := range []string{
-		"", "a1b2c3d4", "a1b2c3d4-1000", "a1b2c3d4-1000-abc", "a1b2c3d4-1000-d-abc-def",
+		"", "a1b2c3d4", "a1b2c3d4-1000", "a1b2c3d4-1000-d-abc-def", "a1b2c3d4-1000-",
 		"-1000-d-abc", "a1b2c3d4-1000-d-", "a1b2c3d4-1000--abc", "A1B2-1000-d-abc",
 		"a1/b2-1000-d-abc", "a1b2-1000-d/x-abc", "a1b2-1000-D-abc",
 		"a1b2-x-d-abc", "a1b2--1-d-abc", "a1b2-01000-d-abc", "a1b2-+1-d-abc",
@@ -32,6 +32,22 @@ func TestParseJoinCodeRefusesWhatItDidNotWrite(t *testing.T) {
 	} {
 		if c, err := ParseJoinCode(s); !errors.Is(err, ErrJoinCode) {
 			t.Errorf("ParseJoinCode(%q) = %+v, %v; want ErrJoinCode", s, c, err)
+		}
+	}
+}
+
+// A session started before the door had its own name hands out codes of
+// three fields, and a guest on this build is told so rather than that the
+// code is not one; a malformed three-field code is still no code at all.
+func TestParseJoinCodeNamesAnOlderBuildsCode(t *testing.T) {
+	for _, s := range []string{"a1b2c3d4-1000-abc", "a1b2c3d4-0-" + strings.Repeat("z", 32)} {
+		if c, err := ParseJoinCode(s); !errors.Is(err, ErrOldJoinCode) || c != (JoinCode{}) {
+			t.Errorf("ParseJoinCode(%q) = %+v, %v; want ErrOldJoinCode", s, c, err)
+		}
+	}
+	for _, s := range []string{"a1b2c3d4-x-abc", "a1b2c3d4-1000-", "A1B2-1000-abc", "a1b2-01000-abc", "a1b2-1000-ab/c"} {
+		if _, err := ParseJoinCode(s); !errors.Is(err, ErrJoinCode) {
+			t.Errorf("ParseJoinCode(%q) = %v; want ErrJoinCode", s, err)
 		}
 	}
 }

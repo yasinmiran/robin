@@ -24,6 +24,7 @@ func TestCheckJoin(t *testing.T) {
 	}
 	for want, o := range map[string]Options{
 		"not a join code": {Join: "a1b2c3d4"},
+		"older build":     {Join: "a1b2c3d4-1000-abc"},
 		"--share":         {Join: testCode, Share: []string{"bob"}},
 		"--attach":        {Join: testCode, Attach: ":0"},
 		"--id":            {Join: testCode, Resume: "ab12"},

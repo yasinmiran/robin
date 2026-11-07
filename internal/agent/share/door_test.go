@@ -334,6 +334,7 @@ func TestADoorNameTakenFromTheSessionIDDeniesNoSharing(t *testing.T) {
 // robin-agent join learns the door from the Join its CLI sends, and the
 // door still reads that Join whole, with whatever came after it.
 func TestReadJoinFindsTheDoorAndKeepsTheLine(t *testing.T) {
+	const ping = `{"type":"ping"}` + "\n"
 	code := protocol.JoinCode{Session: "a1b2c3d4", Owner: 1000, Door: newSecret(), Secret: newSecret()}
 	sent := string(joinLine(t, code.String())) + `{"type":"bye"}` + "\n"
 	got, rest, err := ReadJoin(strings.NewReader(sent))
@@ -343,12 +344,23 @@ func TestReadJoinFindsTheDoorAndKeepsTheLine(t *testing.T) {
 	if b, err := io.ReadAll(rest); err != nil || string(b) != sent {
 		t.Errorf("the door reads %q, %v; want %q", b, err, sent)
 	}
+	// The CLI's Conn may ping before it sends the Join; the door's Conn
+	// reads past pings too.
+	sent = strings.Repeat(ping, maxPingsBeforeJoin) + sent
+	got, rest, err = ReadJoin(strings.NewReader(sent))
+	if err != nil || got != code {
+		t.Fatalf("after pings, ReadJoin = %+v, %v; want %+v", got, err, code)
+	}
+	if b, err := io.ReadAll(rest); err != nil || string(b) != sent {
+		t.Errorf("after pings, the door reads %q, %v; want %q", b, err, sent)
+	}
 	for name, line := range map[string]string{
 		"nothing":    "",
 		"no newline": string(bytes.TrimSuffix(joinLine(t, code.String()), []byte("\n"))),
 		"not a join": `{"type":"start","start":{"version":2}}` + "\n",
 		"a bad code": string(joinLine(t, "a1b2c3d4-1000-x")),
 		"too long":   `{"type":"join","join":{"code":"` + strings.Repeat("a", maxJoinLine) + `"}}` + "\n",
+		"only pings": strings.Repeat(ping, maxPingsBeforeJoin+1) + string(joinLine(t, code.String())),
 	} {
 		if c, _, err := ReadJoin(strings.NewReader(line)); err == nil {
 			t.Errorf("%s: took %+v", name, c)

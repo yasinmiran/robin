@@ -521,6 +521,12 @@ session ends every guest's CLI with it. A guest whose connection drops does
 not come back on its own: the code it joined with is spent, so it needs
 another invitation.
 
+Both sides need a build with the door's own name. A session started by an
+older build, kept running across an upgrade, hands out codes of three
+parts that this build refuses as from an older build; start the session
+again to share it. An older guest CLI cannot take the new codes of four
+parts.
+
 ## Hardware encoding
 
 ```sh
@@ -725,8 +731,10 @@ socket, `@robin-share-<door>`, which has no file and so no permissions: any
 account on the host can connect to it, and any account could take a name
 it knew before the daemon did. So the door is not named after the session
 id, which is on the daemon's command line for every account to read: the
-daemon draws 128 random bits for its name as it starts, and only join
-codes carry them. Before it reads a byte, the daemon
+daemon draws 128 random bits for its name as it starts, and nobody can
+know them before the daemon listens: only join codes carry them, and the
+kernel lists the name only once it is taken. Before it reads a byte, the
+daemon
 asks the kernel who connected (`SO_PEERCRED`) and hangs up unless that uid
 holds an open invitation. The invited account then has 5 s to present the
 invitation's code, which the daemon compares in constant time, spends on
