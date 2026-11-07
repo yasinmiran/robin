@@ -5,7 +5,7 @@ import { joinBase } from "../../src/lib/base.ts";
 
 const { base } = siteAddress(process.env.SITE_URL);
 
-/** at is where a site path is served: /install is /robin/install in the Pages build. */
+/** at is where a site path is served: /flags is /robin/flags in the Pages build. */
 const at = (path: string) => joinBase(base, path);
 
 /** failOnErrors fails the test on any uncaught error or console error. */
@@ -41,13 +41,13 @@ test("the homepage shows what Robin is", async ({ page }) => {
   const stage = page.getByRole("figure", { name: /^Your terminal runs robin gui alice@build-box/ });
   await expect(stage.getByRole("img", { name: /A Robin session in the browser/ })).toBeVisible();
   await expect(page.getByText("Connected", { exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Install" })).toHaveAttribute("href", at("/install"));
+  await expect(page.getByRole("link", { name: "Get started" })).toHaveAttribute("href", at("/getting-started"));
   await expect(page.locator('link[rel="icon"]')).toHaveAttribute("href", at("/favicon.svg"));
   noErrors();
 });
 
 for (const [path, title, heading] of [
-  ["/install", "Install and build", "What the host needs"],
+  ["/getting-started", "Getting started", "What the host needs"],
   ["/using", "Using Robin", "The page"],
   ["/flags", "Flags", "Picture"],
 ] as const) {
@@ -92,7 +92,7 @@ test("flag defaults read without stray spaces", async ({ page }) => {
 
 test("the theme toggle switches and remembers the theme", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "light" });
-  await page.goto(at("/install"));
+  await page.goto(at("/getting-started"));
   const html = page.locator("html");
   await expect(html).not.toHaveClass(/\bdark\b/);
 
@@ -112,13 +112,13 @@ test("the theme follows the system until one is picked", async ({ page }) => {
 });
 
 test("search finds a page and opens it", async ({ page }) => {
-  await page.goto(at("/install"));
+  await page.goto(at("/getting-started"));
   await hydrated(page, page.getByRole("button", { name: "Search the docs" }));
   await page.locator("body").press("Control+k");
   const dialog = page.getByRole("dialog", { name: "Search the docs" });
   await dialog.getByRole("combobox").fill("restore token");
-  await dialog.getByRole("option", { name: /Attaching to Wayland/ }).first().click();
-  await expect(page).toHaveURL(/\/attach-wayland/);
+  await dialog.getByRole("option", { name: /Attaching to a desktop/ }).first().click();
+  await expect(page).toHaveURL(/\/attach(#|$)/);
 });
 
 test("pages, assets and the search index all load from under the base", async ({ page, baseURL }) => {
@@ -153,7 +153,7 @@ test.describe("at phone width", () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
 
   test("the sidebar opens in a sheet and leads to a page", async ({ page }) => {
-    await page.goto(at("/install"));
+    await page.goto(at("/getting-started"));
     await expect(page.getByRole("complementary").getByRole("navigation", { name: "Docs" })).toBeHidden();
 
     const menu = page.getByRole("button", { name: "Open navigation" });
@@ -163,7 +163,7 @@ test.describe("at phone width", () => {
     await expect(sheet).toBeVisible();
     await sheet.getByRole("link", { name: "Sound" }).click();
     await expect(page).toHaveURL(/\/sound$/);
-    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Sound");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Sound, microphone and camera");
   });
 
   for (const path of ["/", "/using", "/how-it-works"]) {
@@ -172,6 +172,32 @@ test.describe("at phone width", () => {
       expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
     });
   }
+});
+
+for (const [old, lands] of [
+  ["/install", "/getting-started"],
+  ["/known-limits#sound", "/sound#limits"],
+  ["/attach-wayland", "/attach#wayland"],
+] as const) {
+  test(`${old} lands on ${lands}`, async ({ page }) => {
+    await page.goto(at(old));
+    await expect(page).toHaveURL(new RegExp(`${at(lands)}$`));
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  });
+}
+
+test("a moved page answers 200 and stays out of search", async ({ page, request }) => {
+  const stub = await request.get(at("/install"));
+  expect(stub.status()).toBe(200);
+  expect(await stub.text()).toContain("This page moved to");
+
+  await page.goto(at("/getting-started"));
+  await hydrated(page, page.getByRole("button", { name: "Search the docs" }));
+  await page.locator("body").press("Control+k");
+  const dialog = page.getByRole("dialog", { name: "Search the docs" });
+  await dialog.getByRole("combobox").fill("moved");
+  await expect(dialog.getByRole("status")).toHaveText(/results?$/);
+  await expect(dialog.getByRole("option", { name: /Moved to/ })).toHaveCount(0);
 });
 
 test("an unknown address gets the 404 page", async ({ page }) => {
