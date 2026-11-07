@@ -13,9 +13,9 @@ You need Go 1.26 or newer and a checkout of the repository; on Linux or macOS no
 make
 ```
 
-Robin is two programs. The CLI, `cmd/robin`, is pure Go (`CGO_ENABLED=0`) and cross-builds with Go alone. The agent, `cmd/robin-agent`, runs on the host and links openh264 and libopus, built as a fully static musl binary for x86_64 and arm64 so it starts on any distribution.
+Robin is two programs. The CLI, `cmd/robin`, is pure Go. The agent, `cmd/robin-agent`, runs on the host and links openh264 and libopus, built as a fully static musl binary for x86_64 and arm64.
 
-The first `make` downloads a pinned toolchain and checks each piece against its SHA-256, caching it under `.cache/`, then builds both agents and embeds them in `bin/robin`. Go itself comes from the release `go.mod` names: make sets `GOTOOLCHAIN` to it and stops if another Go runs.
+The first `make` downloads a pinned toolchain, checks each piece's SHA-256 and caches it under `.cache/`, then builds both agents and embeds them in `bin/robin`.
 
 | Component | Version | Used for |
 |---|---|---|
@@ -30,7 +30,7 @@ Building needs no containers and no root; without the `openh264` and `opus` buil
 
 ## Tests
 
-The container suites run in rootless podman; Docker is not supported. `make test` alone runs anywhere Go does, skipping what needs podman.
+The container suites run in rootless podman; Docker is not supported. `make test` alone runs anywhere Go does and skips what needs podman, except probe cases whose images podman has.
 
 | Target | What it runs |
 |---|---|
@@ -39,7 +39,7 @@ The container suites run in rootless podman; Docker is not supported. `make test
 | `make test-x` | X11 capture, input, display, sound and whole agent sessions against Xvfb, in podman |
 | `make test-wayland` | Wayland attach against headless GNOME 46, GNOME 49 and KDE Plasma 6.7, in podman |
 | `make e2e` | the real CLI against a podman host, with Chrome as the client |
-| `make test-agents` | builds the agents and scans them for anything of the builder |
+| `make test-agents` | builds the agents, scans them for anything of the builder and deploys one over a local sshd |
 | `make check` | `test`, `test-agents`, `test-x`, `test-wayland` and `e2e` |
 | `make cover` | every suite with coverage, checked against `coverage-baseline.txt` |
 | `make fuzz` | every Go fuzz target for `FUZZTIME` (10s by default) each, then the page's property tests |
@@ -47,13 +47,15 @@ The container suites run in rootless podman; Docker is not supported. `make test
 
 Run `make check` before a merge.
 
+CI runs the Go tests with stub encoders, the page's tests and this site's checks, builds, scans and deploys the agents as `make test-agents` does, and runs the probe in Ubuntu 24.04, Alpine 3.20 and Fedora 40 under podman. The X11, Wayland and e2e suites, the real encoder tests and `make repro` run only locally, so `make check` stays the gate.
+
 The KDE desktop needs a GPU render node and prints SKIPPED without one; `WLTEST_DESKTOPS` picks fewer desktops:
 
 ```sh
 WLTEST_DESKTOPS=gnome49 make test-wayland
 ```
 
-The first `make e2e` needs network access for image pulls and about 3.6 GB of disk for its two images, and its GNOME Wayland host adds an image of about 1 GB and needs Go on the machine. Once `make e2e` has built the CLI, run scenarios by hand with `e2e/run.sh`:
+The first `make e2e` needs network access and about 3.6 GB of disk for its images, plus 1 GB for the GNOME Wayland host. Once `make e2e` has built the CLI, run scenarios by hand with `e2e/run.sh`:
 
 ```sh
 e2e/run.sh            # every scenario
@@ -67,14 +69,14 @@ e2e/run.sh selftest   # the harness alone, no CLI needed
 
 ## Reproducible builds
 
-With the pinned toolchain on a Linux x86_64 machine, the same commit gives the same bytes from any checkout path. That covers the agent a CLI uploads too, since the agent's name on a host is a hash of its content.
+With the pinned toolchain on a Linux x86_64 machine, the same commit gives the same bytes from any checkout path. That covers the agents too.
 
 ```sh
 make repro                      # builds everything twice and compares
 REPRO_TOOLCHAIN=1 make repro    # also rebuilds openh264 and libopus for the copy
 ```
 
-`make repro` builds the agents, the CLI and `dist/` from your checkout, then again from a copy outside any repository, and fails if any file differs. `REPRO_SELFTEST=1 make repro` builds the copy under another version and passes only when the comparison notices.
+`make repro` builds the agents, the CLI and `dist/` from your checkout, then again from a copy outside any repository, and fails if any file differs.
 
 No release is tagged yet. Once one is, rebuilding its tag gives the same sums as the release:
 
@@ -84,11 +86,11 @@ make dist
 sha256sum dist/*
 ```
 
-The version is linked into every binary, so a tree with local changes, which `git describe` marks `-dirty`, never matches.
+A tree with local changes builds as `-dirty` and never matches.
 
 ## The docs site
 
-This site lives in `site/` and builds with Node and npm, apart from the Go build:
+This site, in `site/`, builds with Node and npm:
 
 ```sh
 cd site
