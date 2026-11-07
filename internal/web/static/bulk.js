@@ -5,6 +5,9 @@
 import { BULK_CHANNEL, BULK_WINDOW, CHUNK_SIZE, Grant, Sum, checkHeader, parseFrame } from './bulkframe.js';
 
 const MAX_REASON = 1024;
+// NOT_CONNECTED is why a transfer cannot start without a peer, in words a
+// transfer's row shows after its verdict.
+export const NOT_CONNECTED = 'not connected to the desktop';
 
 const receivers = new Map(); // kind -> { accept, inbound, supersede }
 // underWay holds, by kind, the transfers from the agent that hold a place
@@ -43,6 +46,8 @@ export function onBulk(kind, accept, { inbound, supersede = false } = {}) {
 
 // sendBulk sends blob, a Blob or File, as one transfer described by header
 // on a channel of its own from pc, and resolves once the agent kept it.
+// With no peer, or a closed one, as while the page reconnects, it rejects
+// with NOT_CONNECTED.
 // It sends no further ahead of the agent's sink than its credit, which
 // keeps the channel's queue to a window. Aborting signal cancels the
 // transfer; progress, when given, hears how many bytes have gone out
@@ -51,6 +56,7 @@ export async function sendBulk(pc, header, blob, { signal, progress } = {}) {
   const h = { ...header, t: 'header', size: blob.size };
   checkHeader(h);
   signal?.throwIfAborted();
+  if (!pc || pc.connectionState === 'closed') throw new Error(NOT_CONNECTED);
   const channel = pc.createDataChannel(BULK_CHANNEL, { ordered: true });
   channel.binaryType = 'arraybuffer';
   const out = new Outbound(channel, signal);

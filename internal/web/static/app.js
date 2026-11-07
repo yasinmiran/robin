@@ -163,8 +163,12 @@ function sendSignal(m) {
   return true;
 }
 
+// sendControl sends a control message to the agent, and says whether it
+// went: while the page reconnects there is no channel to take it.
 function sendControl(c) {
-  if (channel?.readyState === 'open') channel.send(JSON.stringify(c));
+  if (channel?.readyState !== 'open') return false;
+  channel.send(JSON.stringify(c));
+  return true;
 }
 
 async function onSignal(m) {

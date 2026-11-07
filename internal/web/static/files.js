@@ -7,7 +7,7 @@
 // the browser unasked.
 
 import { registerKind } from './bulkframe.js';
-import { onBulk } from './bulk.js';
+import { NOT_CONNECTED, onBulk } from './bulk.js';
 import { onControl } from './control.js';
 import { shown } from './hosttext.js';
 import {
@@ -45,8 +45,8 @@ export class Files {
   #frame = 0;
   #dropTimer = 0;
 
-  // send delivers a control message; bulk(header, blob, options) sends a
-  // transfer, as sendBulk does.
+  // send delivers a control message and reports whether it went;
+  // bulk(header, blob, options) sends a transfer, as sendBulk does.
   constructor({ overlay, send, bulk }) {
     this.#overlay = overlay;
     this.#send = send;
@@ -296,7 +296,9 @@ export class Files {
     actions.className = 'actions';
     if (t.state === OFFERED) {
       actions.append(button('save', 'Save', () => {
-        if (this.#transfers.fetch(t.id)) this.#send({ t: 'file-fetch', file: { id: t.id } });
+        if (this.#transfers.fetch(t.id) && !this.#send({ t: 'file-fetch', file: { id: t.id } })) {
+          this.#transfers.failed(t.id, NOT_CONNECTED);
+        }
       }));
     }
     if (t.state === OFFERED || t.state === FETCHING || t.state === RECEIVING) {

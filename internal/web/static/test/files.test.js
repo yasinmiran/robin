@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { sendBulk } from '../bulk.js';
 import { Sum } from '../bulkframe.js';
 import { dispatchControl } from '../control.js';
 import { Clipboard } from '../clipboard.js';
@@ -13,12 +14,22 @@ const later = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // One Files and one Clipboard for the whole file, as bulk kinds register
 // once; app.js wires them the same way.
+// While connected is false the page has no peer, as while it reconnects:
+// control messages do not go and transfers meet sendBulk without a peer.
 const controls = [];
 const bulks = [];
+let connected = true;
 const files = new Files({
   overlay,
-  send: (c) => controls.push(c),
-  bulk: async (header, blob) => { bulks.push({ header, size: blob.size }); },
+  send: (c) => {
+    if (!connected) return false;
+    controls.push(c);
+    return true;
+  },
+  bulk: async (header, blob, options) => {
+    if (!connected) return sendBulk(null, header, blob, options);
+    bulks.push({ header, size: blob.size });
+  },
 });
 const clipboard = new Clipboard({
   send: (c) => controls.push(c),
@@ -192,4 +203,39 @@ test('a host\'s names show the marks that reorder text instead of applying them'
   await later();
   const status = (await row(id)).find((el) => el.className === 'status');
   assert.equal(status.textContent, 'Uploaded as b2\\u202etxt.exe');
+});
+
+test('without a peer, an upload and a Save say the page is not connected', async () => {
+  connected = false;
+  try {
+    files.upload([{ name: 'offline.txt', size: 1 }]);
+    await later();
+    const up = files.list().find((t) => t.name === 'offline.txt');
+    assert.equal(up.state, 'failed');
+    const status = (await row(up.id)).find((el) => el.className === 'status');
+    assert.equal(status.textContent, 'Upload failed: not connected to the desktop');
+
+    dispatchControl({ t: 'file-offer', file: { id: 'n1', name: 'n1.bin', size: 1 } });
+    const before = controls.length;
+    button(await row('n1'), 'save').click();
+    assert.equal(controls.length, before, 'no fetch went');
+    const li = await row('n1');
+    assert.equal(li.find((el) => el.className === 'status').textContent, 'Download failed: not connected to the desktop');
+    assert.ok(button(li, 'save'), 'Save is back, for once the page reconnects');
+  } finally {
+    connected = true;
+  }
+});
+
+test('a Save clicked before a reconnect gets its Save back when the host offers the file again', async () => {
+  dispatchControl({ t: 'file-offer', file: { id: 'r1', name: 'r1.bin', size: 2 } });
+  button(await row('r1'), 'save').click();
+  assert.equal(files.list().find((t) => t.id === 'r1').state, 'fetching');
+  // The peer went before the agent sent the file; the new one's control
+  // channel hears every open offer again.
+  dispatchControl({ t: 'file-offer', file: { id: 'r1', name: 'r1.bin', size: 2 } });
+  button(await row('r1'), 'save').click();
+  assert.deepEqual(controls.at(-1), { t: 'file-fetch', file: { id: 'r1' } });
+  assert.deepEqual(await fileFromAgent('r1', new Uint8Array([1, 2])), { t: 'done' });
+  assert.equal(saved.at(-1).name, 'r1.bin');
 });
