@@ -38,6 +38,7 @@ func TestMain(m *testing.M) {
 //	normal  one access unit per frame
 //	hang    answer the first frame, then nothing
 //	die     exit with a message on stderr after the first frame
+//	stall   print a message on stderr at the first frame, then answer nothing
 //	lag     hold each access unit back until the next frame arrives
 //	high    as normal, with a High profile SPS
 //	spawn   as normal, after starting a grandchild in its process group
@@ -122,6 +123,9 @@ func fake(mode string, args []string) {
 		case behaviour == "die":
 			fmt.Fprintln(os.Stderr, "fake: exploded")
 			os.Exit(3)
+		case behaviour == "stall":
+			fmt.Fprintln(os.Stderr, "fake: no device")
+			continue
 		case behaviour == "lag":
 			au, held = held, au
 		}

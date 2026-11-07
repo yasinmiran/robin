@@ -15,6 +15,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/yasinmiran/robin/internal/tail"
 )
 
 const (
@@ -41,7 +43,7 @@ type server struct {
 	cmd    *exec.Cmd
 	exited chan struct{}
 	err    error // valid once exited is closed
-	stderr tail
+	stderr tail.Buffer
 	once   sync.Once
 }
 
@@ -189,28 +191,4 @@ func (s *server) exitError() error {
 		return fmt.Errorf("pulseaudio %s: %s", status, log)
 	}
 	return fmt.Errorf("pulseaudio %s", status)
-}
-
-// tail keeps the last few KiB written to it.
-type tail struct {
-	mu  sync.Mutex
-	buf []byte
-}
-
-const tailSize = 4096
-
-func (t *tail) Write(b []byte) (int, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.buf = append(t.buf, b...)
-	if over := len(t.buf) - tailSize; over > 0 {
-		t.buf = append(t.buf[:0], t.buf[over:]...)
-	}
-	return len(b), nil
-}
-
-func (t *tail) String() string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return string(t.buf)
 }

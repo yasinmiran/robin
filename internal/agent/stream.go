@@ -269,7 +269,7 @@ func (s *stream) run(ctx context.Context) {
 		// An I420 desktop already delivers frames at the size it was asked for.
 		scaled := f.Format == desktop.BGRX && (f.Width > s.maxW || f.Height > s.maxH)
 		if scaled {
-			w, h = fit(f.Width, f.Height, s.maxW, s.maxH)
+			w, h = desktop.Fit(f.Width, f.Height, s.maxW, s.maxH)
 		}
 		if enc == nil || img.Width != w || img.Height != h {
 			closeEncoder()
