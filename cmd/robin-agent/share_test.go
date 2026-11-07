@@ -110,7 +110,7 @@ func TestAnotherUserJoinsAsAGuest(t *testing.T) {
 	ready, dir := start(owner, exe)
 	ownerUID := strconv.Itoa(os.Getuid())
 	join := func() *joinProxy {
-		return joinAgent(t, s.Command(s.Exe, "join", "-session", ready.ID, "-owner", ownerUID))
+		return joinAgent(t, s.Command(s.Exe, "join"))
 	}
 
 	// Another account the owner did not invite is hung up on unread.
@@ -123,8 +123,15 @@ func TestAnotherUserJoinsAsAGuest(t *testing.T) {
 	waitLog(t, dir, "guest refused: no invitation", "uid="+strconv.Itoa(int(s.UID)))
 
 	inv = invite(t, owner, "robin-stranger")
-	if code, err := protocol.ParseJoinCode(inv.Code); err != nil || code.Session != ready.ID || strconv.Itoa(code.Owner) != ownerUID {
+	code, err := protocol.ParseJoinCode(inv.Code)
+	if err != nil || code.Session != ready.ID || strconv.Itoa(code.Owner) != ownerUID || code.Door == ready.ID {
 		t.Fatalf("code %q: %+v, %v", inv.Code, code, err)
+	}
+	// The door is named by the code alone, not by the id every account
+	// reads on the daemon's command line.
+	if c, err := net.Dial("unix", protocol.ShareSocket(ready.ID)); err == nil {
+		c.Close()
+		t.Error("the door listens at a name the session id gives")
 	}
 	g := join()
 	g.conn.Send(protocol.Message{Type: protocol.TypeJoin, Join: &protocol.Join{Version: protocol.Version, Code: inv.Code}})
@@ -143,7 +150,9 @@ func TestAnotherUserJoinsAsAGuest(t *testing.T) {
 
 	// A join aimed at a socket the named owner does not hold stops at the
 	// guest's own end.
-	wrongOwner := joinAgent(t, s.Command(s.Exe, "join", "-session", ready.ID, "-owner", "4242"))
+	wrongOwner := join()
+	code.Owner = 4242
+	wrongOwner.conn.Send(protocol.Message{Type: protocol.TypeJoin, Join: &protocol.Join{Version: protocol.Version, Code: code.String()}})
 	if err := wrongOwner.exited(); err == nil || !strings.Contains(wrongOwner.log.String(), "not to its owner") {
 		t.Fatalf("a join for the wrong owner: %v\n%s", err, wrongOwner.log)
 	}
@@ -169,9 +178,13 @@ func TestAGuestGoesWithTheSession(t *testing.T) {
 	s := agenttest.NewStranger(t)
 	exe := agentCopy(t)
 	owner := serveAgent(t, exe)
-	ready, dir := start(owner, exe)
+	_, dir := start(owner, exe)
 	inv := invite(t, owner, "robin-stranger")
-	g := joinAgent(t, s.Command(s.Exe, "join", "-session", ready.ID, "-owner", strconv.Itoa(os.Getuid())))
+	code, err := protocol.ParseJoinCode(inv.Code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := joinAgent(t, s.Command(s.Exe, "join"))
 	g.conn.Send(protocol.Message{Type: protocol.TypeJoin, Join: &protocol.Join{Version: protocol.Version, Code: inv.Code}})
 	g.recv(protocol.TypeReady)
 
@@ -185,34 +198,42 @@ func TestAGuestGoesWithTheSession(t *testing.T) {
 		t.Errorf("the guest's proxy: %v\n%s", err, g.log)
 	}
 	waitRunDirGone(t, dir, 10*time.Second)
-	if c, err := net.Dial("unix", protocol.ShareSocket(ready.ID)); err == nil {
+	if c, err := net.Dial("unix", protocol.ShareSocket(code.Door)); err == nil {
 		c.Close()
 		t.Error("the guests' door outlived the session")
 	}
 }
 
-// join takes only a session and an owner it could have been given, and
-// says so when there is no session to join.
+// join takes no arguments, nothing on stdin but a Join with a code it
+// could have been given, and says so when there is no session to join.
 func TestJoinRefusesWhatNamesNoSession(t *testing.T) {
 	exe := agentCopy(t)
-	for _, args := range [][]string{
-		{"join"}, {"join", "-session", "../x", "-owner", "0"}, {"join", "-session", "abc", "-owner", "-3"}, {"join", "-bogus"},
-	} {
+	run := func(stdin string, args ...string) (int, string) {
 		cmd := exec.Command(exe, args...)
 		cmd.Env = append(os.Environ(), "ROBIN_AGENT_MAIN=1")
+		cmd.Stdin = strings.NewReader(stdin)
 		out, err := cmd.CombinedOutput()
 		var exitErr *exec.ExitError
-		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
-			t.Errorf("%q: %v\n%s", args, err, out)
+		if !errors.As(err, &exitErr) {
+			t.Fatalf("%q: %v\n%s", args, err, out)
+		}
+		return exitErr.ExitCode(), string(out)
+	}
+	for _, args := range [][]string{
+		{"join", "-session", "abc", "-owner", "0"}, {"join", "-bogus"}, {"join", "abc"},
+	} {
+		if code, out := run("", args...); code != 2 {
+			t.Errorf("%q: exit %d\n%s", args, code, out)
 		}
 	}
-	cmd := exec.Command(exe, "join", "-session", "zz"+strconv.Itoa(os.Getpid()), "-owner", "0")
-	cmd.Env = append(os.Environ(), "ROBIN_AGENT_MAIN=1")
-	cmd.Stdin = strings.NewReader("")
-	out, err := cmd.CombinedOutput()
-	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 || !strings.Contains(string(out), "no session") {
-		t.Errorf("join of no session: %v\n%s", err, out)
+	for _, stdin := range []string{"", `{"type":"start","start":{"version":2}}` + "\n", `{"type":"join","join":{"version":2,"code":"../x-0-y-z"}}` + "\n"} {
+		if code, out := run(stdin, "join"); code != 1 || !strings.Contains(out, "join:") {
+			t.Errorf("join of %q: exit %d\n%s", stdin, code, out)
+		}
+	}
+	none := protocol.JoinCode{Session: "zz" + strconv.Itoa(os.Getpid()), Owner: 0, Door: "zz" + strconv.Itoa(os.Getpid()), Secret: "x"}
+	if code, out := run(`{"type":"join","join":{"version":2,"code":"`+none.String()+`"}}`+"\n", "join"); code != 1 || !strings.Contains(out, "no session") {
+		t.Errorf("join of no session: exit %d\n%s", code, out)
 	}
 }
 

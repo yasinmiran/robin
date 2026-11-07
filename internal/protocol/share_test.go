@@ -9,12 +9,12 @@ import (
 )
 
 func TestJoinCodeRoundTrips(t *testing.T) {
-	c := JoinCode{Session: "a1b2c3d4", Owner: 1000, Secret: "k3j4m5n6p7q2r3s4t5u6v7w2x3"}
+	c := JoinCode{Session: "a1b2c3d4", Owner: 1000, Door: "m2n3p4q5r6s7t2u3v4w5x6y7z2", Secret: "k3j4m5n6p7q2r3s4t5u6v7w2x3"}
 	got, err := ParseJoinCode(c.String())
 	if err != nil || got != c {
 		t.Fatalf("ParseJoinCode(%q) = %+v, %v", c.String(), got, err)
 	}
-	if c.String() != "a1b2c3d4-1000-k3j4m5n6p7q2r3s4t5u6v7w2x3" {
+	if c.String() != "a1b2c3d4-1000-m2n3p4q5r6s7t2u3v4w5x6y7z2-k3j4m5n6p7q2r3s4t5u6v7w2x3" {
 		t.Errorf("String() = %q", c.String())
 	}
 }
@@ -23,11 +23,12 @@ func TestJoinCodeRoundTrips(t *testing.T) {
 // anything a JoinCode would not have written.
 func TestParseJoinCodeRefusesWhatItDidNotWrite(t *testing.T) {
 	for _, s := range []string{
-		"", "a1b2c3d4", "a1b2c3d4-1000", "a1b2c3d4-1000-abc-def",
-		"-1000-abc", "a1b2c3d4-1000-", "A1B2-1000-abc", "a1/b2-1000-abc",
-		"a1b2-x-abc", "a1b2--1-abc", "a1b2-01000-abc", "a1b2-+1-abc",
-		"a1b2-1000-abc\n", "a1b2-1000-" + strings.Repeat("a", 200),
-		"a1b2-99999999999999999999-abc",
+		"", "a1b2c3d4", "a1b2c3d4-1000", "a1b2c3d4-1000-d-abc-def", "a1b2c3d4-1000-",
+		"-1000-d-abc", "a1b2c3d4-1000-d-", "a1b2c3d4-1000--abc", "A1B2-1000-d-abc",
+		"a1/b2-1000-d-abc", "a1b2-1000-d/x-abc", "a1b2-1000-D-abc",
+		"a1b2-x-d-abc", "a1b2--1-d-abc", "a1b2-01000-d-abc", "a1b2-+1-d-abc",
+		"a1b2-1000-d-abc\n", "a1b2-1000-d-" + strings.Repeat("a", 200),
+		"a1b2-99999999999999999999-d-abc",
 	} {
 		if c, err := ParseJoinCode(s); !errors.Is(err, ErrJoinCode) {
 			t.Errorf("ParseJoinCode(%q) = %+v, %v; want ErrJoinCode", s, c, err)
@@ -35,25 +36,24 @@ func TestParseJoinCodeRefusesWhatItDidNotWrite(t *testing.T) {
 	}
 }
 
-// A target names a session and an owner robin-agent join may dial, before
-// any secret is known.
-func TestJoinCodeCheckTarget(t *testing.T) {
-	if err := (JoinCode{Session: "a1b2c3d4", Owner: 0}).CheckTarget(); err != nil {
-		t.Errorf("a good target: %v", err)
+// A session started before the door had its own name hands out codes of
+// three fields, and a guest on this build is told so rather than that the
+// code is not one; a malformed three-field code is still no code at all.
+func TestParseJoinCodeNamesAnOlderBuildsCode(t *testing.T) {
+	for _, s := range []string{"a1b2c3d4-1000-abc", "a1b2c3d4-0-" + strings.Repeat("z", 32)} {
+		if c, err := ParseJoinCode(s); !errors.Is(err, ErrOldJoinCode) || c != (JoinCode{}) {
+			t.Errorf("ParseJoinCode(%q) = %+v, %v; want ErrOldJoinCode", s, c, err)
+		}
 	}
-	for _, c := range []JoinCode{
-		{Owner: 1000}, {Session: "a1b2", Owner: -1}, {Session: "A1B2", Owner: 1000},
-		{Session: "a1/b2", Owner: 1000}, {Session: "a1-b2", Owner: 1000},
-		{Session: strings.Repeat("a", 129), Owner: 1000},
-	} {
-		if err := c.CheckTarget(); !errors.Is(err, ErrJoinCode) {
-			t.Errorf("%+v: %v, want ErrJoinCode", c, err)
+	for _, s := range []string{"a1b2c3d4-x-abc", "a1b2c3d4-1000-", "A1B2-1000-abc", "a1b2-01000-abc", "a1b2-1000-ab/c"} {
+		if _, err := ParseJoinCode(s); !errors.Is(err, ErrJoinCode) {
+			t.Errorf("ParseJoinCode(%q) = %v; want ErrJoinCode", s, err)
 		}
 	}
 }
 
 func TestShareSocketIsAbstract(t *testing.T) {
-	if got := ShareSocket("a1b2c3d4"); got != "@robin-share-a1b2c3d4" {
+	if got := ShareSocket("m2n3p4q5"); got != "@robin-share-m2n3p4q5" {
 		t.Errorf("ShareSocket = %q", got)
 	}
 }

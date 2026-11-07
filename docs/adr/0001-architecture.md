@@ -2843,7 +2843,7 @@ account on the host needs a way in for that account that no other account
 has, a peer of its own for its page, and a rule for who drives.
 
 - The way in is an abstract unix socket per session daemon,
-  `@robin-share-<id>`. The controller's socket lives in the 0700 run
+  `@robin-share-<door>`. The controller's socket lives in the 0700 run
   directory, where no other uid can reach it, and opening a path to it for
   one guest would open it to every account. An abstract socket has no file
   and no mode, so anyone can connect, and the gate is the same pair of
@@ -2851,20 +2851,39 @@ has, a peer of its own for its page, and a rule for who drives.
   `SO_PEERCRED` on the accepting goroutine and hangs up, without reading,
   unless that uid holds an open invitation; only then does the connection
   get 5 s to present its code. The name goes with the daemon, and there is
-  no file to sweep. The cost is the network namespace: an abstract name
+  no file to sweep. It was first `@robin-share-<id>`, but the session id
+  is on the daemon's command line, which `/proc` shows every account, and
+  an abstract name belongs to whoever binds it first: another account
+  could take the name before the daemon listened, and the session then
+  shared with nobody for its whole life. The guest's owner-uid check
+  (below) kept that from reaching a guest, so it denied sharing and
+  nothing more. The daemon now draws 128 random bits for the name as it
+  starts and writes them nowhere, `session.json` included, since nothing
+  restarts a daemon under its id and resume reaches the same process;
+  only join codes carry them, so no account knows the name before the
+  daemon holds it. The code grew a field for it, so a daemon started
+  before this change still hands out codes of three fields, which a
+  guest now refuses as from an older build (`ErrOldJoinCode`), and an
+  older guest CLI cannot take a code of four: sharing needs both sides
+  on this build. Binding first
+  thing and failing the session on a refused bind would have caught the
+  squat without preventing it, and still cost the owner the session.
+  The cost is the network namespace: an abstract name
   is visible only inside one, so a guest whose login lands in a container
   of its own cannot join (README, Known limits).
 - An invitation names an account, which the agent looks up in
   `/etc/passwd` and then through the host's `getent`, since the static
   agent has no name service of its own. Its code is the session id, the
-  owner's uid and 128 random bits; the bits are compared in constant time,
-  spent by the first join that presents them, and expire after 10 minutes,
+  owner's uid, the door's name and 128 random bits; the bits are compared
+  in constant time, spent by the first join that presents them, and
+  expire after 10 minutes,
   and three wrong codes from the invited uid withdraw the invitation.
   Inviting the same account again replaces its code. The code goes from
   the guest's CLI to the door in the first message over the agent's stdin,
   never on a command line, where `/proc` would show it to every account;
-  `robin-agent join` takes only the session id and the owner's uid, and
-  checks that whoever listens on the name is that uid, since another
+  `robin-agent join` takes no arguments, reads that first message for the
+  door and the owner's uid, passes it on to the door, and checks that
+  whoever listens on the name is that uid, since another
   account could take an abstract name once the daemon that held it is
   gone and serve the guest a desktop of its choosing. The guest's CLI pins
   the DTLS fingerprint of the agent it reached, as the owner's does.

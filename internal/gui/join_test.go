@@ -13,7 +13,7 @@ import (
 	"github.com/yasinmiran/robin/internal/relay"
 )
 
-const testCode = "a1b2c3d4-1000-k3j4m5n6p7q2r3s4t5u6v7w2x3"
+const testCode = "a1b2c3d4-1000-m2n3p4q5r6s7t2u3v4w5x6y7z2-k3j4m5n6p7q2r3s4t5u6v7w2x3"
 
 func TestCheckJoin(t *testing.T) {
 	if err := checkJoin(Options{}); err != nil {
@@ -24,6 +24,7 @@ func TestCheckJoin(t *testing.T) {
 	}
 	for want, o := range map[string]Options{
 		"not a join code": {Join: "a1b2c3d4"},
+		"older build":     {Join: "a1b2c3d4-1000-abc"},
 		"--share":         {Join: testCode, Share: []string{"bob"}},
 		"--attach":        {Join: testCode, Attach: ":0"},
 		"--id":            {Join: testCode, Resume: "ab12"},
@@ -41,13 +42,11 @@ func TestCheckJoin(t *testing.T) {
 	}
 }
 
-func TestJoinArgsCarryNoSecret(t *testing.T) {
-	code, err := protocol.ParseJoinCode(testCode)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := strings.Join(joinArgs("/home/a/.cache/robin/robin-agent-x", code), " ")
-	if got != "/home/a/.cache/robin/robin-agent-x join -session a1b2c3d4 -owner 1000" {
+// Nothing of the code goes on the command line: not the secret, and not
+// the door, which only an invitation names.
+func TestJoinArgsCarryNothingOfTheCode(t *testing.T) {
+	got := strings.Join(joinArgs("/home/a/.cache/robin/robin-agent-x"), " ")
+	if got != "/home/a/.cache/robin/robin-agent-x join" {
 		t.Errorf("join args %q", got)
 	}
 }
@@ -231,7 +230,7 @@ func waitText(t *testing.T, b *lockedBuffer, want string) {
 // for it, or, in a checkout without built agents, at the deploy.
 func TestRunGuestOfNoSession(t *testing.T) {
 	o, _, _ := localhost(t, "XDG_CACHE_HOME="+t.TempDir())
-	o.Join = "zz000000-1000-k3j4m5n6p7q2r3s4t5u6v7w2x3"
+	o.Join = "zz000000-1000-m2n3p4q5r6s7t2u3v4w5x6y7z2-k3j4m5n6p7q2r3s4t5u6v7w2x3"
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	err := Run(ctx, o)

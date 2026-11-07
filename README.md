@@ -472,8 +472,8 @@ killed, the keeper gives the room back its screens and speakers.
 ## Sharing a desktop
 
 ```sh
-robin gui --share alice build-box                    # your desktop, which alice may join
-robin gui --join a1b2c3d4-1000-k3j4... alice@build-box  # alice, from her own computer
+robin gui --share alice build-box                             # your desktop, which alice may join
+robin gui --join a1b2c3d4-1000-m2n3...-k3j4... alice@build-box  # alice, from her own computer
 ```
 
 `--share alice` invites another account on the host to watch your session.
@@ -520,6 +520,12 @@ every invitation withdrawn, and nobody joins until you are back; ending the
 session ends every guest's CLI with it. A guest whose connection drops does
 not come back on its own: the code it joined with is spent, so it needs
 another invitation.
+
+Both sides need a build with the door's own name. A session started by an
+older build, kept running across an upgrade, hands out codes of three
+parts that this build refuses as from an older build; start the session
+again to share it. An older guest CLI cannot take the new codes of four
+parts.
 
 ## Hardware encoding
 
@@ -721,15 +727,22 @@ A view-only Wayland grant takes the keyboard, the pointer and uploads away,
 and leaves the clipboard and the files the host offers.
 
 The guests' door. A session daemon takes guests on an abstract unix
-socket, `@robin-share-<id>`, which has no file and so no permissions: any
-account on the host can connect to it. Before it reads a byte, the daemon
+socket, `@robin-share-<door>`, which has no file and so no permissions: any
+account on the host can connect to it, and any account could take a name
+it knew before the daemon did. So the door is not named after the session
+id, which is on the daemon's command line for every account to read: the
+daemon draws 128 random bits for its name as it starts, and nobody can
+know them before the daemon listens: only join codes carry them, and the
+kernel lists the name only once it is taken. Before it reads a byte, the
+daemon
 asks the kernel who connected (`SO_PEERCRED`) and hangs up unless that uid
 holds an open invitation. The invited account then has 5 s to present the
 invitation's code, which the daemon compares in constant time, spends on
 first use and lets expire after 10 minutes; three wrong ones withdraw the
-invitation. A code is 128 random bits beside the session's id and your
-uid, and it never goes on a command line: the guest's CLI sends it over
-its agent's stdin. At most 8 invitations are open at once, 4 connections
+invitation. A code is 128 random bits beside the session's id, your uid
+and the door's name, and no part of it goes on a command line: the
+guest's CLI sends it over its agent's stdin, and the agent finds the door
+from it. At most 8 invitations are open at once, 4 connections
 may be presenting a code at once, and a session takes 8 guests, each
 getting one new peer connection a second; a guest that stops reading
 what the session sends it is dropped within 10 s. The
