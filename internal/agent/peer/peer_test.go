@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -228,45 +227,45 @@ func TestPeerRejectsOversizedControl(t *testing.T) {
 	}
 }
 
-// TestPeerOwnsItsPacer checks that a paced peer's drain goroutine ends
-// when the peer closes and that an unpaced peer never starts one.
+// TestPeerOwnsItsPacer checks that a paced peer hands GCC the bounded
+// pacer, whose drain goroutine has ended once the peer closes, and that
+// an unpaced peer has none. It asks the peer's own pacer rather than
+// counting goroutines by their stacks: a goroutine not yet scheduled shows
+// no frame of the function it will run, so a count could miss it.
 func TestPeerOwnsItsPacer(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		unpaced bool
-		running int
 	}{
-		{"paced", false, 1},
-		{"unpaced", true, 0},
+		{"paced", false},
+		{"unpaced", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			before := pacersRunning()
 			p, err := New(Config{MinBitrate: 100_000, StartBitrate: 500_000, MaxBitrate: 1_000_000, Unpaced: tc.unpaced}, Handlers{})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if n := pacersRunning() - before; n != tc.running {
+			own, paced := p.bwe.pacer.(*pacer)
+			if paced == tc.unpaced {
 				p.Close()
-				t.Fatalf("%d pacers running, want %d", n, tc.running)
+				t.Fatalf("pacer %T with Unpaced %v", p.bwe.pacer, tc.unpaced)
+			}
+			if paced && own.stopped == nil {
+				p.Close()
+				t.Fatal("the pacer's drain goroutine never started")
 			}
 			if err := p.Close(); err != nil {
 				t.Fatal(err)
 			}
-			if n := pacersRunning() - before; n != 0 {
-				t.Fatalf("%d pacers still running after Close", n)
+			if !paced {
+				return
+			}
+			select {
+			case <-own.stopped:
+			default:
+				t.Fatal("the pacer's drain goroutine outlived Close")
 			}
 		})
-	}
-}
-
-// pacersRunning counts the goroutines inside pacer.run.
-func pacersRunning() int {
-	buf := make([]byte, 1<<20)
-	for {
-		if n := runtime.Stack(buf, true); n < len(buf) {
-			return strings.Count(string(buf[:n]), ".(*pacer).run(")
-		}
-		buf = make([]byte, 2*len(buf))
 	}
 }
 
