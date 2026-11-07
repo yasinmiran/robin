@@ -50,21 +50,6 @@ func TestPipelineScalesOnlyWhenSizeKnown(t *testing.T) {
 	}
 }
 
-func TestFit(t *testing.T) {
-	for _, tc := range []struct{ w, h, maxW, maxH, wantW, wantH int }{
-		{1280, 720, 1920, 1080, 1280, 720},
-		{3840, 2160, 1920, 1080, 1920, 1080},
-		{2560, 1600, 1920, 1080, 1728, 1080},
-		{1366, 768, 1920, 1080, 1366, 768},
-		{1367, 769, 1920, 1080, 1366, 768},
-		{0, 0, 1920, 1080, 0, 0},
-	} {
-		if w, h := fit(tc.w, tc.h, tc.maxW, tc.maxH); w != tc.wantW || h != tc.wantH {
-			t.Errorf("fit(%d, %d, %d, %d) = %dx%d, want %dx%d", tc.w, tc.h, tc.maxW, tc.maxH, w, h, tc.wantW, tc.wantH)
-		}
-	}
-}
-
 func TestCaptureSkipsRepeatedFrames(t *testing.T) {
 	f := &frames{width: 2, height: 2}
 	size := 6

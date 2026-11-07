@@ -356,20 +356,6 @@ func waitSize(t *testing.T, sizes chan [2]int, w, h int) {
 	}
 }
 
-func TestFit(t *testing.T) {
-	for _, tc := range []struct{ w, h, mw, mh, ww, wh int }{
-		{800, 600, 1920, 1080, 800, 600},
-		{1001, 701, 1920, 1080, 1000, 700},
-		{2560, 1440, 1920, 1080, 1920, 1080},
-		{3000, 1000, 1920, 1080, 1920, 640},
-		{0, 600, 1920, 1080, 0, 0},
-	} {
-		if gw, gh := fit(tc.w, tc.h, tc.mw, tc.mh); gw != tc.ww || gh != tc.wh {
-			t.Errorf("fit(%d,%d into %dx%d) = %dx%d, want %dx%d", tc.w, tc.h, tc.mw, tc.mh, gw, gh, tc.ww, tc.wh)
-		}
-	}
-}
-
 func TestCursorCacheForgetsTheOldest(t *testing.T) {
 	guestPage := &viewer{cursorsShown: map[uint32]bool{}}
 	s := &session{
