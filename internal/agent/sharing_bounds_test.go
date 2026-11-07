@@ -3,10 +3,12 @@
 package agent
 
 import (
+	"net"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/pion/ice/v4"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
 
@@ -76,11 +78,16 @@ func (m *turnMic) Play(r track.Reader) error {
 
 // micTracks connects a stand-in page sending n microphone tracks to a
 // receiving peer, and returns the tracks as the receiver gets them, each
-// fed a silence packet every 20 ms until the test ends.
+// fed a silence packet every 20 ms until the test ends. The two meet on
+// one loopback pair: the tracks wait on that pair connecting, not on how
+// many interfaces and addresses this machine has for ICE to try.
 func micTracks(t *testing.T, n int) []*webrtc.TrackRemote {
 	t.Helper()
 	var se webrtc.SettingEngine
 	se.SetIncludeLoopbackCandidate(true)
+	se.SetIPFilter(net.IP.IsLoopback)
+	se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
+	se.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
 	api := webrtc.NewAPI(webrtc.WithSettingEngine(se))
 	send, err := api.NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
