@@ -63,6 +63,60 @@ jobs:
       - name: go test
         run: go test ./...
 
+  agents:
+    name: Agents built, scanned and deployed
+    runs-on: ubuntu-24.04
+    # A cold cache compiles zig's musl and libc++, nasm, openh264 and opus
+    # for both targets.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      # zig, the downloads and the libraries built from them. Every library
+      # directory is already named by the hash of its inputs; the key names
+      # the scripts that pin those inputs, and has no fallback, so a change
+      # to a pin starts from an empty cache instead of carrying the old zig
+      # and libraries along forever.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/toolchain
+          key: toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('toolchain/*.sh') }}
+      - name: make agents
+        run: make agents
+      # Scans both agents for anything of the runner and deploys the amd64
+      # one over a local sshd; neither test skips here for want of an agent.
+      - name: make test-agents
+        run: make test-agents
+
+  probe:
+    name: Probe in distribution images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      # The Docker Official Images the X and Wayland suites also build
+      # from. The probe runs in them with --network=none, as root inside a
+      # rootless container, and nothing in this job holds a secret.
+      - name: pull the probe's images
+        run: |
+          for image in docker.io/library/ubuntu:24.04 docker.io/library/alpine:3.20 docker.io/library/fedora:40; do
+            podman pull -q "$image"
+          done
+      # Fails, rather than skips, a case whose image the step above missed.
+      - name: go test the probe in podman
+        run: ROBIN_REQUIRE_CONTAINERS=1 go test -run '^TestScriptContainers$' ./internal/probe
+
   govulncheck:
     name: govulncheck
     runs-on: ubuntu-24.04

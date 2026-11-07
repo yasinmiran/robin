@@ -1220,11 +1220,21 @@ and `go test ./...` without the encoder tags, so the encoders build as
 stubs and no C toolchain is fetched; govulncheck for the Linux build and
 for the CLI on macOS and Windows; the page's modules under `node --test`;
 a lockfile check of `e2e` and the browser smoke test; and the docs site's
-`npm ci`, `npm test` and `npm run check`. Nothing that needs podman, a
-display or a GPU runs there, and CI builds no agents and pulls no images,
-so `make test-agents` and `make repro` run only locally and the probe's
-container cases, which `make test` runs wherever podman has their images,
-skip there. `make check` stays the gate before a merge.
+`npm ci`, `npm test` and `npm run check`. Two more jobs need the C
+toolchain or a container. One runs `make agents` and `make test-agents`,
+with zig and the openh264 and libopus builds cached under a key of the
+toolchain scripts' content, so both agents are built and scanned on
+every change and the amd64 one is deployed over a local sshd. The other
+pulls the three Docker Official Images the probe's container cases need
+(Ubuntu 24.04, Alpine 3.20, Fedora 40) and runs them under the runner's
+rootless podman with `ROBIN_REQUIRE_CONTAINERS=1`, which fails a case
+whose image is missing instead of skipping it. Locally `make test` runs
+those cases wherever podman already has the images and skips the rest;
+`podman pull` them first to run them all. Left to local runs: `make
+test-x`, `make test-wayland`, `make e2e`, the encoder tests against the
+real openh264 and libopus, and `make repro`, since a runner has no
+display or GPU and one build is all the agents job does. `make check`
+stays the gate before a merge.
 The workflow's token can only read, checkout keeps no credentials, and
 every action is pinned to a commit; `site/scripts/workflows.test.ts`
 fails on a workflow that drops any of those. govulncheck is pinned in its own module,
@@ -1275,9 +1285,10 @@ comparison notices, so the check is known not to be vacuous. `make
 test-agents`, which `make check` and `make repro` run, builds the agents
 and scans them for the checkout, the toolchain cache, the home directory,
 Go's own directories, a Go other than the pinned one and any build
-setting the Makefile does not set. `make test` runs the same test but
-skips it when no agents have been built, so it stays free of the
-toolchain.
+setting the Makefile does not set, then deploys one over a local sshd.
+CI runs it on every change; `make repro` runs only locally. `make test`
+runs the same tests but skips them when no agents have been built, so it
+stays free of the toolchain.
 
 macOS as a build host is expected to produce the same bytes, since zig
 carries its own libc and the Go side is pure, but that has not yet been

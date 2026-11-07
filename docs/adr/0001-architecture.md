@@ -1343,9 +1343,18 @@ repro`; `make test` skips the test without agents, so a fresh clone's
 unit tests need no toolchain) checks the agents this tree builds for the
 checkout, the toolchain cache, the home directory, Go's directories, the pinned Go
 version and the exact set of build settings, so a leak that comes back is
-caught without the double build. Nothing checks it on every merge yet:
-CI builds the encoders as stubs and fetches no C toolchain, so it builds
-no agents to check.
+caught without the double build. CI's agents job runs `make agents` and
+`make test-agents` on every push and pull request, so the scan holds on
+every merge, not only on a machine that happened to build the agents. Its
+zig, downloads and libraries are cached under the hash of
+`toolchain/*.sh`, with no fallback key: every library directory is
+already named by its inputs, and a pin change should start clean rather
+than carry the old toolchain along. A pull request's run reads the cache
+main saved but writes only its own, so a branch cannot hand main a
+toolchain, and the downloads are checked by hash on every use whatever
+the cache held. The double build stays local, since
+the scan already catches a leak on every merge and `make repro` would be
+a second full build to do it again.
 
 ### Publishing the docs from a build it does not trust
 
@@ -3083,14 +3092,22 @@ it pulls in become as much a part of the attack surface as the agent. CI
 only, never `pull_request_target`, with `contents: read` as the whole of
 its token and no secret: a pull request from a fork gets nothing worth
 taking. Checkout keeps no credentials, no `run:` step reads an event field,
-and each of the three actions (checkout, setup-go, setup-node) is pinned to
-a full commit SHA, since a tag can be moved. It runs what needs no
-container: the stub build's tests, vet, gofmt, a tidy check, govulncheck,
-the page's node tests and the site, every `npm ci` with `--ignore-scripts`
-(no dependency needs an install script, so none runs while npm installs
-it). `make check` stays the merge gate,
-because a runner has no podman, display or GPU for the suites that matter
-most. `site/scripts/workflows.test.ts` holds every workflow to these
+and each of its four actions (checkout, setup-go, setup-node, cache) is
+GitHub's own and pinned to a full commit SHA, since a tag can be moved. It
+runs the stub build's tests, vet, gofmt, a tidy check, govulncheck, the
+page's node tests and the site, every `npm ci` with `--ignore-scripts` (no
+dependency needs an install script, so none runs while npm installs it);
+it builds and scans the agents with the pinned toolchain, whose downloads
+are checked by hash as on a workstation; and it runs the probe in Ubuntu,
+Alpine and Fedora under the runner's rootless podman. Those three images
+are pulled by tag from Docker Hub's official library, the namespace the X
+and Wayland suites already build from, and the probe runs in them with no
+network in a job that holds no secret, so even a tag moved to a hostile
+image reaches nothing worth taking. `ROBIN_REQUIRE_CONTAINERS=1` makes a missing image fail its cases
+there rather than skip them, as `ROBIN_REQUIRE_AGENTS=1` does for the
+agents. `make check` stays the merge gate, because a runner has no display
+or GPU for the X, Wayland and end-to-end suites, and `make repro` is a
+second full build. `site/scripts/workflows.test.ts` holds every workflow to these
 rules (pins, a read-only default token, no `pull_request_target`, no kept
 credentials, no `${{ }}` in a script, `--ignore-scripts`), so a new
 workflow or an edit that drops one fails the site's tests in CI. The one
