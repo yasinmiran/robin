@@ -212,8 +212,7 @@ commands() {
 }
 
 # session_bus reports this user's session bus, which attaching to a Wayland
-# desktop reaches its portal through. The agent finds an X display's cookie
-# and the sound server for itself.
+# desktop reaches its portal through.
 session_bus() {
 	rt=${XDG_RUNTIME_DIR:-/run/user/$uid}
 	[ -S "$rt/bus" ] && kv session_bus "$rt/bus"

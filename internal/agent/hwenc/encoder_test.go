@@ -199,6 +199,24 @@ func TestStalledToolTimesOut(t *testing.T) {
 	}
 }
 
+// A tool whose stderr carries only errors has failed once it prints, even
+// if it keeps waiting on its input: the encoder gives up within errorGrace
+// instead of the frame's whole deadline.
+func TestStderrErrorEndsTheWait(t *testing.T) {
+	r := fakeRoute("multipart:stall")
+	r.stderrFatal = true
+	e := newEncoder(r, 64, 48, 30, 1_000_000)
+	defer e.Close()
+	start := time.Now()
+	_, err := e.Encode(yuv.NewI420(64, 48), 0, true)
+	if err == nil || !strings.Contains(err.Error(), "in time") || !strings.Contains(err.Error(), "fake: no device") {
+		t.Fatalf("got %v, want a timeout carrying the tool's message", err)
+	}
+	if d := time.Since(start); d > errorGrace+time.Second {
+		t.Fatalf("gave up after %v, want about %v", d, errorGrace)
+	}
+}
+
 func TestCloseKillsProcessGroup(t *testing.T) {
 	pidfile := filepath.Join(t.TempDir(), "pid")
 	e := newEncoder(fakeRoute("multipart:spawn", "ROBIN_HWENC_FAKE_PIDFILE="+pidfile), 64, 48, 30, 1_000_000)

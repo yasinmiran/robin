@@ -44,9 +44,6 @@ func TestCheckEncoder(t *testing.T) {
 		{"nvenc through ffmpeg", "nvenc", Report{GPU: nvidia, FFmpegEncoders: []string{"h264_nvenc"}}, nil},
 		{"nvenc through gstreamer", "nvenc", Report{GPU: nvidia, Commands: gst, GstPlugins: []string{"nvcodec"}}, nil},
 		{"no nvidia gpu", "nvenc", Report{GPU: intel, FFmpegEncoders: []string{"h264_nvenc"}}, []string{"no NVIDIA GPU"}},
-		// Seen on a workstation with the NVIDIA utilities and no NVIDIA card.
-		{"nvenc without a driver", "nvenc", Report{FFmpegEncoders: []string{"h264_nvenc"}},
-			[]string{"no NVIDIA GPU"}},
 		{"nvidia without a tool", "nvenc", Report{Distro: Distro{ID: "arch"}, UID: 1000, GPU: nvidia, FFmpegEncoders: []string{"h264_vaapi"}},
 			[]string{"needs ffmpeg with h264_nvenc", "install with: sudo pacman -S ffmpeg"}},
 	} {
@@ -102,7 +99,7 @@ func TestAutoEncoder(t *testing.T) {
 		why  string // a substring of the reason
 	}{
 		{"no GPU", Report{CPUs: 2}, 1280, 720, "software", "no GPU encoder"},
-		// A workstation with the NVIDIA utilities and no driver loaded.
+		// ffmpeg is often built with nvenc on hosts without an NVIDIA GPU.
 		{"nvenc without a driver", Report{CPUs: 2, FFmpegEncoders: ffNVENC}, 1280, 720, "software", "no GPU encoder"},
 		{"render node nobody can drive", Report{CPUs: 2, GPU: intel}, 1280, 720, "software", "no GPU encoder"},
 

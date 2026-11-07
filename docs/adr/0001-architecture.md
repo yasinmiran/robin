@@ -212,9 +212,10 @@ the install command. Attach mode needs none of it.
 
 The probe reports only what the CLI decides with, such as the
 distribution, live sessions and displays, the session bus, the GPU and the
-encoder routes, spawn tools, cameras, the agent directory and kept
-sessions. The agent finds an X display's cookie, the sound server and its
-encoder route for itself, on the host, so the probe does not look for them.
+encoders the host's ffmpeg or GStreamer offer, spawn tools, cameras, the
+agent directory and kept sessions. The agent finds an X display's cookie,
+the sound server and the encoder tool it runs for itself, on the host, so
+the probe does not look for them.
 
 The agent picks the lightest session it finds: Xfce, else a window manager
 with a terminal beside it, else a bare terminal. The terminal starts first
