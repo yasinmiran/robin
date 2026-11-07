@@ -104,19 +104,24 @@ type GuestChange struct {
 const WhyGuestLeft = "you left the session"
 
 // JoinCode is what an invitation's code names: the session, its owner's
-// uid, which the guest checks the session's socket against, and the secret.
+// uid, which the guest checks the session's socket against, the door that
+// socket is named by, and the secret.
 type JoinCode struct {
 	Session string
 	Owner   int
-	Secret  string
+	// Door is drawn at random by the session daemon as it starts, so that
+	// no account can know the socket's name, and take it first, from the
+	// session id every account reads on the daemon's command line.
+	Door   string
+	Secret string
 }
 
-// codeAlphabet is every character a session id or secret holds.
+// codeAlphabet is every character a session id, door or secret holds.
 const codeAlphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 // String is the code as the user passes it to robin gui --join.
 func (c JoinCode) String() string {
-	return c.Session + "-" + strconv.Itoa(c.Owner) + "-" + c.Secret
+	return c.Session + "-" + strconv.Itoa(c.Owner) + "-" + c.Door + "-" + c.Secret
 }
 
 // ErrJoinCode is what ParseJoinCode returns for anything it did not make.
@@ -125,40 +130,29 @@ var ErrJoinCode = errors.New("not a join code: robin gui --join takes the code t
 // maxJoinCode bounds a code as the user passes it.
 const maxJoinCode = 128
 
-// CheckTarget reports whether c's session and owner could name a socket
-// and a uid: a session id of codeAlphabet alone and a uid that is not
-// negative. It says nothing of the secret.
-func (c JoinCode) CheckTarget() error {
-	if !inAlphabet(c.Session) || c.Owner < 0 || len(c.Session) > maxJoinCode {
-		return ErrJoinCode
-	}
-	return nil
-}
-
 func inAlphabet(s string) bool { return s != "" && strings.Trim(s, codeAlphabet) == "" }
 
 // ParseJoinCode reads a code that JoinCode.String wrote. It refuses
-// anything else, so what it returns can name a socket and a uid.
+// anything else, so what it returns can name a socket and a uid: a
+// session id, a door and a secret of codeAlphabet alone, and a uid that is
+// not negative.
 func ParseJoinCode(s string) (JoinCode, error) {
 	parts := strings.Split(s, "-")
-	if len(parts) != 3 || len(s) > maxJoinCode || !inAlphabet(parts[2]) {
+	if len(parts) != 4 || len(s) > maxJoinCode || !inAlphabet(parts[0]) || !inAlphabet(parts[2]) || !inAlphabet(parts[3]) {
 		return JoinCode{}, ErrJoinCode
 	}
 	uid, err := strconv.Atoi(parts[1])
-	if err != nil || strconv.Itoa(uid) != parts[1] {
+	if err != nil || uid < 0 || strconv.Itoa(uid) != parts[1] {
 		return JoinCode{}, ErrJoinCode
 	}
-	c := JoinCode{Session: parts[0], Owner: uid, Secret: parts[2]}
-	if err := c.CheckTarget(); err != nil {
-		return JoinCode{}, err
-	}
-	return c, nil
+	return JoinCode{Session: parts[0], Owner: uid, Door: parts[2], Secret: parts[3]}, nil
 }
 
-// ShareSocket returns the abstract unix socket the session daemon of
-// session id takes guests on. An abstract socket has no file and no permissions,
-// so anyone may connect; the daemon admits only an invited uid that
-// presents its code, and the guest checks the listener is the owner's.
-func ShareSocket(id string) string {
-	return fmt.Sprintf("@robin-share-%s", id)
+// ShareSocket returns the abstract unix socket a session daemon takes
+// guests on, named by its JoinCode.Door. An abstract socket has no file
+// and no permissions, so anyone may connect, and anyone may take a name
+// nobody holds; the daemon admits only an invited uid that presents its
+// code, and the guest checks the listener is the owner's.
+func ShareSocket(door string) string {
+	return fmt.Sprintf("@robin-share-%s", door)
 }

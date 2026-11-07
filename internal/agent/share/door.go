@@ -3,12 +3,16 @@
 package share
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"slices"
 	"sync"
 	"time"
 
@@ -97,8 +101,8 @@ type Door struct {
 	wg        sync.WaitGroup
 }
 
-// Open listens on protocol.ShareSocket of inv's session. Anyone on the
-// host may connect to an abstract socket; the door hangs up on a
+// Open listens on protocol.ShareSocket of the door inv's codes name. Anyone
+// on the host may connect to an abstract socket; the door hangs up on a
 // connection whose uid holds no invitation before reading a byte of it.
 func Open(inv *Invites, log *slog.Logger) (*Door, error) {
 	return open(inv, log, writeWait)
@@ -109,7 +113,7 @@ func open(inv *Invites, log *slog.Logger, wait time.Duration) (*Door, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	ln, err := net.Listen("unix", protocol.ShareSocket(inv.session))
+	ln, err := net.Listen("unix", protocol.ShareSocket(inv.door))
 	if err != nil {
 		return nil, fmt.Errorf("share: listen: %w", err)
 	}
@@ -235,11 +239,37 @@ func (d *Door) Close() error {
 	return err
 }
 
-// Dial connects a guest's agent to the door of the session code names, and
-// makes sure the session's owner listens there: an abstract name is
-// anyone's to take once the daemon that held it is gone.
+// maxJoinLine bounds the line ReadJoin reads.
+const maxJoinLine = 4 << 10
+
+// ReadJoin reads the first line of in, a guest CLI's Join, for the door
+// its code names. It returns the code with a reader of all of in, that
+// line included, for the door to read. The code, door and secret alike,
+// comes this way and never on a command line, which every account can
+// read in /proc.
+func ReadJoin(in io.Reader) (protocol.JoinCode, io.Reader, error) {
+	br := bufio.NewReaderSize(in, maxJoinLine)
+	line, err := br.ReadSlice('\n')
+	if err != nil {
+		return protocol.JoinCode{}, nil, fmt.Errorf("read the join: %w", err)
+	}
+	line = slices.Clone(line)
+	var m protocol.Message
+	if err := json.Unmarshal(line, &m); err != nil || m.Type != protocol.TypeJoin || m.Join == nil {
+		return protocol.JoinCode{}, nil, errors.New("expected the CLI's join first")
+	}
+	code, err := protocol.ParseJoinCode(m.Join.Code)
+	if err != nil {
+		return protocol.JoinCode{}, nil, err
+	}
+	return code, io.MultiReader(bytes.NewReader(line), br), nil
+}
+
+// Dial connects a guest's agent to the door code names, and makes sure the
+// session's owner listens there: an abstract name is anyone's to take once
+// the daemon that held it is gone.
 func Dial(code protocol.JoinCode) (net.Conn, error) {
-	c, err := net.Dial("unix", protocol.ShareSocket(code.Session))
+	c, err := net.Dial("unix", protocol.ShareSocket(code.Door))
 	if err != nil {
 		return nil, fmt.Errorf("no session %s to join on this host: %w", code.Session, err)
 	}

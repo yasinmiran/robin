@@ -21,7 +21,7 @@ var signalingSeeds = []string{
 	`{"type":"ping"}`,
 	`{"type":"offer","sdp":"v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\n"}`,
 	`{"type":"candidate","candidate":{"candidate":"candidate:1 1 udp 2130706431 10.0.0.2 50000 typ host","sdpMid":"0","sdpMLineIndex":0}}`,
-	`{"type":"join","join":{"version":2,"code":"a1b2c3d4-1000-abcdefghijklmnopqrstuvwxyz"}}`,
+	`{"type":"join","join":{"version":2,"code":"a1b2c3d4-1000-zyxwvutsrqponmlkjihgfedcba-abcdefghijklmnopqrstuvwxyz"}}`,
 	`{"type":"invited","invitation":{"user":"bob","code":"s-1-x","expires":"2026-10-30T12:10:00Z"}}`,
 	`{"type":"macros","macroChange":{"put":{"id":"m1","name":"Hi","steps":[{"text":"hi"},{"pause":10},{"keys":[{"key":"Control","code":"ControlLeft"}]}]}}}`,
 	`{"type":"error","error":"no display","code":"busy"}`,
@@ -336,10 +336,10 @@ func FuzzParseTileBatch(f *testing.F) {
 // uid, and is exactly what String writes of it.
 func FuzzParseJoinCode(f *testing.F) {
 	for _, s := range []string{
-		"a1b2c3d4-1000-abcdefghijklmnopqrstuvwxyz",
-		"s1-0-x", "s1--1-x", "s1-01-x", "s1-1000-", "-1000-x", "s1-1000-x-y",
-		"S1-1000-x", "s1-+1-x", "s1-99999999999999999999-x", "s1-1000-x\n",
-		strings.Repeat("a", 120) + "-1-b",
+		"a1b2c3d4-1000-zyxwvutsrqponmlkjihgfedcba-abcdefghijklmnopqrstuvwxyz",
+		"s1-0-d-x", "s1--1-d-x", "s1-01-d-x", "s1-1000-d-", "s1-1000--x", "-1000-d-x",
+		"s1-1000-d-x-y", "s1-1000-x", "S1-1000-d-x", "s1-1000-D-x", "s1-+1-d-x",
+		"s1-99999999999999999999-d-x", "s1-1000-d-x\n", strings.Repeat("a", 120) + "-1-d-b",
 	} {
 		f.Add(s)
 	}
@@ -354,11 +354,11 @@ func FuzzParseJoinCode(f *testing.F) {
 		if c.String() != s {
 			t.Fatalf("%q parses to %+v, which writes %q", s, c, c.String())
 		}
-		if err := c.CheckTarget(); err != nil || !inAlphabet(c.Secret) {
+		if !inAlphabet(c.Session) || !inAlphabet(c.Door) || !inAlphabet(c.Secret) || c.Owner < 0 {
 			t.Fatalf("took %+v", c)
 		}
-		if strings.ContainsAny(ShareSocket(c.Session), "/\x00") {
-			t.Fatalf("session %q names an odd socket", c.Session)
+		if strings.ContainsAny(ShareSocket(c.Door), "/\x00") {
+			t.Fatalf("door %q names an odd socket", c.Door)
 		}
 	})
 }
