@@ -5,22 +5,54 @@ section: Start
 order: 3
 ---
 
+The client is the machine you run `robin` on, and the browser runs there too, because the page is served on loopback only. It needs OpenSSH and a browser that plays H.264 over WebRTC.
+
 ## Browsers
 
-Coming soon.
+| Browser | State |
+|---|---|
+| Chrome | supported |
+| Edge | supported, same engine as Chrome |
+| Firefox | supported, with Cisco's OpenH264 plugin |
+| Safari | picture and input work on macOS |
+
+The first session from a new Firefox profile needs network access. Firefox downloads the OpenH264 plugin by itself the first time a page asks for H.264, and until it has it the page stays black; afterwards the plugin shows under Add-ons and themes, Plugins.
+
+In full screen, Chrome and Edge let shortcuts such as Ctrl+W and Alt+Tab reach the remote desktop instead of the browser.
 
 ## Client systems
 
-Coming soon.
+**Linux.** The page opens with `xdg-open`.
+
+**macOS.** The page opens with `open`. Cmd is sent to the remote as Control, so Cmd+C there is Ctrl+C.
+
+**Windows 10 or 11.** Use the OpenSSH client Windows ships, `ssh.exe` on your `PATH`; the page opens in your default browser. That client has no ControlMaster, so `--ssh-mux` is off by default and each step of a session opens an ssh of its own, each with its own login: with a key or `ssh-agent` you do not notice, with a password or a 2FA prompt you answer several times a session.
+
+**Android.** Install [Termux](https://termux.dev) and its `openssh` and `termux-tools` packages, then run the `robin-linux-arm64` binary there as it is. The page opens in Android's browser through `termux-open-url`.
+
+**iOS and iPadOS** cannot be clients: nothing there lets you run a program that drives `ssh` and listens on loopback for the browser.
+
+See [Client](/flags#client) for `--no-browser` and `--ssh-mux`.
 
 ## Input methods and touch
 
-Coming soon.
+Input methods work in every browser above. Text you compose, such as CJK or an accent built from a dead key, shows in the page while you compose it and reaches the remote desktop once you commit it.
+
+On a touch screen:
+
+- A tap clicks, and a long press right clicks.
+- One finger drags, as a mouse does with its button held.
+- Two fingers scroll.
+- Pinching zooms the picture on your device without resizing the desktop, and moving the pinch pans it.
+- The keyboard button in the status tab raises the soft keyboard.
 
 ## One browser per session
 
-Coming soon.
+A session serves one browser at a time, though reloading the tab that holds it is fine. A second tab shows "Could not connect" and asks you to use the link Robin printed most recently, so close the other tab and reload this one, or go back to the other.
+
+A guest on a shared session watches through a CLI and page of their own; see [Sharing](/sharing).
 
 ## Limits
 
-Coming soon.
+- The Windows and Android clients have not yet run on real devices; please report what you find in an issue.
+- Touch has no momentum or double tap, so a scroll stops when your fingers lift. A soft keyboard has no Ctrl, Alt or Esc; the [Keys row](/macros#the-keys-row) sends common chords such as Ctrl+Alt+Delete and Alt+Tab.
