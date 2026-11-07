@@ -24,7 +24,7 @@ describe("MobileNav", () => {
   it("closes when a page is picked", async () => {
     render(<MobileNav groups={groups} />);
     await userEvent.click(screen.getByRole("button", { name: "Open navigation" }));
-    await userEvent.click(screen.getByRole("link", { name: "Install and build" }));
+    await userEvent.click(screen.getByRole("link", { name: "Getting started" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 

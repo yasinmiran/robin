@@ -1,6 +1,6 @@
 ---
 title: Flags
-description: Every command and flag robin takes, with its default, grouped by what it changes.
+description: Every command and flag robin takes, with its default.
 section: Reference
 order: 1
 ---
@@ -33,7 +33,7 @@ Size the remote display in the browser's device pixels: sharp text on Retina scr
 Video bitrate ceiling in kbit/s; congestion control works below it.
 </Flag>
 <Flag name="--encoder" arg="MODE" def="`auto`">
-Video encoder on the host: `auto` (the GPU where it pays, else software), `software`, `vaapi` or `nvenc`. See [Hardware encoding](/hardware-encoding).
+Video encoder on the host: `auto` (the GPU where it pays, else software), `software`, `vaapi` or `nvenc`. See [GPU encoding](/using#gpu-encoding).
 </Flag>
 </Flags>
 
@@ -72,7 +72,7 @@ Start a new desktop even when a kept one could be resumed.
 
 <Flags>
 <Flag name="--mic" def="off">
-Offer your microphone to the host's programs, as Robin microphone. It stays off until you switch it on in the page. See [Microphone and camera](/microphone-and-camera).
+Offer your microphone to the host's programs, as Robin microphone. It stays off until you switch it on in the page. See [Microphone and camera](/sound#microphone-and-camera).
 </Flag>
 <Flag name="--camera" def="off">
 Offer your camera to the host's programs, through PipeWire or a v4l2loopback device. It stays off until you switch it on in the page.
@@ -108,7 +108,7 @@ Join another account's session as a guest, with the code its owner was given, ov
 Media path: `auto` (direct UDP, SSH tunnel as fallback), `direct` for UDP only, or `tunnel` to keep the media on the SSH path: the agent gathers no UDP and gets none of the browser's candidates, so no UDP pair can form whatever the browser shows (see [How it works](/how-it-works#transports-and-fallback)).
 </Flag>
 <Flag name="--stun" arg="SERVERS" def="`stun:stun.l.google.com:19302`">
-Comma-separated STUN servers for NAT traversal, or `none`. The browser and the agent each ask them for their public address (see [Security](/security#stun-tells-a-server-where-you-are)), except with `--transport tunnel`, which asks none.
+Comma-separated STUN servers for NAT traversal, or `none`. The browser and the agent each ask them for their public address (see [Security](/security#what-you-trust)), except with `--transport tunnel`, which asks none.
 </Flag>
 <Flag name="--listen" arg="ADDR" def="`127.0.0.1:0`">
 Address for the local page; loopback only.
