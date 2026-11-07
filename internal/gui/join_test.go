@@ -19,8 +19,17 @@ func TestCheckJoin(t *testing.T) {
 	if err := checkJoin(Options{}); err != nil {
 		t.Errorf("no join: %v", err)
 	}
-	if err := checkJoin(Options{Join: testCode, Mic: true, HiDPI: true}); err != nil {
+	if err := checkJoin(Options{Join: testCode, Mic: true, HiDPI: true, Encoder: protocol.EncoderAuto, Monitor: protocol.MonitorPrimary}); err != nil {
 		t.Errorf("a plain join: %v", err)
+	}
+	for _, o := range []Options{
+		{Keep: time.Hour}, {Keep: KeepNone}, {MaxWidth: 1280, MaxHeight: 720}, {FPS: 15},
+		{MaxKbps: 2000}, {Encoder: "vaapi"}, {Monitor: "2"},
+	} {
+		o.Join = testCode
+		if err := checkJoin(o); err == nil || !strings.Contains(err.Error(), "the owner's stream") {
+			t.Errorf("%+v: %v, want the owner's stream", o, err)
+		}
 	}
 	for want, o := range map[string]Options{
 		"not a join code": {Join: "a1b2c3d4"},
