@@ -721,15 +721,20 @@ A view-only Wayland grant takes the keyboard, the pointer and uploads away,
 and leaves the clipboard and the files the host offers.
 
 The guests' door. A session daemon takes guests on an abstract unix
-socket, `@robin-share-<id>`, which has no file and so no permissions: any
-account on the host can connect to it. Before it reads a byte, the daemon
+socket, `@robin-share-<door>`, which has no file and so no permissions: any
+account on the host can connect to it, and any account could take a name
+it knew before the daemon did. So the door is not named after the session
+id, which is on the daemon's command line for every account to read: the
+daemon draws 128 random bits for its name as it starts, and only join
+codes carry them. Before it reads a byte, the daemon
 asks the kernel who connected (`SO_PEERCRED`) and hangs up unless that uid
 holds an open invitation. The invited account then has 5 s to present the
 invitation's code, which the daemon compares in constant time, spends on
 first use and lets expire after 10 minutes; three wrong ones withdraw the
-invitation. A code is 128 random bits beside the session's id and your
-uid, and it never goes on a command line: the guest's CLI sends it over
-its agent's stdin. At most 8 invitations are open at once, 4 connections
+invitation. A code is 128 random bits beside the session's id, your uid
+and the door's name, and no part of it goes on a command line: the
+guest's CLI sends it over its agent's stdin, and the agent finds the door
+from it. At most 8 invitations are open at once, 4 connections
 may be presenting a code at once, and a session takes 8 guests, each
 getting one new peer connection a second; a guest that stops reading
 what the session sends it is dropped within 10 s. The
