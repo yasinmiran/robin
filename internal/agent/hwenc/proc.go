@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/yasinmiran/robin/internal/tail"
 )
 
 // proc is one run of an encoder tool: NV12 frames in on stdin, framed access
@@ -25,7 +27,7 @@ type proc struct {
 	aus    chan []byte
 	// readErr says why aus closed; it is set before the close.
 	readErr     error
-	stderr      *tail
+	stderr      *stderrTail
 	stderrFatal bool
 
 	bitrate int           // what the tool was started with, bits per second
@@ -58,7 +60,7 @@ func startProc(r *route, c config) (*proc, error) {
 	cmd.Env = r.environ()
 	cmd.Stdin = inR
 	cmd.Stdout = outW
-	stderr := newTail(4 << 10)
+	stderr := newStderrTail()
 	cmd.Stderr = stderr
 	// Pdeathsig fires when the thread that forked exits, which the Go runtime
 	// does not do to threads it has not locked, so in practice it means the
@@ -153,32 +155,19 @@ func (p *proc) kill() {
 	p.stdout.Close()
 }
 
-// tail keeps the last max bytes written to it. written is closed by the
-// first write.
-type tail struct {
+// stderrTail keeps the end of a tool's stderr. written is closed by the
+// first write, which for a tool whose stderr carries only errors is the
+// first sign of a failure.
+type stderrTail struct {
+	tail.Buffer
 	written chan struct{}
-
-	mu   sync.Mutex
-	max  int
-	buf  []byte
-	once sync.Once
+	once    sync.Once
 }
 
-func newTail(max int) *tail { return &tail{max: max, written: make(chan struct{})} }
+func newStderrTail() *stderrTail { return &stderrTail{written: make(chan struct{})} }
 
-func (t *tail) Write(b []byte) (int, error) {
-	t.mu.Lock()
-	t.buf = append(t.buf, b...)
-	if over := len(t.buf) - t.max; over > 0 {
-		t.buf = append(t.buf[:0], t.buf[over:]...)
-	}
-	t.mu.Unlock()
+func (t *stderrTail) Write(b []byte) (int, error) {
+	n, err := t.Buffer.Write(b)
 	t.once.Do(func() { close(t.written) })
-	return len(b), nil
-}
-
-func (t *tail) String() string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return string(t.buf)
+	return n, err
 }
