@@ -5,24 +5,51 @@ section: Use
 order: 4
 ---
 
-Coming soon.
+```sh
+robin gui --attach auto --curtain --silent workstation
+```
+
+`--curtain` blacks out an attached desktop's own screen and `--silent` quiets its speakers; your page still gets the picture and the sound.
+
+<Callout type="warning" title="The curtain is no lock.">
+Someone at the host can still type, blind, because its keyboard and mouse keep working, and when the session ends for any reason the screen comes back unlocked.
+</Callout>
+
+Both are off unless you ask, and the status tab has a switch for each: Black out host screen and Quiet host speakers. A desktop robin starts has nobody in front of it, so both flags are refused there.
 
 ## The curtain
 
-Coming soon.
+The curtain works on X11 and on GNOME under Wayland, where the screen-sharing indicator goes dark with the rest.
+
+On other Wayland desktops, KDE Plasma included, the switch is missing and `--curtain` fails with the reason. A screen whose gamma a program cannot set (some USB and DisplayLink monitors, virtual GPUs) leaves the switch missing too, and `--curtain` names it; one plugged in mid-session shows up as an error under the switch instead.
 
 ## The silent room
 
-Coming soon.
+`--silent` adds an output named Robin silent room to the host's sound settings, then moves every program's sound into it, each new one too as it starts to play, and your page plays that output. Switch it off or end the session and each program moves back.
+
+A program that refuses to be moved keeps playing at the host; the switch names it until it stops.
 
 ## On resume
 
-Coming soon.
+A desktop you attached to with `--keep` stays dark and quiet for as long as the host keeps it. Picking it back up with either switch on means naming it with `--id`, as [Resuming with other flags](/sessions#resuming-with-other-flags) shows:
+
+```sh
+robin gui --id ID --curtain --silent workstation
+```
+
+If a switch cannot come on, robin says why, and the desktop stays kept the way it was.
 
 ## If the screen stays black
 
-Coming soon.
+Robin undoes both even when its agent is killed; either can stay only if every robin process on the host is killed at once. Fix it over SSH or from a text console:
+
+- On X11, with `DISPLAY` set to that desktop, run `xrandr --output NAME --gamma 1:1:1 --brightness 1` for each screen.
+- On GNOME, switch Night Light on and off, or log out.
+- If Robin silent room is still listed, find its module with `pactl list short modules | grep robin_silent` and remove it with `pactl unload-module` and that number.
 
 ## Limits
 
-Coming soon.
+- The curtain is not yet checked on a real monitor, and on some hardware the pointer may stay showing on the black screen.
+- Night Light or a newly plugged monitor can show for up to a second before the curtain darkens it again.
+- A program that starts playing while the room is silent may be heard for a fraction of a second.
+- A program that played while the room was silent may forget the output you chose for it earlier and play on the default one next time.
