@@ -5,22 +5,52 @@ section: Use
 order: 7
 ---
 
+The keys button, beside full screen in the status tab, opens a section for whatever your keyboard cannot get through to the desktop, and the tab stays out while it is open.
+
 ## The Keys row
 
-Coming soon.
+The Keys row sends whichever of these you click: Ctrl+Alt+Delete, Alt+Tab, Alt+F4, Super, Ctrl+W, Ctrl+T, Ctrl+N, Ctrl+Q and Print Screen.
+
+Outside full screen your browser or your own system keeps these keys, which is why Ctrl+W on your keyboard closes the tab. Chrome in full screen passes most of them on; the row covers the rest, and the other browsers.
+
+There are no Ctrl+Alt+F keys: on an attached desktop they would switch the host's console away from your session.
 
 ## Type clipboard
 
-Coming soon.
+Type clipboard comes first in the Macros row. It types the text on this computer's clipboard onto the desktop as keys, up to 16 KiB, which gets through where a paste does nothing, such as a lock screen or a VM console.
+
+Chrome asks for permission to read the clipboard once a session; Firefox and Safari show their own Paste button at each click.
 
 ## Your own macros
 
-Coming soon.
+A macro is a name and a list of steps. Each step is a chord, such as Ctrl+Alt+T, pressed in order and let go in reverse, or a run of text typed as it stands, or a pause of up to 60 seconds.
+
+**New macro** opens the editor. **Record keys** takes what you press and sends none of it to the desktop until you stop: a character, alone or with Shift, joins the text before it, and any other key is a chord with the modifiers held. Add text and pauses below the steps; a key your browser keeps can be recorded by clicking it in the Keys row.
+
+Click a macro to play it, and again to stop it. It also stops when the page loses the keyboard or the connection, and lets go of every key. A macro does not wait for the desktop, so typing into a window it opens needs a pause first.
 
 ## Where macros are kept
 
-Coming soon.
+The CLI keeps your macros in one file, shared by every session on this computer:
+
+| Client | File |
+|---|---|
+| Linux | `$XDG_CONFIG_HOME/robin/macros.json`, else `~/.config/robin/macros.json` |
+| macOS | `~/Library/Application Support/robin/macros.json` |
+| Windows | `%AppData%\robin\macros.json` |
+
+<Callout type="note" title="Plain text.">
+Macro text is saved as plain text. Keep passwords out of it.
+</Callout>
+
+A new macro shows only in sessions to the host as you typed it. `alice@box` and `box` are two hosts for this, and unticking **Only on** shows it everywhere.
+
+If the file does not read, the terminal and the page both say why and **New macro** is greyed out; the file itself stays as it is until you fix it.
 
 ## Limits
 
-Coming soon.
+- Recording takes only the keys your browser hands the page, so click the others in the Keys row.
+- A save waits up to 2 seconds for another session's save and then says so; save again.
+- On GNOME Wayland, text with any character outside ASCII, or one the host's layout lacks, arrives as a paste, so a prompt that takes no paste gets nothing.
+- The file holds at most 100 macros and 256 KiB; delete a macro to make room.
+- Type clipboard is not yet checked in Firefox or Safari.
