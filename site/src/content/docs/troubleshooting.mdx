@@ -7,7 +7,7 @@ order: 2
 
 ## Start with verbose logs
 
-Run the same command with `-v`. Robin then logs each step, along with the agent's log from the host: what the host has, which encoder it picked and, when a GPU encoder fell back to software, why.
+Run the same command with `-v`. Robin then logs each step and the agent's log from the host, including which encoder it picked and why it fell back to software.
 
 ```sh
 robin gui -v build-box
@@ -35,7 +35,7 @@ If Robin cannot start a browser, it prints `open this URL in your browser:` foll
 - Firefox shows no picture until it has fetched its OpenH264 plugin, which needs a network connection the first time.
 - On Wayland, someone at the host's screen has to approve the screen sharing request. The terminal says so and waits up to two minutes; see [The consent dialog](/attach#the-consent-dialog).
 - KDE Plasma cannot share its screen on a host without a GPU, and the session ends with "Start failed".
-- If you name an encoder with `--encoder` and the host cannot run it, the session stops with an error naming it. Leave it at `auto`, which falls back to software, or name `software`.
+- An encoder you name with `--encoder` stops robin if the host cannot run it, and ends the session with its error if it keeps failing once the picture starts. Leave it at `auto`, which falls back to software, or name `software`.
 
 ## Could not connect
 
@@ -58,7 +58,7 @@ The status tab shows "SSH tunnel" when direct UDP between your machine and the h
 
 ## The picture is slow or blocky
 
-A narrow link drops frames or blurs a busy picture. Ask for less with a smaller `--max-size`, such as `1600x900`, or a lower `--fps`. Neither changes a kept desktop, so run `robin end` first or start another with `--new`. About 2 fps in the status tab on an idle screen is normal, not a stall, and the first second of motion after a still screen can be soft.
+A narrow link drops frames or blurs a busy picture. Ask for less with a smaller `--max-size`, such as `1600x900`, or a lower `--fps`. Neither changes a kept desktop, so run `robin end` first or start another with `--new`. About 2 fps in the status tab on an idle screen is normal, and the first second of motion after a still screen can be soft.
 
 ## The session is busy
 
