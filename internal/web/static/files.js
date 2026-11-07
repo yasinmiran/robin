@@ -44,6 +44,7 @@ export class Files {
   #uploads = 0;
   #frame = 0;
   #dropTimer = 0;
+  #peers = 0; // peers lost so far, which ends the downloads they carried
 
   // send delivers a control message and reports whether it went;
   // bulk(header, blob, options) sends a transfer, as sendBulk does.
@@ -101,6 +102,18 @@ export class Files {
     this.#hint.hidden = Boolean(reason);
     this.#note.textContent = reason;
     this.#note.hidden = !reason;
+  }
+
+  // peerLost settles what went with the peer connection the page dropped:
+  // a Save asked on it and a download coming over it go back on offer, and
+  // an upload going over it fails. None waits for its channel's close,
+  // which a browser need not fire once the peer itself is closed.
+  peerLost() {
+    this.#peers++;
+    for (const t of this.#transfers.list()) {
+      if (t.state === FETCHING || t.state === RECEIVING) this.#transfers.failed(t.id, NOT_CONNECTED);
+    }
+    for (const abort of this.#aborts.values()) abort.abort(new Error(NOT_CONNECTED));
   }
 
   // upload sends files to the host, one at a time, in order, unless
@@ -161,8 +174,8 @@ export class Files {
         this.#transfers.finished(id);
         this.#clearLater(id);
       } catch (err) {
-        if (abort.signal.aborted) this.#transfers.remove(id);
-        else this.#transfers.failed(id, reasonOf(err));
+        // Cancel has removed its row already; a lost peer leaves it failed.
+        this.#transfers.failed(id, reasonOf(abort.signal.aborted ? abort.signal.reason : err));
       } finally {
         this.#aborts.delete(id);
       }
@@ -174,7 +187,7 @@ export class Files {
   // user asked to save, once for each click on Save, and no larger than
   // the offer the user clicked: the agent sends what the file holds by
   // then, which may be less. Dismissing it on the way makes the rest of
-  // its bytes nobody's.
+  // its bytes nobody's, and so does losing the peer it came over.
   #download(h) {
     if (!this.#transfers.receive(h.id)) throw new Error('nobody asked for this file');
     const t = this.#transfers.get(h.id);
@@ -184,7 +197,8 @@ export class Files {
       this.#transfers.failed(h.id, why);
       throw new Error(why);
     }
-    const wanted = () => this.#transfers.get(h.id) === t && t.state === RECEIVING;
+    const peers = this.#peers;
+    const wanted = () => this.#peers === peers && this.#transfers.get(h.id) === t && t.state === RECEIVING;
     const pieces = [];
     let piece = [];
     let pieceBytes = 0;

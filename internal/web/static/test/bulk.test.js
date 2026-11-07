@@ -114,8 +114,8 @@ test('sendBulk refuses what the agent could not take before opening a channel', 
 });
 
 test('sendBulk without a live peer says the page is not connected', async () => {
-  // While the page reconnects it has no peer at all; once a session ends,
-  // a closed one.
+  // While the page redials the host it has no peer at all; once a session
+  // ends, a closed one.
   await assert.rejects(sendBulk(null, { kind: 'test' }, new Blob(['x'])), { message: NOT_CONNECTED });
   const closed = new FakePeer(acceptBulk);
   closed.connectionState = 'closed';

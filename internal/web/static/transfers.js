@@ -92,18 +92,12 @@ export class Transfers {
     return this.#set(id, { state: QUEUED });
   }
 
-  // offer adds a file the host offers. A page that reconnects hears every
-  // open offer again: one it already lists stays as it is, except that a
-  // fetching one goes back on offer, since its fetch went with the old
-  // peer and nothing is on its way. One whose bytes are arriving is left
-  // to its channel's close. Past MAX_OFFERS, the oldest still waiting for
-  // a click on Save goes; with none such, the new one is not listed.
+  // offer adds a file the host offers, or leaves one it already offered as
+  // it is: a page that reconnects hears every open offer again. Past
+  // MAX_OFFERS, the oldest still waiting for a click on Save goes; with
+  // none such, the new one is not listed.
   offer(id, name, size) {
-    const listed = this.#list.get(id);
-    if (listed) {
-      if (listed.state === FETCHING) this.#set(id, { state: OFFERED, done: 0, error: '' });
-      return;
-    }
+    if (this.#list.has(id)) return;
     const open = this.list().filter((t) => t.dir === 'down' && t.state !== SAVED);
     if (open.length >= MAX_OFFERS) {
       const oldest = open.find((t) => t.state === OFFERED);

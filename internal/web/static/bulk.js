@@ -46,8 +46,8 @@ export function onBulk(kind, accept, { inbound, supersede = false } = {}) {
 
 // sendBulk sends blob, a Blob or File, as one transfer described by header
 // on a channel of its own from pc, and resolves once the agent kept it.
-// With no peer, or a closed one, as while the page reconnects, it rejects
-// with NOT_CONNECTED.
+// With no peer, or a closed one, as while the page redials the host, it
+// rejects with NOT_CONNECTED.
 // It sends no further ahead of the agent's sink than its credit, which
 // keeps the channel's queue to a window. Aborting signal cancels the
 // transfer; progress, when given, hears how many bytes have gone out

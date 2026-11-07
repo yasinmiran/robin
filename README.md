@@ -218,8 +218,9 @@ leaves once `~/Downloads` is gone, so uploads then go to `~/Downloads` too. A
 file whose name starts with a dot is refused, so no upload is hidden. Nothing
 on the host is ever replaced; a second `report.pdf` becomes `report (1).pdf`,
 and the status tab shows the name it got. An upload that finds the page
-with no connection, as while it reconnects, fails with "not connected to the
-desktop"; send it again once the page is back.
+with no connection, as while the page redials the host, fails with "not
+connected to the desktop", and so does one cut off when the page drops its
+connection; send it again once the page is back.
 
 Getting a file from the host starts on the host:
 
@@ -232,8 +233,9 @@ The page lists each offer by name and size, and nothing downloads until you
 click Save; Dismiss turns it down. Save takes the file as it is by then, but
 never more than the size shown: a file that grew since its offer is refused,
 and both the page and `robin-send` say so. A Save clicked while the page
-reconnects, or just before the connection dropped, gets its Save button back
-once the page is connected again. `robin-send` stays until every file it
+has no connection fails at once with "not connected to the desktop" and
+keeps its Save button; so does a Save, or a download, that the page's
+connection took with it when it dropped. `robin-send` stays until every file it
 offered has been saved or declined, prints which, and exits non-zero unless
 all were saved. Ctrl+C there withdraws whatever is still on offer. Programs in
 a spawned desktop have `robin-send` on their `PATH` and `ROBIN_FILES_SOCK`
