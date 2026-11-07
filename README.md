@@ -158,7 +158,7 @@ once, at the start, where each went on the host or why it could not.
 | `--encoder` | `auto` | `auto` encodes on the host's GPU where it pays and in software elsewhere; `software`, `vaapi` or `nvenc` insist on one; see [Hardware encoding](#hardware-encoding) |
 | `--session` | lightest found | command to run in the display robin starts, e.g. `startxfce4`; refused with `--attach`, since that desktop runs its own |
 | `--attach` | | stream a desktop already running on the host: `auto`, `wayland` for your Wayland session, or an X display such as `:1` |
-| `--monitor` | `primary` | the monitor of an attached X11 desktop to show first: a name such as `DP-2`, its number, or `all`; the page switches between them. Refused without `--attach` and with `--attach wayland`: Wayland shows the monitor picked in its sharing dialog |
+| `--monitor` | `primary` | the monitor of an attached X11 desktop to show first: a name such as `DP-2`, its number, or `all`; the page switches between them. Refused for a desktop robin starts and with `--attach wayland`, where Wayland shows the monitor picked in its sharing dialog; a resume by `--id` ignores it, like the other flags that shape a new desktop |
 | `--keep` | `8h`, `0` with `--attach` | how long the host keeps the desktop after the connection drops or the page detaches; `0` ends it with the connection |
 | `--id` | the one kept session | which kept session to resume |
 | `--new` | | start a new desktop even when a kept one could be resumed; refused with `--id` |

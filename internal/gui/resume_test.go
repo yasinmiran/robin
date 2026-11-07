@@ -280,15 +280,16 @@ func TestCheckSpawn(t *testing.T) {
 	}
 }
 
-// TestCheckDesktop: a flag the desktop asked for would drop is refused,
-// and the refusal names the flag; one a resume by id may still use, or
-// that a new desktop of the mode uses, is let through.
+// TestCheckDesktop: a flag that the requested desktop would drop is
+// refused, and the refusal names the flag; one that a new desktop of the
+// mode uses is let through, and so is a resume by id, which takes none of
+// the flags that shape a new desktop.
 func TestCheckDesktop(t *testing.T) {
 	for want, o := range map[string]Options{
 		"--new starts another desktop":  {New: true, Resume: "ab12"},
 		"--monitor picks a monitor":     {Monitor: "2"},
 		"--monitor is for X11 desktops": {Attach: protocol.AttachWayland, Monitor: protocol.MonitorAll},
-		"--session is the command":      {Attach: ":0", Session: "xterm"},
+		"--session sets the command":    {Attach: ":0", Session: "xterm"},
 		"runs its own":                  {Attach: protocol.AttachWayland, Session: "xterm"},
 	} {
 		if err := checkDesktop(o); err == nil || !strings.Contains(err.Error(), want) {

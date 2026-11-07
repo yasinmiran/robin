@@ -912,11 +912,13 @@ page for a session that is not what was asked.
   does, not with only this on. A spawned desktop refuses either flag, as
   the CLI refuses them for a new one; the CLI leaves a resume by `--id` to
   the agent, since that session may be attached, and skips its spawn check
-  for the same reason. `--monitor` and `--session` are refused the same
-  way where the desktop would drop them (`checkDesktop`): `--monitor`
+  for the same reason. `--monitor` and `--session` are refused where the
+  desktop they ask for would drop them (`checkDesktop`): `--monitor`
   without `--attach` or with Wayland, which has one picture from its
   sharing dialog, checked again once `--attach auto` has picked; `--session`
-  with `--attach`. `--new` with `--id` is refused rather than resuming. A
+  with `--attach`. A resume by `--id` carries neither, as it carries none
+  of the flags that shape only a new desktop, so the CLI lets them through
+  there. `--new` with `--id` is refused rather than resuming. A
   guest's `--join` refuses every flag that shapes the owner's session,
   since a guest sends no Start to carry it.
 - Devices are made as the session starts: a spawned desktop's pulseaudio
