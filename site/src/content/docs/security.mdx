@@ -5,28 +5,52 @@ section: Reference
 order: 3
 ---
 
-Coming soon.
+Robin logs in with SSH and adds no login of its own. A session runs as the account you logged in as. Robin opens no port on the host for anyone to log in through, and nothing it does needs root, so what is left to guard is the picture and input travelling between the host and your browser, plus the one page on your machine that drives the session.
 
 ## Reporting a vulnerability
 
-Coming soon.
+Report it privately through GitHub: open the repository's **Security** tab and choose **Report a vulnerability**. Please do not open a public issue. [SECURITY.md](https://github.com/yasinmiran/robin/blob/main/SECURITY.md) says which versions get fixes and what is in scope, along with what to expect after you report.
 
 ## What you trust
 
-Coming soon.
+Your ssh setup and the host's sshd decide who gets in, as they do without Robin. If someone can log in as you, they can do what Robin does.
+
+Anything running as your account on the host can see and drive your session, and once you switch on your microphone and camera, they reach every program that records as you too. A camera through `v4l2loopback` goes further: whoever the device's permissions admit can read it, usually the `video` group, so on a shared host others may see it (more in [Who can hear and see them](/sound#who-can-hear-and-see-them)).
+
+At the start of every connection the browser and the agent each ask a STUN server for their public address, Google's by default, and that server learns the public addresses of the host and of your machine. `--transport tunnel` asks no STUN server at all. Otherwise, to keep them from it, name a server of your own, or pass `--stun none` at the cost of the direct path through most NATs (see [`--stun`](/flags#flag-stun)).
+
+On a Wayland desktop, the restore token that skips the consent dialog works like a password. It sits in `wayland-restore-token` beside the agent, readable only by you; treat it as you would a key, and if you think someone else read it, delete it ([The restore token](/attach#the-restore-token)).
+
+Your macros are plain text in `macros.json` on your own machine, readable by anything running as you, so keep passwords out of text steps ([Where macros are kept](/macros#where-macros-are-kept)).
 
 ## What Robin keeps out
 
-Coming soon.
+- The host's identity reaches your browser only over SSH, and the encrypted stream is tied to it, so nobody on the network can pose as the host or read the stream.
+- The page listens on loopback only, and `--listen` refuses any other address. It needs a random token that is never sent in a request, and one browser holds the page at a time.
+- Other accounts on the host cannot drive or watch your session, and cannot end it either: its sockets turn them away, and an attempt of theirs to end it leaves it running.
+- A guest needs a one-time code made for their own account, good once and within 10 minutes; three wrong codes withdraw it. The host checks which account is knocking before the session reads any code ([Inviting](/sharing#inviting)).
+- Uploads land only in your download folder, never in your home directory itself, and never replace a file: a name that is taken gets a number, as in `a (1).pdf`. A name that starts with a dot is refused, so an upload cannot become a startup file.
+- Files leave the host only when a program running as you offers them with `robin-send`, and only when you click **Save** in the page.
+- Text the host prints on your terminal has its control characters escaped, so a hostile host cannot retitle your terminal or rewrite what you see there.
+- A host cannot point the page at services on your machine's loopback. Robin passes on only IP addresses for the browser to try, never loopback or a name it would have to look up.
 
 ## On a shared computer
 
-Coming soon.
+Other users of your machine can read the command lines of your processes. Robin never puts the page's token on one: your browser gets a launch link that works once and then says Not Found.
+
+The browser keeps that link on its command line for as long as it runs, though, and someone who reads it in time can open the page before your browser does.
+
+<Callout type="warning" title="Shared computer.">
+If your browser shows Not Found, or the terminal says the launch link was opened again, someone else opened the page first: end the session with Ctrl+C. Robin also prints `a browser opened the page` when the first browser connects, so a tab of yours still loading after that line means the same. On a shared computer, use `--no-browser`. It prints the page's address on stdout for you to open yourself, and leaves nothing for others to read.
+</Callout>
 
 ## What Robin does not protect
 
-Coming soon.
+- The curtain hides the screen but does not lock the room's keyboard or mouse. Anyone at the machine can type and click while it is drawn, and when the session ends the desktop comes back unlocked in front of them ([The curtain](/private-session#the-curtain)).
+- On an attached desktop, whoever sits at the screen sees everything you do unless the curtain is drawn, and on Wayland desktops other than GNOME it cannot be.
+- On GNOME Wayland, text with characters the host's keyboard layout lacks is typed as a paste. It sits on the host's clipboard for about a second, where any program on that desktop can read it, and a clipboard manager may keep it in its history. Macros and Type clipboard go the same way ([Wrong characters on GNOME Wayland](/troubleshooting#wrong-characters-on-gnome-wayland)).
+- A guest with control can do on the desktop what you can, and every guest sees your screen and hears its sound with or without control.
 
 ## Verifiable builds
 
-Coming soon.
+Robin's builds are reproducible. Building the same commit twice, from any checkout, gives byte-for-byte the same `robin` and the same agents, and the agent's file name on the host carries the hash of its content, so you can check that what runs on the host and on your machine is what the source says; [Reproducible builds](/contributing#reproducible-builds) shows how.
