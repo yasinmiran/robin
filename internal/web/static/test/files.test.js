@@ -296,3 +296,13 @@ test('a download and an upload under way when the peer goes are settled without 
   assert.deepEqual(await fresh.verdict, { t: 'done' });
   assert.equal(saved.at(-1).name, 'g1.bin');
 });
+
+test('a cancelled upload leaves no row behind', async () => {
+  stall = true;
+  files.upload([{ name: 'cancelled.txt', size: 1 }]);
+  await until('the upload is under way', () => files.list().find((t) => t.name === 'cancelled.txt')?.state === 'sending');
+  const { id } = files.list().find((t) => t.name === 'cancelled.txt');
+  button(await row(id), 'cancel').click();
+  await later();
+  assert.equal(files.list().some((t) => t.id === id), false);
+});
