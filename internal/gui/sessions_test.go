@@ -117,25 +117,39 @@ func agentsIn(t *testing.T, dir string) []string {
 }
 
 // TestEndUsesTheSessionsOwnAgent: robin end of a session another build
-// started runs that build's agent, still in place, and uploads nothing.
+// started runs that build's agent, still in place, and uploads nothing,
+// both when that agent ends the session and when it says the session is
+// already gone.
 func TestEndUsesTheSessionsOwnAgent(t *testing.T) {
 	const other = agentbin.NamePrefix + "fedcba9876543210"
-	o, agentDir := keptOnLocalhost(t, other)
-	calls := filepath.Join(t.TempDir(), "calls")
-	script := fmt.Sprintf("#!/bin/sh\necho \"$@\" >> %s\n", calls)
-	if err := os.WriteFile(filepath.Join(agentDir, other), []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := End(ctx, o, ""); err != nil {
-		t.Fatal(err)
-	}
-	if b, _ := os.ReadFile(calls); strings.TrimSpace(string(b)) != "end ab12" {
-		t.Fatalf("the session's agent ran %q, want end ab12", b)
-	}
-	if got := agentsIn(t, agentDir); len(got) != 1 || got[0] != other {
-		t.Fatalf("the agent directory holds %v after the end, want only %s", got, other)
+	for _, tc := range []struct {
+		name string
+		exit int
+		gone bool
+	}{
+		{"ended", 0, false},
+		{"already gone", protocol.ExitNoSession, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o, agentDir := keptOnLocalhost(t, other)
+			calls := filepath.Join(t.TempDir(), "calls")
+			script := fmt.Sprintf("#!/bin/sh\necho \"$@\" >> %s\nexit %d\n", calls, tc.exit)
+			if err := os.WriteFile(filepath.Join(agentDir, other), []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			err := End(ctx, o, "")
+			if tc.gone != errors.Is(err, errNoSession) || (!tc.gone && err != nil) {
+				t.Fatalf("End: %v, want no session %v", err, tc.gone)
+			}
+			if b, _ := os.ReadFile(calls); strings.TrimSpace(string(b)) != "end ab12" {
+				t.Fatalf("the session's agent ran %q, want end ab12", b)
+			}
+			if got := agentsIn(t, agentDir); len(got) != 1 || got[0] != other {
+				t.Fatalf("the agent directory holds %v after the end, want only %s", got, other)
+			}
+		})
 	}
 }
 
@@ -161,8 +175,8 @@ func TestEndPutsItsAgentInPlaceWhenTheSessionsIsGone(t *testing.T) {
 	}
 }
 
-// The session file names its agent; only a bare agent file name in the
-// agent directory is run.
+// TestKeptAgentPath: the session file names its agent; only a bare agent
+// file name in the agent directory is run.
 func TestKeptAgentPath(t *testing.T) {
 	const name = agentbin.NamePrefix + "0123456789abcdef"
 	h := &host{report: &probe.Report{AgentDir: "/home/u/.cache/robin"}}

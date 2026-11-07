@@ -848,9 +848,12 @@ keeps the reflex and moves it one process out.
   dangled after a `--new` beside the session. `robin end` runs that kept
   agent's own `end` (every agent that writes `session.json` has one), so
   ending a session of another build is not a 15 MB upload; the CLI deploys
-  its agent only when the kept one fails to end it, its file gone, say.
-  The name comes from the session's file, so only a bare `robin-agent-`
-  file name in the agent directory is run.
+  its agent only when the kept one fails to end it, its file gone, say,
+  and an error then names both failures. An agent that writes
+  `session.json` but predates the no-session exit status fails on a
+  session already gone, so ending one of those still deploys; that case
+  is rare enough to accept. The name comes from the session's file, so
+  only a bare `robin-agent-` file name in the agent directory is run.
 - The CLI: the relay, the page server, the tunnel's loopback listener and
   the page itself outlive the SSH connection; only the master, the proxy
   and the forward are remade. The page is told `reconnecting`, drops its

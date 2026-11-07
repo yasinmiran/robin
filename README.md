@@ -87,7 +87,8 @@ this CLI does not carry. Started beside it with `--new`, the upload leaves
 the kept session's agent in place, so `robin-send` in that desktop keeps
 working. `robin end` ends a session with that agent of its own, still on
 the host, so ending one of another build uploads nothing; only when that
-agent is gone does the CLI put its own in place to do it.
+agent cannot end it (its file gone, say) does the CLI put its own in place
+to do it.
 
 A new `robin gui` that resumes a desktop gets what its own command line
 names, or is told why not. `--curtain` and `--silent` switch on the curtain

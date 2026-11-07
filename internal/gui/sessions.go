@@ -65,22 +65,32 @@ func End(ctx context.Context, o Options, id string) (err error) {
 // uploads nothing. Only when that agent cannot end it (its file is gone,
 // say) does this CLI's agent go in place to do it.
 func (h *host) endKept(ctx context.Context, s protocol.Session) error {
-	if own, ok := h.keptAgentPath(s); ok {
-		err := endSession(ctx, h.m, own, s.ID)
-		if err == nil || errors.Is(err, errNoSession) {
-			return err
-		}
-		h.log.Info("the session's own agent did not end it", "agent", own, "err", err)
+	kept, ok := h.keptAgentPath(s)
+	if !ok {
+		return h.endWithOurs(ctx, s)
 	}
+	keptErr := endSession(ctx, h.m, kept, s.ID)
+	if keptErr == nil || errors.Is(keptErr, errNoSession) {
+		return keptErr
+	}
+	if err := h.endWithOurs(ctx, s); err != nil {
+		return fmt.Errorf("%s could not end it (%v); %w", s.Agent, keptErr, err)
+	}
+	return nil
+}
+
+// endWithOurs puts this CLI's agent in place and ends kept session s with
+// it.
+func (h *host) endWithOurs(ctx context.Context, s protocol.Session) error {
 	a, err := agentbin.For(h.report.Arch)
 	if err != nil {
 		return err
 	}
-	path, err := h.deployAgent(ctx, a)
+	ours, err := h.deployAgent(ctx, a)
 	if err != nil {
 		return err
 	}
-	return endSession(ctx, h.m, path, s.ID)
+	return endSession(ctx, h.m, ours, s.ID)
 }
 
 // keptAgentPath is where the agent of kept session s lies on the host. The
