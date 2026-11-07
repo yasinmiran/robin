@@ -74,15 +74,16 @@ func (c *controller) Send(m protocol.Message) error { return c.cur.Load().Send(m
 type sender interface{ Send(protocol.Message) error }
 
 // serve runs the session's message loop for controller after controller,
-// until one says bye, the keep window runs out with none attached, the
-// desktop goes away or ctx ends. ready is sent again to each controller that
+// until one says bye, the keep window runs out with none attached, fatal
+// yields why the session cannot go on (the desktop went away, the video
+// gave out) or ctx ends. ready is sent again to each controller that
 // resumes.
-func (s *session) serve(ctx context.Context, cs Controllers, ready *protocol.Ready, desktopDone <-chan error, keep time.Duration, state protocol.Session) error {
+func (s *session) serve(ctx context.Context, cs Controllers, ready *protocol.Ready, fatal <-chan error, keep time.Duration, state protocol.Session) error {
 	state.Connected = true
 	cs.Changed(state)
 	conn := s.conn.cur.Load()
 	for {
-		bye, err := s.relay(ctx, conn, desktopDone)
+		bye, err := s.relay(ctx, conn, fatal)
 		if err != nil {
 			return err
 		}
@@ -100,7 +101,7 @@ func (s *session) serve(ctx context.Context, cs Controllers, ready *protocol.Rea
 		s.log.Info("controller gone; keeping the desktop", "until", until.Format(time.RFC3339))
 		state.Connected, state.Until = false, &until
 		cs.Changed(state)
-		conn, err = s.linger(ctx, cs, ready, desktopDone, until)
+		conn, err = s.linger(ctx, cs, ready, fatal, until)
 		switch {
 		case errors.Is(err, errKeepRanOut):
 			s.log.Info("keep window ran out; ending the session")
@@ -118,8 +119,8 @@ func (s *session) serve(ctx context.Context, cs Controllers, ready *protocol.Rea
 }
 
 // relay serves one controller until it says bye (true) or goes away (false,
-// nil). The desktop dying or ctx ending is an error that ends the session.
-func (s *session) relay(ctx context.Context, conn *protocol.Conn, desktopDone <-chan error) (bool, error) {
+// nil). What fatal yields, or ctx ending, is an error that ends the session.
+func (s *session) relay(ctx context.Context, conn *protocol.Conn, fatal <-chan error) (bool, error) {
 	msgs := make(chan protocol.Message)
 	go func() {
 		defer close(msgs)
@@ -140,8 +141,8 @@ func (s *session) relay(ctx context.Context, conn *protocol.Conn, desktopDone <-
 		case <-ctx.Done():
 			s.ended(conn, "the agent was told to stop")
 			return false, ctx.Err()
-		case err := <-desktopDone:
-			return false, fail(conn, fmt.Errorf("desktop went away: %w", err))
+		case err := <-fatal:
+			return false, fail(conn, err)
 		case m, ok := <-msgs:
 			if !ok {
 				if ctx.Err() != nil {
@@ -176,9 +177,9 @@ var errKeepRanOut = errors.New("agent: the keep window ran out")
 
 // linger waits for the next controller until the keep window ends. It
 // returns the resumed connection, or an error: errKeepRanOut, ErrNoControllers
-// when none can come back, or why the desktop went away or ctx ended. A
+// when none can come back, or what fatal yielded or why ctx ended. A
 // controller admit refuses is dropped; the wait goes on.
-func (s *session) linger(ctx context.Context, cs Controllers, ready *protocol.Ready, desktopDone <-chan error, until time.Time) (*protocol.Conn, error) {
+func (s *session) linger(ctx context.Context, cs Controllers, ready *protocol.Ready, fatal <-chan error, until time.Time) (*protocol.Conn, error) {
 	type next struct {
 		conn *protocol.Conn
 		err  error
@@ -206,8 +207,8 @@ func (s *session) linger(ctx context.Context, cs Controllers, ready *protocol.Re
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case err := <-desktopDone:
-			return nil, fmt.Errorf("desktop went away: %w", err)
+		case err := <-fatal:
+			return nil, err
 		case <-expiry.C:
 			return nil, errKeepRanOut
 		case a := <-arrivals:

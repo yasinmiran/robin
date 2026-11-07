@@ -169,8 +169,16 @@ trial failure shows in the first Ready. A later one shows in the next Ready
 a controller gets on resume, with the reason, and in a guest's Ready by
 name. An
 encoder the user named still fails the session at its trial and is never
-swapped later: a frame it fails is skipped, and the tool is restarted
-after a second.
+swapped later: a frame it fails is skipped, the screen is owed again at
+the next tick, and the tool is restarted after a second. Skipping alone
+once left a named encoder that passed its trial and then failed at the
+session's size (a VA-API driver capped below the desktop, say) restarting
+its tool for ever while the page showed no video and nothing said why. So
+the stream gives up after `maxFailedFrames` (3) failures at one size with
+no frame encoded between, a few seconds given the restart's pause, and the
+session ends with the encoder's error, which the CLI prints, as it does
+one that fails its trial. A good frame resets the count, and so does a
+new size; frames the tool skips while it waits to restart do not.
 
 The first `Open` tries each route the host offers on a 320x240 frame,
 ffmpeg first since it measured faster and cheaper, and keeps the first that

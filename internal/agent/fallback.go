@@ -51,8 +51,10 @@ func chooseEncoder(start protocol.Start, encoders map[string]NewEncoderFunc, log
 // videoEncoder opens the session's encoders. A hardware encoder the CLI
 // picked gives way to software from the first time it fails, to open at a
 // size or to encode a frame, for the rest of the session: the pick was a
-// guess from the probe, and software video beats none. The session opens
-// and drives encoders from one goroutine at a time; inUse is safe from any.
+// guess from the probe, and software video beats none. One the user named
+// is used as it is: the stream skips each frame it fails and ends the
+// session once it fails maxFailedFrames running. The session opens and
+// drives encoders from one goroutine at a time; inUse is safe from any.
 type videoEncoder struct {
 	name   string // the encoder Start asked for
 	hw, sw NewEncoderFunc

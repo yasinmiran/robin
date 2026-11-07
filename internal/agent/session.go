@@ -295,8 +295,19 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 	if audio != nil {
 		run(func(ctx context.Context) { s.forwardAudio(ctx, audio) })
 	}
+	fatal := make(chan error, 1)
+	run(func(ctx context.Context) {
+		select {
+		case err := <-d.done:
+			fatal <- fmt.Errorf("desktop went away: %w", err)
+		case err := <-s.stream.failed:
+			name, _ := video.inUse()
+			fatal <- fmt.Errorf("encoder %s: %w", name, err)
+		case <-ctx.Done():
+		}
+	})
 
-	return s.serve(ctx, cs, ready, d.done, o.Keep, protocol.Session{
+	return s.serve(ctx, cs, ready, fatal, o.Keep, protocol.Session{
 		ID: ready.ID, PID: os.Getpid(), Build: o.Build, Mode: d.mode, Display: d.name, Desktop: d.session,
 		Keep: ready.Keep, Started: time.Now(),
 	})
