@@ -3,16 +3,21 @@ package gui
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/yasinmiran/robin/internal/agentbin"
+	"github.com/yasinmiran/robin/internal/probe"
 	"github.com/yasinmiran/robin/internal/protocol"
 	"github.com/yasinmiran/robin/internal/sshmux"
 	"github.com/yasinmiran/robin/internal/sshmux/sshtest"
@@ -59,6 +64,124 @@ func TestEndOverSSHRefusesAnUnknownSession(t *testing.T) {
 	err := End(ctx, o, "zz99-not-a-session")
 	if err == nil || !strings.Contains(err.Error(), "no kept session zz99-not-a-session") {
 		t.Fatalf("End of nothing: %v", err)
+	}
+}
+
+// keptOnLocalhost is localhost with the probe's agent directory in one of
+// the test's own, holding one kept session, ab12, that runs from agent. A
+// sleep stands in for its daemon, so the probe lists the session and
+// nothing robin started is signaled.
+func keptOnLocalhost(t *testing.T, agent string) (o Options, agentDir string) {
+	t.Helper()
+	cache := t.TempDir()
+	agentDir = filepath.Join(cache, "robin")
+	runDir := filepath.Join(agentDir, "run", "ab12")
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	daemon := exec.Command("sleep", "300")
+	if err := daemon.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		daemon.Process.Kill()
+		daemon.Wait()
+	})
+	s := spawned("ab12", agent)
+	s.PID = daemon.Process.Pid
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "session.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	o, _, _ = localhost(t, "XDG_CACHE_HOME="+cache)
+	return o, agentDir
+}
+
+// agentsIn lists the agent files in dir.
+func agentsIn(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), agentbin.NamePrefix) {
+			names = append(names, e.Name())
+		}
+	}
+	return names
+}
+
+// TestEndUsesTheSessionsOwnAgent: robin end of a session another build
+// started runs that build's agent, still in place, and uploads nothing.
+func TestEndUsesTheSessionsOwnAgent(t *testing.T) {
+	const other = agentbin.NamePrefix + "fedcba9876543210"
+	o, agentDir := keptOnLocalhost(t, other)
+	calls := filepath.Join(t.TempDir(), "calls")
+	script := fmt.Sprintf("#!/bin/sh\necho \"$@\" >> %s\n", calls)
+	if err := os.WriteFile(filepath.Join(agentDir, other), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := End(ctx, o, ""); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(calls); strings.TrimSpace(string(b)) != "end ab12" {
+		t.Fatalf("the session's agent ran %q, want end ab12", b)
+	}
+	if got := agentsIn(t, agentDir); len(got) != 1 || got[0] != other {
+		t.Fatalf("the agent directory holds %v after the end, want only %s", got, other)
+	}
+}
+
+// TestEndPutsItsAgentInPlaceWhenTheSessionsIsGone: with the session's own
+// agent file gone, robin end deploys this CLI's agent and ends the session
+// with that.
+func TestEndPutsItsAgentInPlaceWhenTheSessionsIsGone(t *testing.T) {
+	a, err := agentbin.For(runtime.GOARCH)
+	if err != nil {
+		t.Skipf("no agent for %s in this build (make builds them): %v", runtime.GOARCH, err)
+	}
+	o, agentDir := keptOnLocalhost(t, agentbin.NamePrefix+"fedcba9876543210")
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := End(ctx, o, "ab12"); err != nil {
+		t.Fatal(err)
+	}
+	if got := agentsIn(t, agentDir); len(got) != 1 || got[0] != a.Name() {
+		t.Fatalf("the agent directory holds %v, want %s", got, a.Name())
+	}
+	if _, err := os.Stat(filepath.Join(agentDir, "run", "ab12")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the session's run dir is still there: %v", err)
+	}
+}
+
+// The session file names its agent; only a bare agent file name in the
+// agent directory is run.
+func TestKeptAgentPath(t *testing.T) {
+	const name = agentbin.NamePrefix + "0123456789abcdef"
+	h := &host{report: &probe.Report{AgentDir: "/home/u/.cache/robin"}}
+	for agent, want := range map[string]string{
+		name:                                   "/home/u/.cache/robin/" + name,
+		"":                                     "",
+		agentbin.NamePrefix:                    "",
+		"sh":                                   "",
+		agentbin.NamePrefix + "x/../../bin/sh": "",
+		"../" + name:                           "",
+	} {
+		got, ok := h.keptAgentPath(protocol.Session{Agent: agent})
+		if got != want || ok != (want != "") {
+			t.Errorf("agent %q: %q, %v; want %q", agent, got, ok, want)
+		}
+	}
+	h.report.AgentDir = ""
+	if _, ok := h.keptAgentPath(protocol.Session{Agent: name}); ok {
+		t.Error("an agent path with no agent directory")
 	}
 }
 

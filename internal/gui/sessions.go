@@ -2,7 +2,10 @@ package gui
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"path"
+	"strings"
 
 	"github.com/yasinmiran/robin/internal/agentbin"
 	"github.com/yasinmiran/robin/internal/protocol"
@@ -50,6 +53,25 @@ func End(ctx context.Context, o Options, id string) (err error) {
 	if err != nil {
 		return err
 	}
+	if err := h.endKept(ctx, s); err != nil {
+		return fmt.Errorf("end session %s on %s: %w", s.ID, o.Dest, err)
+	}
+	fmt.Fprintf(o.Stderr, "robin: ended session %s (%s) on %s\n", s.ID, s.Display, o.Dest)
+	return nil
+}
+
+// endKept ends kept session s with the agent it runs from, which deploy
+// leaves in place beside this CLI's, so ending a session of another build
+// uploads nothing. Only when that agent cannot end it (its file is gone,
+// say) does this CLI's agent go in place to do it.
+func (h *host) endKept(ctx context.Context, s protocol.Session) error {
+	if own, ok := h.keptAgentPath(s); ok {
+		err := endSession(ctx, h.m, own, s.ID)
+		if err == nil || errors.Is(err, errNoSession) {
+			return err
+		}
+		h.log.Info("the session's own agent did not end it", "agent", own, "err", err)
+	}
 	a, err := agentbin.For(h.report.Arch)
 	if err != nil {
 		return err
@@ -58,11 +80,18 @@ func End(ctx context.Context, o Options, id string) (err error) {
 	if err != nil {
 		return err
 	}
-	if err := endSession(ctx, h.m, path, s.ID); err != nil {
-		return fmt.Errorf("end session %s on %s: %w", s.ID, o.Dest, err)
+	return endSession(ctx, h.m, path, s.ID)
+}
+
+// keptAgentPath is where the agent of kept session s lies on the host. The
+// name comes from the session's own file, so only a bare agent file name
+// in the agent directory counts.
+func (h *host) keptAgentPath(s protocol.Session) (string, bool) {
+	name, ok := strings.CutPrefix(s.Agent, agentbin.NamePrefix)
+	if !ok || name == "" || strings.ContainsAny(name, "/\x00") || !path.IsAbs(h.report.AgentDir) {
+		return "", false
 	}
-	fmt.Fprintf(o.Stderr, "robin: ended session %s (%s) on %s\n", s.ID, s.Display, o.Dest)
-	return nil
+	return path.Join(h.report.AgentDir, s.Agent), true
 }
 
 // chooseToEnd picks the session robin end means.
