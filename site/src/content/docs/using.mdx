@@ -7,40 +7,107 @@ order: 1
 
 ## The command
 
-Coming soon.
+```sh
+robin gui [flags] [user@]host [-- ssh-args...]
+robin ls [user@]host [-- ssh-args...]
+robin end [user@]host [id] [-- ssh-args...]
+robin version
+```
+
+`robin gui` opens a desktop on the host in your browser. `robin ls` lists the desktops the host keeps for you and `robin end` ends one; see [Kept sessions](/sessions). Flags go before the host, and everything after `--` goes to `ssh` as it is:
 
 ```sh
-robin gui [flags] [user@]host [-- ssh options]
+robin gui --fps 60 user@host -- -p 2222 -i ~/.ssh/other_key
 ```
+
+[Flags](/flags) lists every flag with its default.
 
 ## SSH
 
-Coming soon.
+Robin runs your own `ssh` (`--ssh` picks another) over one connection, so you authenticate once, and your `~/.ssh/config`, `ProxyJump`, SSH agent, keys and password or 2FA prompts work as they do for `ssh` alone.
+
+On Windows or with `--ssh-mux=false`, each step opens its own connection and a password prompt comes several times; see [Client systems](/browsers#client-systems).
+
+If the connection drops, the CLI redials while the page says Reconnecting. A desktop Robin started stays on the host for `--keep`, 8 hours by default, for a later `robin gui` to pick up; see [Kept sessions](/sessions).
 
 ## A new desktop
 
-Coming soon.
+Without `--attach`, the agent starts its own display with Xvfb, sized to your browser window up to `--max-size`, and runs Xfce in it if `xfce4-session` is installed. Failing that it runs a window manager (openbox, fluxbox, icewm or twm) with a terminal beside it, else a bare terminal. To run something else, name it:
+
+```sh
+robin gui --session startxfce4 host
+```
+
+The session keeps the locale SSH passed, falling back to the host's `/etc/locale.conf` or `/etc/default/locale`, then `C.UTF-8`.
+
+To stream a desktop that is already running instead, see [Attaching to a desktop](/attach).
 
 ## Size and frame rate
 
-Coming soon.
+`--max-size` is the largest remote resolution: 2560x1440 by default, 1920x1080 on hosts with four cores or fewer, and 1280x720 on hosts with two or fewer. `--fps` caps the frame rate, at 30 by default or 20 on those smallest hosts. `--max-kbps` caps the video bitrate, 10000 by default, and raising it helps only on a link with room to spare.
+
+On a Retina or other HiDPI screen, `--hidpi` sizes a new desktop in device pixels, which buys sharper text for more pixels to encode; raise `--max-size` with it for the full native size.
+
+About 2 fps in the status tab on a still screen is normal. Frames go out when the screen changes, and a still picture is resent twice a second.
 
 ## Sharp text and actual size
 
-Coming soon.
+**Sharp text**, a switch in the status tab, is on by default. Parts of the screen that stop changing are resent without loss over the video, so text sharpens a moment after you stop scrolling or typing. It needs an X11 desktop and Chrome, Edge or Firefox; without those the switch is greyed out, with the reason under it.
+
+**Actual size**, beside it, shows each desktop pixel as a whole number of your screen's pixels instead of fitting the picture to the window, so text never goes through a fractional scale. A desktop larger than the window pans when you hold the pointer at an edge of the window, or drag with two fingers on a touch screen.
 
 ## Transports
 
-Coming soon.
+`--transport` picks how the picture travels, and the status tab shows the one in use.
+
+- `auto`, the default, uses **Direct UDP** when it works and the **SSH tunnel** when it does not. If UDP stops during a session, the page moves onto the tunnel within a few seconds.
+- `direct` uses UDP only.
+- `tunnel` keeps the picture on the SSH connection. If the tunnel cannot open, the session fails, where `auto` would carry on over UDP and log a warning.
+
+`--stun` names the STUN servers that help UDP get through NAT, comma-separated, or `none`, and defaults to `stun:stun.l.google.com:19302`; with `--transport tunnel` no STUN server is asked. [What you trust](/security#what-you-trust) says what a STUN server learns, and [How it works](/how-it-works#transports-and-fallback) shows how the paths fit together.
 
 ## GPU encoding
 
-Coming soon.
+`--encoder auto`, the default, picks the encoder before the session starts:
+
+- On a host with four cores or fewer, it uses the GPU when the host can drive it.
+- On a bigger host, it uses the GPU only when `--max-size` is above 2560x1440 and ffmpeg can drive the GPU.
+- Otherwise it encodes in software.
+
+On a host that has both, VA-API comes before NVENC. `--encoder software` never uses the GPU, while `--encoder vaapi` and `--encoder nvenc` insist on it: if the GPU cannot run, the session fails. If a GPU encoder that `auto` picked fails, though, the session carries on in software.
+
+The host needs a device and a tool to drive it:
+
+| Encoder | Device | Tool, either of |
+|---|---|---|
+| `vaapi` (Intel, AMD) | a render node in `/dev/dri` you can open, usually by being in the `render` group, and a VA-API driver that encodes H.264 | ffmpeg with `h264_vaapi`; `gst-launch-1.0` with GStreamer's va or vaapi plugin and gst-plugins-good |
+| `nvenc` (NVIDIA) | the NVIDIA driver loaded | ffmpeg with `h264_nvenc`; `gst-launch-1.0` with GStreamer's nvcodec plugin and gst-plugins-good |
+
+On Debian and Ubuntu, `sudo apt install ffmpeg` brings the tool for both. If you name an encoder the host cannot run, the CLI says what is missing before it starts. Run with `-v` to see which encoder was picked and why, and why it fell back if it did.
 
 ## The page
 
-Coming soon.
+The page runs on `127.0.0.1` at a random port and needs the token in the link the CLI opened or printed. `--listen` takes only a literal loopback IP and refuses `localhost`. One browser holds a session at a time; see [One browser per session](/browsers#one-browser-per-session).
+
+The status tab hangs from the top edge and tucks away while things are healthy; move the pointer to the top to bring it back. It shows:
+
+- the state: Connecting, Connected, Reconnecting or Session ended
+- the transport and the picture's resolution, frame rate and bitrate
+- the guests, while you [share the desktop](/sharing)
+- a [monitor menu](/attach#monitors) on an attached X11 desktop with several monitors
+- the [Sound](/sound) button once sound arrives, and Microphone and Camera when offered
+- Sharp text and Actual size, and on an attached desktop the [private session](/private-session) switches
+- Upload files, and files the host offers you to Save
+- the [Keys and macros](/macros) button
+- the keyboard button on a touch screen, and full screen
+- **Disconnect, keep desktop** and **End session**
+
+Keys are sent by character, so text arrives right whatever your local layout, and on a Mac Cmd is sent as Control. Full screen also locks the keyboard where the browser supports it, so shortcuts like Ctrl+W and Alt+Tab reach the desktop. The clipboard carries plain text, HTML and PNG images both ways, up to 16 MiB at a time, and your paste shortcut sends what you copied before the key; see [Files and the clipboard](/files-and-clipboard).
 
 ## Limits
 
-Coming soon.
+- Sharp text works on X11 desktops only. On Wayland the switch is greyed out, so use a new desktop or an X11 one for it.
+- NVENC has not yet run on NVIDIA hardware; if it misbehaves, use `--encoder software`.
+- The GPU adds a little delay and is slower to recover from a lost picture, which `--encoder software` avoids.
+- Through the SSH tunnel a lossy link stalls the picture, so let UDP reach the host where you can.
+- On a narrow link, a busy picture drops to a few frames a second so text stays readable; a smaller `--max-size` helps.
