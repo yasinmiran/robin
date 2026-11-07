@@ -12,28 +12,28 @@ Robin splits a session in two. SSH carries control (it logs in, looks at the hos
 <title id="robin-arch-title">How a Robin session is wired</title>
 <desc id="robin-arch-desc">On your machine, the browser talks to the robin CLI over a websocket, and the CLI drives ssh. One SSH connection reaches sshd on the Linux host, which runs robin-agent and forwards media to it when UDP is blocked. The agent captures the desktop. Media goes straight from the agent to the browser over UDP, or, when UDP is blocked, through the CLI's tunnel listener and the SSH connection.</desc>
 <g fill="none" stroke="currentColor">
-<rect x="10" y="40" width="330" height="400" rx="14" strokeDasharray="4 4" strokeOpacity="0.45" />
-<rect x="420" y="40" width="330" height="400" rx="14" strokeDasharray="4 4" strokeOpacity="0.45" />
-<rect x="30" y="60" width="290" height="110" rx="8" strokeWidth="1.5" />
-<rect x="30" y="200" width="290" height="100" rx="8" strokeWidth="1.5" />
-<rect x="30" y="340" width="290" height="80" rx="8" strokeWidth="1.5" />
-<rect x="440" y="60" width="290" height="110" rx="8" strokeWidth="1.5" />
-<rect x="560" y="200" width="170" height="100" rx="8" strokeWidth="1.5" />
-<rect x="440" y="340" width="290" height="80" rx="8" strokeWidth="1.5" />
-<line x1="320" y1="105" x2="440" y2="105" strokeWidth="4" />
-<line x1="90" y1="170" x2="90" y2="200" strokeWidth="1.5" />
-<line x1="90" y1="300" x2="90" y2="340" strokeWidth="1.5" />
-<line x1="320" y1="380" x2="440" y2="380" strokeWidth="1.5" />
-<line x1="462" y1="340" x2="462" y2="170" strokeWidth="1.5" />
-<line x1="645" y1="170" x2="645" y2="200" strokeWidth="1.5" />
-<line x1="280" y1="170" x2="280" y2="200" strokeWidth="2" strokeDasharray="6 4" />
-<line x1="280" y1="300" x2="280" y2="340" strokeWidth="2" strokeDasharray="6 4" />
-<line x1="548" y1="340" x2="548" y2="170" strokeWidth="2" strokeDasharray="6 4" />
-<line x1="30" y1="455" x2="60" y2="455" strokeWidth="4" />
-<line x1="250" y1="455" x2="280" y2="455" strokeWidth="2" strokeDasharray="6 4" />
-<line x1="530" y1="455" x2="560" y2="455" strokeWidth="1.5" />
+<rect x="10" y="40" width="330" height="400" rx="14" stroke-dasharray="4 4" stroke-opacity="0.45" />
+<rect x="420" y="40" width="330" height="400" rx="14" stroke-dasharray="4 4" stroke-opacity="0.45" />
+<rect x="30" y="60" width="290" height="110" rx="8" stroke-width="1.5" />
+<rect x="30" y="200" width="290" height="100" rx="8" stroke-width="1.5" />
+<rect x="30" y="340" width="290" height="80" rx="8" stroke-width="1.5" />
+<rect x="440" y="60" width="290" height="110" rx="8" stroke-width="1.5" />
+<rect x="560" y="200" width="170" height="100" rx="8" stroke-width="1.5" />
+<rect x="440" y="340" width="290" height="80" rx="8" stroke-width="1.5" />
+<line x1="320" y1="105" x2="440" y2="105" stroke-width="4" />
+<line x1="90" y1="170" x2="90" y2="200" stroke-width="1.5" />
+<line x1="90" y1="300" x2="90" y2="340" stroke-width="1.5" />
+<line x1="320" y1="380" x2="440" y2="380" stroke-width="1.5" />
+<line x1="462" y1="340" x2="462" y2="170" stroke-width="1.5" />
+<line x1="645" y1="170" x2="645" y2="200" stroke-width="1.5" />
+<line x1="280" y1="170" x2="280" y2="200" stroke-width="2" stroke-dasharray="6 4" />
+<line x1="280" y1="300" x2="280" y2="340" stroke-width="2" stroke-dasharray="6 4" />
+<line x1="548" y1="340" x2="548" y2="170" stroke-width="2" stroke-dasharray="6 4" />
+<line x1="30" y1="455" x2="60" y2="455" stroke-width="4" />
+<line x1="250" y1="455" x2="280" y2="455" stroke-width="2" stroke-dasharray="6 4" />
+<line x1="530" y1="455" x2="560" y2="455" stroke-width="1.5" />
 </g>
-<g fill="currentColor" fontSize="13" fontWeight="600">
+<g fill="currentColor" font-size="13" font-weight="600">
 <text x="22" y="30">Your machine</text>
 <text x="432" y="30">Linux host</text>
 <text x="46" y="86">Browser</text>
@@ -43,7 +43,7 @@ Robin splits a session in two. SSH carries control (it logs in, looks at the hos
 <text x="576" y="226">Desktop</text>
 <text x="456" y="366">sshd</text>
 </g>
-<g fill="currentColor" fontSize="11.5" fillOpacity="0.8">
+<g fill="currentColor" font-size="11.5" fill-opacity="0.8">
 <text x="46" y="108">the page, served on 127.0.0.1</text>
 <text x="46" y="126">decodes video, plays sound</text>
 <text x="46" y="144">sends keys, pointer, clipboard</text>
@@ -60,14 +60,14 @@ Robin splits a session in two. SSH carries control (it logs in, looks at the hos
 <text x="576" y="284">or Wayland desktop</text>
 <text x="456" y="388">runs the agent on an exec channel</text>
 <text x="456" y="406">SFTP upload, forward to the agent</text>
-<text x="380" y="95" textAnchor="middle">WebRTC</text>
-<text x="380" y="123" textAnchor="middle">direct UDP</text>
+<text x="380" y="95" text-anchor="middle">WebRTC</text>
+<text x="380" y="123" text-anchor="middle">direct UDP</text>
 <text x="100" y="189">websocket</text>
 <text x="100" y="324">control</text>
-<text x="272" y="189" textAnchor="end">media over TCP</text>
-<text x="272" y="324" textAnchor="end">media fallback</text>
-<text x="380" y="370" textAnchor="middle">one SSH</text>
-<text x="380" y="398" textAnchor="middle">connection</text>
+<text x="272" y="189" text-anchor="end">media over TCP</text>
+<text x="272" y="324" text-anchor="end">media fallback</text>
+<text x="380" y="370" text-anchor="middle">one SSH</text>
+<text x="380" y="398" text-anchor="middle">connection</text>
 <text x="472" y="245">signaling</text>
 <text x="472" y="261">on stdio</text>
 <text x="655" y="190">frames, input</text>
