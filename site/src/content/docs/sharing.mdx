@@ -27,7 +27,7 @@ A code lets the account it names, and no other, join once within 10 minutes. Inv
 
 Alice runs the command on her own computer, over her own SSH login to the host. Her browser shows your desktop and pointer, with sound, and her status tab says she is view only until you give her control; Upload files and the Keys row wait on that as well.
 
-A guest joins your desktop as it is, so `--join` refuses `--share`, `--attach`, `--camera`, `--curtain` and `--silent`. If the code has expired or been used, she asks you for another.
+A guest joins your desktop as it is, so `--join` refuses `--share`, `--attach`, `--id`, `--new`, `--session`, `--camera`, `--curtain` and `--silent`. If the code has expired or been used, she asks you for another.
 
 ## Control
 
@@ -52,6 +52,5 @@ See [What Robin keeps out](/security#what-robin-keeps-out) for how the host chec
 - Everyone gets one stream, encoded at the bitrate the slowest guest's link allows, so a guest on a poor link makes your picture coarser too.
 - Your keys and a guest's in control interleave as they arrive, so agree who types.
 - An account the host cannot find in `/etc/passwd` or through `getent` cannot be invited.
-- A session takes up to 8 guests and 8 open invitations at once.
 - A guest's camera is never used.
 - Sharp text follows your page only, so a guest sees the video as it is.
