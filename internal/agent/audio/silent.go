@@ -22,6 +22,7 @@ import (
 	"github.com/jfreymuth/pulse/proto"
 
 	"github.com/yasinmiran/robin/internal/agent/opus"
+	"github.com/yasinmiran/robin/internal/tail"
 )
 
 // RoomStep is the keeper's kind for a RoomUndo.
@@ -107,7 +108,7 @@ type Room struct {
 	monitor string
 	child   *exec.Cmd     // owns the sink under PipeWire; nil for a module's
 	exited  chan struct{} // closed when the child exits; nil without one
-	stderr  tail
+	stderr  tail.Buffer
 
 	pending  chan sinkInputEvent
 	rescan   atomic.Bool

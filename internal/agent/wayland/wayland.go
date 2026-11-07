@@ -112,7 +112,7 @@ func Open(ctx context.Context, o Options) (_ *Desktop, err error) {
 	o.Log.Info("portal session", "node", d.sess.node, "size", fmt.Sprintf("%dx%d", d.sess.width, d.sess.height),
 		"devices", d.sess.devices, "clipboard", d.sess.clipboard, "cursor", p.cursorMode)
 
-	w, h := fit(d.sess.width, d.sess.height, o.MaxWidth, o.MaxHeight)
+	w, h := desktop.Fit(d.sess.width, d.sess.height, o.MaxWidth, o.MaxHeight)
 	if d.frames, err = startFrames(d.sess.remote, d.sess.node, w, h, o.FPS); err != nil {
 		return nil, err
 	}
@@ -337,17 +337,4 @@ func (d *Desktop) Close() error {
 		d.conn.Close()
 	})
 	return nil
-}
-
-// fit scales w x h down to fit inside maxW x maxH, keeping the aspect ratio,
-// and rounds to even dimensions. Unknown sizes stay unknown.
-func fit(w, h, maxW, maxH int) (int, int) {
-	if w <= 0 || h <= 0 {
-		return 0, 0
-	}
-	if maxW > 0 && maxH > 0 && (w > maxW || h > maxH) {
-		scale := min(float64(maxW)/float64(w), float64(maxH)/float64(h))
-		w, h = int(float64(w)*scale), int(float64(h)*scale)
-	}
-	return max(w&^1, 2), max(h&^1, 2)
 }

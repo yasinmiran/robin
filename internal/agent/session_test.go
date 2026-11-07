@@ -153,11 +153,17 @@ func (h *harness) start(configure ...func(*protocol.Start)) *protocol.Ready {
 // waitGone fails unless Run returned and the session left nothing behind.
 func (h *harness) waitGone(display string) {
 	h.t.Helper()
+	if err := h.waitExit(display); err != nil {
+		h.t.Fatalf("Run: %v", err)
+	}
+}
+
+// waitExit fails unless Run returned and the session left nothing behind,
+// and returns what Run did.
+func (h *harness) waitExit(display string) error {
+	h.t.Helper()
 	select {
 	case <-h.exited:
-		if h.runErr != nil {
-			h.t.Fatalf("Run: %v", h.runErr)
-		}
 	case <-time.After(10 * time.Second):
 		h.t.Fatal("agent did not exit")
 	}
@@ -169,6 +175,7 @@ func (h *harness) waitGone(display string) {
 	if _, err := os.Stat("/tmp/.X" + num + "-lock"); !errors.Is(err, os.ErrNotExist) {
 		h.t.Fatalf("Xvfb for %s still holds its lock (%v)", display, err)
 	}
+	return h.runErr
 }
 
 func TestSessionTearsDownOnStdinEOF(t *testing.T) {
@@ -352,20 +359,6 @@ func waitSize(t *testing.T, sizes chan [2]int, w, h int) {
 			last = s
 		case <-deadline:
 			t.Fatalf("encoder never saw %dx%d (last %dx%d)", w, h, last[0], last[1])
-		}
-	}
-}
-
-func TestFit(t *testing.T) {
-	for _, tc := range []struct{ w, h, mw, mh, ww, wh int }{
-		{800, 600, 1920, 1080, 800, 600},
-		{1001, 701, 1920, 1080, 1000, 700},
-		{2560, 1440, 1920, 1080, 1920, 1080},
-		{3000, 1000, 1920, 1080, 1920, 640},
-		{0, 600, 1920, 1080, 0, 0},
-	} {
-		if gw, gh := fit(tc.w, tc.h, tc.mw, tc.mh); gw != tc.ww || gh != tc.wh {
-			t.Errorf("fit(%d,%d into %dx%d) = %dx%d, want %dx%d", tc.w, tc.h, tc.mw, tc.mh, gw, gh, tc.ww, tc.wh)
 		}
 	}
 }

@@ -294,15 +294,20 @@ func TestProbeOverADeadConnection(t *testing.T) {
 }
 
 // The agent lands by its content's name in the directory the probe chose,
-// and a deploy into a file fails as the deploy's.
+// and a deploy into a file fails as the deploy's. Without an embedded agent
+// it skips, except under make test-agents (ROBIN_REQUIRE_AGENTS=1), which
+// has just built them.
 func TestDeployAgent(t *testing.T) {
+	a, err := agentbin.For(runtime.GOARCH)
+	if err != nil {
+		if os.Getenv("ROBIN_REQUIRE_AGENTS") == "1" {
+			t.Fatalf("no agent for %s embedded: %v", runtime.GOARCH, err)
+		}
+		t.Skipf("no agent for %s in this build (make builds them): %v", runtime.GOARCH, err)
+	}
 	h, _, _ := sshHost(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	a, err := agentbin.For(runtime.GOARCH)
-	if err != nil {
-		t.Skipf("no agent for %s in this build (make builds them): %v", runtime.GOARCH, err)
-	}
 	h.report = &probe.Report{Arch: runtime.GOARCH, AgentDir: t.TempDir(), SHA256Tool: "sha256sum"}
 	path, err := h.deployAgent(ctx, a)
 	if err != nil {

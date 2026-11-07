@@ -163,8 +163,12 @@ function sendSignal(m) {
   return true;
 }
 
+// sendControl sends a control message to the agent, and says whether it
+// went: while the page redials the host there is no channel to take it.
 function sendControl(c) {
-  if (channel?.readyState === 'open') channel.send(JSON.stringify(c));
+  if (channel?.readyState !== 'open') return false;
+  channel.send(JSON.stringify(c));
+  return true;
 }
 
 async function onSignal(m) {
@@ -330,6 +334,7 @@ function dropPeer() {
   keys.stop();
   devices?.stop();
   sharp.reset();
+  files.peerLost();
   earlyCandidates = [];
   const old = pc;
   pc = null;

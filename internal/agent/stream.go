@@ -4,6 +4,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"slices"
 	"sync"
@@ -44,6 +45,15 @@ const minKeyframeGap = 300 * time.Millisecond
 // picture again instead costs a few hundred bytes and lets rate control
 // spend what it has spare sharpening it.
 const refreshEvery = 500 * time.Millisecond
+
+// maxFailedFrames is how many frames running an encoder may fail, to open
+// or to encode, with none encoded and no encoder opened between, before the
+// stream gives up and the session ends with the encoder's error: no video
+// for ever tells the user nothing. hwenc restarts its tool at most once a
+// second, so for it this is seconds without a frame; an encoder that fails
+// every call gives up after maxFailedFrames ticks. One failed frame among
+// good ones never does.
+const maxFailedFrames = 3
 
 // stream captures, encodes and sends frames at up to fps while it has a
 // subscriber. Each frame is encoded once, at the lowest target among the
@@ -178,7 +188,9 @@ func (s *stream) wantTiles(on bool) { s.tilesWanted.Store(&tileRequest{on: on}) 
 
 func (s *stream) requestKeyframe() { s.keyframe.Store(true) }
 
-func (s *stream) run(ctx context.Context) {
+// run streams until ctx ends, returning nil, or until the encoder fails
+// maxFailedFrames frames running, returning why.
+func (s *stream) run(ctx context.Context) error {
 	interval := time.Second / time.Duration(s.fps)
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
@@ -199,6 +211,9 @@ func (s *stream) run(ctx context.Context) {
 		lastClock time.Time
 		tracker   = newTileTracker(s.log)
 		setup     tileSetup
+		// failures counts frames failed since a frame last went out or an
+		// encoder last opened.
+		failures int
 	)
 	closeEncoder := func() {
 		if enc != nil {
@@ -212,7 +227,7 @@ func (s *stream) run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case <-tick.C:
 		}
 		subs := s.subscribers()
@@ -266,19 +281,34 @@ func (s *stream) run(ctx context.Context) {
 			}
 		}
 		w, h := f.Width&^1, f.Height&^1
+		// giveUp skips a frame the encoder could not make, owing the page
+		// the screen again at the next tick, and returns why the stream
+		// ends if that was one failed frame too many.
+		giveUp := func(err error) error {
+			skipTimestamp()
+			stale = true
+			if failures++; failures < maxFailedFrames {
+				return nil
+			}
+			s.log.Error("video encoder keeps failing", "w", w, "h", h, "failures", failures, "err", err)
+			return fmt.Errorf("no video at %dx%d after %d failed frames: %w", w, h, failures, err)
+		}
 		// An I420 desktop already delivers frames at the size it was asked for.
 		scaled := f.Format == desktop.BGRX && (f.Width > s.maxW || f.Height > s.maxH)
 		if scaled {
-			w, h = fit(f.Width, f.Height, s.maxW, s.maxH)
+			w, h = desktop.Fit(f.Width, f.Height, s.maxW, s.maxH)
 		}
 		if enc == nil || img.Width != w || img.Height != h {
 			closeEncoder()
 			br := target(subs)
 			if enc, err = s.newEncoder(w, h, s.fps, int(br)); err != nil {
 				s.log.Error("encoder", "w", w, "h", h, "err", err)
-				skipTimestamp()
+				if err := giveUp(err); err != nil {
+					return err
+				}
 				continue
 			}
+			failures = 0
 			appliedBitrate = br
 			img = yuv.NewI420(w, h)
 			force = true
@@ -308,7 +338,9 @@ func (s *stream) run(ctx context.Context) {
 		au, err := enc.Encode(img, now.Sub(began), force)
 		if err != nil {
 			s.log.Warn("encode", "err", err)
-			skipTimestamp()
+			if err := giveUp(err); err != nil {
+				return err
+			}
 			continue
 		}
 		if force {
@@ -325,6 +357,7 @@ func (s *stream) run(ctx context.Context) {
 			skipTimestamp()
 			continue
 		}
+		failures = 0
 		if err := s.video.Write(au, d); err != nil {
 			s.log.Debug("write frame", "err", err)
 		}

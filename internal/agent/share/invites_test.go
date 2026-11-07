@@ -41,7 +41,7 @@ func TestAnInvitationAdmitsItsUserOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, err := protocol.ParseJoinCode(inv.Code)
-	if err != nil || code.Session != "s1" || code.Owner != 4242 || len(code.Secret) != 26 {
+	if err != nil || code.Session != "s1" || code.Owner != 4242 || code.Door != in.door || len(code.Door) != 26 || len(code.Secret) != 26 {
 		t.Fatalf("code %q parses to %+v, %v", inv.Code, code, err)
 	}
 	if !in.Invited(1001) || in.Invited(1002) {
@@ -100,14 +100,33 @@ func TestACodeAdmitsOnlyItsUID(t *testing.T) {
 	}
 }
 
+// Every session draws a door of its own, and a code naming another door
+// admits nobody.
+func TestACodeNamesItsSessionsOwnDoor(t *testing.T) {
+	in, _ := testInvites(map[string]int{"alice": 1001})
+	other, _ := testInvites(nil)
+	if in.door == other.door {
+		t.Fatalf("two sessions drew the door %q", in.door)
+	}
+	inv, _ := in.Invite("alice")
+	c, _ := protocol.ParseJoinCode(inv.Code)
+	c.Door = other.door
+	if _, err := in.Redeem(1001, c.String()); !errors.Is(err, ErrBadCode) {
+		t.Fatalf("a code naming another door: %v", err)
+	}
+	if user, err := in.Redeem(1001, inv.Code); err != nil || user != "alice" {
+		t.Fatalf("the code itself after: %q, %v", user, err)
+	}
+}
+
 func TestWrongCodesWithdrawTheInvitation(t *testing.T) {
 	in, _ := testInvites(map[string]int{"alice": 1001})
 	inv, _ := in.Invite("alice")
 	c, _ := protocol.ParseJoinCode(inv.Code)
 	wrong := []string{
 		"not a code",
-		protocol.JoinCode{Session: "s2", Owner: 4242, Secret: c.Secret}.String(),
-		protocol.JoinCode{Session: "s1", Owner: 4243, Secret: c.Secret}.String(),
+		protocol.JoinCode{Session: "s2", Owner: 4242, Door: c.Door, Secret: c.Secret}.String(),
+		protocol.JoinCode{Session: "s1", Owner: 4243, Door: c.Door, Secret: c.Secret}.String(),
 	}
 	for i, code := range wrong {
 		if _, err := in.Redeem(1001, code); !errors.Is(err, ErrBadCode) {

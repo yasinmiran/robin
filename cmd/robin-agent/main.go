@@ -45,7 +45,7 @@ import (
 
 var version = "dev"
 
-const usage = "usage: robin-agent serve [-v] [-keep d] [-resume id] [-detach setsid|systemd-run] | join -session id -owner uid | daemon ... | end id | send FILE... | keeper [-v] | version"
+const usage = "usage: robin-agent serve [-v] [-keep d] [-resume id] [-detach setsid|systemd-run] | join | daemon ... | end id | send FILE... | keeper [-v] | version"
 
 func main() {
 	if filepath.Base(os.Args[0]) == agent.SendCommand {
@@ -138,19 +138,14 @@ func serve(args []string) int {
 	return 0
 }
 
-// join is a guest CLI's end on the host: a proxy to the guests' door of
-// the session the CLI names, which it checks its owner holds. The code
-// itself goes over stdin, in the CLI's Join, and never on a command line.
+// join is a guest CLI's end on the host: a proxy to the guests' door that
+// the code in the CLI's Join, its first line on stdin, names, which it
+// checks the session's owner holds. It takes no arguments, so nothing of
+// the code is ever on a command line.
 func join(args []string) int {
 	fs := flag.NewFlagSet("join", flag.ContinueOnError)
-	session := fs.String("session", "", "the session to join")
-	owner := fs.Int("owner", -1, "the uid of the session's owner")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	code := protocol.JoinCode{Session: *session, Owner: *owner}
-	if err := code.CheckTarget(); err != nil {
-		fmt.Fprintln(os.Stderr, "robin-agent: join: bad -session or -owner")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, usage)
 		return 2
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
@@ -158,12 +153,33 @@ func join(args []string) int {
 	signal.Ignore(syscall.SIGPIPE)
 	out := os.Stdout
 	os.Stdout = os.Stderr
-	c, err := share.Dial(code)
+	type joined struct {
+		code protocol.JoinCode
+		in   io.Reader
+		err  error
+	}
+	// A read of stdin cannot be interrupted; ctx ending exits instead.
+	read := make(chan joined, 1)
+	go func() {
+		code, in, err := share.ReadJoin(os.Stdin)
+		read <- joined{code, in, err}
+	}()
+	var j joined
+	select {
+	case j = <-read:
+	case <-ctx.Done():
+		return 1
+	}
+	if j.err != nil {
+		fmt.Fprintln(os.Stderr, "robin-agent: join:", j.err)
+		return 1
+	}
+	c, err := share.Dial(j.code)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "robin-agent:", err)
 		return 1
 	}
-	if err := share.Relay(ctx, c, os.Stdin, out); err != nil {
+	if err := share.Relay(ctx, c, j.in, out); err != nil {
 		fmt.Fprintln(os.Stderr, "robin-agent:", err)
 		return 1
 	}
@@ -232,7 +248,9 @@ func runDaemon(args []string) int {
 	defer ln.Close()
 	// Serve removes the directory once a session ran; before that it is ours.
 	defer os.RemoveAll(*dir)
-	// Guests come in by an abstract socket; a daemon that cannot have one
+	// Guests come in by an abstract socket named at random: the id is on
+	// this command line, where every account reads it, so a name built
+	// from it could be taken first. A daemon the kernel gives no socket
 	// still serves its owner, and shares nothing.
 	door, err := share.Open(share.NewInvites(*id, os.Getuid()), log)
 	if err != nil {

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"strconv"
 	"time"
 
 	"github.com/yasinmiran/robin/internal/agentbin"
@@ -27,11 +26,15 @@ func checkJoin(o Options) error {
 	if _, err := protocol.ParseJoinCode(o.Join); err != nil {
 		return err
 	}
+	shapesStream := o.Keep != 0 || o.MaxWidth > 0 || o.MaxHeight > 0 || o.FPS > 0 || o.MaxKbps > 0 ||
+		(o.Encoder != "" && o.Encoder != protocol.EncoderAuto) || o.namesMonitor()
 	switch {
 	case len(o.Share) > 0:
 		return errors.New("--share is the owner's; a guest cannot invite others")
 	case o.Attach != "" || o.Resume != "" || o.New || o.Session != "":
 		return errors.New("--join joins the owner's desktop as it is; --attach, --id, --new and --session are the owner's")
+	case shapesStream:
+		return errors.New("--join watches the owner's stream as it is; --keep, --max-size, --fps, --max-kbps, --encoder and --monitor are the owner's")
 	case o.Camera:
 		return errors.New("a guest's camera is not offered: the camera stays the owner's")
 	case o.Curtain || o.Silent:
@@ -84,9 +87,11 @@ func (a *agentProc) awaitInvited(ctx context.Context) (*protocol.Invitation, err
 	}
 }
 
-// joinArgs is robin-agent join's command line for the session code names.
-func joinArgs(path string, code protocol.JoinCode) []string {
-	return []string{path, "join", "-session", code.Session, "-owner", strconv.Itoa(code.Owner)}
+// joinArgs is robin-agent join's command line. It names nothing of the
+// code, which every account could read in /proc: the agent learns the
+// door from the Join the guest sends it.
+func joinArgs(path string) []string {
+	return []string{path, "join"}
 }
 
 // runGuest joins the session o.Join names as a guest: over the user's own
@@ -95,10 +100,6 @@ func joinArgs(path string, code protocol.JoinCode) []string {
 // removes the guest or ends the session; a lost connection is not
 // redialed, since the code it joined with is spent.
 func runGuest(ctx context.Context, o Options, log *slog.Logger) error {
-	code, err := protocol.ParseJoinCode(o.Join)
-	if err != nil {
-		return err
-	}
 	h, err := connect(ctx, o, log)
 	if err != nil {
 		return err
@@ -112,7 +113,7 @@ func runGuest(ctx context.Context, o Options, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	ag, err := startProxy(h.m, joinArgs(path, code), o.Verbose, o.Stderr)
+	ag, err := startProxy(h.m, joinArgs(path), o.Verbose, o.Stderr)
 	if err != nil {
 		return err
 	}

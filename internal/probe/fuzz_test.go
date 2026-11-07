@@ -61,7 +61,7 @@ func FuzzParse(f *testing.F) {
 // Parse takes each in constant time, so the most a host can print parses
 // at once rather than in quadratic time.
 func TestParseIsLinearInTheOutput(t *testing.T) {
-	for _, key := range []string{"xauth", "ffmpeg_encoder", "gst_plugin", "gst_dir"} {
+	for _, key := range []string{"ffmpeg_encoder", "gst_plugin", "gst_dir"} {
 		var b bytes.Buffer
 		b.WriteString(header + "\n")
 		for i := 0; b.Len() < 1<<20; i++ {
@@ -75,7 +75,7 @@ func TestParseIsLinearInTheOutput(t *testing.T) {
 		if took := time.Since(start); took > 2*time.Second {
 			t.Errorf("a megabyte of %s took %s", key, took)
 		}
-		if n := len(r.XAuthority) + len(r.FFmpegEncoders) + len(r.GstPlugins) + len(r.GstDirs); n < 50000 {
+		if n := len(r.FFmpegEncoders) + len(r.GstPlugins) + len(r.GstDirs); n < 50000 {
 			t.Errorf("a megabyte of %s gave %d values", key, n)
 		}
 	}

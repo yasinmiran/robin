@@ -280,6 +280,44 @@ func TestCheckSpawn(t *testing.T) {
 	}
 }
 
+// TestCheckDesktop: a flag that the requested desktop would drop is
+// refused, and the refusal names the flag; one that a new desktop of the
+// mode uses is let through, and so is a resume by id, which takes none of
+// the flags that shape a new desktop.
+func TestCheckDesktop(t *testing.T) {
+	for want, o := range map[string]Options{
+		"--new starts another desktop":  {New: true, Resume: "ab12"},
+		"--monitor picks a monitor":     {Monitor: "2"},
+		"--monitor is for X11 desktops": {Attach: protocol.AttachWayland, Monitor: protocol.MonitorAll},
+		"--session sets the command":    {Attach: ":0", Session: "xterm"},
+		"runs its own":                  {Attach: protocol.AttachWayland, Session: "xterm"},
+	} {
+		if err := checkDesktop(o); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%+v: %v, want it to say %q", o, err, want)
+		}
+	}
+	for _, o := range []Options{
+		{},
+		{Monitor: protocol.MonitorPrimary},
+		{Attach: protocol.AttachWayland, Monitor: protocol.MonitorPrimary},
+		{Attach: ":0", Monitor: "DP-1"},
+		{Attach: "auto", Monitor: protocol.MonitorAll}, // checked again once auto resolves
+		{Resume: "ab12", Monitor: "2"},
+		{Session: "xterm"},
+		{Session: "xterm", New: true},
+		{Session: "xterm", Resume: "ab12"},
+	} {
+		if err := checkDesktop(o); err != nil {
+			t.Errorf("%+v: %v", o, err)
+		}
+	}
+	// Run refuses before it dials anything.
+	err := Run(context.Background(), Options{Dest: "nowhere.invalid", Monitor: "2"})
+	if err == nil || !strings.Contains(err.Error(), "--monitor") {
+		t.Errorf("Run with --monitor and no --attach: %v", err)
+	}
+}
+
 func TestAgentBye(t *testing.T) {
 	a, f := agentOverPipes(t)
 	go func() {

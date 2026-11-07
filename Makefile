@@ -139,11 +139,13 @@ ifeq ($(HOST_OS)/$(HOST_ARCH),linux/amd64)
 endif
 
 # The agents this tree builds, scanned for anything of the builder: paths,
-# an unpinned Go, a build setting the recipes do not set. The test runs
-# only here, against agents just built: make test stays free of the
-# toolchain, and agents an older build left behind would not match.
+# an unpinned Go, a build setting the recipes do not set; then deployed over
+# a local sshd. The tests run only here, against agents just built: make
+# test stays free of the toolchain, and agents an older build left behind
+# would not match.
 test-agents: agents
 	ROBIN_REQUIRE_AGENTS=1 $(GO) test ./internal/agentbin
+	ROBIN_REQUIRE_AGENTS=1 $(GO) test -run '^TestDeployAgent$$' ./internal/gui
 
 # The page's pure modules, under Node's own test runner. make test runs them
 # too, through TestPageModules in internal/web; this target is for make cover

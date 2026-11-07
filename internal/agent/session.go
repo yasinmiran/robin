@@ -202,7 +202,7 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 		audio, audioErr = sound, soundErr
 	}
 
-	w0, h0 := fit(start.Width, start.Height, start.MaxWidth, start.MaxHeight)
+	w0, h0 := desktop.Fit(start.Width, start.Height, start.MaxWidth, start.MaxHeight)
 	if w0 > 0 && h0 > 0 {
 		if _, _, err := d.desk.Resize(w0, h0); err != nil && !errors.Is(err, desktop.ErrFixedSize) {
 			log.Warn("initial resize", "err", err)
@@ -285,7 +285,20 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 		wg.Add(1)
 		go func() { defer wg.Done(); f(ctx) }()
 	}
-	run(s.stream.run)
+	fatal := make(chan error, 1)
+	// report hands serve why the session cannot go on; the first reason wins.
+	report := func(err error) {
+		select {
+		case fatal <- err:
+		default:
+		}
+	}
+	run(func(ctx context.Context) {
+		if err := s.stream.run(ctx); err != nil {
+			name, _ := video.inUse()
+			report(fmt.Errorf("encoder %s: %w", name, err))
+		}
+	})
 	run(s.forwardClipboard)
 	run(s.serveFiles)
 	run(s.forwardCursor)
@@ -295,8 +308,15 @@ func Serve(ctx context.Context, cs Controllers, o Options) error {
 	if audio != nil {
 		run(func(ctx context.Context) { s.forwardAudio(ctx, audio) })
 	}
+	run(func(ctx context.Context) {
+		select {
+		case err := <-d.done:
+			report(fmt.Errorf("desktop went away: %w", err))
+		case <-ctx.Done():
+		}
+	})
 
-	return s.serve(ctx, cs, ready, d.done, o.Keep, protocol.Session{
+	return s.serve(ctx, cs, ready, fatal, o.Keep, protocol.Session{
 		ID: ready.ID, PID: os.Getpid(), Build: o.Build, Mode: d.mode, Display: d.name, Desktop: d.session,
 		Keep: ready.Keep, Started: time.Now(),
 	})
@@ -425,7 +445,7 @@ func (s *session) applyInput(m protocol.Control) {
 }
 
 func (s *session) applyResize(m protocol.Control) {
-	w, h := fit(m.W, m.H, s.start.MaxWidth, s.start.MaxHeight)
+	w, h := desktop.Fit(m.W, m.H, s.start.MaxWidth, s.start.MaxHeight)
 	if w <= 0 || h <= 0 {
 		return
 	}
@@ -606,19 +626,6 @@ func normalize(s protocol.Start) protocol.Start {
 		s.MaxKbps = protocol.DefaultMaxKbps
 	}
 	return s
-}
-
-// fit scales w x h down to fit inside maxW x maxH, keeping the aspect ratio,
-// and rounds to even dimensions.
-func fit(w, h, maxW, maxH int) (int, int) {
-	if w <= 0 || h <= 0 {
-		return 0, 0
-	}
-	if w > maxW || h > maxH {
-		scale := min(float64(maxW)/float64(w), float64(maxH)/float64(h))
-		w, h = int(float64(w)*scale), int(float64(h)*scale)
-	}
-	return max(w&^1, 2), max(h&^1, 2)
 }
 
 // fail tells the CLI why the session is ending, then returns err.

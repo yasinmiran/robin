@@ -23,7 +23,7 @@ func TestKnocksFromAnUninvitedUIDLogBounded(t *testing.T) {
 	}
 	const knocks = 500
 	for range knocks {
-		c, err := net.Dial("unix", protocol.ShareSocket(d.inv.session))
+		c, err := net.Dial("unix", protocol.ShareSocket(d.inv.door))
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -25,23 +25,15 @@ const header = "probe=1"
 // Report is what the probe found on the host.
 type Report struct {
 	OS      string // uname -s
-	Kernel  string // uname -r
 	Machine string // uname -m
 	// Arch is Machine as a GOARCH value, or "" when Go has no name for it.
 	Arch string
 
 	Distro Distro
 
-	User     string
-	UID      int
-	Home     string
-	CPUs     int
-	MemoryKB int64
-
-	// Env is the desktop environment as the SSH exec channel sees it. It is
-	// usually empty even when a desktop is running; Sessions, X11 and Wayland
-	// find those independently.
-	Env Env
+	User string
+	UID  int
+	CPUs int
 
 	// Sessions are this user's logind sessions.
 	Sessions []Session
@@ -55,12 +47,9 @@ type Report struct {
 	// Commands maps each command robin can use, found on PATH, to its path.
 	Commands map[string]string
 
-	// XAuthority lists readable X cookie files that may belong to a running
-	// display, for attaching to it.
-	XAuthority []string
-	// SessionBus, PulseSocket and PipeWireSocket are this user's sockets in
-	// the runtime directory, or "".
-	SessionBus, PulseSocket, PipeWireSocket string
+	// SessionBus is this user's session bus socket in the runtime directory,
+	// or "".
+	SessionBus string
 	// FFmpegEncoders are the host ffmpeg's hardware H.264 encoders, such as
 	// h264_vaapi. GstPlugins are the GStreamer plugins found among pipewire,
 	// vaapi, va, nvcodec, x264, videoconvertscale, videoconvert, y4m and
@@ -95,16 +84,6 @@ type Distro struct {
 	ID        string   // "ubuntu", "fedora", "alpine", ...
 	VersionID string   // "24.04"
 	IDLike    []string // ["rhel", "centos", "fedora"]
-	Name      string   // PRETTY_NAME
-}
-
-// Env holds the desktop variables of the probe's own environment.
-type Env struct {
-	SessionType    string // XDG_SESSION_TYPE
-	Display        string // DISPLAY
-	WaylandDisplay string // WAYLAND_DISPLAY
-	CurrentDesktop string // XDG_CURRENT_DESKTOP
-	RuntimeDir     string // XDG_RUNTIME_DIR
 }
 
 // Session is a logind session, as loginctl show-session reports it. Type is
@@ -129,9 +108,7 @@ type GPU struct {
 	VAInfo       string
 	VADriver     string
 	VAH264Encode bool
-	// NvidiaSMI is the path of nvidia-smi, or "" when absent. NvidiaGPUs are
-	// the GPUs the loaded NVIDIA driver reports.
-	NvidiaSMI  string
+	// NvidiaGPUs are the GPUs the loaded NVIDIA driver reports.
 	NvidiaGPUs []string
 }
 
@@ -181,7 +158,7 @@ func Parse(out []byte) (*Report, error) {
 			return nil, fmt.Errorf("probe: line %d: %s: %w", start+n+1, key, err)
 		}
 	}
-	for _, list := range []*[]string{&r.XAuthority, &r.FFmpegEncoders, &r.GstPlugins, &r.GstDirs} {
+	for _, list := range []*[]string{&r.FFmpegEncoders, &r.GstPlugins, &r.GstDirs} {
 		*list = unique(*list)
 	}
 	r.Arch = goarch(r.Machine)
@@ -193,8 +170,6 @@ func (r *Report) set(key, val string) error {
 	switch key {
 	case "os":
 		r.OS = val
-	case "kernel":
-		r.Kernel = val
 	case "machine":
 		r.Machine = val
 	case "distro_id":
@@ -203,31 +178,12 @@ func (r *Report) set(key, val string) error {
 		r.Distro.VersionID = val
 	case "distro_like":
 		r.Distro.IDLike = strings.Fields(val)
-	case "distro_name":
-		r.Distro.Name = val
 	case "user":
 		r.User = val
 	case "uid":
 		r.UID, err = atoi(val)
-	case "home":
-		r.Home = val
 	case "cpus":
 		r.CPUs, err = atoi(val)
-	case "memory_kb":
-		if val != "" {
-			r.MemoryKB, err = strconv.ParseInt(val, 10, 64)
-		}
-
-	case "env.XDG_SESSION_TYPE":
-		r.Env.SessionType = val
-	case "env.DISPLAY":
-		r.Env.Display = val
-	case "env.WAYLAND_DISPLAY":
-		r.Env.WaylandDisplay = val
-	case "env.XDG_CURRENT_DESKTOP":
-		r.Env.CurrentDesktop = val
-	case "env.XDG_RUNTIME_DIR":
-		r.Env.RuntimeDir = val
 
 	case "session":
 		r.Sessions = append(r.Sessions, Session{ID: val})
@@ -262,19 +218,11 @@ func (r *Report) set(key, val string) error {
 		r.GPU.VADriver = val
 	case "vainfo_h264_encode":
 		r.GPU.VAH264Encode = val == "yes"
-	case "nvidia_smi":
-		r.GPU.NvidiaSMI = val
 	case "nvidia_gpu":
 		r.GPU.NvidiaGPUs = append(r.GPU.NvidiaGPUs, val)
 
-	case "xauth":
-		r.XAuthority = append(r.XAuthority, val)
 	case "session_bus":
 		r.SessionBus = val
-	case "pulse":
-		r.PulseSocket = val
-	case "pipewire":
-		r.PipeWireSocket = val
 	case "ffmpeg_encoder":
 		r.FFmpegEncoders = append(r.FFmpegEncoders, val)
 	case "gst_plugin":

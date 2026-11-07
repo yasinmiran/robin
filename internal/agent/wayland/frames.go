@@ -18,6 +18,7 @@ import (
 
 	"github.com/yasinmiran/robin/internal/agent/desktop"
 	"github.com/yasinmiran/robin/internal/agent/xdg"
+	"github.com/yasinmiran/robin/internal/tail"
 )
 
 // firstFrameTimeout bounds the wait for the stream's first picture.
@@ -35,7 +36,7 @@ const firstFrameTimeout = 10 * time.Second
 type frames struct {
 	cmd    *exec.Cmd
 	out    io.ReadCloser
-	stderr *tail
+	stderr *tail.Buffer
 	ready  chan struct{} // closed once the size is known and buffers exist
 	exited chan struct{} // closed once gst has exited and been reaped
 
@@ -77,7 +78,7 @@ func startFrames(remote *os.File, node uint32, width, height, fps int) (*frames,
 	// An orphaned gst would keep the stream, and the screen sharing
 	// indicator on the host, alive.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
-	f := &frames{cmd: cmd, stderr: &tail{max: 4 << 10}, ready: make(chan struct{}), exited: make(chan struct{})}
+	f := &frames{cmd: cmd, stderr: &tail.Buffer{}, ready: make(chan struct{}), exited: make(chan struct{})}
 	cmd.Stderr = f.stderr
 	out, err := cmd.StdoutPipe()
 	if err != nil {
@@ -226,27 +227,4 @@ func (f *frames) stop() {
 		f.cmd.Process.Kill()
 		<-f.exited
 	}
-}
-
-// tail keeps the last max bytes written to it.
-type tail struct {
-	mu  sync.Mutex
-	max int
-	buf []byte
-}
-
-func (t *tail) Write(p []byte) (int, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.buf = append(t.buf, p...)
-	if over := len(t.buf) - t.max; over > 0 {
-		t.buf = t.buf[over:]
-	}
-	return len(p), nil
-}
-
-func (t *tail) String() string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return string(t.buf)
 }

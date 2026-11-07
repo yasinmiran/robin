@@ -116,6 +116,9 @@ func Run(ctx context.Context, o Options) (err error) {
 	if err := checkPrivate(o); err != nil {
 		return err
 	}
+	if err := checkDesktop(o); err != nil {
+		return err
+	}
 	h, err := connect(ctx, o, log)
 	if err != nil {
 		return err
@@ -127,6 +130,9 @@ func Run(ctx context.Context, o Options) (err error) {
 			return err
 		}
 		log.Info("attaching", "to", o.Attach)
+		if err := checkDesktop(o); err != nil {
+			return fmt.Errorf("--attach auto found %s on %s: %w", o.Attach, o.Dest, err)
+		}
 	}
 	if err := checkSpawn(o, report); err != nil {
 		return err
@@ -517,6 +523,30 @@ func checkSpawn(o Options, r *probe.Report) error {
 			o.Dest, strings.Join(missing, ", "), r.InstallHint())
 	}
 	return nil
+}
+
+// checkDesktop refuses a flag that the requested desktop would drop:
+// --monitor picks among an attached X11 desktop's monitors, and --session
+// sets the command of a desktop robin starts. A resume by id takes
+// neither, like every other flag that shapes only a new desktop.
+func checkDesktop(o Options) error {
+	switch {
+	case o.New && o.Resume != "":
+		return errors.New("--new starts another desktop and --id resumes a kept one; give one of them")
+	case o.namesMonitor() && o.Attach == "" && o.Resume == "":
+		return errors.New("--monitor picks a monitor of an X11 desktop you attach to with --attach; a desktop robin starts has one screen")
+	case o.namesMonitor() && o.Attach == protocol.AttachWayland:
+		return errors.New("--monitor is for X11 desktops; Wayland shows the monitor picked in its sharing dialog")
+	case o.Session != "" && o.Attach != "":
+		return errors.New("--session sets the command of a desktop robin starts; a desktop you attach to with --attach runs its own")
+	}
+	return nil
+}
+
+// namesMonitor reports whether o asks for a monitor other than the
+// primary one.
+func (o Options) namesMonitor() bool {
+	return o.Monitor != "" && o.Monitor != protocol.MonitorPrimary
 }
 
 // resumeMessage is the Resume of a new robin gui for kept session id: it

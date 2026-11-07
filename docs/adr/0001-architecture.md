@@ -169,8 +169,21 @@ trial failure shows in the first Ready. A later one shows in the next Ready
 a controller gets on resume, with the reason, and in a guest's Ready by
 name. An
 encoder the user named still fails the session at its trial and is never
-swapped later: a frame it fails is skipped, and the tool is restarted
-after a second.
+swapped later: a frame it fails is skipped, the screen is owed again at
+the next tick, and the tool is restarted after a second. Skipping alone
+once left a named encoder that passed its trial and then failed at the
+session's size (a VA-API driver capped below the desktop, say) restarting
+its tool for ever while the page showed no video and nothing said why. So
+the stream gives up after `maxFailedFrames` (3) failures with no frame
+encoded and no encoder opened between, a few seconds given the restart's
+pause, and the session ends with the encoder's error, which the CLI
+prints, as it does one that fails its trial. A good frame resets the
+count, and so does an encoder opening at a new size; frames the tool
+skips while it waits to restart do not. The rule is the stream's, so it
+holds for any encoder, openh264 included, and for one that fails to open
+at a size, which fails on every tick and so gives up within a few; a
+picked GPU encoder never reaches it, since its first failure hands the
+frame to openh264, which the rule then covers.
 
 The first `Open` tries each route the host offers on a 320x240 frame,
 ffmpeg first since it measured faster and cheaper, and keeps the first that
@@ -209,6 +222,13 @@ across distros. And a host that lacks Xvfb also lacks any desktop to run in
 it, so the user is installing packages either way; `xvfb` is one more name on
 the same line. The probe reports exactly what is missing and the CLI prints
 the install command. Attach mode needs none of it.
+
+The probe reports only what the CLI decides with, such as the
+distribution, live sessions and displays, the session bus, the GPU and the
+encoders the host's ffmpeg or GStreamer offer, spawn tools, cameras, the
+agent directory and kept sessions. The agent finds an X display's cookie,
+the sound server and the encoder tool it runs for itself, on the host, so
+the probe does not look for them.
 
 The agent picks the lightest session it finds: Xfce, else a window manager
 with a terminal beside it, else a bare terminal. The terminal starts first
@@ -845,7 +865,15 @@ keeps the reflex and moves it one process out.
   run first and unlink the kept daemon's binary even though the CLI then
   left the session alone, and the upload spares every agent a kept
   session runs from: the desktop's `robin-send` is a symlink to it, and
-  dangled after a `--new` beside the session.
+  dangled after a `--new` beside the session. `robin end` runs that kept
+  agent's own `end` (every agent that writes `session.json` has one), so
+  ending a session of another build is not a 15 MB upload; the CLI deploys
+  its agent only when the kept one fails to end it, its file gone, say,
+  and an error then names both failures. An agent that writes
+  `session.json` but predates the no-session exit status fails on a
+  session already gone, so ending one of those still deploys; that case
+  is rare enough to accept. The name comes from the session's file, so
+  only a bare `robin-agent-` file name in the agent directory is run.
 - The CLI: the relay, the page server, the tunnel's loopback listener and
   the page itself outlive the SSH connection; only the master, the proxy
   and the forward are remade. The page is told `reconnecting`, drops its
@@ -907,7 +935,17 @@ page for a session that is not what was asked.
   does, not with only this on. A spawned desktop refuses either flag, as
   the CLI refuses them for a new one; the CLI leaves a resume by `--id` to
   the agent, since that session may be attached, and skips its spawn check
-  for the same reason.
+  for the same reason. `--monitor` and `--session` are refused where the
+  desktop they ask for would drop them (`checkDesktop`): `--monitor`
+  without `--attach` or with Wayland, which has one picture from its
+  sharing dialog, checked again once `--attach auto` has picked; `--session`
+  with `--attach`. A resume by `--id` carries neither, as it carries none
+  of the flags that shape only a new desktop, so the CLI lets them through
+  there. `--new` with `--id` is refused rather than resuming. A
+  guest's `--join` refuses every flag that shapes the owner's session,
+  since a guest sends no Start to carry it; `--audio=false` among them,
+  which the CLI checks itself since the option's zero value cannot say
+  whether it was named.
 - Devices are made as the session starts: a spawned desktop's pulseaudio
   loads the microphone before it runs, and Start names the camera's
   v4l2loopback device. Adding one to a running session would be a second
@@ -1214,7 +1252,19 @@ uploads used to remove its row and its Cancel button while its bytes still
 went. The page lists at most 256 files on offer, the agent's own
 `maxSessionOffers`, since every change redraws every row: past that, the
 oldest still waiting for a click on Save goes, so a host that offered
-without end grows neither the list nor the redraw.
+without end grows neither the list nor the redraw. A transfer goes with
+the peer it was asked on: when the page drops its peer connection, the
+rows that peer carried settle there and then, a Save not yet answered and
+a download under way back on offer and an upload under way failed, all
+"not connected to the desktop". The page does not wait for those
+channels' close events, which the WebRTC spec has `close()` skip (Chrome
+fires them anyway), and what an old channel still delivers is nobody's
+download. An offer heard again changes nothing: the agent sends every open
+offer again when a new control channel opens, and a Save clicked on the
+new peer before they arrive must not be undone by them. A Save clicked
+while the page has no control channel goes straight back on offer the same
+way, and so does an upload that meets no peer, which `sendBulk` refuses
+before it touches one.
 
 **Names from the host.** File names, the names uploads were kept under,
 transfer errors and monitor names go in as text, never markup, but the
@@ -1343,9 +1393,20 @@ repro`; `make test` skips the test without agents, so a fresh clone's
 unit tests need no toolchain) checks the agents this tree builds for the
 checkout, the toolchain cache, the home directory, Go's directories, the pinned Go
 version and the exact set of build settings, so a leak that comes back is
-caught without the double build. Nothing checks it on every merge yet:
-CI builds the encoders as stubs and fetches no C toolchain, so it builds
-no agents to check.
+caught without the double build. CI's agents job runs `make agents` and
+`make test-agents` on every push and pull request, so the scan holds on
+every merge, not only on a machine that happened to build the agents. Its
+zig, downloads and libraries are cached under the hash of
+`toolchain/*.sh`, with no fallback key: every library directory is
+already named by its inputs, and a pin change should start clean rather
+than carry the old toolchain along. Each download is checked by hash when it is
+fetched; after that, the cache's zig, nasm and libraries are used as
+built. What makes that safe is the cache's scope: main's entry is written
+only by main's own runs, from a verified download, and a pull request's
+run reads it but writes only its own scope, so a branch cannot hand main
+a toolchain. The double build stays local, since
+the scan already catches a leak on every merge and `make repro` would be
+a second full build to do it again.
 
 ### Publishing the docs from a build it does not trust
 
@@ -2843,7 +2904,7 @@ account on the host needs a way in for that account that no other account
 has, a peer of its own for its page, and a rule for who drives.
 
 - The way in is an abstract unix socket per session daemon,
-  `@robin-share-<id>`. The controller's socket lives in the 0700 run
+  `@robin-share-<door>`. The controller's socket lives in the 0700 run
   directory, where no other uid can reach it, and opening a path to it for
   one guest would open it to every account. An abstract socket has no file
   and no mode, so anyone can connect, and the gate is the same pair of
@@ -2851,20 +2912,39 @@ has, a peer of its own for its page, and a rule for who drives.
   `SO_PEERCRED` on the accepting goroutine and hangs up, without reading,
   unless that uid holds an open invitation; only then does the connection
   get 5 s to present its code. The name goes with the daemon, and there is
-  no file to sweep. The cost is the network namespace: an abstract name
+  no file to sweep. It was first `@robin-share-<id>`, but the session id
+  is on the daemon's command line, which `/proc` shows every account, and
+  an abstract name belongs to whoever binds it first: another account
+  could take the name before the daemon listened, and the session then
+  shared with nobody for its whole life. The guest's owner-uid check
+  (below) kept that from reaching a guest, so it denied sharing and
+  nothing more. The daemon now draws 128 random bits for the name as it
+  starts and writes them nowhere, `session.json` included, since nothing
+  restarts a daemon under its id and resume reaches the same process;
+  only join codes carry them, so no account knows the name before the
+  daemon holds it. The code grew a field for it, so a daemon started
+  before this change still hands out codes of three fields, which a
+  guest now refuses as from an older build (`ErrOldJoinCode`), and an
+  older guest CLI cannot take a code of four: sharing needs both sides
+  on this build. Binding first
+  thing and failing the session on a refused bind would have caught the
+  squat without preventing it, and still cost the owner the session.
+  The cost is the network namespace: an abstract name
   is visible only inside one, so a guest whose login lands in a container
   of its own cannot join (README, Known limits).
 - An invitation names an account, which the agent looks up in
   `/etc/passwd` and then through the host's `getent`, since the static
   agent has no name service of its own. Its code is the session id, the
-  owner's uid and 128 random bits; the bits are compared in constant time,
-  spent by the first join that presents them, and expire after 10 minutes,
+  owner's uid, the door's name and 128 random bits; the bits are compared
+  in constant time, spent by the first join that presents them, and
+  expire after 10 minutes,
   and three wrong codes from the invited uid withdraw the invitation.
   Inviting the same account again replaces its code. The code goes from
   the guest's CLI to the door in the first message over the agent's stdin,
   never on a command line, where `/proc` would show it to every account;
-  `robin-agent join` takes only the session id and the owner's uid, and
-  checks that whoever listens on the name is that uid, since another
+  `robin-agent join` takes no arguments, reads that first message for the
+  door and the owner's uid, passes it on to the door, and checks that
+  whoever listens on the name is that uid, since another
   account could take an abstract name once the daemon that held it is
   gone and serve the guest a desktop of its choosing. The guest's CLI pins
   the DTLS fingerprint of the agent it reached, as the owner's does.
@@ -3083,14 +3163,25 @@ it pulls in become as much a part of the attack surface as the agent. CI
 only, never `pull_request_target`, with `contents: read` as the whole of
 its token and no secret: a pull request from a fork gets nothing worth
 taking. Checkout keeps no credentials, no `run:` step reads an event field,
-and each of the three actions (checkout, setup-go, setup-node) is pinned to
-a full commit SHA, since a tag can be moved. It runs what needs no
-container: the stub build's tests, vet, gofmt, a tidy check, govulncheck,
-the page's node tests and the site, every `npm ci` with `--ignore-scripts`
-(no dependency needs an install script, so none runs while npm installs
-it). `make check` stays the merge gate,
-because a runner has no podman, display or GPU for the suites that matter
-most. `site/scripts/workflows.test.ts` holds every workflow to these
+and each of its four actions (checkout, setup-go, setup-node, cache) is
+GitHub's own and pinned to a full commit SHA, since a tag can be moved. It
+runs the stub build's tests, vet, gofmt, a tidy check, govulncheck, the
+page's node tests and the site, every `npm ci` with `--ignore-scripts` (no
+dependency needs an install script, so none runs while npm installs it);
+it builds and scans the agents with the pinned toolchain, whose downloads
+are checked by hash as on a workstation; and it runs the probe in Ubuntu,
+Alpine and Fedora under the runner's rootless podman. Those three images
+are pulled by tag from Docker Hub's official library, the namespace the X
+and Wayland suites already build from, and the probe runs in them with no
+network in a job that holds no secret and saves no cache, so even a tag
+moved to a hostile image reaches nothing worth taking and leaves nothing
+another job restores. `ROBIN_REQUIRE_CONTAINERS=1` makes a missing image fail its cases
+there rather than skip them, as `ROBIN_REQUIRE_AGENTS=1` does for the
+agents. `make check` stays the merge gate. The X, Wayland and end-to-end
+suites, the encoder tests against the real openh264 and libopus and `make
+repro` are left to local runs by choice, not because a runner could not
+run them: they take long, the suites build images that install packages,
+and only the Wayland suite's KDE run needs a GPU. `site/scripts/workflows.test.ts` holds every workflow to these
 rules (pins, a read-only default token, no `pull_request_target`, no kept
 credentials, no `${{ }}` in a script, `--ignore-scripts`), so a new
 workflow or an edit that drops one fails the site's tests in CI. The one

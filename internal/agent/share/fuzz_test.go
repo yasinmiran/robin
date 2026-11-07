@@ -98,7 +98,7 @@ func FuzzDoor(f *testing.F) {
 			t.Fatal(err)
 		}
 		defer d.Close()
-		c, err := net.Dial("unix", protocol.ShareSocket(in.session))
+		c, err := net.Dial("unix", protocol.ShareSocket(in.door))
 		if err != nil {
 			t.Fatal(err)
 		}

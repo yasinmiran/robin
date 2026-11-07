@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
-import { BulkRefused, Inbound, acceptBulk, onBulk, sendBulk } from '../bulk.js';
+import { BulkRefused, Inbound, NOT_CONNECTED, acceptBulk, onBulk, sendBulk } from '../bulk.js';
 import { BULK_WINDOW, CHUNK_SIZE, Sum, registerKind } from '../bulkframe.js';
 import { FakeChannel, FakePeer, fromAgent, until, within } from './fakes.js';
 
@@ -111,6 +111,16 @@ test('sendBulk refuses what the agent could not take before opening a channel', 
   gone.abort();
   await assert.rejects(sendBulk(pc, { kind: 'test' }, new Blob(['x']), { signal: gone.signal }), { name: 'AbortError' });
   assert.equal(pc.channels.length, 0);
+});
+
+test('sendBulk without a live peer says the page is not connected', async () => {
+  // While the page redials the host it has no peer at all; once a session
+  // ends, a closed one.
+  await assert.rejects(sendBulk(null, { kind: 'test' }, new Blob(['x'])), { message: NOT_CONNECTED });
+  const closed = new FakePeer(acceptBulk);
+  closed.connectionState = 'closed';
+  await assert.rejects(sendBulk(closed, { kind: 'test' }, new Blob(['x'])), { message: NOT_CONNECTED });
+  assert.equal(closed.channels.length, 0);
 });
 
 test('the far side refusing rejects with its reason', async () => {

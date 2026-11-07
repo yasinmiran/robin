@@ -63,7 +63,7 @@ func (g gatedWriter) Write(p []byte) (int, error) {
 
 func dialDoor(t *testing.T, d *Door) net.Conn {
 	t.Helper()
-	c, err := net.Dial("unix", protocol.ShareSocket(d.inv.session))
+	c, err := net.Dial("unix", protocol.ShareSocket(d.inv.door))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestCloseEndsThoseJoiningAndTheInvitations(t *testing.T) {
 	if len(d.Invites().Open()) != 0 {
 		t.Error("Close left invitations open")
 	}
-	if _, err := net.Dial("unix", protocol.ShareSocket(d.inv.session)); err == nil {
+	if _, err := net.Dial("unix", protocol.ShareSocket(d.inv.door)); err == nil {
 		t.Error("the socket still accepts")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -285,9 +285,93 @@ func TestCloseEndsThoseJoiningAndTheInvitations(t *testing.T) {
 	}
 }
 
+// The session id is on the daemon's command line, which every account can
+// read in /proc. A name built from it alone could be taken before the
+// daemon listens there, and the session would share with nobody; the door
+// listens under a name only its invitations carry, so a guest still
+// reaches it past whoever holds the one the id gives.
+func TestADoorNameTakenFromTheSessionIDDeniesNoSharing(t *testing.T) {
+	id := fmt.Sprintf("q%d%d", os.Getpid(), time.Now().UnixNano())
+	squat, err := net.Listen("unix", "@robin-share-"+id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer squat.Close()
+	in := NewInvites(id, os.Getuid())
+	in.lookup = func(string) (int, error) { return os.Getuid() + 1, nil }
+	d, err := open(in, slog.New(slog.DiscardHandler), writeWait)
+	if err != nil {
+		t.Fatalf("the door, with its session id's name taken: %v", err)
+	}
+	defer d.Close()
+	inv, err := in.Invite("guest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := protocol.ParseJoinCode(inv.Code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := Dial(code)
+	if err != nil {
+		t.Fatalf("a guest dialing its code: %v", err)
+	}
+	defer c.Close()
+	accepted := make(chan struct{})
+	go func() {
+		if c, err := squat.Accept(); err == nil {
+			c.Close()
+			close(accepted)
+		}
+	}()
+	select {
+	case <-accepted:
+		t.Fatal("the guest reached the squatter")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// robin-agent join learns the door from the Join its CLI sends, and the
+// door still reads that Join whole, with whatever came after it.
+func TestReadJoinFindsTheDoorAndKeepsTheLine(t *testing.T) {
+	const ping = `{"type":"ping"}` + "\n"
+	code := protocol.JoinCode{Session: "a1b2c3d4", Owner: 1000, Door: newSecret(), Secret: newSecret()}
+	sent := string(joinLine(t, code.String())) + `{"type":"bye"}` + "\n"
+	got, rest, err := ReadJoin(strings.NewReader(sent))
+	if err != nil || got != code {
+		t.Fatalf("ReadJoin = %+v, %v; want %+v", got, err, code)
+	}
+	if b, err := io.ReadAll(rest); err != nil || string(b) != sent {
+		t.Errorf("the door reads %q, %v; want %q", b, err, sent)
+	}
+	// The CLI's Conn may ping before it sends the Join; the door's Conn
+	// reads past pings too.
+	sent = strings.Repeat(ping, maxPingsBeforeJoin) + sent
+	got, rest, err = ReadJoin(strings.NewReader(sent))
+	if err != nil || got != code {
+		t.Fatalf("after pings, ReadJoin = %+v, %v; want %+v", got, err, code)
+	}
+	if b, err := io.ReadAll(rest); err != nil || string(b) != sent {
+		t.Errorf("after pings, the door reads %q, %v; want %q", b, err, sent)
+	}
+	for name, line := range map[string]string{
+		"nothing":     "",
+		"no newline":  string(bytes.TrimSuffix(joinLine(t, code.String()), []byte("\n"))),
+		"not a join":  `{"type":"start","start":{"version":2}}` + "\n",
+		"a bad code":  string(joinLine(t, "a1b2c3d4-x-d-abc")),
+		"an old code": string(joinLine(t, "a1b2c3d4-1000-x")),
+		"too long":    `{"type":"join","join":{"code":"` + strings.Repeat("a", maxJoinLine) + `"}}` + "\n",
+		"only pings":  strings.Repeat(ping, maxPingsBeforeJoin+1) + string(joinLine(t, code.String())),
+	} {
+		if c, _, err := ReadJoin(strings.NewReader(line)); err == nil {
+			t.Errorf("%s: took %+v", name, c)
+		}
+	}
+}
+
 func TestDialChecksTheListenerIsTheOwner(t *testing.T) {
-	id := fmt.Sprintf("d%d%d", os.Getpid(), time.Now().UnixNano())
-	ln, err := net.Listen("unix", protocol.ShareSocket(id))
+	door := newSecret()
+	ln, err := net.Listen("unix", protocol.ShareSocket(door))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,15 +385,15 @@ func TestDialChecksTheListenerIsTheOwner(t *testing.T) {
 			c.Close()
 		}
 	}()
-	c, err := Dial(protocol.JoinCode{Session: id, Owner: os.Getuid(), Secret: "x"})
+	c, err := Dial(protocol.JoinCode{Session: "s1", Owner: os.Getuid(), Door: door, Secret: "x"})
 	if err != nil {
 		t.Fatalf("the owner's own socket: %v", err)
 	}
 	c.Close()
-	if _, err := Dial(protocol.JoinCode{Session: id, Owner: os.Getuid() + 1, Secret: "x"}); err == nil || !strings.Contains(err.Error(), "not to its owner") {
+	if _, err := Dial(protocol.JoinCode{Session: "s1", Owner: os.Getuid() + 1, Door: door, Secret: "x"}); err == nil || !strings.Contains(err.Error(), "not to its owner") {
 		t.Errorf("a socket held by another uid: %v", err)
 	}
-	if _, err := Dial(protocol.JoinCode{Session: id + "x", Owner: os.Getuid(), Secret: "x"}); err == nil || !strings.Contains(err.Error(), "no session") {
+	if _, err := Dial(protocol.JoinCode{Session: "s1", Owner: os.Getuid(), Door: door + "x", Secret: "x"}); err == nil || !strings.Contains(err.Error(), "no session") {
 		t.Errorf("no socket: %v", err)
 	}
 }

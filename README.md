@@ -85,7 +85,10 @@ carries a different agent than the one running refuses to resume, before it
 uploads anything, and says to run `robin end`, since the daemon runs code
 this CLI does not carry. Started beside it with `--new`, the upload leaves
 the kept session's agent in place, so `robin-send` in that desktop keeps
-working.
+working. `robin end` ends a session with that agent of its own, still on
+the host, so ending one of another build uploads nothing; only when that
+agent cannot end it (its file gone, say) does the CLI put its own in place
+to do it.
 
 A new `robin gui` that resumes a desktop gets what its own command line
 names, or is told why not. `--curtain` and `--silent` switch on the curtain
@@ -154,14 +157,14 @@ once, at the start, where each went on the host or why it could not.
 | `--hidpi` | off | size the remote display in the browser's device pixels: sharp text on Retina screens, about four times the pixels to encode. Raise `--max-size` to go fully native |
 | `--max-kbps` | `10000` | video bitrate ceiling; congestion control works below it |
 | `--encoder` | `auto` | `auto` encodes on the host's GPU where it pays and in software elsewhere; `software`, `vaapi` or `nvenc` insist on one; see [Hardware encoding](#hardware-encoding) |
-| `--session` | lightest found | command to run in the display, e.g. `startxfce4` |
+| `--session` | lightest found | command to run in the display robin starts, e.g. `startxfce4`; refused with `--attach`, since that desktop runs its own |
 | `--attach` | | stream a desktop already running on the host: `auto`, `wayland` for your Wayland session, or an X display such as `:1` |
-| `--monitor` | `primary` | the monitor of an attached X11 desktop to show first: a name such as `DP-2`, its number, or `all`; the page switches between them. Wayland shows the monitor picked in its sharing dialog |
+| `--monitor` | `primary` | the monitor of an attached X11 desktop to show first: a name such as `DP-2`, its number, or `all`; the page switches between them. Refused for a desktop robin starts and with `--attach wayland`, where Wayland shows the monitor picked in its sharing dialog; a resume by `--id` ignores it, like the other flags that shape a new desktop |
 | `--keep` | `8h`, `0` with `--attach` | how long the host keeps the desktop after the connection drops or the page detaches; `0` ends it with the connection |
 | `--id` | the one kept session | which kept session to resume |
-| `--new` | | start a new desktop even when a kept one could be resumed |
+| `--new` | | start a new desktop even when a kept one could be resumed; refused with `--id` |
 | `--share` | | invite this account on the host to join as a guest, who watches until you give them control; repeat for more (see [Sharing a desktop](#sharing-a-desktop)) |
-| `--join` | | join another account's session as a guest, with the code its owner was given, over your own login to the host |
+| `--join` | | join another account's session as a guest, with the code its owner was given, over your own login to the host. The flags that shape the session (`--attach`, `--id`, `--new`, `--session`, `--keep`, `--max-size`, `--fps`, `--max-kbps`, `--encoder`, `--monitor`, `--audio=false`, `--camera`, `--curtain`, `--silent`, `--share`) are the owner's and refused |
 | `--audio` | `true` | stream the desktop's sound; `--audio=false` leaves it out |
 | `--mic` | off | offer your microphone to the host's programs; it stays off until you switch it on in the page |
 | `--camera` | off | offer your camera to the host's programs, through PipeWire or a v4l2loopback device; off until switched on |
@@ -217,7 +220,10 @@ your home directory itself counts as unset, which is what xdg-user-dirs-update
 leaves once `~/Downloads` is gone, so uploads then go to `~/Downloads` too. A
 file whose name starts with a dot is refused, so no upload is hidden. Nothing
 on the host is ever replaced; a second `report.pdf` becomes `report (1).pdf`,
-and the status tab shows the name it got.
+and the status tab shows the name it got. An upload that finds the page
+with no connection, as while the page redials the host, fails with "not
+connected to the desktop", and so does one cut off when the page drops its
+connection; send it again once the page is back.
 
 Getting a file from the host starts on the host:
 
@@ -229,7 +235,10 @@ robin-send report.pdf build/*.log                # in a terminal of the desktop 
 The page lists each offer by name and size, and nothing downloads until you
 click Save; Dismiss turns it down. Save takes the file as it is by then, but
 never more than the size shown: a file that grew since its offer is refused,
-and both the page and `robin-send` say so. `robin-send` stays until every file it
+and both the page and `robin-send` say so. A Save clicked while the page
+has no connection fails at once with "not connected to the desktop" and
+keeps its Save button; so does a Save, or a download, that the page's
+connection took with it when it dropped. `robin-send` stays until every file it
 offered has been saved or declined, prints which, and exits non-zero unless
 all were saved. Ctrl+C there withdraws whatever is still on offer. Programs in
 a spawned desktop have `robin-send` on their `PATH` and `ROBIN_FILES_SOCK`
@@ -472,8 +481,8 @@ killed, the keeper gives the room back its screens and speakers.
 ## Sharing a desktop
 
 ```sh
-robin gui --share alice build-box                    # your desktop, which alice may join
-robin gui --join a1b2c3d4-1000-k3j4... alice@build-box  # alice, from her own computer
+robin gui --share alice build-box                             # your desktop, which alice may join
+robin gui --join a1b2c3d4-1000-m2n3...-k3j4... alice@build-box  # alice, from her own computer
 ```
 
 `--share alice` invites another account on the host to watch your session.
@@ -521,6 +530,12 @@ session ends every guest's CLI with it. A guest whose connection drops does
 not come back on its own: the code it joined with is spent, so it needs
 another invitation.
 
+Both sides need a build with the door's own name. A session started by an
+older build, kept running across an upgrade, hands out codes of three
+parts that this build refuses as from an older build; start the session
+again to share it. An older guest CLI cannot take the new codes of four
+parts.
+
 ## Hardware encoding
 
 ```sh
@@ -538,7 +553,10 @@ software. If the GPU it picked fails on the host, as the session starts or
 at any frame after, the session carries on in software to its end, and `-v`
 shows which encoder was picked, why, and why it fell back. An encoder named
 with `--encoder` is never swapped for software: one that fails as the
-session starts fails the session.
+session starts fails the session, and so does one that starts and then
+fails three frames running at the desktop's size, a GPU driver capped
+below your resolution, say; robin prints the encoder's error. A frame it
+fails now and then among good ones is only skipped.
 
 The agent is a static binary and cannot load the host's GPU libraries, so
 for these it pipes frames through a tool the host already has: ffmpeg, or
@@ -721,15 +739,22 @@ A view-only Wayland grant takes the keyboard, the pointer and uploads away,
 and leaves the clipboard and the files the host offers.
 
 The guests' door. A session daemon takes guests on an abstract unix
-socket, `@robin-share-<id>`, which has no file and so no permissions: any
-account on the host can connect to it. Before it reads a byte, the daemon
+socket, `@robin-share-<door>`, which has no file and so no permissions: any
+account on the host can connect to it, and any account could take a name
+it knew before the daemon did. So the door is not named after the session
+id, which is on the daemon's command line for every account to read: the
+daemon draws 128 random bits for its name as it starts, and nobody can
+know them before the daemon listens: only join codes carry them, and the
+kernel lists the name only once it is taken. Before it reads a byte, the
+daemon
 asks the kernel who connected (`SO_PEERCRED`) and hangs up unless that uid
 holds an open invitation. The invited account then has 5 s to present the
 invitation's code, which the daemon compares in constant time, spends on
 first use and lets expire after 10 minutes; three wrong ones withdraw the
-invitation. A code is 128 random bits beside the session's id and your
-uid, and it never goes on a command line: the guest's CLI sends it over
-its agent's stdin. At most 8 invitations are open at once, 4 connections
+invitation. A code is 128 random bits beside the session's id, your uid
+and the door's name, and no part of it goes on a command line: the
+guest's CLI sends it over its agent's stdin, and the agent finds the door
+from it. At most 8 invitations are open at once, 4 connections
 may be presenting a code at once, and a session takes 8 guests, each
 getting one new peer connection a second; a guest that stops reading
 what the session sends it is dropped within 10 s. The
@@ -1220,11 +1245,21 @@ and `go test ./...` without the encoder tags, so the encoders build as
 stubs and no C toolchain is fetched; govulncheck for the Linux build and
 for the CLI on macOS and Windows; the page's modules under `node --test`;
 a lockfile check of `e2e` and the browser smoke test; and the docs site's
-`npm ci`, `npm test` and `npm run check`. Nothing that needs podman, a
-display or a GPU runs there, and CI builds no agents and pulls no images,
-so `make test-agents` and `make repro` run only locally and the probe's
-container cases, which `make test` runs wherever podman has their images,
-skip there. `make check` stays the gate before a merge.
+`npm ci`, `npm test` and `npm run check`. Two more jobs need the C
+toolchain or a container. One runs `make agents` and `make test-agents`,
+with zig and the openh264 and libopus builds cached under a key of the
+toolchain scripts' content, so both agents are built and scanned on
+every change and the amd64 one is deployed over a local sshd. The other
+pulls the three Docker Official Images the probe's container cases need
+(Ubuntu 24.04, Alpine 3.20, Fedora 40) and runs them under the runner's
+rootless podman with `ROBIN_REQUIRE_CONTAINERS=1`, which fails a case
+whose image is missing instead of skipping it. Locally `make test` runs
+those cases wherever podman already has the images and skips the rest;
+`podman pull` them first to run them all. Left to local runs, by choice:
+`make test-x`, `make test-wayland`, `make e2e`, the encoder tests against
+the real openh264 and libopus, and `make repro`. They take long, the
+suites build images that install packages, and only the KDE run of `make
+test-wayland` needs a GPU. `make check` stays the gate before a merge.
 The workflow's token can only read, checkout keeps no credentials, and
 every action is pinned to a commit; `site/scripts/workflows.test.ts`
 fails on a workflow that drops any of those. govulncheck is pinned in its own module,
@@ -1275,9 +1310,10 @@ comparison notices, so the check is known not to be vacuous. `make
 test-agents`, which `make check` and `make repro` run, builds the agents
 and scans them for the checkout, the toolchain cache, the home directory,
 Go's own directories, a Go other than the pinned one and any build
-setting the Makefile does not set. `make test` runs the same test but
-skips it when no agents have been built, so it stays free of the
-toolchain.
+setting the Makefile does not set, then deploys one over a local sshd.
+CI runs it on every change; `make repro` runs only locally. `make test`
+runs the same tests but skips them when no agents have been built, so it
+stays free of the toolchain.
 
 macOS as a build host is expected to produce the same bytes, since zig
 carries its own libc and the Go side is pure, but that has not yet been

@@ -182,14 +182,11 @@ func rejectedSummary(agentDir string, rejected ...RejectedDir) summary {
 
 func TestParseDesktopWayland(t *testing.T) {
 	want := &Report{
-		OS: "Linux", Kernel: "6.8.0-45-generic", Machine: "x86_64", Arch: "amd64",
-		Distro:   Distro{ID: "ubuntu", VersionID: "24.04", IDLike: []string{"debian"}, Name: "Ubuntu 24.04.1 LTS"},
-		User:     "bob",
-		UID:      1000,
-		Home:     "/home/bob",
-		CPUs:     8,
-		MemoryKB: 16165432,
-		Env:      Env{SessionType: "tty", RuntimeDir: "/run/user/1000"},
+		OS: "Linux", Machine: "x86_64", Arch: "amd64",
+		Distro: Distro{ID: "ubuntu", VersionID: "24.04", IDLike: []string{"debian"}},
+		User:   "bob",
+		UID:    1000,
+		CPUs:   8,
 		Sessions: []Session{
 			{ID: "2", Name: "bob", Type: "wayland", State: "active", Class: "user", Desktop: "ubuntu", Active: true},
 			{ID: "7", Name: "bob", Type: "tty", State: "active", Class: "user", Active: true, Remote: true},
@@ -208,8 +205,6 @@ func TestParseDesktopWayland(t *testing.T) {
 		Commands: map[string]string{
 			"xkbcomp":             "/usr/bin/xkbcomp",
 			"x-terminal-emulator": "/usr/bin/x-terminal-emulator",
-			"dbus-run-session":    "/usr/bin/dbus-run-session",
-			"dbus-launch":         "/usr/bin/dbus-launch",
 		},
 		AgentDir:   "/home/bob/.cache/robin",
 		SHA256Tool: "sha256sum",
@@ -229,7 +224,6 @@ func TestParseNvidia(t *testing.T) {
 			{"/dev/dri/card0", true}, {"/dev/dri/card1", true},
 			{"/dev/dri/renderD128", true}, {"/dev/dri/renderD129", true},
 		},
-		NvidiaSMI:  "/usr/bin/nvidia-smi",
 		NvidiaGPUs: []string{"NVIDIA GeForce RTX 3060"},
 	}
 	if !reflect.DeepEqual(r.GPU, want) {
@@ -305,7 +299,7 @@ func TestParseTolerance(t *testing.T) {
 		t.Errorf("got %+v", r)
 	}
 
-	for _, bad := range []string{"uid=abc", "memory_kb=lots", "agentdir_rejected=/tmp/x", "agent_sha256=nohash"} {
+	for _, bad := range []string{"uid=abc", "cpus=lots", "agentdir_rejected=/tmp/x", "agent_sha256=nohash"} {
 		if _, err := Parse([]byte("probe=1\n" + bad + "\n")); err == nil {
 			t.Errorf("Parse accepted %q", bad)
 		}
@@ -385,18 +379,14 @@ func parseFile(t *testing.T, name string) *Report {
 
 func TestParseAttachAndEncoderKeys(t *testing.T) {
 	out := "probe=1\nos=Linux\n" +
-		"xauth=/home/a/.Xauthority\nxauth=/run/user/1000/gdm/Xauthority\nxauth=/home/a/.Xauthority\n" +
-		"session_bus=/run/user/1000/bus\npulse=/run/user/1000/pulse/native\npipewire=/run/user/1000/pipewire-0\n" +
+		"session_bus=/run/user/1000/bus\n" +
 		"ffmpeg_encoder=h264_vaapi\nffmpeg_encoder=h264_nvenc\ngst_plugin=pipewire\ngst_plugin=vaapi\ngst_plugin=pipewire\n"
 	r, err := Parse([]byte(out))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(r.XAuthority, []string{"/home/a/.Xauthority", "/run/user/1000/gdm/Xauthority"}) {
-		t.Errorf("XAuthority %q", r.XAuthority)
-	}
-	if r.SessionBus != "/run/user/1000/bus" || r.PulseSocket != "/run/user/1000/pulse/native" || r.PipeWireSocket != "/run/user/1000/pipewire-0" {
-		t.Errorf("sockets %q %q %q", r.SessionBus, r.PulseSocket, r.PipeWireSocket)
+	if r.SessionBus != "/run/user/1000/bus" {
+		t.Errorf("session bus %q", r.SessionBus)
 	}
 	if !slices.Equal(r.FFmpegEncoders, []string{"h264_vaapi", "h264_nvenc"}) || !slices.Equal(r.GstPlugins, []string{"pipewire", "vaapi"}) {
 		t.Errorf("encoders %q plugins %q", r.FFmpegEncoders, r.GstPlugins)

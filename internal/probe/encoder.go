@@ -85,7 +85,6 @@ func (r *Report) vaapiProblem() (string, bool) {
 }
 
 func (r *Report) nvencProblem() (string, bool) {
-	// nvidia-smi alone proves nothing: it is installed on hosts with no GPU.
 	if len(r.GPU.NvidiaGPUs) == 0 {
 		return "no NVIDIA GPU with its driver loaded", false
 	}

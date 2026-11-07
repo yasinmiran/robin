@@ -139,7 +139,13 @@ test("the guest joins over its own login and watches the owner's stream", async 
     .toEqual([`${GUEST} false`]);
   expect(await text(ownerPage, '#guests .label'), "the owner's row says who watches").toBe(`${GUEST} watching`);
   expect((await share(ownerPage)).guests.invitations, 'the spent invitation is gone').toEqual([]);
-  expect(await guestProcesses(), "alice's agent runs as alice").toMatch(/robin-agent-\S+ join -session \S+ -owner 1000/);
+  expect(await guestProcesses(), "alice's agent runs as alice").toMatch(/robin-agent-\S+ join$/m);
+  // Nothing of the code is on a command line any account can read, the
+  // door's name included.
+  const [, , door, secret] = code.split('-');
+  const commandLines = (await host.sshRaw('ps -eo args')).stdout;
+  expect(commandLines, 'the door is on no command line').not.toContain(door);
+  expect(commandLines, 'the secret is on no command line').not.toContain(secret);
   // Both pages keep decoding.
   const decoded = (p: Page) => p.evaluate(() => (window as any).robin.stats().then((s: any) => s.framesDecoded as number));
   const before = [await decoded(ownerPage), await decoded(guestPage)];

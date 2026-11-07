@@ -42,8 +42,11 @@ var ErrBadCode = errors.New("this join code is not valid: it may have expired or
 type Invites struct {
 	session string
 	owner   int
-	lookup  func(name string) (int, error)
-	now     func() time.Time
+	// door names the session's socket. Only the codes carry it, so no
+	// account can take the name before the daemon listens there.
+	door   string
+	lookup func(name string) (int, error)
+	now    func() time.Time
 
 	mu   sync.Mutex
 	open []*invite
@@ -57,9 +60,10 @@ type invite struct {
 	tries   int
 }
 
-// NewInvites holds the invitations of session, owned by uid owner.
+// NewInvites holds the invitations of session, owned by uid owner, and
+// draws the name of the door they open.
 func NewInvites(session string, owner int) *Invites {
-	return &Invites{session: session, owner: owner}
+	return &Invites{session: session, owner: owner, door: newSecret()}
 }
 
 // clock returns the time now, as tests may set it.
@@ -88,10 +92,7 @@ func (in *Invites) Invite(name string) (protocol.Invitation, error) {
 	if uid == in.owner {
 		return protocol.Invitation{}, fmt.Errorf("%s is the session's own user, who resumes it with robin gui rather than joining", name)
 	}
-	secret, err := newSecret()
-	if err != nil {
-		return protocol.Invitation{}, err
-	}
+	secret := newSecret()
 	in.mu.Lock()
 	defer in.mu.Unlock()
 	in.prune()
@@ -129,7 +130,7 @@ func (in *Invites) Redeem(uid int, code string) (string, error) {
 	// The secret is compared in constant time whatever else is wrong, so
 	// how long a refusal takes says nothing of the secret.
 	match := subtle.ConstantTimeCompare([]byte(c.Secret), []byte(i.secret)) == 1
-	if parseErr == nil && match && c.Session == in.session && c.Owner == in.owner {
+	if parseErr == nil && match && c.Session == in.session && c.Owner == in.owner && c.Door == in.door {
 		in.open = slices.Delete(in.open, n, n+1)
 		return i.user, nil
 	}
@@ -167,7 +168,7 @@ func (in *Invites) prune() {
 }
 
 func (in *Invites) view(i *invite) protocol.Invitation {
-	code := protocol.JoinCode{Session: in.session, Owner: in.owner, Secret: i.secret}
+	code := protocol.JoinCode{Session: in.session, Owner: in.owner, Door: in.door, Secret: i.secret}
 	return protocol.Invitation{User: i.user, Code: code.String(), Expires: i.expires}
 }
 
@@ -175,12 +176,12 @@ func (in *Invites) view(i *invite) protocol.Invitation {
 // which a JoinCode carries as they are.
 var secretEncoding = base32.NewEncoding("abcdefghijklmnopqrstuvwxyz234567").WithPadding(base32.NoPadding)
 
-func newSecret() (string, error) {
+// newSecret draws 128 random bits. crypto/rand.Read never fails: the
+// program crashes instead.
+func newSecret() string {
 	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return secretEncoding.EncodeToString(b), nil
+	rand.Read(b)
+	return secretEncoding.EncodeToString(b)
 }
 
 // userName is what Invite takes for an account: the portable set of
