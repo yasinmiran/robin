@@ -175,13 +175,15 @@ func stubCommands(t *testing.T) string {
 }
 
 // TestScriptContainers runs the script in distribution images under rootless
-// podman. Images are never pulled; a missing one skips its cases.
+// podman. Images are never pulled; a missing one skips its cases, or fails
+// them under ROBIN_REQUIRE_CONTAINERS=1, which CI sets once it has pulled
+// them.
 func TestScriptContainers(t *testing.T) {
 	if testing.Short() {
 		t.Skip("containers are slow")
 	}
 	if _, err := exec.LookPath("podman"); err != nil {
-		t.Skip("podman not found")
+		missing(t, "podman not found")
 	}
 
 	const (
@@ -272,7 +274,7 @@ func TestScriptContainers(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			if exec.Command("podman", "image", "exists", tt.image).Run() != nil {
-				t.Skipf("image %s not present", tt.image)
+				missing(t, "image %s not present", tt.image)
 			}
 			shell := tt.shell
 			if shell == "" {
@@ -353,6 +355,16 @@ func strangersNamesIgnored(t *testing.T, r *Report) {
 	if len(r.Kept) != 0 || r.UID != 0 {
 		t.Errorf("Kept %+v, uid %d: a socket's name reached the report", r.Kept, r.UID)
 	}
+}
+
+// missing skips t for want of podman or an image, or fails it when
+// ROBIN_REQUIRE_CONTAINERS=1 says they were provided.
+func missing(t *testing.T, format string, args ...any) {
+	t.Helper()
+	if os.Getenv("ROBIN_REQUIRE_CONTAINERS") == "1" {
+		t.Fatalf(format, args...)
+	}
+	t.Skipf(format, args...)
 }
 
 // bare checks a stock image probed as root: no desktop, nothing for spawn
