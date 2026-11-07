@@ -472,8 +472,8 @@ killed, the keeper gives the room back its screens and speakers.
 ## Sharing a desktop
 
 ```sh
-robin gui --share alice build-box                    # your desktop, which alice may join
-robin gui --join a1b2c3d4-1000-k3j4... alice@build-box  # alice, from her own computer
+robin gui --share alice build-box                             # your desktop, which alice may join
+robin gui --join a1b2c3d4-1000-m2n3...-k3j4... alice@build-box  # alice, from her own computer
 ```
 
 `--share alice` invites another account on the host to watch your session.
