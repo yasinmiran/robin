@@ -13,43 +13,45 @@ Name the account when you start the session:
 robin gui --share alice build-box
 ```
 
-Once the desktop is up, robin prints the command alice runs:
+Once the desktop is up, robin prints what alice runs:
 
 ```text
-robin: alice may join once, until 3:04PM, with: robin gui --join a1b2c3d4-1000-k3j4m5n6p7q2r3s4t5u6v7w2x3 alice@build-box
+robin: alice may join once, until 3:04PM, with: robin gui --join a1b2c3d4-1000-m2n3p4q5r6s7t2u3v4w5x6y7z2-k3j4m5n6p7q2r3s4t5u6v7w2x3 alice@build-box
 ```
 
-For more accounts, repeat `--share`, or invite from the page: type a name in the status tab's Share part and press Invite. The tab lists every guest who joined, and each open invitation with a Copy join command button.
+For more accounts, repeat `--share`, or type a name in the status tab's Share part and press Invite. The tab lists every guest and each open invitation, with a Copy join command button.
 
-A code lets the account it names, and no other, join once within 10 minutes. Inviting the same account again replaces its code, and three wrong codes from that account withdraw it.
+A code lets the account it names, and no other, join once within 10 minutes. Inviting that account again replaces its code, and three wrong codes withdraw it.
+
+You and your guest need the same build of robin. A code from a session an older build started is refused with `this code is from a session started with an older build of robin`; end that session and start it again to share it.
 
 ## Joining
 
-Alice runs the command on her own computer, over her own SSH login to the host. Her browser shows your desktop and pointer, with sound, and her status tab says she is view only until you give her control; Upload files and the Keys row wait on that as well.
+Alice runs the command on her own computer, over her own SSH login to the host. Her browser shows your desktop, pointer and sound, and her status tab says she is view only until you give her control.
 
-A guest joins your desktop as it is, so `--join` refuses `--share`, `--attach`, `--id`, `--new`, `--session`, `--camera`, `--curtain` and `--silent`. If the code has expired or been used, she asks you for another.
+`--join` refuses the flags that shape your session; see [Flags](/flags#flag-join). If the code has expired or been used, she asks you for another.
 
 ## Control
 
-Each guest's row in your Share part has Give control. Click it and their keys, pointer and paste reach the desktop, the host's clipboard reaches them, and they can upload and get the files `robin-send` offers, while you keep control the whole time. If they ran with `--mic` and your session has a microphone, the host hears them too.
+Each guest's row in your Share part has Give control. Click it and their keys, pointer and paste reach the desktop, the host's clipboard reaches them, and they can upload and save files, while you keep control too. If they ran with `--mic` and your session has a microphone, the host hears them.
 
-Only one guest has control at a time, so giving it to a second guest takes it from the first, and the button says so.
+One guest has control at a time: giving it to another takes it from the first.
 
-Take back control ends theirs at once: keys they held are let go and text still being typed is dropped, and any file or clipboard on its way to them stops too. Closing or reloading your own page takes control from every guest, though they keep watching. Remove asks for a second click, then disconnects them, and their page and their robin say why.
+Take back control ends theirs at once, letting go of held keys and stopping files on their way. Closing or reloading your own page takes control from every guest, though they keep watching. Remove asks for a second click, then disconnects them.
 
-Whoever has control, some things stay yours: a guest's window never resizes the desktop, and only you pick the monitor, the [curtain and the silent room](/private-session), [sharp text](/using#sharp-text-and-actual-size), the camera, and whether the desktop is kept or ended.
+Some things stay yours: a guest's window never resizes the desktop, and only you pick the monitor, the [curtain and the silent room](/private-session), [sharp text](/using#sharp-text-and-actual-size), the camera, and whether the desktop is kept or ended.
 
 ## When it ends
 
-Even if robin reconnects, every guest is let go and every open invitation withdrawn once your robin loses the session, by Ctrl+C, a dropped link or Disconnect, keep desktop. Nobody can join a [kept desktop](/sessions) until you are back on it and invite them again.
+Every guest is let go and every invitation withdrawn once your robin loses the session, by Ctrl+C, a dropped link or Disconnect, keep desktop, even if it reconnects. Nobody can join a [kept desktop](/sessions) until you are back and invite them again.
 
-A guest leaves with Ctrl+C or the page's Leave button, and one whose connection drops needs a new invitation, since its code is spent.
+A guest leaves with Ctrl+C or the page's Leave button, and one whose connection drops needs a new invitation.
 
 See [What Robin keeps out](/security#what-robin-keeps-out) for how the host checks who joins.
 
 ## Limits
 
-- Everyone gets one stream, encoded at the bitrate the slowest guest's link allows, so a guest on a poor link makes your picture coarser too.
+- Everyone gets one stream at the bitrate the slowest guest's link allows, so a guest on a poor link makes your picture coarser too.
 - Your keys and a guest's in control interleave as they arrive, so agree who types.
 - An account the host cannot find in `/etc/passwd` or through `getent` cannot be invited.
 - A guest's camera is never used.
