@@ -73,10 +73,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # setup-go keys its cache by these files alone, so toolchain/lib.sh
+      # gives the cgo cross builds a key of their own, apart from the go
+      # job's test builds.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache-dependency-path: go.sum
+          cache-dependency-path: |
+            go.sum
+            toolchain/lib.sh
       # zig, the downloads and the libraries built from them. Every library
       # directory is already named by the hash of its inputs; the key names
       # the scripts that pin those inputs, and has no fallback, so a change
@@ -101,10 +106,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # No Go cache: the job builds one package, and a job that runs
+      # third-party images saves nothing another job restores.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache-dependency-path: go.sum
+          cache: false
       # The Docker Official Images the X and Wayland suites also build
       # from. The probe runs in them with --network=none, as root inside a
       # rootless container, and nothing in this job holds a secret.

@@ -1230,11 +1230,11 @@ pulls the three Docker Official Images the probe's container cases need
 rootless podman with `ROBIN_REQUIRE_CONTAINERS=1`, which fails a case
 whose image is missing instead of skipping it. Locally `make test` runs
 those cases wherever podman already has the images and skips the rest;
-`podman pull` them first to run them all. Left to local runs: `make
-test-x`, `make test-wayland`, `make e2e`, the encoder tests against the
-real openh264 and libopus, and `make repro`, since a runner has no
-display or GPU and one build is all the agents job does. `make check`
-stays the gate before a merge.
+`podman pull` them first to run them all. Left to local runs, by choice:
+`make test-x`, `make test-wayland`, `make e2e`, the encoder tests against
+the real openh264 and libopus, and `make repro`. They take long, the
+suites build images that install packages, and only the KDE run of `make
+test-wayland` needs a GPU. `make check` stays the gate before a merge.
 The workflow's token can only read, checkout keeps no credentials, and
 every action is pinned to a commit; `site/scripts/workflows.test.ts`
 fails on a workflow that drops any of those. govulncheck is pinned in its own module,

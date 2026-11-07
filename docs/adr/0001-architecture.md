@@ -1349,10 +1349,12 @@ every merge, not only on a machine that happened to build the agents. Its
 zig, downloads and libraries are cached under the hash of
 `toolchain/*.sh`, with no fallback key: every library directory is
 already named by its inputs, and a pin change should start clean rather
-than carry the old toolchain along. A pull request's run reads the cache
-main saved but writes only its own, so a branch cannot hand main a
-toolchain, and the downloads are checked by hash on every use whatever
-the cache held. The double build stays local, since
+than carry the old toolchain along. Each download is checked by hash when it is
+fetched; after that, the cache's zig, nasm and libraries are used as
+built. What makes that safe is the cache's scope: main's entry is written
+only by main's own runs, from a verified download, and a pull request's
+run reads it but writes only its own scope, so a branch cannot hand main
+a toolchain. The double build stays local, since
 the scan already catches a leak on every merge and `make repro` would be
 a second full build to do it again.
 
@@ -3102,12 +3104,15 @@ are checked by hash as on a workstation; and it runs the probe in Ubuntu,
 Alpine and Fedora under the runner's rootless podman. Those three images
 are pulled by tag from Docker Hub's official library, the namespace the X
 and Wayland suites already build from, and the probe runs in them with no
-network in a job that holds no secret, so even a tag moved to a hostile
-image reaches nothing worth taking. `ROBIN_REQUIRE_CONTAINERS=1` makes a missing image fail its cases
+network in a job that holds no secret and saves no cache, so even a tag
+moved to a hostile image reaches nothing worth taking and leaves nothing
+another job restores. `ROBIN_REQUIRE_CONTAINERS=1` makes a missing image fail its cases
 there rather than skip them, as `ROBIN_REQUIRE_AGENTS=1` does for the
-agents. `make check` stays the merge gate, because a runner has no display
-or GPU for the X, Wayland and end-to-end suites, and `make repro` is a
-second full build. `site/scripts/workflows.test.ts` holds every workflow to these
+agents. `make check` stays the merge gate. The X, Wayland and end-to-end
+suites, the encoder tests against the real openh264 and libopus and `make
+repro` are left to local runs by choice, not because a runner could not
+run them: they take long, the suites build images that install packages,
+and only the Wayland suite's KDE run needs a GPU. `site/scripts/workflows.test.ts` holds every workflow to these
 rules (pins, a read-only default token, no `pull_request_target`, no kept
 credentials, no `${{ }}` in a script, `--ignore-scripts`), so a new
 workflow or an edit that drops one fails the site's tests in CI. The one
